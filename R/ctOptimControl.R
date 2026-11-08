@@ -197,13 +197,12 @@
 #'  \item{\code{overshoot}}{\code{'magnitude'} (the default),
 #'  \code{'saturation'} or \code{'off'}: which directions are pulled back after
 #'  a fit, to test whether it stopped at a maximum.}
-#'  \item{\code{stallwindow}, \code{stallfraction}, \code{stallratio},
-#'  \code{stallcooldown}, \code{stalltighten}, \code{stalltightenings}}{The
-#'  stall check (defaults 80, 0.01, 0.001, 30, 0.1, 2): how many iterations of
-#'  negligible progress end a fit, what share of its own progress counts as
-#'  negligible, how much of its responsiveness a transform must have lost to
-#'  count as the reason, and how long and how far the bar tightens after a fit
-#'  is found slow rather than stuck.}
+#'  \item{\code{stallwindow}, \code{stallratio}, \code{stallcooldown}}{The
+#'  stall check (defaults 80, 0.001, 30): over how many iterations a fit's gain
+#'  is read (half a nat or less starts a look for a transform gone flat), how
+#'  much of its responsiveness a transform must have lost to count as the
+#'  reason the fit stopped, and how long the check waits after finding a fit
+#'  slow rather than stuck.}
 #'  \item{\code{escapesaturated}}{Default FALSE. Refit a fit stalled on a
 #'  saturated transform from a zeroed boundary, keeping whichever wins.}
 #'  \item{\code{escapepin}}{Default FALSE. Hold the escaped coordinates still

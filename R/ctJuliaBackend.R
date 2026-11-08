@@ -5762,7 +5762,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 .ctJuliaOptimise <- function(model_spec, start, optimcontrol = list(),
   gradient = "adjoint", cores = 1L, verbose = 0L, maxiter = NULL,
   callback = NULL, objective = NULL, progress_label = NULL,
-  progress_budget = FALSE, pin = NULL, carried = NULL, inverse = NULL,
+  progress_budget = FALSE, pin = NULL, resumed = FALSE, inverse = NULL,
   hessian = NULL, hessian_at = NULL, walked = FALSE, checkpoint = NULL) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   # A caller may hand in the objective to maximise. `intoverstates=FALSE` does,
@@ -5838,12 +5838,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # and its curvature came back indefinite in a substantial direction.
     stall_window = if (state_explicit) 0L
       else .ctBackendStallWindow(optimcontrol),
-    stall_fraction = .ctBackendStallFraction(optimcontrol),
     # The hysteresis: a fit that stalls with nothing flat is slow rather than
-    # stuck, so it is left alone for a while and asked less readily after.
+    # stuck, so it is left alone for a while before it is asked again.
     stall_cooldown = as.integer(.ctJuliaOr(optimcontrol$stallcooldown, 30L)),
-    stall_tighten = as.numeric(.ctJuliaOr(optimcontrol[["stalltighten"]], 0.1)),
-    stall_tightenings = as.integer(.ctJuliaOr(optimcontrol$stalltightenings, 2L)),
     # How much of its live responsiveness a transform has to have lost before
     # it counts as the reason a fit stopped. Relative, because an absolute
     # derivative floor means a different thing for every transform.
@@ -6110,10 +6107,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # `stochastic`, as on stan: TRUE runs the sgd phase (`_ctsem_sgd`) before
   # L-BFGS, 'auto' runs it above 50 parameters -- stan's own rule -- and FALSE,
   # the julia default, does not. Only on a stage that starts away from the
-  # optimum: not a stage resumed after certification (`carried`), the prior
+  # optimum: not a stage resumed after certification (`resumed`), the prior
   # warm-up's fixed budget, or a profile point, which all start near one.
   stochastic <- optimcontrol$stochastic
-  if (!is.null(stochastic) && is.null(carried) && !isTRUE(progress_budget) &&
+  if (!is.null(stochastic) && !resumed && !isTRUE(progress_budget) &&
       is.null(pin)) {
     common$sgd <- if (identical(stochastic, "auto"))
       length(as.numeric(start)) > 50L else isTRUE(stochastic)
@@ -6122,7 +6119,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # same stages as `stochastic` and for the same reason. Its seed comes from
   # R's generator, so `set.seed()` reproduces the fit at a given `cores`.
   saem <- .ctJuliaSaemIterations(optimcontrol)
-  if (saem > 0L && is.null(carried) && !isTRUE(progress_budget) &&
+  if (saem > 0L && !resumed && !isTRUE(progress_budget) &&
       is.null(pin) && !is.null(model_spec$laplace) && !state_explicit) {
     common$saem <- TRUE
     common$saem_maxiter <- saem
@@ -6138,14 +6135,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     }
   }
   # A stage resumed after a certification found the point short of a maximum
-  # (`.ctBackendCorrectResult()`): the progress the fit made before it, so its
-  # stall watch has a progress to take a share of, and leave to stop on
-  # progress alone once the watch's hysteresis is spent. Every other rule is the
-  # first stage's. See `CTSEMStallWatch` in the engine.
-  if (!is.null(carried)) {
-    common$stall_carried <- max(0, as.numeric(carried)[1L], na.rm = TRUE)
-    common$stall_alone <- TRUE
-  }
+  # (`.ctBackendCorrectResult()`) may stop on progress alone, once a window
+  # gains nothing the certification could use. Every other rule is the first
+  # stage's. See `CTSEMStallWatch` in the engine.
+  if (isTRUE(resumed)) common$stall_alone <- TRUE
   # `cores` is the ceiling the subject loop runs at, and the fit records it.
   # Restored afterwards so the session does not carry this fit's ceiling into
   # the next thing that runs.
@@ -6201,7 +6194,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # its builds, for a resume to start from (`local`).
   local_inverse <- NULL
   optimise_once <- function(from, pin = default_pin,
-      carried = NULL, endgame = NULL, local = NULL) {
+      resumed = FALSE, endgame = NULL, local = NULL) {
     args <- common
     if (!is.null(local)) {
       if (is.matrix(local$inverse) && nrow(local$inverse) == length(from) &&
@@ -6214,15 +6207,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # starts where the full objective already brought the fit, so a first
     # batch of a few units only walks it away again (on the SNSF pilot, 493
     # units, every resume began at the 20-unit batch, its log posterior back
-    # at -271148 from -386462) -- with the progress the fit has made carried
-    # in, so its stall watch has a progress to take a share of and leaves to
-    # stop on progress alone once the watch's hysteresis is spent; and on
+    # at -271148 from -386462) -- with its stall watch left to stop it on
+    # progress alone once it stops gaining; and on
     # the curvature the verdict was reached on, where there is one: its
     # covariance as L-BFGS's first metric and the Hessian for the finish to
     # walk on where Hessians are dear. Every other rule is the first stage's.
-    if (!is.null(carried)) {
+    if (resumed) {
       args$batch <- FALSE
-      args$stall_carried <- max(0, as.numeric(carried)[1L], na.rm = TRUE)
       args$stall_alone <- TRUE
     }
     if (!is.null(endgame)) {
@@ -6369,7 +6360,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     local_builds <- local_builds + as.integer(.ctJuliaOr(result$local_builds, 0L))[1L]
     local <- list(inverse = local_inverse, builds = local_builds)
     result <- .ctJuliaAddRunCounts(optimise_once(as.numeric(result$minimizer),
-      carried = 0, local = local), result)
+      resumed = TRUE, local = local), result)
   }
   # A run still ended on a jump stops there, at no maximum of anything
   # continuous, so it is not certified; the fit warns and leaves integrating
@@ -6413,7 +6404,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # damped: holding the freed coordinate back with the metric was measured
   # and it breaks the escape (-3721.05 against -2950.59 on one fit), since
   # after zeroing it the refit needs that coordinate to *travel*.
-  stage <- function(from, carried = 0, endgame = NULL) {
+  stage <- function(from, endgame = NULL) {
     coordinates <- attr(from, "coordinates")
     from <- as.numeric(from)
     if (isTRUE(optimcontrol$escapepin) && length(coordinates)) {
@@ -6426,11 +6417,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
           coordinates),
         value = c(if (length(default_pin$index)) as.numeric(default_pin$value),
           from[coordinates]))
-      staged <- optimise_once(from, pin = escape_pin, carried = carried)
+      staged <- optimise_once(from, pin = escape_pin, resumed = TRUE)
       return(.ctJuliaAddRunCounts(optimise_once(as.numeric(staged$minimizer),
-        carried = carried, endgame = endgame), staged))
+        resumed = TRUE, endgame = endgame), staged))
     }
-    optimise_once(from, carried = carried, endgame = endgame)
+    optimise_once(from, resumed = TRUE, endgame = endgame)
   }
   # Not for a run that ended on a jump: its point is on no continuous
   # objective, so a certification there has nothing to judge, and a resume
