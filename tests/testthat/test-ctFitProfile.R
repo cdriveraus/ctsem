@@ -161,14 +161,14 @@ test_that("plotting a profile draws a panel per parameter without complaint", {
 
 test_that("a profile separates a determined parameter from one on a flat ray", {
   skip_without_julia()
-  # The same noise fixture `test-backend-summary.R` uses. Fitted to noise it
-  # has more than one local maximum, -205.827 and -207.019 among them, and
-  # which one a fit reaches depends on its path: the default fit reached
-  # -205.827 before the endgame moved into the engine and has reached -207.019
-  # since, converged and certified both times, because each is a maximum. At
-  # the higher, one diffusion correlation is on a ray along which the
-  # likelihood is flat to about 1e-10, while the other parameters are
-  # ordinary.
+  # The same noise fixture `test-backend-summary.R` uses, with Cholesky
+  # covariances. Fitted to noise its diffusion loses rank: under the
+  # correlation constructions a correlation ran to one along a ray flat to
+  # about 1e-10, but since 2026-11-08 those correlations are held at 0.999
+  # (R/ctCorBound.R), so no correlation is on a flat ray any more. Under
+  # Cholesky the same loss of rank is the second diagonal running to zero, a
+  # ray flat below (raw -4.6 at the default fit), while the other parameters
+  # are ordinary.
   set.seed(5)
   data <- do.call(rbind, lapply(1:30, function(i) data.frame(id = i,
     time = c(0, .5, 1.5, 2.4, 3.5), Y1 = stats::rnorm(5, 0, .5),
@@ -179,13 +179,15 @@ test_that("a profile separates a determined parameter from one on a flat ray", {
     CINT = matrix(0, 2, 1),
     DRIFT = matrix(c("auto1", "cross12", "cross21", "auto2"), 2, 2,
       byrow = TRUE)))
+  model$covmattransform <- "cholesky"
   # Profiled from an estonly fit started at the certified maximum, so every
   # step is the default rather than half a standard error the flat direction
   # does not have. Routing profile points through the fit's own pipeline makes
   # each constrained reoptimisation as capable as the fit itself, so from a
-  # lower maximum one of them lands in a higher basin -- +1.17 from -207.019
-  # -- and `$better` reports the point. Refitting from it is what a user does
-  # with that, and what this does, until the profile finds nothing higher.
+  # lower maximum one of them can land in a higher basin -- under the
+  # correlation construction +1.17 from -207.019 -- and `$better` reports the
+  # point. Refitting from it is what a user does with that, and what this
+  # does, until the profile finds nothing higher.
   # It warns twice, about the flat ray by name -- the Hessian repair and the
   # identifiability report -- which is the finding checked field by field below.
   fitted <- suppressWarnings(suppressMessages(ctFit(data, model,
@@ -194,13 +196,15 @@ test_that("a profile separates a determined parameter from one on a flat ray", {
   refit <- function(from) suppressMessages(ctFit(data, model, backend = "julia",
     verbose = 0, inits = from, optimcontrol = list(estonly = TRUE)))
   profile <- function(fit) ctFitProfile(fit,
-    parameters = c("auto1", "diff_eta2_eta1"), points = 6L, cores = 1)
+    parameters = c("auto1", "diff_eta2"), points = 6L, cores = 1)
   fit <- refit(fitted$estimate$raw)
   out <- profile(fit)
   # Up to four rounds. Above one thread the subject sums divide differently
   # from run to run, so which basins the refits pass through moves with the
-  # session; two rounds usually reach the top (-207.019, -205.872, -205.827),
-  # and on dev2 a whole-file run sometimes ended one short, still `$better`.
+  # session. Under Cholesky the default fit reached -207.019 from five seeds
+  # of five and its profile found nothing higher (2026-11-08); under the
+  # correlation construction two rounds usually reached the top (-207.019,
+  # -205.872, -205.827).
   for (round in 1:4) {
     if (is.null(out$better)) break
     # The point `$better` reports is worth what it says: a free fit from it
@@ -215,10 +219,7 @@ test_that("a profile separates a determined parameter from one on a flat ray", {
   # is the check that makes the rest of the output mean anything: a profile
   # computed around a point that is not a maximum describes the wrong point.
   # Which of the fixture's maxima that is depends on the path, so the test
-  # asserts the property rather than a value: with the prior warm-up off by
-  # default on this Gaussian model (2026-09-27) the refits end at -205.872,
-  # where the profile finds nothing higher and the ray below is as flat, and
-  # before that they ended at -205.827.
+  # asserts the property rather than a value.
   expect_null(out$better)
   expect_equal(out$bar, stats::qchisq(0.95, 1) / 2)
   expect_gt(nrow(out$profile), 6L)
@@ -232,9 +233,9 @@ test_that("a profile separates a determined parameter from one on a flat ray", {
   # the comment in ctFitProfile()).
   expect_equal(out$base, fit$estimate$logposterior)
 
-  flat <- out$summary[out$summary$parameter == "diff_eta2_eta1", ]
+  flat <- out$summary[out$summary$parameter == "diff_eta2", ]
   expect_equal(flat$verdict, "structurally non-identifiable")
-  # Flat downward specifically: the correlation's transform saturates one way
+  # Flat downward specifically: the diagonal's transform saturates one way
   # and not the other.
   expect_true(grepl("lower", flat$flat))
   expect_true(is.na(flat$lower))

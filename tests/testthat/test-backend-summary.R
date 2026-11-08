@@ -542,18 +542,18 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
     MANIFESTVAR = diag(c(.1, .1)), MANIFESTMEANS = matrix(0, 2, 1),
     T0MEANS = matrix(0, 2, 1), CINT = matrix(0, 2, 1),
     DRIFT = matrix(c("auto1", "cross12", "cross21", "auto2"), 2, 2, byrow = TRUE)))
-  # The fixture at a maximum. Fitted to noise, this model has more than one,
-  # -205.827 and -207.019 among them, and which one a fit reaches depends on
-  # its path: the default fit reached -205.827 before the endgame moved into
-  # the engine and has reached -207.019 since, converged and certified both
-  # times. What a flat ray looks like in the report is a question at any
-  # maximum, so it is asked at -207.019; `test-ctFitProfile.R` is where the
-  # higher is found.
+  # Cholesky covariances: fitted to noise the diffusion loses rank, and since
+  # 2026-11-08 a correlation construction holds its correlation at 0.999
+  # (R/ctCorBound.R), where the wall's curvature gives it an interval. Under
+  # Cholesky the loss of rank is the second diagonal running to zero along a
+  # ray flat below, which is what this asks about.
+  model$covmattransform <- "cholesky"
+  # The fixture at a maximum, -207.019, which the default fit reached from
+  # five seeds of five (2026-11-08); `test-ctFitProfile.R` profiles it.
   #
-  # One diffusion correlation is on a flat ray at both: its raw coordinate sits
-  # far out on its transform (past -15 at the higher, -7.4 at the lower), and
-  # the log likelihood moves along the direction by far less than the bar of
-  # 1.92 -- about 1e-10 at the higher, 7e-4 at the lower. The curvature along
+  # One diffusion diagonal is on a flat ray there: its raw coordinate sits far
+  # out on its transform (about -4.6), and the log likelihood moves along the
+  # direction by far less than the bar of 1.92. The curvature along
   # such a ray is a residue of the transform's own derivative rather than a
   # property of the model and the data -- how small it reads depends on how
   # far out the fit walked -- which is why the diagnosis is not left to an
@@ -563,13 +563,10 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
   # identifiability report -- which is the finding checked field by field below.
   #
   # Started at the -207.019 maximum, since which maximum a start reaches is
-  # the optimiser's business and this is about the report: from the default
-  # start, without the transform metric (juliaFit 8279cf4b), 2 starts of 5
-  # end at -210.133 instead, the drift diagonals far out at the white-noise
-  # limit, where four directions are flat.
+  # the optimiser's business and this is about the report.
   fitted <- suppressWarnings(suppressMessages(ctFit(data, model,
     backend = "julia", verbose = 0,
-    inits = c(-1.09, 8.17, -4.34, 0.34, -0.91, -7.08, -1.44, -1.07, -0.09, -1.22))))
+    inits = c(-1.09, 8.17, -4.34, 0.34, -0.91, -0.54, -4.62, -1.07, -0.04, -1.22))))
   expect_equal(fitted$estimate$loglik, -207.019, tolerance = 1e-3)
   expect_identical(fitted$uncertainty$certification$status, "certified")
   # estonly: ctFit() finishes with ctOptimUncertainty() as the Stan path does,
@@ -612,11 +609,12 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
   expect_null(interval$nsamples)
   # The intervals come from the draws, so they must have width -- except along
   # a direction the data does not determine, which is not inverted at all and
-  # so contributes none. This model, fitted to noise, drives its diffusion
-  # correlation onto the boundary and gives exactly one such direction. The
-  # covariance used to floor that eigenvalue at `ridge` instead, which put a
-  # standard error of 1e4 on the coordinate and, through the draws, an interval
-  # of [-1, 1] on a correlation estimated at -1 -- width invented by the ridge.
+  # so contributes none. This model, fitted to noise, drives its second
+  # diffusion diagonal onto the boundary and gives exactly one such direction.
+  # The covariance used to floor that eigenvalue at `ridge` instead, which put
+  # a standard error of 1e4 on the coordinate and, through the draws, an
+  # interval of [-1, 1] on a correlation estimated at -1 -- width invented by
+  # the ridge.
   #
   # NA rather than zero, which is what this asserted before. A zero-width
   # interval is still an interval to read, and on a coordinate that only
@@ -748,8 +746,9 @@ test_that("ctSummaryMatrices and ctDiscretePars work on backend fits", {
     MANIFESTVAR = diag(c(.1, .1)), MANIFESTMEANS = matrix(0, 2, 1),
     T0MEANS = matrix(0, 2, 1), CINT = matrix(0, 2, 1),
     DRIFT = matrix(c("auto1", "cross12", "cross21", "auto2"), 2, 2, byrow = TRUE)))
-  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
-    optimcontrol = list(estonly = TRUE)))
+  # Fitted to noise, its diffusion correlation ends on its bound, and says so.
+  fit <- suppressWarnings(suppressMessages(ctFit(data, model, backend = "julia",
+    verbose = 0, optimcontrol = list(estonly = TRUE))))
 
   matrices <- ctSummaryMatrices(fit)
   expect_true(all(c("DRIFT", "DIFFUSIONcov", "T0cov", "asymDIFFUSIONcov", "dtDRIFT") %in%
