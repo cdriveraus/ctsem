@@ -1058,13 +1058,27 @@ test_that("an RI-CLPM reports the same T0cov on the Laplace and augmented routes
   }))
   model <- .t0cov_model()
   t0cov <- lapply(c(laplace = "laplace", augmented = "augmented"), function(route) {
-    fit <- suppressWarnings(suppressMessages(ctFit(data, model, backend = "julia",
-      intoverpop = route, verbose = 0, cores = 2)))
+    # Every warning a fit and its summaries give, kept to be read below.
+    warned <- character()
+    keep <- function(w) {
+      warned <<- c(warned, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    }
+    fit <- withCallingHandlers(suppressMessages(ctFit(data, model,
+      backend = "julia", intoverpop = route, verbose = 0, cores = 2)), warning = keep)
+    withCallingHandlers(summary(fit), warning = keep)
     # At the estimate, so the comparison is of the two optima.
     fit$estimate$rawposterior <- NULL
     fit$transformedpars <- NULL
-    list(loglik = fit$estimate$loglik, T0cov = ctSummaryMatrices(fit)$T0cov)
+    T0cov <- withCallingHandlers(ctSummaryMatrices(fit)$T0cov, warning = keep)
+    list(loglik = fit$estimate$loglik, warned = warned, T0cov = T0cov)
   })
+  # A plain fit of a model with random T0MEANS, its summary and its matrices
+  # warn of nothing from R itself: the block's draws were once filled from a
+  # zero-row matrix, "non-empty data for zero-extent matrix", twice a fit.
+  for (route in names(t0cov)) {
+    expect_false(any(grepl("zero-extent", t0cov[[route]]$warned)), label = route)
+  }
   expect_equal(t0cov$laplace$loglik, t0cov$augmented$loglik, tolerance = 1e-5)
   expect_true(all(diag(t0cov$laplace$T0cov) > .1))
   expect_equal(t0cov$laplace$T0cov, t0cov$augmented$T0cov, tolerance = 1e-3)
