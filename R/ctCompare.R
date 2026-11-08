@@ -94,14 +94,14 @@ anova.ctStanFit <- function(object, ...) {
 }
 
 .ctFitSampled <- function(fit) {
-  if (inherits(fit, 'ctJuliaFit')) !is.null(fit$sample) else
+  if (.ctFitIsJulia(fit)) !is.null(fit$sample) else
     length(fit$stanfit$stanfit@sim) > 0
 }
 
 # TRUE, 'randomCorr' or stan's 1: any prior makes the estimate a posterior
 # mode, where the log likelihood is not at its maximum.
 .ctFitHasPriors <- function(fit) {
-  p <- if (inherits(fit, 'ctJuliaFit')) .ctJuliaOr(fit$args$resolved$priors,
+  p <- if (.ctFitIsJulia(fit)) .ctJuliaOr(fit$args$resolved$priors,
     fit$args$priors) else fit$standata$priors
   length(p) == 1L && !is.na(p) && !identical(p, FALSE) &&
     !isTRUE(p == 0)
@@ -152,7 +152,7 @@ anova.ctStanFit <- function(object, ...) {
     ": the models are not nested in that order, or an optimisation stopped ",
     "short.", call. = FALSE)
 
-  method <- vapply(fits, function(f) if (inherits(f, 'ctJuliaFit'))
+  method <- vapply(fits, function(f) if (.ctFitIsJulia(f))
     as.character(.ctJuliaOr(f$estimate$loglik_method, '')) else '', '')
   notes <- c(
     vapply(which(method == 'checked'), function(i) paste0(names[i],
