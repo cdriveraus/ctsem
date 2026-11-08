@@ -54,7 +54,8 @@ as for intercepts and initial means.
 
 On an optimised fit, \code{estimate} holds the same matrices at the fit's
 estimate, unrounded: \code{ctSummaryMatrices(fit)$estimate$DRIFT} is the
-estimated drift matrix, which a summary of the draws need not equal.
+estimated drift matrix, which a summary of the draws need not equal. A
+\code{backend='stan'} fit's has no \code{popcov}, which stan simulates.
 }
 \description{
 Summarise model-implied parameter matrices from a ctsem fit object.

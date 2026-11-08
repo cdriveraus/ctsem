@@ -116,7 +116,8 @@ ctStanRawSamples<-function(fit){
 #'
 #'On an optimised fit, \code{estimate} holds the same matrices at the fit's
 #'estimate, unrounded: \code{ctSummaryMatrices(fit)$estimate$DRIFT} is the
-#'estimated drift matrix, which a summary of the draws need not equal.
+#'estimated drift matrix, which a summary of the draws need not equal. A
+#'\code{backend='stan'} fit's has no \code{popcov}, which stan simulates.
 #'@aliases ctStanContinuousPars
 #'@export
 # `state` is part of the generic, not an extra the julia method happens to
@@ -159,11 +160,13 @@ ctSummaryMatrices.ctStanFit <- function(fit,
   }
   out <- at(ctExtract(fit,cores=1), calcfunc, calcfuncargs)
   # The matrices at an optimised fit's estimate, unrounded, as the julia method
-  # gives them. Stan's popcov there is its own, simulated at the estimate.
+  # gives them -- without popcov, which stan simulates at each point: two calls
+  # gave covariances 0.35 apart, which is no estimate.
   if (length(fit$stanfit$stanfit@sim) == 0L && length(fit$stanfit$rawest)) {
     estimate <- stan_constrainsamples(sm = fit$stanmodel, standata = fit$standata,
       samples = matrix(fit$stanfit$rawest, nrow = 1L), cores = 1L,
       savescores = FALSE, savesubjectmatrices = FALSE, dokalman = FALSE, quiet = TRUE)
+    estimate$popcov <- NULL
     out$estimate <- at(estimate, mean, list())
   }
   .ctContextMessage(fit, .ctContextPopLabel)

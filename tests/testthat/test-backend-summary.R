@@ -813,7 +813,11 @@ test_that("the Stan summary path is unchanged by the shared refactor", {
   expect_equal(unname(diag(matrices$rawpopcorr)), rep(1, nrow(popsd)))
   expect_equal(dim(matrices$estimate$DRIFT), dim(matrices$DRIFT))
   expect_true(all(is.finite(matrices$estimate$DRIFT)))
-  expect_equal(dimnames(matrices$estimate$popcov), dimnames(matrices$popcov))
+  expect_equal(dimnames(matrices$estimate$rawpopcorr), dimnames(matrices$popcov))
+  # Stan simulates popcov at each point, so the estimate has none, and two
+  # calls agree.
+  expect_null(matrices$estimate$popcov)
+  expect_identical(suppressMessages(ctSummaryMatrices(ctstantestfit)), matrices)
 
   discrete <- ctDiscretePars(ctstantestfit, times = c(0, 1), nsamples = 10)
   expect_equal(dim(discrete)[3], 2L)
