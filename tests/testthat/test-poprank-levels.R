@@ -237,19 +237,29 @@ test_that("a reduced level's gradient matches finite differences", {
   # Nothing short of differencing the objective would have caught it.
   d <- levelframe(nstudy = 5L, nperson = 6L, nburst = 3L)
   for (pr in list(NA, c(study = 1), c(subject = 2, study = 1))) {
+    # The fit only builds the objective; the warm-up would find nothing the
+    # comparison uses.
     args <- list(d, levelmodel(), backend = "julia", intoverpop = "laplace",
-      cores = 2, optimcontrol = list(estonly = TRUE, maxiter = 3))
+      cores = 2, optimcontrol = list(estonly = TRUE, maxiter = 3,
+        carefulfit = FALSE))
     if (!identical(pr, NA)) args$poprank <- pr
     fit <- suppressMessages(suppressWarnings(do.call(ctFit, args)))
-    at <- as.numeric(fit$estimate$raw)
+    # A fixed point near the prior's centre, not where the fit stopped. These
+    # data are noise, and a three-iteration fit at two cores stops wherever its
+    # arithmetic leads, at times where a unit has two maxima and its term
+    # jumps: 0.15-0.8 nats under a step of 1e-5 there, which a difference
+    # quotient reads as a gradient of thousands (juliaFit 38328d67, once the
+    # prior warm-up ran to convergence and moved where the fit stops).
+    set.seed(1)
+    at <- stats::rnorm(length(fit$estimate$raw), 0, 0.1)
     with_gradient <- ctsem:::.ctBackendLpgFunc(fit, gradient = TRUE)
     value_only <- ctsem:::.ctBackendLpgFunc(fit, gradient = FALSE)
     analytic <- as.numeric(attr(with_gradient(at), "gradient"))
     expect_true(all(is.finite(analytic)))
-    # 1e-4, not smaller. Every perturbation re-solves the profiled inner modes,
-    # so the difference quotient carries that solve's own noise and a shorter
-    # step makes the comparison worse rather than sharper -- measured best
-    # agreement on this engine is around 1e-4 to 3e-4.
+    # A step of 1e-4: every perturbation re-solves the inner modes, so the
+    # difference quotient carries that solve's own error as well as its
+    # truncation error. At this point the two agreed to 7e-7 or better at
+    # every rank (local, 2026-11-08).
     numeric <- vapply(seq_along(at), function(i) {
       h <- 1e-4 * max(1, abs(at[[i]]))
       up <- lo <- at
@@ -259,11 +269,11 @@ test_that("a reduced level's gradient matches finite differences", {
     }, numeric(1))
     relative <- abs(analytic - numeric) /
       pmax(1, abs(analytic), abs(numeric))
-    # Loose enough for that noise and nowhere near loose enough to pass a
+    # A hundredfold margin over that, and nowhere near loose enough to pass a
     # broken gradient: the defect this guards against made the seeded assembly
     # throw, so the comparison was not close, it was absent.
-    expect_lt(stats::median(relative), 1e-4)
-    expect_lt(max(relative), 1e-2)
+    expect_lt(stats::median(relative), 1e-5)
+    expect_lt(max(relative), 1e-4)
   }
 })
 
