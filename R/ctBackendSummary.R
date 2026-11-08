@@ -89,11 +89,10 @@
   1L
 }
 
-# The four accessors below are for functions that were written stan-only and
-# read `fit$stanfit$...` directly (ctChisqTest, ctCoverageCheck). They
-# are not a general "raw sample" API -- .ctBackendRawSamples() above already
-# covers that for julia, and ctStanRawSamples() for stan -- just the specific
-# fields those two callers each named explicitly.
+# The three accessors below read what both backends keep under different
+# names: the raw estimate, the raw uncertainty draws and the raw parameter
+# names. They are not a general "raw sample" API -- .ctBackendRawSamples()
+# above already covers that for julia, and ctStanRawSamples() for stan.
 
 # The raw (unconstrained) parameter vector at the point estimate.
 .ctFitRawEstimate <- function(fit) {
@@ -107,20 +106,6 @@
 .ctFitRawPosterior <- function(fit) {
   if (inherits(fit, 'ctJuliaFit')) return(fit$estimate$rawposterior)
   fit$stanfit$rawposterior
-}
-
-# The value of the objective actually optimised at the estimate. Stan's
-# `optimfit$value` is the log posterior (lp__), not the pure log likelihood --
-# priors, if any, are included -- so the julia analogue is `logposterior`,
-# falling back to `loglik` for a fit with no prior contribution, the same
-# fallback `.ctBackendSummary()` uses for the same field.
-.ctFitOptimValue <- function(fit) {
-  if (inherits(fit, 'ctJuliaFit')) {
-    ll <- fit$estimate$logposterior
-    if (is.null(ll)) ll <- fit$estimate$loglik
-    return(ll)
-  }
-  fit$stanfit$optimfit$value
 }
 
 # Raw parameter names, in the same order as .ctFitRawEstimate()/
