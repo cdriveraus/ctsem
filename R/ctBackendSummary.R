@@ -452,12 +452,17 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # `t0population` is the initial covariance the random T0MEANS carry, draws x
 # nlatent x nlatent (`.ctBackendT0MeansPopulation()`), added to `pop_T0cov`
 # so that it reports all of the initial variation in the latent states.
+#
+# The population covariance matrices (`rawpopcov`, `rawpopcov_<l>`) are left
+# out: they are a level's, not the model's, and reach a reader through
+# `.ctBackendPopulationArrays()` under 3.11.1's names.
 .ctBackendPopArraysFromFlat <- function(flat, layout, spec, t0population = NULL) {
-  out <- lapply(seq_along(layout$matrix), function(index) {
+  keep <- which(!startsWith(layout$matrix, "rawpopcov"))
+  out <- lapply(keep, function(index) {
     .ctBackendTrimAugmented(.ctBackendReshape(flat, layout, index), layout$matrix[index],
       spec, margin = c(2L, 3L))
   })
-  names(out) <- paste0("pop_", layout$matrix)
+  names(out) <- paste0("pop_", layout$matrix[keep])
   if (!is.null(t0population) && !is.null(out$pop_T0cov)) {
     latent <- seq_len(dim(t0population)[2L])
     out$pop_T0cov[, latent, latent] <- out$pop_T0cov[, latent, latent, drop = FALSE] +
@@ -466,13 +471,60 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   out
 }
 
+# Each level's population of individually varying parameters, per draw, as
+# 3.11.1's ctExtract() named them: `popsd` (draws x k, the natural-scale sds
+# summary() reports), `rawpopcov` and `rawpopcorr` (draws x k x k, the raw
+# scale's covariance and correlations), and `popcov`, the natural scale's
+# covariance: popsd's sds with the raw correlations, exact where a parameter's
+# transform is affine (intercepts, initial means), so a covariance built from
+# summary()'s popsd and rawpopcorr is this one. Named by parameter. One level
+# reports under the plain names, several each under `<name>.<level>`, as
+# summary()'s sections do: `$popcov` then matches no level's by prefix.
+# From the constrain cache alone, so a stored fit reports them without Julia.
+.ctBackendPopulationArrays <- function(constrained) {
+  populations <- constrained$populations
+  if (!length(populations)) return(list())
+  levels <- constrained$randomeffectlevels
+  several <- length(populations) > 1L
+  out <- list()
+  for (population in populations) {
+    covariance <- population$covariance
+    ndraws <- dim(covariance)[1L]
+    k <- dim(covariance)[2L]
+    names <- .ctBackendParamLabel(population$param, population$parnumber)
+    variance <- matrix(vapply(seq_len(k), function(i) covariance[, i, i],
+      numeric(ndraws)), nrow = ndraws)
+    rawsd <- sqrt(pmax(variance, 0))
+    popsd <- NULL
+    for (level in levels) if (identical(level$level, population$level)) popsd <- level$popsd
+    if (is.null(popsd)) popsd <- rawsd
+    popsd <- matrix(popsd, nrow = ndraws, ncol = k, dimnames = list(NULL, names))
+    correlation <- covariance
+    natural <- covariance
+    for (i in seq_len(k)) for (j in seq_len(k)) {
+      denominator <- rawsd[, i] * rawsd[, j]
+      correlation[, i, j] <- if (i == j) 1 else
+        ifelse(denominator > 0, covariance[, i, j] / denominator, NA_real_)
+      natural[, i, j] <- popsd[, i] * popsd[, j] * correlation[, i, j]
+    }
+    named <- list(NULL, names, names)
+    dimnames(covariance) <- dimnames(correlation) <- dimnames(natural) <- named
+    suffix <- if (several) paste0(".", population$level) else ""
+    out[[paste0("popsd", suffix)]] <- popsd
+    out[[paste0("popcov", suffix)]] <- natural
+    out[[paste0("rawpopcov", suffix)]] <- covariance
+    out[[paste0("rawpopcorr", suffix)]] <- correlation
+  }
+  out
+}
+
 .ctBackendPopArrays <- function(fit, samples = NULL, tipreds = NULL, state = NULL,
-  time = 0, dt = 0) {
+  time = 0, dt = 0, constrained = NULL) {
   # The fit's cached constrain step covers the default evaluation point only:
   # asking for another `state`, `tipreds`, `time` or `dt` is asking for
   # different matrices, so those go to the engine.
   if (is.null(tipreds) && is.null(state) && identical(time, 0) && identical(dt, 0)) {
-    constrained <- .ctBackendConstrained(fit, samples)
+    if (is.null(constrained)) constrained <- .ctBackendConstrained(fit, samples)
     return(.ctBackendPopArraysFromFlat(constrained$flat, constrained$layout,
       .ctBackendSpec(fit), .ctBackendT0MeansCached(fit, constrained)))
   }
@@ -702,11 +754,13 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     subject <- .ctBackendSubjectMatrices(spec, flat)
   }
 
-  arrays <- .ctBackendPopArrays(object, samples = samples, ...)
+  constrained <- .ctBackendConstrained(object, samples)
+  arrays <- .ctBackendPopArrays(object, samples = samples, constrained = constrained, ...)
   popmeans <- .ctBackendPopMeanSamples(object, samples = samples)
   c(list(rawpars = samples, popmeans = popmeans$values,
     loglik = object$estimate$loglik, gradient = object$optim$gradient,
-    subject_loglik = object$estimate$subject_loglik), arrays, subject)
+    subject_loglik = object$estimate$subject_loglik),
+    .ctBackendPopulationArrays(constrained), arrays, subject)
 }
 
 .ctBackendNameMatrices <- function(out, model) {
@@ -802,15 +856,51 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   out
 }
 
+# The population covariance (`popcov`, natural scale) and correlation
+# (`rawpopcorr`) matrices among the draws' arrays `e`, each level's
+# (`<name>.<level>`), collapsed as the model matrices are and named by
+# parameter. Shared by both backends: a stan fit's ctExtract() carries both under
+# these names.
+.ctSummaryPopulationMatrices <- function(e, calcfunc, calcfuncargs) {
+  out <- list()
+  for (name in grep("^(popcov|rawpopcorr)(\\..+)?$", names(e), value = TRUE)) {
+    draws <- e[[name]]
+    if (length(dim(draws)) != 3L || !prod(dim(draws)[-1L])) next
+    args <- calcfuncargs
+    args$collapsemargin <- 1
+    args$collapsefunc <- calcfunc
+    args$na.rm <- TRUE
+    args$inarray <- draws
+    value <- array(do.call(ctCollapse, args), dim = dim(draws)[-1L])
+    dimnames(value) <- dimnames(draws)[-1L]
+    out[[name]] <- value
+  }
+  out
+}
+
 .ctBackendSummaryMatrices <- function(fit, calcfunc = quantile,
   calcfuncargs = list(probs = 0.5), timeinterval = 1, ...) {
   model <- .ctBackendModel(fit)
-  e <- .ctBackendPopArrays(fit, ...)
-  .ctSummaryMatricesFromArrays(e, continuoustime = model$continuoustime,
-    latentNames = model$latentNames, manifestNames = model$manifestNames,
-    TDpredNames = model$TDpredNames, calcfunc = calcfunc,
-    calcfuncargs = calcfuncargs, timeinterval = timeinterval,
-    binaryNames = model$manifestNames[model$manifesttype %in% 1])
+  at <- function(samples, calcfunc, calcfuncargs) {
+    constrained <- .ctBackendConstrained(fit, samples)
+    e <- .ctBackendPopArrays(fit, samples = samples, constrained = constrained, ...)
+    c(.ctSummaryMatricesFromArrays(e, continuoustime = model$continuoustime,
+      latentNames = model$latentNames, manifestNames = model$manifestNames,
+      TDpredNames = model$TDpredNames, calcfunc = calcfunc,
+      calcfuncargs = calcfuncargs, timeinterval = timeinterval,
+      binaryNames = model$manifestNames[model$manifesttype %in% 1]),
+      .ctSummaryPopulationMatrices(.ctBackendPopulationArrays(constrained),
+        calcfunc, calcfuncargs))
+  }
+  out <- at(NULL, calcfunc, calcfuncargs)
+  # The matrices at the estimate, unrounded, where the fit has one: an
+  # optimised fit's, beside the summary of its draws. A sampled fit's `raw` is
+  # its posterior mean, which is no estimate (summary()'s `mode` columns are
+  # absent there for the same reason).
+  if (is.null(fit$sample) && length(fit$estimate$raw)) {
+    out$estimate <- at(matrix(as.numeric(fit$estimate$raw), nrow = 1L), mean, list())
+  }
+  out
 }
 
 

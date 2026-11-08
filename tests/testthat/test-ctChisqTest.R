@@ -78,6 +78,14 @@ test_that("ctChisqTest compares two nested julia fits, and a julia fit against a
   expect_true(!is.na(p))
   expect_true(p >= 0 && p <= 1)
   expect_equal(p, ctChisqTest(f_free, f_fixed))
+  # The test itself rides along: twice the gain in the objective, on one df.
+  expect_equal(p$df, 1)
+  expect_equal(p$statistic, 2 * (ctsem:::.ctFitOptimValue(f_free) -
+      ctsem:::.ctFitOptimValue(f_fixed)))
+  expect_equal(p$p, stats::pchisq(p$statistic, 1, lower.tail = FALSE))
+  expect_identical(p$p, as.vector(p))
+  # And it prints as the bare p-value it always was.
+  expect_identical(capture.output(print(p)), capture.output(print(p$p)))
 
   # Cross-backend: same model fit with backend='stan' should be numerically
   # close, since both are maximum-likelihood fits of the same model to the

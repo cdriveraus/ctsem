@@ -34,6 +34,15 @@
 #' nothing is messaged, because the summaries call this repeatedly and say it
 #' once themselves. \code{\link{ctModelIsNonlinear}} answers whether the point
 #' matters for this model at all.
+#'
+#' Where parameters vary over subjects, the population of them, per draw:
+#' \code{popsd} (draws by parameters), \code{rawpopcov} and \code{rawpopcorr}
+#' (the raw scale's covariance and correlations, draws by parameters by
+#' parameters) and \code{popcov} (the covariance on the natural scale). On a
+#' \code{backend='julia'} fit they are named by parameter, and a model with
+#' several grouping levels gives each level's as \code{rawpopcov.<level>} and so
+#' on; its \code{popcov} combines \code{popsd} with the raw correlations, exact
+#' where a parameter's transform is affine.
 #' @aliases extract
 #' @examples
 #' \donttest{

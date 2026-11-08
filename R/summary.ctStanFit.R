@@ -106,7 +106,17 @@ ctStanRawSamples<-function(fit){
 #'the initial latent covariance over subjects: \code{T0VAR} plus the
 #'population covariance of any individually varying \code{T0MEANS}), the
 #'asymptotic \code{asymCINT} and \code{asymDIFFUSIONcov}, and
-#'\code{dtDRIFT} at \code{timeinterval}.
+#'\code{dtDRIFT} at \code{timeinterval}. Where parameters vary over subjects,
+#'also their population covariance on the natural scale, \code{popcov}, and
+#'their raw-scale correlations, \code{rawpopcorr}, named by parameter (with
+#'several grouping levels, \code{popcov.<level>} and \code{rawpopcorr.<level>}).
+#'\code{popcov} combines the sds \code{summary()} reports as \code{popsd} with
+#'those correlations, so it is exact where a parameter's transform is affine,
+#'as for intercepts and initial means.
+#'
+#'On an optimised fit, \code{estimate} holds the same matrices at the fit's
+#'estimate, unrounded: \code{ctSummaryMatrices(fit)$estimate$DRIFT} is the
+#'estimated drift matrix, which a summary of the draws need not equal.
 #'@aliases ctStanContinuousPars
 #'@export
 # `state` is part of the generic, not an extra the julia method happens to
@@ -126,17 +136,36 @@ ctSummaryMatrices.ctStanFit <- function(fit,
   if(!'ctStanFit' %in% class(fit)) stop(paste0('Not an object of class ctStanFit! Instead is ',paste0(class(fit),collapse=', ')))
   .ctContextRequireStateSupport(fit, state)
 
-  e<-ctExtract(fit,cores=1) #Qfit$stanfit$transformedpars #first dim of subobjects is iter, 2nd subjects
-  
   # The collapse itself lives in .ctSummaryMatricesFromArrays (ctBackendSummary.R)
   # so that the stan and julia backends summarise identical pop_* arrays with
-  # identical code rather than with two copies that can drift.
-  out <- .ctSummaryMatricesFromArrays(e,
-    continuoustime = fit$ctstanmodel$continuoustime,
-    latentNames = fit$ctstanmodel$latentNames,
-    manifestNames = fit$ctstanmodel$manifestNames,
-    TDpredNames = fit$ctstanmodel$TDpredNames,
-    calcfunc = calcfunc, calcfuncargs = calcfuncargs, timeinterval = timeinterval)
+  # identical code rather than with two copies that can drift; the population
+  # covariance and correlations likewise (.ctSummaryPopulationMatrices), named
+  # by parameter as the julia method names them.
+  ms <- ctMatsetupFreePars(fit$setup$matsetup)
+  ms <- ms[ms$indvarying > 0, , drop = FALSE]
+  popnames <- ms$parname[order(ms$indvarying)]
+  at <- function(e, calcfunc, calcfuncargs) {
+    for (name in c('popcov', 'rawpopcorr')) {
+      if (length(dim(e[[name]])) == 3L && dim(e[[name]])[2L] == length(popnames))
+        dimnames(e[[name]]) <- list(NULL, popnames, popnames)
+    }
+    c(.ctSummaryMatricesFromArrays(e,
+      continuoustime = fit$ctstanmodel$continuoustime,
+      latentNames = fit$ctstanmodel$latentNames,
+      manifestNames = fit$ctstanmodel$manifestNames,
+      TDpredNames = fit$ctstanmodel$TDpredNames,
+      calcfunc = calcfunc, calcfuncargs = calcfuncargs, timeinterval = timeinterval),
+      .ctSummaryPopulationMatrices(e, calcfunc, calcfuncargs))
+  }
+  out <- at(ctExtract(fit,cores=1), calcfunc, calcfuncargs)
+  # The matrices at an optimised fit's estimate, unrounded, as the julia method
+  # gives them. Stan's popcov there is its own, simulated at the estimate.
+  if (length(fit$stanfit$stanfit@sim) == 0L && length(fit$stanfit$rawest)) {
+    estimate <- stan_constrainsamples(sm = fit$stanmodel, standata = fit$standata,
+      samples = matrix(fit$stanfit$rawest, nrow = 1L), cores = 1L,
+      savescores = FALSE, savesubjectmatrices = FALSE, dokalman = FALSE, quiet = TRUE)
+    out$estimate <- at(estimate, mean, list())
+  }
   .ctContextMessage(fit, .ctContextPopLabel)
   .ctContextAttach(out, fit)
 }
@@ -452,13 +481,23 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   
   
   if(parmatrices){
-    # Five collapses of the same arrays, so the context note is emitted once
-    # here as a summary section rather than five times as a message.
-    Mean=suppressMessages(ctSummaryMatrices(object,calcfunc = mean,calcfuncargs=list(),timeinterval=timeinterval))
-    sd=suppressMessages(ctSummaryMatrices(object,calcfunc = sd,calcfuncargs = list(na.rm=TRUE),timeinterval=timeinterval))
-    `2.5%` = suppressMessages(ctSummaryMatrices(object,calcfunc = quantile,calcfuncargs = list(probs=.025),timeinterval=timeinterval))
-    `50%` = suppressMessages(ctSummaryMatrices(object,calcfunc = quantile,calcfuncargs = list(probs=.5),timeinterval=timeinterval))
-    `97.5%` = suppressMessages(ctSummaryMatrices(object,calcfunc = quantile,calcfuncargs = list(probs=.975),timeinterval=timeinterval))
+    # Five collapses of the draws already extracted, as the julia summary
+    # does: the model's matrices only (ctSummaryMatrices() adds the population
+    # and the estimate, which summary() reports in sections of their own), and
+    # the context note is emitted once here as a summary section.
+    collapse <- function(calcfunc, calcfuncargs) {
+      .ctSummaryMatricesFromArrays(e,
+        continuoustime = object$ctstanmodel$continuoustime,
+        latentNames = object$ctstanmodel$latentNames,
+        manifestNames = object$ctstanmodel$manifestNames,
+        TDpredNames = object$ctstanmodel$TDpredNames,
+        calcfunc = calcfunc, calcfuncargs = calcfuncargs, timeinterval = timeinterval)
+    }
+    Mean=collapse(mean, list())
+    sd=collapse(stats::sd, list(na.rm=TRUE))
+    `2.5%` = collapse(quantile, list(probs=.025))
+    `50%` = collapse(quantile, list(probs=.5))
+    `97.5%` = collapse(quantile, list(probs=.975))
     
     d <- data.frame(ctModelUnlist(Mean,matnames = names(Mean)))
     colnames(d)[colnames(d) %in% 'value'] <- 'Mean'

@@ -12,7 +12,10 @@ ctChisqTest(fit1, fit2)
 \item{fit2}{Second fit to be compared}
 }
 \value{
-Numeric probability
+The p-value, which prints and computes as a number, as it always
+has. It also carries the test: \code{$statistic}, the likelihood-ratio
+chi-square (twice the difference in the objective), \code{$df}, the
+difference in the number of parameters, and \code{$p}, the p-value itself.
 }
 \description{
 Likelihood ratio test between two nested model fits. Works for \code{ctStanFit}

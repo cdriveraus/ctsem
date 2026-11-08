@@ -44,7 +44,17 @@ built from them (\code{DIFFUSIONcov}, \code{MANIFESTcov}, and \code{T0cov},
 the initial latent covariance over subjects: \code{T0VAR} plus the
 population covariance of any individually varying \code{T0MEANS}), the
 asymptotic \code{asymCINT} and \code{asymDIFFUSIONcov}, and
-\code{dtDRIFT} at \code{timeinterval}.
+\code{dtDRIFT} at \code{timeinterval}. Where parameters vary over subjects,
+also their population covariance on the natural scale, \code{popcov}, and
+their raw-scale correlations, \code{rawpopcorr}, named by parameter (with
+several grouping levels, \code{popcov.<level>} and \code{rawpopcorr.<level>}).
+\code{popcov} combines the sds \code{summary()} reports as \code{popsd} with
+those correlations, so it is exact where a parameter's transform is affine,
+as for intercepts and initial means.
+
+On an optimised fit, \code{estimate} holds the same matrices at the fit's
+estimate, unrounded: \code{ctSummaryMatrices(fit)$estimate$DRIFT} is the
+estimated drift matrix, which a summary of the draws need not equal.
 }
 \description{
 Summarise model-implied parameter matrices from a ctsem fit object.
