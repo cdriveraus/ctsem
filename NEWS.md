@@ -25,7 +25,7 @@ A major release: ctsem gains a second estimation engine, written in Julia, which
 - New views of the dynamics: `ctNetwork()` and `ctNetworkPlot()`, `ctPhasePortrait()`, `ctStateDependencePlot()` and `ctVarianceDecomposition()`.
 - Posterior predictive checking is consolidated in `ctPostPredPlots()`, with panels for the mean trajectory and the lagged covariance; `ctFitCovCheck()` is renamed `ctFitCheckCov()`, the old name still available, and splits by group.
 - `ctLOO(method='psis')` cross-validates a Laplace fit without refitting.
-- `coef()`, `vcov()`, `logLik()` and `print()` for fits from either backend; `summary()`, `plot()` and `ctPlotPosterior()` for julia fits.
+- `coef()`, `vcov()`, `logLik()`, `print()` and `anova()`, a likelihood-ratio test table for nested fits, for fits from either backend; `summary()`, `plot()` and `ctPlotPosterior()` for julia fits.
 - `ctGenerate(fromPriors=TRUE)` draws datasets from a model's prior predictive, without a fit or data, and `ctGenerateFromPriors()` is deprecated in its favour; `ctGenerate(backend='julia')` generates random effects at every level, nonlinear dynamics and non-Gaussian indicators, fills in a given design with `datastruct=`, and takes population values on the scales `summary()` reports with `values=`.
 - `ctGenerate()`'s `n.subjects` is now `n`, one count per id level; `n.subjects` still works, with a warning.
 - ACF plots fit a precision weighted spline by default, `method='weighted'`; `method='quantile'` for the previous plot.

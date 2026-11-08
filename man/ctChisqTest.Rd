@@ -7,24 +7,21 @@
 ctChisqTest(fit1, fit2)
 }
 \arguments{
-\item{fit1}{One of the fits to be compared (better fit is assumed as base for comparison)}
+\item{fit1}{One of the fits to be compared.}
 
-\item{fit2}{Second fit to be compared}
+\item{fit2}{Second fit to be compared. The fit with more parameters is
+tested against the other, whichever order they come in.}
 }
 \value{
-The p-value, which prints and computes as a number, as it always
-has. It also carries the test: \code{$statistic}, the likelihood-ratio
-chi-square (twice the difference in the objective), \code{$df}, the
-difference in the number of parameters, and \code{$p}, the p-value itself.
+The p-value: that of the fit with more parameters in
+\code{anova(fit1, fit2)}. \code{NA} where the two have the same number of
+parameters.
 }
 \description{
-Likelihood ratio test between two nested model fits. Works for \code{ctStanFit}
-and \code{ctJuliaFit} objects, including comparisons between one of each, via
-\code{.ctFitOptimValue()}/\code{.ctFitRawEstimate()} (see \code{R/ctBackendSummary.R}),
-which read the objective value actually optimised (stan's \code{optimfit$value},
-julia's \code{estimate$logposterior} falling back to \code{estimate$loglik} --
-both are the log posterior including any priors, not the pure log likelihood)
-and the raw parameter vector for each backend.
+The p-value of a likelihood-ratio test between two nested model fits, from
+either backend. \code{\link[=anova.ctJuliaFit]{anova}(fit1, fit2)} gives
+the whole test: each fit's log likelihood, the chi-square statistic, its
+degrees of freedom and the p-value.
 }
 \examples{
 \donttest{

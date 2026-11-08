@@ -1120,7 +1120,7 @@
 #'   without refitting; \code{\link{ctModelProposals}} lists the changes and
 #'   \code{\link{ctModelImprove}} refits them.}
 #' \item{Does a richer model fit better, or predict better?}{
-#'   \code{\link{ctChisqTest}} for nested models, \code{\link{ctLOO}} for
+#'   \code{\link[=anova.ctJuliaFit]{anova}} for nested models, \code{\link{ctLOO}} for
 #'   out-of-sample prediction.}
 #' \item{How much do the julia engine's approximations cost?}{
 #'   \code{\link{ctLaplaceCheck}} for the Laplace approximation of random
