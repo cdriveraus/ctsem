@@ -806,6 +806,18 @@ test_that("the Stan summary path is unchanged by the shared refactor", {
   expect_true(all(c("DRIFT", "DIFFUSIONcov", "T0cov", "dtDRIFT") %in% names(matrices)))
   expect_equal(dim(matrices$DRIFT),
     rep(length(ctstantestfit$ctstanmodel$latentNames), 2))
+  # The population, named by parameter, and the matrices at the estimate, as
+  # on julia: the estimate's popsd is the summary's mode.
+  popsd <- summary(ctstantestfit)$popsd
+  expect_equal(dimnames(matrices$popcov), list(rownames(popsd), rownames(popsd)))
+  expect_equal(unname(diag(matrices$rawpopcorr)), rep(1, nrow(popsd)))
+  expect_equal(dim(matrices$estimate$DRIFT), dim(matrices$DRIFT))
+  expect_true(all(is.finite(matrices$estimate$DRIFT)))
+  expect_equal(dimnames(matrices$estimate$rawpopcorr), dimnames(matrices$popcov))
+  # Stan simulates popcov at each point, so the estimate has none, and two
+  # calls agree.
+  expect_null(matrices$estimate$popcov)
+  expect_identical(suppressMessages(ctSummaryMatrices(ctstantestfit)), matrices)
 
   discrete <- ctDiscretePars(ctstantestfit, times = c(0, 1), nsamples = 10)
   expect_equal(dim(discrete)[3], 2L)
@@ -1018,6 +1030,58 @@ test_that("T0cov adds every level's random T0MEANS covariance on the Laplace rou
   expect_equal(block[1, , ], .t0cov_expected(fit, raw), tolerance = 1e-6)
 })
 
+# The population of the varying parameters is read under 3.11.1's names --
+# rawpopcov, rawpopcorr, popcov, popsd -- each level's with its name after a
+# dot, never as a `pop_` matrix of the model; and ctSummaryMatrices() gives the
+# matrices at the estimate beside the draws' summary.
+test_that("ctExtract and ctSummaryMatrices give each level's population under 3.11.1's names", {
+  skip_without_julia()
+  model <- .t0cov_model(id = c("id", "study"))
+  set.seed(4)
+  data <- data.frame(id = rep(1:8, each = 4), study = rep(1:2, each = 16),
+    time = rep(0:3, 8), Y1 = stats::rnorm(32), Y2 = stats::rnorm(32))
+  spec <- suppressMessages(ctFit(data, model, backend = "julia",
+    intoverpop = "laplace", fit = FALSE))
+  raw <- stats::rnorm(ctsem:::.ctBackendNpar(spec), 0, .4)
+  fit <- .summary_pointfit(spec, model, raw, "julia")
+  e <- ctExtract(fit)
+  expect_false(any(startsWith(names(e), "pop_rawpopcov")))
+  # Two levels, so no plain name for `$` to match a level's by prefix.
+  expect_null(e[["rawpopcov"]])
+  module <- ctsem:::.ctJuliaModule(spec$project)
+  objective <- ctsem:::.ctJuliaObjective(fit)
+  for (l in 1:2) {
+    level <- spec$laplace$levels[[l]]
+    suffix <- paste0(".", level$name)
+    names <- ctsem:::.ctBackendParamLabel(level$param, level$re_index)
+    rawcov <- e[[paste0("rawpopcov", suffix)]]
+    expect_equal(dimnames(rawcov), list(NULL, names, names))
+    expect_equal(unname(rawcov[1, , ]), as.matrix(ctsem:::.ctBackendJuliaValue(
+      module$ctsem_laplace_popcov(objective, ctsem:::.ctJuliaNumericVector(raw),
+        as.integer(l)))), tolerance = 1e-10)
+    expect_equal(e[[paste0("rawpopcorr", suffix)]][1, , ],
+      stats::cov2cor(rawcov[1, , ]), tolerance = 1e-10)
+    # popcov: summary()'s popsd with the raw correlations.
+    sds <- e[[paste0("popsd", suffix)]][1, ]
+    expect_equal(e[[paste0("popcov", suffix)]][1, , ],
+      e[[paste0("rawpopcorr", suffix)]][1, , ] * outer(sds, sds), tolerance = 1e-10)
+  }
+  expect_equal(unname(e$popsd.id[1, ]),
+    unname(ctsem:::.ctBackendConstrained(fit)$randomeffectlevels[[1]]$popsd[1, ]))
+
+  m <- ctSummaryMatrices(fit)
+  expect_equal(m$popcov.id, e$popcov.id[1, , ])
+  expect_equal(m$rawpopcorr.study, e$rawpopcorr.study[1, , ])
+  # A point fit's summary is its estimate.
+  expect_equal(m$estimate$T0cov, m$T0cov)
+  expect_equal(m$estimate$popcov.study, m$popcov.study)
+  # The T0MEANS block of the natural-scale covariance, summed over the levels,
+  # is what T0cov adds to the floor: the T0MEANS transforms are affine.
+  t0 <- c("T0m_eta1", "T0m_eta2")
+  expect_equal(unname(m$T0cov - diag(1e-6, 2)),
+    unname(m$popcov.id[t0, t0] + m$popcov.study[t0, t0]), tolerance = 1e-8)
+})
+
 test_that("T0cov is unchanged without random T0MEANS, and on the augmented route", {
   skip_without_julia()
   set.seed(5)
@@ -1066,13 +1130,33 @@ test_that("an RI-CLPM reports the same T0cov on the Laplace and augmented routes
     }
     fit <- withCallingHandlers(suppressMessages(ctFit(data, model,
       backend = "julia", intoverpop = route, verbose = 0, cores = 2)), warning = keep)
-    withCallingHandlers(summary(fit), warning = keep)
+    s <- withCallingHandlers(summary(fit), warning = keep)
+    estimate <- withCallingHandlers(ctSummaryMatrices(fit)$estimate, warning = keep)
     # At the estimate, so the comparison is of the two optima.
     fit$estimate$rawposterior <- NULL
     fit$transformedpars <- NULL
     T0cov <- withCallingHandlers(ctSummaryMatrices(fit)$T0cov, warning = keep)
-    list(loglik = fit$estimate$loglik, warned = warned, T0cov = T0cov)
+    list(loglik = fit$estimate$loglik, warned = warned, T0cov = T0cov,
+      estimate = estimate, summary = s)
   })
+  # The estimate beside the draws: what summary() prints as `mode`, unrounded,
+  # and the same as the matrices of the fit without its draws.
+  for (route in names(t0cov)) {
+    estimate <- t0cov[[route]]$estimate
+    pm <- t0cov[[route]]$summary$parmatrices
+    drift <- pm[pm$matrix == "DRIFT", ]
+    expect_equal(drift$mode, estimate$DRIFT[cbind(drift$row, drift$col)],
+      tolerance = 1e-3, label = route)
+    expect_equal(estimate$T0cov, t0cov[[route]]$T0cov, tolerance = 1e-8, label = route)
+    popsd <- t0cov[[route]]$summary$popsd
+    expect_equal(unname(sqrt(diag(estimate$popcov))[rownames(popsd)]),
+      unname(popsd[, "mode"]), tolerance = 1e-3, label = route)
+  }
+  # The initial means' block of the random-effects covariance at the estimate
+  # is T0cov there, the floor aside: one quantity, read two ways.
+  t0 <- c("T0m_eta1", "T0m_eta2")
+  expect_equal(unname(t0cov$laplace$estimate$T0cov - diag(1e-6, 2)),
+    unname(t0cov$laplace$estimate$popcov[t0, t0]), tolerance = 1e-8)
   # A plain fit of a model with random T0MEANS, its summary and its matrices
   # warn of nothing from R itself: the block's draws were once filled from a
   # zero-row matrix, "non-empty data for zero-extent matrix", twice a fit.

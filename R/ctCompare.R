@@ -11,7 +11,10 @@
 #' @param fit1 One of the fits to be compared (better fit is assumed as base for comparison)
 #' @param fit2 Second fit to be compared
 #'
-#' @return Numeric probability
+#' @return The p-value, which prints and computes as a number, as it always
+#' has. It also carries the test: \code{$statistic}, the likelihood-ratio
+#' chi-square (twice the difference in the objective), \code{$df}, the
+#' difference in the number of parameters, and \code{$p}, the p-value itself.
 #' @export
 #'
 #' @examples
@@ -61,5 +64,22 @@ ctChisqTest<-function(fit1,fit2){
       length(.ctFitRawEstimate(fit2)))
   )
   d <- d[order(d$npars,decreasing = FALSE),]
-  stats::pchisq(q =  diff(2*d$ll),df = diff(d$npars),lower.tail = FALSE)
+  statistic <- diff(2*d$ll)
+  df <- diff(d$npars)
+  # The p-value, as before, so that printing it, comparing it and doing
+  # arithmetic with it read as they always have; the test rides along.
+  structure(stats::pchisq(q = statistic, df = df, lower.tail = FALSE),
+    statistic = statistic, df = df, class = 'ctChisqTest')
+}
+
+#' @export
+print.ctChisqTest <- function(x, ...) {
+  print(as.vector(x), ...)
+  invisible(x)
+}
+
+#' @export
+`$.ctChisqTest` <- function(x, name) {
+  switch(name, p = as.vector(x), statistic = attr(x, 'statistic'),
+    df = attr(x, 'df'), NULL)
 }
