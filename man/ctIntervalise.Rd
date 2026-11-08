@@ -75,7 +75,14 @@ The wide format data as a matrix, with the absolute time columns
 Converts absolute times to intervals for wide format ctsem panel data
 }
 \details{
-Time column must be numeric!
+Time column must be numeric! Columns are read in ctsem's wide
+  order: the manifest variables and then the time dependent predictors, each
+  by occasion as \code{\link{ctWideNames}} lists them, then the absolute
+  times \code{T0}, \code{T1}, ..., then the time independent predictors, as
+  \code{\link{ctLongToWide}} returns them. Columns with exactly those names
+  in another order are put in that order by name, with a message; columns
+  named otherwise are read by position. An occasion with no time has its
+  observations set to \code{NA} unless \code{imputedefs = TRUE}.
 }
 \examples{
 wideexample <- ctLongToWide(datalong = ctstantestdat, id = "id", 

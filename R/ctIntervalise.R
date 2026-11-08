@@ -30,7 +30,14 @@
 #' @param startoffset if 0 (default) uses earliest observation as start time.  
 #' If greater than 0, all first observations are NA, with distance of 
 #' startoffset to first recorded observation.
-#' @details Time column must be numeric!
+#' @details Time column must be numeric! Columns are read in ctsem's wide
+#'   order: the manifest variables and then the time dependent predictors, each
+#'   by occasion as \code{\link{ctWideNames}} lists them, then the absolute
+#'   times \code{T0}, \code{T1}, ..., then the time independent predictors, as
+#'   \code{\link{ctLongToWide}} returns them. Columns with exactly those names
+#'   in another order are put in that order by name, with a message; columns
+#'   named otherwise are read by position. An occasion with no time has its
+#'   observations set to \code{NA} unless \code{imputedefs = TRUE}.
 #' @examples
 #' wideexample <- ctLongToWide(datalong = ctstantestdat, id = "id", 
 #' time = "time", manifestNames = c("Y1", "Y2"), 
@@ -66,9 +73,29 @@ ctIntervalise<-function(datawide,Tpoints,n.manifest,n.TDpred=0,n.TIpred=0,impute
   
   if(n.TIpred > 0 | any(TIpredNames != 'auto')){
     if(all(TIpredNames=='auto')) TIpredNames=paste0('TI',1:n.TIpred)
-    if(length(TIpredNames) != n.TIpred) stop("Length of TIpredNames does not equal n.TIpred!") 
+    if(length(TIpredNames) != n.TIpred) stop("Length of TIpredNames does not equal n.TIpred!")
   }
-  
+
+  # Columns are read by position, in ctsem's wide order: the manifests and the
+  # time dependent predictors by occasion (ctWideNames()), then the absolute
+  # times T0, T1, ... (as ctLongToWide() names them), then the time independent
+  # predictors. Columns named exactly so but in another order are put in that
+  # order by name, as ctWideToLong() reads them: read by position, a listing
+  # with each predictor's occasions together put every value on the wrong
+  # predictor and occasion, silently. Other names are read by position.
+  expected <- c(ctWideNames(n.manifest = n.manifest, Tpoints = Tpoints,
+    n.TDpred = n.TDpred, manifestNames = manifestNames,
+    TDpredNames = TDpredNames)[seq_len(Tpoints * (n.manifest + n.TDpred))],
+    paste0("T", seq_len(Tpoints) - 1L), if (n.TIpred > 0) TIpredNames)
+  given <- colnames(datawide)
+  if (!is.null(given) && length(given) == length(expected) &&
+      !anyDuplicated(given) && setequal(given, expected) &&
+      !identical(as.character(given), expected)) {
+    message("ctIntervalise(): columns put in ctsem's wide order by name (",
+      paste(utils::head(expected, 4), collapse = ", "), ", ...)")
+    datawide <- datawide[, expected, drop = FALSE]
+  }
+
   tempwide<-as.matrix(datawide,nrow=nrow(datawide)) #ensure matrix for transformations
   
   timeindex<-((Tpoints*n.manifest+(Tpoints)*n.TDpred)+1) : 
@@ -90,25 +117,16 @@ ctIntervalise<-function(datawide,Tpoints,n.manifest,n.TDpred=0,n.TIpred=0,impute
   if(imputedefs==FALSE) { #set missing variable values to NA
     message("imputedefs==FALSE (default, recommended) so setting observations with no time value to NA")
     
-    if (Tpoints > 1){
-      for(i in 1:(Tpoints-1)){ #for every time, 
-        # if(any(is.na(tempwide[, timeindex[i]]))) browser()
-        manifestindices <- cseq((1+(i-1)*n.manifest):(i*(n.manifest)), #columns that begin with first tdpred at time i 
-          n.manifest*Tpoints, #up to last manifest
-          Tpoints)
-        tempwide[rep(which(is.na(tempwide[, timeindex[i]])),each=n.manifest), #rows that contain missings on time i
-          manifestindices] <-  #by tpoints
-          NA #if NA, set corresponding manifests to NA
-        
-        if(n.TDpred>0) {
-          tdindices <- cseq( (n.manifest*Tpoints+((i-1)*n.TDpred+1)):(n.manifest*Tpoints+n.TDpred*i), #columns that begin with first tdpred at time i 
-            n.manifest*Tpoints+n.TDpred*Tpoints, #up to last tdpred
-            Tpoints) #columns that begin with first tdpred at time i 
-          tempwide[rep(which(is.na(tempwide[, timeindex[i]])),each=n.TDpred), #rows that contain missings on time i
-            tdindices] <-  #by tpoints
-            NA #if NA, set corresponding TDpreds to NA
-        }
-      }
+    # Every occasion, the last included, and only that occasion's columns: the
+    # indices once stepped on by `Tpoints` from each occasion's block, so a
+    # missing time at occasion 2 of 10 also blanked occasion 7's manifests, and
+    # the loop stopped short of the last occasion.
+    for(i in seq_len(Tpoints)){
+      missing <- which(is.na(tempwide[, timeindex[i]]))
+      if(!length(missing)) next
+      tempwide[missing, ((i-1)*n.manifest+1):(i*n.manifest)] <- NA
+      if(n.TDpred>0) tempwide[missing,
+        n.manifest*Tpoints + (((i-1)*n.TDpred+1):(i*n.TDpred))] <- NA
     }
     tempwide[which(is.na( #in rows of tempwide where
       tempwide[,timeindex[1]] #the first time points are NA
