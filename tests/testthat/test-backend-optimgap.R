@@ -348,24 +348,22 @@ test_that("a stored Hessian is reused within the fit's hessianreuse standard err
     trace = list(objective = c(value - 5, value))), list(...))
 }
 
-test_that("a fit short of its optimum is resumed under its own rules, with its progress carried", {
+test_that("a fit short of its optimum is resumed under its own rules", {
   # A gap of one nat: the finish did not close it (a line search that ran out,
   # say), so the certification says suboptimal.
   short <- .fake_result(-diag(c(4, 25)), c(2, 5), value = -100)
   done <- .fake_result(-diag(c(4, 25)), c(0, 0), value = -99, x = c(0.5, 0.2))
   seen <- list()
-  optimise <- function(from, carried, endgame = NULL) {
-    seen[[length(seen) + 1L]] <<- list(from = from, carried = carried,
-      endgame = endgame)
+  optimise <- function(from, endgame = NULL) {
+    seen[[length(seen) + 1L]] <<- list(from = from, endgame = endgame)
     done
   }
   out <- ctsem:::.ctBackendCorrectResult(short, spec = list(), npar = 2L,
     tolerance = 1e-6, maxtries = 2L, optimise = optimise)
-  # Once, from where it stopped, carrying the five nats the fit had made -- and
-  # nothing else: no tolerance tightened, no cap raised, no rule switched off.
+  # Once, from where it stopped -- and nothing else: no tolerance tightened,
+  # no cap raised, no rule switched off.
   expect_length(seen, 1L)
   expect_equal(seen[[1L]]$from, c(0, 0))
-  expect_equal(seen[[1L]]$carried, 5)
   # With the curvature it was certified on, for the resumed stage to start
   # from: the Hessian and where it was taken.
   expect_identical(seen[[1L]]$endgame$hessian, short$hessian)
@@ -440,20 +438,17 @@ test_that("a measured better point is resumed from before anything is certified,
     NULL
   }
   seen <- list()
-  optimise <- function(from, carried, endgame = NULL) {
-    seen[[length(seen) + 1L]] <<- list(from = as.numeric(from), carried = carried,
-      endgame = endgame)
+  optimise <- function(from, endgame = NULL) {
+    seen[[length(seen) + 1L]] <<- list(from = as.numeric(from), endgame = endgame)
     if (length(seen) == 1L) better else done
   }
   out <- ctsem:::.ctBackendCorrectResult(short, spec = list(), npar = 2L,
     tolerance = 1e-6, maxtries = 2L, optimise = optimise, escape = escape)
   expect_equal(offered, 1L)
   expect_length(seen, 2L)
-  # The escape: from the measured point, with no curvature, the fit's progress
-  # carried like any resume.
+  # The escape: from the measured point, with no curvature.
   expect_equal(seen[[1L]]$from, c(1, 0))
   expect_null(seen[[1L]]$endgame)
-  expect_equal(seen[[1L]]$carried, 5)
   # Then the certification of the escaped point, and its resume on that
   # curvature.
   expect_equal(seen[[2L]]$from, c(1, 0))
@@ -492,7 +487,7 @@ test_that("a measured better point is resumed from before anything is certified,
   seen <- list()
   kept <- ctsem:::.ctBackendCorrectResult(short, spec = list(), npar = 2L,
     tolerance = 1e-6, maxtries = 2L, escape = escape,
-    optimise = function(from, carried, endgame = NULL) worse)
+    optimise = function(from, endgame = NULL) worse)
   expect_identical(kept$result, short)
   expect_false(kept$corrections[[1L]]$resumed)
   expect_equal(kept$certification$status, "suboptimal")
@@ -503,7 +498,7 @@ test_that("a resume that does not improve is not taken", {
   short <- .fake_result(-diag(c(4, 25)), c(2, 5), value = -100)
   worse <- .fake_result(-diag(c(4, 25)), c(0, 0), value = -101)
   out <- ctsem:::.ctBackendCorrectResult(short, spec = list(), npar = 2L,
-    tolerance = 1e-6, optimise = function(from, carried, endgame = NULL) worse)
+    tolerance = 1e-6, optimise = function(from, endgame = NULL) worse)
   expect_identical(out$result, short)
   expect_equal(out$certification$status, "suboptimal")
   expect_false(out$corrections[[1L]]$resumed)
@@ -512,7 +507,7 @@ test_that("a resume that does not improve is not taken", {
 test_that("rounds are capped, and a certified fit takes none", {
   short <- .fake_result(-diag(c(4, 25)), c(2, 5), value = -100)
   calls <- 0L
-  again <- function(from, carried, endgame = NULL) {
+  again <- function(from, endgame = NULL) {
     calls <<- calls + 1L
     .fake_result(-diag(c(4, 25)), c(2, 5), value = -100 + calls)
   }
@@ -534,7 +529,7 @@ test_that("rounds are capped, and a certified fit takes none", {
 })
 
 test_that("a flat direction that still gains stops, and so does a saddle the finish could not leave", {
-  never <- function(from, carried, endgame = NULL) stop("resumed")
+  never <- function(from, endgame = NULL) stop("resumed")
   # `notstationary` stops: continuing along the probe's direction walked
   # AnomAuth S1 from its good optimum into the spurious basin.
   flatgain <- .fake_result(-diag(c(4, 0)), c(0, 3), value = -100,
@@ -556,7 +551,7 @@ test_that("a flat direction that still gains stops, and so does a saddle the fin
   expect_length(stuck$corrections, 0L)
   # Without that record the saddle is resumed, as any point short of a maximum.
   resumed <- 0L
-  once <- function(from, carried, endgame = NULL) {
+  once <- function(from, endgame = NULL) {
     resumed <<- resumed + 1L
     .fake_result(-diag(c(1, 1)), c(0, 0), value = -99)
   }
@@ -577,7 +572,7 @@ test_that("a flat direction that still gains stops, and so does a saddle the fin
 })
 
 test_that("a saddle the finish measured flat is certified, and not resumed", {
-  never <- function(from, carried, endgame = NULL) stop("resumed")
+  never <- function(from, endgame = NULL) stop("resumed")
   # The finish walked the one negative direction and found nothing along it.
   rounding <- .fake_result(diag(c(-4, 1e-3)), c(0, 0), value = -100,
     newton_saddle = TRUE, newton_ladder_tried = TRUE,

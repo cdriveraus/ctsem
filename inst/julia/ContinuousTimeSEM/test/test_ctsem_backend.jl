@@ -424,18 +424,15 @@ ContinuousTimeSEM.ctsem_evaluate(::_AtPeakMock, x::AbstractVector;
     for (i, v) in enumerate(vcat(climb, fill(-1.0, 100)))
         ContinuousTimeSEM._record!(trace, i, v, 1.0)
     end
-    @test ContinuousTimeSEM._ctsem_stalled(trace, 80, 1e-2)
-    watch() = ContinuousTimeSEM.CTSEMStallWatch(window=80, fraction=1e-2,
-        cooldown=30, tighten=0.1, tightenings=2)
+    @test ContinuousTimeSEM._ctsem_stalled(trace, 80, 0.5)
+    watch() = ContinuousTimeSEM.CTSEMStallWatch(window=80, cooldown=30)
 
-    # Stalled, nothing flat: slow rather than stuck. Not stopped, and asked
-    # less readily next time.
+    # Stalled, nothing flat: slow rather than stuck. Not stopped, and not
+    # asked again for the cooldown.
     w = watch()
-    before = w.fraction
     @test !ContinuousTimeSEM._ctsem_stall_verdict!(w, trace, 221, _AtPeakMock(),
         sp, [0.0, 0.0], 1:2, 1e-3)
     @test w.triggers == 1
-    @test w.fraction == before * 0.1
     @test w.quiet_until == 251
 
     # Inside the cooldown it does not even look.
@@ -443,12 +440,14 @@ ContinuousTimeSEM.ctsem_evaluate(::_AtPeakMock, x::AbstractVector;
         sp, [0.0, 0.0], 1:2, 1e-3)
     @test w.triggers == 1
 
-    # Tightening is capped, so the bar cannot walk away to nothing.
+    # After it, it looks again, and a first stage is never stopped on
+    # progress alone however long it creeps.
     for iteration in (251, 300, 400, 500)
-        ContinuousTimeSEM._ctsem_stall_verdict!(w, trace, iteration,
+        @test !ContinuousTimeSEM._ctsem_stall_verdict!(w, trace, iteration,
             _AtPeakMock(), sp, [0.0, 0.0], 1:2, 1e-3)
     end
-    @test w.fraction >= before * 0.01 - 1e-18
+    @test w.triggers == 5
+    @test !w.exhausted
 
     # Stalled AND flat, but the objective is at its supremum there: still not
     # stopped. Without this the count model over the joint density -- whose
@@ -487,12 +486,16 @@ end
 @testset "a walk off to a limit is stopped and named" begin
     sp = _backend_saturating_parameters()
     trace = ContinuousTimeSEM.CTSEMTrace(:objective, :gradient_norm)
+    # The tail creeps 0.16 nats a window: under the half nat that starts a
+    # look, over what stops a resumed stage on progress alone, so the walk is
+    # the only thing that can stop the resumed watches below.
     climb = collect(range(-1000.0, -1.0; length = 121))
-    for (i, v) in enumerate(vcat(climb, fill(-1.0, 200)))
+    creep = collect(range(-1.0, -1.0 + 0.002 * 199; length = 200))
+    for (i, v) in enumerate(vcat(climb, creep))
         ContinuousTimeSEM._record!(trace, i, v, 1.0)
     end
     watch(; alone = false) = ContinuousTimeSEM.CTSEMStallWatch(window=80,
-        fraction=1e-2, cooldown=30, tighten=0.1, tightenings=2, alone=alone)
+        cooldown=30, alone=alone)
     # The first trigger has nothing to compare with: the slow case.
     w = watch()
     @test !ContinuousTimeSEM._ctsem_stall_verdict!(w, trace, 221, _AtPeakMock(),
@@ -655,8 +658,8 @@ end
         end
         t
     end
-    stalled(values, window = 80, fraction = 1e-5) =
-        ContinuousTimeSEM._ctsem_stalled(trace_of(values), window, fraction)
+    stalled(values, window = 80, bar = ContinuousTimeSEM._CTSEM_STALL_LOOK) =
+        ContinuousTimeSEM._ctsem_stalled(trace_of(values), window, bar)
 
     # The measured fit: 4749 nats climbed, then eighty iterations that moved
     # 0.0155. Its own numbers, so a change to the rule that stopped catching
@@ -664,21 +667,20 @@ end
     climb = collect(range(-8470.0, -3721.05; length = 241))
     plateau = collect(range(-3721.04874, -3721.03329; length = 80))
     @test stalled(vcat(climb, plateau))
-    # And not while it was still climbing: at iteration 240 the window covers
-    # the climb, whose share is 7.9e-3.
+    # And not while it was still climbing.
     @test !stalled(climb)
 
-    # A run still gaining a real share of its own progress is not stalled,
-    # however small the absolute numbers are.
-    @test !stalled(collect(range(-1000.0, 0.0; length = 300)))
+    # The window's own gain decides, not how far the fit came to it: the same
+    # plateau after a climb of a tenth of a nat, or after none, is stalled
+    # alike, and a window that gains 0.65 nats is not, whatever came before.
+    @test stalled(vcat(collect(range(-3721.15, -3721.05; length = 241)), plateau))
+    @test stalled(fill(-5.0, 200))
+    @test !stalled(vcat(climb, collect(range(-3721.0, -3720.4; length = 80))))
+    @test !stalled(vcat(collect(range(-3721.06, -3721.05; length = 241)),
+        collect(range(-3721.0, -3720.4; length = 80))))
 
     # Fewer rows than the window: nothing to say yet.
     @test !stalled(collect(1.0:50.0))
-
-    # No progress at all leaves the share undefined rather than zero, and this
-    # is not the rule that catches it -- `stalled` in the verdict is, which is
-    # why the guard is here and not a division.
-    @test !stalled(fill(-5.0, 200))
 
     # Off, by the control the R side exposes as `optimcontrol$stallwindow = 0`.
     @test !stalled(vcat(climb, plateau), 0)
@@ -1703,18 +1705,14 @@ end
     @test -taken.f == -2705.0 + 1e-3
 end
 
-# A resumed stage starts where the last one stopped, so its own trace shows no
-# progress and the share the watch asks for is undefined. Carrying the fit's
-# progress in fixes that, and on a resumed stage the watch may then stop on
-# progress alone, once the hysteresis every fit runs under is spent: stalled at
-# a share of 1e-2, of 1e-3 thirty iterations later, and of 1e-4 thirty after
-# that. It is the one rule for a resume that has stopped gaining: it replaced
-# resuming with the predicted-gain stop switched off and the cap quadrupled.
-@testset "a resumed stage stops on progress alone once its hysteresis is spent" begin
+# On a resumed stage the watch may stop on progress alone, once a window gains
+# no more than a tenth of a standard error's gap (`_CTSEM_RESOLUTION_CAP`). It
+# is the one rule for a resume that has stopped gaining: it replaced resuming
+# with the predicted-gain stop switched off and the cap quadrupled.
+@testset "a resumed stage stops once a window gains nothing usable" begin
     C = ContinuousTimeSEM
-    function first_stop(values; carried, alone = true)
-        watch = C.CTSEMStallWatch(window = 80, fraction = 1e-2, cooldown = 30,
-            tighten = 0.1, tightenings = 2, carried = carried, alone = alone)
+    function first_stop(values; alone = true)
+        watch = C.CTSEMStallWatch(window = 80, cooldown = 30, alone = alone)
         t = C.CTSEMTrace(:objective, :gradient_norm)
         for (i, v) in enumerate(values)
             C._record!(t, i, v, 1.0)
@@ -1723,19 +1721,19 @@ end
         end
         return (0, watch.exhausted)
     end
-    # AnomAuth's resume: flat at -2900.7749 for its whole budget, after a fit
-    # that had gained something before it.
+    # AnomAuth's resume: flat at -2900.7749 for its whole budget, which once
+    # ran 57 minutes. Stopped at its first window.
     ridge = fill(-2900.7749, 300)
-    @test first_stop(ridge; carried = 5.0) == (141, true)
-    # Without the carried progress the share is undefined and it never stops,
-    # which is the 57 minutes.
-    @test first_stop(ridge; carried = 0.0) == (0, false)
+    @test first_stop(ridge) == (81, true)
     # A first stage keeps the conjunction: no transform layer, no stop.
-    @test first_stop(ridge; carried = 5.0, alone = false) == (0, false)
+    @test first_stop(ridge; alone = false) == (0, false)
     # A resume that is still gaining is left alone: 108 iterations for 2.9
     # nats, the case switching the predicted-gain rule off was measured on.
-    @test first_stop(collect(range(-100.0, -97.1; length = 108));
-        carried = 50.0) == (0, false)
+    @test first_stop(collect(range(-100.0, -97.1; length = 108))) == (0, false)
+    # And one creeping a tenth of a nat a window is slow, not stuck: looked at,
+    # not stopped.
+    @test first_stop(collect(range(-100.0, -100.0 + 0.1 / 80 * 299;
+        length = 300))) == (0, false)
 end
 
 @testset "a first step on no curvature does not end the run" begin

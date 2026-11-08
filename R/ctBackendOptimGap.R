@@ -492,47 +492,30 @@
   value
 }
 
-# When the engine looks for a stalled fit, and how readily.
-#
-# The window is a number of iterations and the fraction is a share of the
-# progress the fit has already made -- not a number of nats, which are not
-# comparable across models, and not a share of what is predicted to remain,
-# which is the one quantity that goes wrong exactly here. See `_ctsem_stalled`
-# in the engine.
+# When the engine looks for a stalled fit: the window, a number of
+# iterations, over which a stage's own gain is read against bars in nats
+# (`_ctsem_stalled` in the engine), whatever the fit gained before it.
 #
 # This is only half of the test. Firing it costs a derivative pass over the
 # transforms, and the fit is stopped only if that finds one flat -- so the
-# fraction is deliberately loose, and it is the conjunction rather than this
-# bar that decides anything. See `_ctsem_stall_verdict!`.
+# bar is deliberately loose, and it is the conjunction rather than this bar
+# that decides anything. See `_ctsem_stall_verdict!`.
 #
 # `stallwindow = 0` switches the whole check off.
 #
-# Provenance: the window of 80 iterations and the fraction of 1e-2 were set by
-# hand on the flat-transform fixtures the watch was built for (fcae6459,
-# 2026-09-14) -- a drift started inside `-log1p_exp`'s flat region, now the
-# slow tier of `test-julia-convergence.R`, and `test_state_sampling.jl`'s count
-# model for the case the conjunction must leave alone. No sweep over either is
-# on record, nor which other values were tried, and neither has been checked on
-# categorical or multilevel models (plan of 2026-09-25, Appendix B and 2i). The
-# watch's other four constants -- cooldown 30, tightening 0.1 at most twice,
-# flat ratio 1e-3 -- have the same provenance and are read inline in
-# `.ctJuliaOptimise()`.
+# Provenance: the window of 80 iterations was set by hand on the
+# flat-transform fixtures the watch was built for (fcae6459, 2026-09-14) -- a
+# drift started inside `-log1p_exp`'s flat region, now the slow tier of
+# `test-julia-convergence.R`, and `test_state_sampling.jl`'s count model for
+# the case the conjunction must leave alone. No sweep over it is on record.
+# The watch's other two constants -- cooldown 30, flat ratio 1e-3 -- have the
+# same provenance and are read inline in `.ctJuliaOptimise()`.
 #' @keywords internal
 .ctBackendStallWindow <- function(optimcontrol = list(), default = 80L) {
   value <- if (is.null(optimcontrol)) NULL else optimcontrol$stallwindow
   if (is.null(value)) return(default)
   value <- suppressWarnings(as.integer(value)[1L])
   if (is.na(value) || value < 0L) default else value
-}
-
-# The fraction's provenance is the window's, above: set by hand on the
-# flat-transform fixtures, not swept.
-#' @keywords internal
-.ctBackendStallFraction <- function(optimcontrol = list(), default = 1e-2) {
-  value <- if (is.null(optimcontrol)) NULL else optimcontrol$stallfraction
-  if (is.null(value)) return(default)
-  value <- suppressWarnings(as.numeric(value)[1L])
-  if (!is.finite(value) || value < 0) default else value
 }
 
 # Where to restart a fit that stopped on a boundary, or NULL if there is
@@ -1133,8 +1116,8 @@
 #   curvature history describes the region the fit just left.
 # - Otherwise, where the fit certifies, `suboptimal` or `notmaximum` with
 #   budget left resumes from the point it reached, under the same rules as the
-#   first stage, with the stall watch carrying the fit's progress so a resumed
-#   stage that stops gaining is stopped (`CTSEMStallWatch` in the engine),
+#   first stage, except that its stall watch stops it once it stops gaining
+#   (`CTSEMStallWatch` in the engine),
 #   and with the curvature the verdict was reached on: the Hessian for the
 #   resumed stage's finish to walk on where Hessians are dear, and its
 #   covariance as L-BFGS's first metric (`.ctBackendResumeInverse()`). Nothing
@@ -1191,12 +1174,6 @@
   # Hessians the certification formed itself (`.ctBackendEndgameAt()`), beside
   # the stages' own in `totals`.
   formed <- 0L
-  # Where the fit started, so a resumed stage's stall watch measures its
-  # progress against the whole fit's rather than its own, which starts at zero.
-  started_at <- suppressWarnings(as.numeric(result$trace$objective)[1L])
-  if (!length(started_at) || !is.finite(started_at)) {
-    started_at <- as.numeric(result$maximum_loglik)[1L]
-  }
   # The certification of one result: the engine's numbers, and the verdict.
   # NULL where the result carries no usable Hessian and none can be formed.
   certify_at <- function(r) {
@@ -1277,8 +1254,7 @@
       message("Not yet a certified maximum (", kind, ", predicted ",
         signif(gap$gap, 3), "); resuming the optimiser")
     }
-    resumed <- try(optimise(from, max(0, value - started_at), stage_endgame),
-      silent = TRUE)
+    resumed <- try(optimise(from, stage_endgame), silent = TRUE)
     ok <- !inherits(resumed, "try-error") &&
       is.finite(as.numeric(resumed$maximum_loglik)[1L]) &&
       as.numeric(resumed$maximum_loglik)[1L] >= value
@@ -1293,8 +1269,8 @@
         NA_real_,
       resumed = ok,
       iterations = if (ok) as.integer(resumed$iterations) else NA_integer_,
-      # Why the resumed stage stopped, and whether it was the carried progress
-      # watch -- a resume that stopped gaining -- that stopped it.
+      # Why the resumed stage stopped, and whether it was the stall watch's
+      # stop on progress -- a resume that stopped gaining -- that stopped it.
       stop_reason = if (ok) as.character(.ctJuliaOr(resumed$stop_reason,
         NA_character_))[1L] else NA_character_,
       stopped_progress = if (ok) isTRUE(resumed$stopped_by_progress) else NA)

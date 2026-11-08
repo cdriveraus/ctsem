@@ -2353,16 +2353,9 @@ function _ctsem_lbfgs_inverse(inverse, n::Integer)
     H
 end
 
-"""What the whole run has gained, and what its last `window` iterations did.
-
-Only for reporting: `_ctsem_stalled` computes both itself rather than calling
-these, so the rule and the message cannot drift apart on a rounding.
+"""What the last `window` iterations gained, for reporting; `_ctsem_stalled`
+reads the trace the same way.
 """
-function _ctsem_trace_progress(trace::CTSEMTrace)
-    values = get(trace.values, :objective, Float64[])
-    length(values) < 2 ? 0.0 : values[end] - values[1]
-end
-
 function _ctsem_window_gain(trace::CTSEMTrace, window::Integer)
     values = get(trace.values, :objective, Float64[])
     length(values) > window ? values[end] - values[end - window] : 0.0
@@ -2384,46 +2377,52 @@ function _ctsem_last_gain(trace::CTSEMTrace)
 end
 
 """
-    _ctsem_stalled(trace, window, fraction)
+    _ctsem_stalled(trace, window, bar)
 
-Whether the last `window` iterations gained a negligible share of the progress
-the fit has made.
+Whether the last `window` iterations gained `bar` nats or less.
 
 Half of a conjunction, and deliberately the weak half. On its own it cannot
 tell a fit that is stuck from one that is converging slowly, and those want
 opposite treatment -- a slow fit should be left alone, because the estimate has
-to settle properly before its curvature is worth anything. So this only decides
-*when to look*, and `_ctsem_flat_coordinates` decides whether there is anything
-to find. A false positive here costs one cheap derivative pass.
+to settle properly before its curvature is worth anything. So on a first stage
+this only decides *when to look*, and `_ctsem_flat_coordinates` decides whether
+there is anything to find. A false positive here costs one cheap derivative
+pass.
 
-The share of progress made, rather than a number of nats or a share of what is
-predicted to remain. Nats are not comparable across models. What remains is
-estimated in flight by `1/2 g'Bg`, and that is the one quantity that goes wrong
-exactly here: measured on the fit this was written for it decayed nine orders
-and then bounced back two, because a direction going flat sends the gradient to
-zero and `B` to infinity together. Progress already made is neither, and it
-carries its own safety -- a fit that started near its optimum has little of it,
-so the bar is small and this cannot fire.
+A bar in nats, read off the window alone. A nat of log likelihood means the
+same in any model -- the certification, the gap rule and the escapes all
+judge in nats -- and what the window gained is the stage's own, whatever the
+start. Until 2026-11-08 the bar was a share (1e-2, tightened to 1e-3 and 1e-4)
+of everything the fit had gained, earlier stages included: a fit started far
+off looked at a creep of tens of nats a window, one started near its optimum
+almost never looked, and a resumed stage had to be handed its predecessors'
+progress to have a bar at all (Charles: "that will differ lots based on start
+values"). `1/2 g'Bg`, what L-BFGS predicts is left, is not the measure either:
+on the fit the watch was written for it decayed nine orders and then bounced
+back two, because a direction going flat sends the gradient to zero and `B` to
+infinity together.
 
 `false` before there is a window to look at.
-
-`carried` is progress made by earlier stages of the same fit. A resumed stage
-starts where the last one stopped, so its own trace shows none, and without
-this the share is undefined and the test can never fire -- which is how a
-resume after a Newton correction came to run its whole 1000 iterations at no
-gain (AnomAuth, 800 subjects: 57 minutes).
 """
-function _ctsem_stalled(trace::CTSEMTrace, window::Integer, fraction::Real;
-        carried::Real=0.0)
+function _ctsem_stalled(trace::CTSEMTrace, window::Integer, bar::Real)
     values = get(trace.values, :objective, Float64[])
     window >= 1 || return false
     length(values) > window || return false
-    progress = values[end] - values[1] + carried
-    isfinite(progress) && progress > 0 || return false
     gained = values[end] - values[end - window]
     isfinite(gained) || return false
-    return gained <= fraction * progress
+    return gained <= bar
 end
+
+"""
+How little a stage's last `window` iterations may gain, in nats, for the stall
+watch to look for a flat coordinate (`_ctsem_stalled`): half a nat, the gap of
+a point one standard error from its maximum. A window that gains less is
+creeping at under 1/160 of that an iteration, where any fit that is going to
+converge by its own rule within the iteration cap has little left to gain,
+and a look costs a derivative pass. A bar on when to *look*, so generous on
+purpose: the stop needs a flat coordinate and a better point behind it too.
+"""
+const _CTSEM_STALL_LOOK = 0.5
 
 """
 The conjunction that decides a fit has stopped for a reason, and the hysteresis
@@ -2437,12 +2436,11 @@ population scale with no individual differences behind it saturates early and
 legitimately while the fit goes on to a perfectly good optimum; and a progress
 test alone cannot tell stuck from slow.
 
-When the progress test fires and nothing is flat, the fit is given more rope
-rather than asked again immediately: `cooldown` iterations of quiet, and the bar
-tightened by `tighten`, at most `tightenings` times so it cannot drift somewhere
-unprincipled. A fit that is merely slow therefore costs a handful of derivative
-passes over its whole run and is then left alone, which is what a long careful
-optimisation needs.
+The progress test is that the stage's last `window` iterations gained no more
+than `look` nats (`_CTSEM_STALL_LOOK`). When it fires and nothing is flat, the
+fit is not asked again for `cooldown` iterations. A fit that is merely slow
+costs a derivative pass every `cooldown` iterations while it creeps, which is
+what a long careful optimisation can afford.
 
 ## Stalled and flat is not enough
 
@@ -2461,7 +2459,7 @@ better to go, and the fit is only stopped when all three hold -- which is also
 what makes stopping safe, because the point to resume from is in hand.
 
 A fit that is stalled and flat with nothing better nearby is treated as the
-slow case: cooldown and tighten. If it is nonetheless in the wrong place, the
+slow case: a cooldown. If it is nonetheless in the wrong place, the
 zero-and-refit escape after the fit is what finds out, because only a refit
 can.
 
@@ -2469,16 +2467,14 @@ can.
 
 `alone = true`, which `.ctBackendCorrectResult()` sets on a stage it resumes
 because the certification found the point short of a maximum. There "stuck
-versus slow" is exactly the question left, and the hysteresis above is what
-answers it: once the bar has been tightened `tightenings` times and the stage
-still has not cleared it, it is stuck, and it stops (`exhausted`). With the
-defaults that is stalled at a share of 1e-2 of the fit's progress, again at
-1e-3 thirty iterations on, and at 1e-4 thirty after that. Nothing new is tuned:
-the window, the share, the cooldown and the tightening are the ones every fit
-already runs under, and `carried` (see `_ctsem_stalled`) is what gives a
-resumed stage a progress to take a share of. This is the one no-progress rule
-for a resume; it replaced switching the predicted-gain stop off and
-quadrupling the cap, which is how a resume on AnomAuth came to run for hours.
+versus slow" is exactly the question left: a resumed stage whose window gains
+no more than `stop` nats, `_CTSEM_RESOLUTION_CAP`, the most any bar on a gain
+rises to (a tenth of a standard error), with nothing flat to pull back and
+nothing diverging, is stuck, and it stops (`exhausted`). At that pace the
+iteration cap leaves it a few hundredths of a nat to find. This is the one
+no-progress rule for a resume; it replaced switching the predicted-gain stop
+off and quadrupling the cap, which is how a resume on AnomAuth came to run for
+hours.
 
 ## Walking off to a limit
 
@@ -2498,36 +2494,37 @@ least doubled since the previous trigger, with the same sign, are diverging:
 the watch stops the run (`diverged`, `stop_reason` "diverged") and names them.
 A slow fit converges, so its coordinates settle between triggers 30 iterations
 apart rather than double ten prior sds out. Replayed on that walk's record
-(the watch's triggers at iterations 99, 129 and 178), the run stops at
-iteration 208, its largest coordinate -43.8 against -15.6 at the trigger
-before, 0.005 nats short of where the walk ended.
+under the progress share the watch then used (triggers at iterations 99, 129
+and 178), the run stops at iteration 208, its largest coordinate -43.8 against
+-15.6 at the trigger before, 0.005 nats short of where the walk ended. Under
+the window's half nat its first trigger comes at iteration 260 at the latest
+(the walk gained 0.01 nats over 180-330, its coordinates doubling about every
+15 iterations), and the second stops it.
 
 ## Provenance
 
-The window of 80 iterations, the share of 1e-2, the cooldown of 30, the
-tightening by 0.1 at most twice, and the flat ratio of 1e-3 that
-`ctsem_optimize` passes to `_ctsem_flat_coordinates` were set by hand on the
-flat-transform fixtures the watch was built for (fcae6459, 2026-09-14): a drift
-started inside `-log1p_exp`'s flat region, now the slow tier of
+The window of 80 iterations, the cooldown of 30 and the flat ratio of 1e-3
+that `ctsem_optimize` passes to `_ctsem_flat_coordinates` were set by hand on
+the flat-transform fixtures the watch was built for (fcae6459, 2026-09-14): a
+drift started inside `-log1p_exp`'s flat region, now the slow tier of
 `test-julia-convergence.R`, and `test_state_sampling.jl`'s count model for the
-case the conjunction must leave alone. No sweep over any of them is on record,
-and the bench cannot give one: over 2,659 bench fits recorded from 2026-10-24
-to 10-31, categorical and multilevel among them, the watch fired twice and
-stopped none (`review/bench/2026-10-31-defaults-jf-f979c331.md`). Its numbers matter only on fits long
-enough to creep for a window.
+case the conjunction must leave alone. The bars in nats replaced a share of the
+fit's progress on 2026-11-08 (`_ctsem_stalled`). No sweep over any of them is
+on record, and the bench cannot give one: over 2,659 bench fits recorded from
+2026-10-24 to 10-31, categorical and multilevel among them, the watch fired
+twice and stopped none (`review/bench/2026-10-31-defaults-jf-f979c331.md`).
+Its numbers matter only on fits long enough to creep for a window.
 """
 mutable struct CTSEMStallWatch
     window::Int
-    fraction::Float64
+    look::Float64
+    stop::Float64
     cooldown::Int
-    tighten::Float64
-    tightenings_left::Int
     quiet_until::Int
     triggers::Int
     flat::Vector{Int}
     point::Vector{Float64}
     gain::Float64
-    carried::Float64
     alone::Bool
     exhausted::Bool
     # The point at the last trigger that found nothing, and whether the run is
@@ -2536,12 +2533,11 @@ mutable struct CTSEMStallWatch
     diverged::Bool
 end
 
-CTSEMStallWatch(; window::Integer=80, fraction::Real=1e-2, cooldown::Integer=30,
-    tighten::Real=0.1, tightenings::Integer=2, carried::Real=0.0,
+CTSEMStallWatch(; window::Integer=80, look::Real=_CTSEM_STALL_LOOK,
+    stop::Real=_CTSEM_RESOLUTION_CAP, cooldown::Integer=30,
     alone::Bool=false) =
-    CTSEMStallWatch(Int(window), Float64(fraction), Int(cooldown),
-        Float64(tighten), Int(tightenings), 0, 0, Int[], Float64[], 0.0,
-        Float64(carried), alone, false, Float64[], false)
+    CTSEMStallWatch(Int(window), Float64(look), Float64(stop), Int(cooldown),
+        0, 0, Int[], Float64[], 0.0, alone, false, Float64[], false)
 
 """
 How far past its N(0, 1) prior, in raw units, a coordinate must be for the
@@ -2565,7 +2561,7 @@ end
     _ctsem_stall_verdict!(watch, trace, iteration, params, values, range, ratio)
 
 Whether to stop: the progress test fired *and* something is flat -- or, on a
-resumed stage (`watch.alone`), the progress test fired at its tightest bar.
+resumed stage (`watch.alone`), the window gained no more than `watch.stop`.
 
 Mutates `watch` with the hysteresis, and records which coordinates were flat so
 the caller can say what ended the run. `params === nothing`, or a range with
@@ -2579,8 +2575,7 @@ function _ctsem_stall_verdict!(watch::CTSEMStallWatch, trace::CTSEMTrace,
     watch.window >= 1 || return false
     params === nothing && !watch.alone && return false
     iteration >= watch.quiet_until || return false
-    _ctsem_stalled(trace, watch.window, watch.fraction;
-        carried=watch.carried) || return false
+    _ctsem_stalled(trace, watch.window, watch.look) || return false
     watch.triggers += 1
     if params !== nothing
         # Two detectors, because neither sees what the other does.
@@ -2649,19 +2644,15 @@ function _ctsem_stall_verdict!(watch::CTSEMStallWatch, trace::CTSEMTrace,
         return true
     end
     watch.previous = collect(Float64, values)
-    # On a resumed stage, stalled at the tightest bar the hysteresis allows:
-    # stuck, not slow. See `CTSEMStallWatch`.
-    if watch.alone && watch.tightenings_left == 0
+    # On a resumed stage, a window that gained nothing the certification
+    # could use: stuck, not slow. See `CTSEMStallWatch`.
+    if watch.alone && _ctsem_stalled(trace, watch.window, watch.stop)
         watch.exhausted = true
         return true
     end
     # Stalled with nothing flat, or flat with nothing better nearby: slow
-    # rather than stuck. Wait, and ask less readily next time.
+    # rather than stuck. Wait before asking again.
     watch.quiet_until = Int(iteration) + watch.cooldown
-    if watch.tightenings_left > 0
-        watch.tightenings_left -= 1
-        watch.fraction *= watch.tighten
-    end
     return false
 end
 
@@ -2991,9 +2982,8 @@ pairs it had whatever this says.
 `newton_hessian`, the Hessian of the maximised objective at
 `newton_hessian_at`, is one the caller already holds, for the finish to walk
 on rather than form again where Hessians are dear (`_ctsem_newton_finish`'s
-`hessian0`). The stall watch's `stall_carried` and `stall_alone`, and with them
-these two, are set only on a stage resumed after a certification (see
-`CTSEMStallWatch`).
+`hessian0`). The stall watch's `stall_alone`, and with it these two, are set
+only on a stage resumed after a certification (see `CTSEMStallWatch`).
 `newton_final = :walked` has the finish return the matrix its last walk stepped
 on (`newton_walked`) instead of forming the exact Hessian where it ends, for a
 stage whose objective the caller is about to change again (`_ctsem_newton_finish`'s
@@ -3026,10 +3016,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     lbfgs_local::Bool=false, local_builds_carried::Integer=0,
     lbfgs_pairs=nothing, initial_alpha::Real=0.1,
     overshoot_probe=_CTSEM_OVERSHOOT_PROBE[],
-    stall_window::Integer=80, stall_fraction::Real=1e-2,
-    stall_cooldown::Integer=30, stall_tighten::Real=0.1,
-    stall_tightenings::Integer=2, stall_ratio::Real=1e-3,
-    stall_carried::Real=0.0, stall_alone::Bool=false,
+    stall_window::Integer=80, stall_cooldown::Integer=30,
+    stall_ratio::Real=1e-3, stall_alone::Bool=false,
     batch::Bool=false, batch_theta::Real=0.25,
     coreset::Bool=false,
     newton::Bool=false, newton_switch::Real=0.1, newton_maxit::Integer=30,
@@ -3265,9 +3253,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # The window is not scaled to L-BFGS's memory: on a large model that made
     # the watch, the one thing that ends a creeping stage, answer up to twelve
     # times later, and progress does not wait for the memory to turn over.
-    stall = CTSEMStallWatch(window=stall_window, fraction=stall_fraction,
-        cooldown=stall_cooldown, tighten=stall_tighten,
-        tightenings=stall_tightenings, carried=stall_carried, alone=stall_alone)
+    stall = CTSEMStallWatch(window=stall_window, cooldown=stall_cooldown,
+        alone=stall_alone)
     # Under `verbose`, each stall check that found a flat coordinate says which,
     # and what pulling back gained -- a check that does not stop the fit
     # otherwise leaves no trace of having run.
@@ -3939,15 +3926,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     converged_enough = verdict.converged_enough
     overshoot = verdict.overshoot
     overshot = verdict.overshot
-    # The progress the stall test read, earlier stages' included: a resumed
-    # stage's own was printed alone, and a stage stopped for gaining 6.7 of
-    # its own 6.7 read as stopped while making all its progress.
     verbose && stopped_by_stall[] && println(_console(), label, ": the last ",
         stall.window, " iterations gained ",
-        _ctsem_window_gain(trace, stall.window), ", under ", stall.fraction,
-        " of the ", _ctsem_trace_progress(trace) + stall.carried,
-        " the fit has gained",
-        stall.carried > 0 ? string(" (", stall.carried, " of it before this stage)") : "",
+        _ctsem_window_gain(trace, stall.window), ", no more than ", stall.look,
         ", and raw ",
         "parameter(s) ", stall.flat, " have lost all but ", stall_ratio,
         " of what their transform does when live, and pulling them back gains ",
@@ -3961,10 +3942,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         "with no maximum to reach; stopping rather than running to the iteration cap")
     verbose && stopped_by_progress[] && println(_console(), label, ": the last ",
         stall.window, " iterations gained ", _ctsem_window_gain(trace, stall.window),
-        ", under ", stall.fraction, " of the ", _ctsem_trace_progress(trace) +
-        stall.carried, " the fit has gained, at the tightest bar -- a resumed ",
-        "stage that has stopped getting anywhere; stopping rather than running ",
-        "to the iteration cap")
+        ", no more than ", stall.stop, " -- a resumed stage that has stopped ",
+        "getting anywhere; stopping rather than running to the iteration cap")
     verbose && !stalled && !(finite_gradient &&
         (result.g_converged || converged_enough)) &&
         println(_console(), label, ": the optimizer stopped with an estimated ",

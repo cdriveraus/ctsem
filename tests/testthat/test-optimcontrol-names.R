@@ -2,8 +2,8 @@
 # asked for, so a read of an optimcontrol field that is a prefix of another
 # returns the other whenever the first is absent: `optimcontrol$uncertainty`
 # read a user's `uncertaintyControl` and stopped the fit in `match.arg()`,
-# `restarts` would have read `restartsd` as a count, `stalltighten` the
-# count `stalltightenings`. Every such read takes `[[`; this keeps it so.
+# and `restarts` would have read `restartsd` as a count. Every such read
+# takes `[[`; this keeps it so.
 
 test_that("no optimcontrol field is read by a prefix of another", {
   files <- list.files(test_path("..", "..", "R"), pattern = "[.]R$", full.names = TRUE)
