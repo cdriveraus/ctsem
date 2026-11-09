@@ -102,6 +102,32 @@ test_that("the bound is the same wall on both routes, and its gradient is right"
   }
 })
 
+test_that("the wall is finite however far out a 'z' correlation is", {
+  skip_without_julia()
+  # Past a coordinate of about 19, 'z' rounds a correlation to one. The wall
+  # took that matrix's inverse, so the objective came back NaN at a point
+  # the filter evaluates. Two effects' wall has a closed form there:
+  # log((R^-1)_jj R_jj) = 2 log cosh z, for each of the two.
+  spec <- .cb_spec("augmented")
+  diffusion <- ctsem:::.ctCorBoundSpec(spec)[[2]]
+  expect_identical(diffusion$matrix, "DIFFUSION")
+  expect_equal(diffusion$code, 2L)
+  set.seed(4)
+  x <- stats::rnorm(ctsem:::.ctBackendNpar(spec), 0, .2)
+  logcosh <- function(z) abs(z) + log1p(exp(-2 * abs(z))) - log(2)
+  limit <- -log1p(-ctsem:::.ctCorBoundValue()^2)
+  for (z in c(-40, 320)) {
+    x[diffusion$index] <- z
+    v <- ctJuliaEvaluate(spec, x, gradient = TRUE, contributions = TRUE, cores = 1)
+    excess <- 2 * logcosh(z) - limit
+    expect_true(all(is.finite(v$gradient)))
+    expect_equal(v$value - sum(v$subject_loglik), -2 * 100 * excess^3, tolerance = 1e-10)
+    # The likelihood's own slope there is sech(z)^2 times something modest.
+    expect_equal(v$gradient[diffusion$index], -2 * 300 * excess^2 * 2 * tanh(z),
+      tolerance = 1e-8)
+  }
+})
+
 test_that("a fit whose covariance the data put on the singular boundary ends on the bound", {
   skip_without_julia()
   warnings <- character()
