@@ -416,9 +416,8 @@ bound, so `_ctsem_prior_precision` leaves it out.
 const _CTSEM_CORBOUND = 0.999
 const _CTSEM_CORBOUND_STEEPNESS = 100.0
 
-"""A block's raw lower triangle with unit scales, and the correlation matrix
-its own construction makes of it."""
-function _ctsem_corbound_matrix(block::CTSEMCorBound, values::AbstractVector{T}) where {T}
+"""A block's raw lower triangle with unit scales."""
+function _ctsem_corbound_base(block::CTSEMCorBound, values::AbstractVector{T}) where {T}
     k = block.k
     base = zeros(T, k, k)
     @inbounds for j in 1:k
@@ -430,6 +429,14 @@ function _ctsem_corbound_matrix(block::CTSEMCorBound, values::AbstractVector{T})
         idx = block.index[c]
         base[i, j] = idx == 0 ? T(block.fixed[c]) : values[idx]
     end
+    return base
+end
+
+"""A block's raw lower triangle with unit scales, and the correlation matrix
+its own construction makes of it."""
+function _ctsem_corbound_matrix(block::CTSEMCorBound, values::AbstractVector{T}) where {T}
+    k = block.k
+    base = _ctsem_corbound_base(block, values)
     buffer = _make_square_buffer(T, k)
     _sdcovsqrt2cov_uncached!(buffer, base, block.code, k)
     R = Matrix{T}(undef, k, k)
@@ -441,7 +448,8 @@ end
 
 """`R`'s inverse through its Cholesky factor, or `nothing` where `R` is not
 positive definite. Hand loops: `k` is small and this is generic in the
-element type."""
+element type. For the correlation square root only: `'z'`'s `R` rounds to
+singular far out (`_ctsem_corbound_zterms`)."""
 function _ctsem_corbound_inverse(R::AbstractMatrix{T}) where {T}
     k = size(R, 1)
     U = copy(R)
@@ -472,6 +480,53 @@ end
 @inline _ctsem_corbound_limit() = -log1p(-_CTSEM_CORBOUND^2)
 
 """
+    _ctsem_corbound_zterms(block, values)
+
+`log((R^-1)_jj R_jj)` for each effect of a `'z'` block (code 2), and what its
+gradient needs: `(logs, Ap, An, Yp, Yn)`. There `R` is `exp(H)` normalised to a
+unit diagonal, `H` hollow from the coordinates, so `R^-1` is `exp(-H)`
+normalised back, and the log is `log exp(H)_jj + log exp(-H)_jj`, each a sum
+of positive terms. Nothing is inverted, and it is finite however far out the
+coordinates are. Through `R`'s Cholesky factor, `R` rounded to singular once a
+coordinate passed about 19 (`tanh` is 1 to the last bit) and the wall, with
+the objective, came back NaN at a point the filter evaluates. Both
+exponentials are shifted as the construction's are (`_fill_hollow!`: the same
+row-sum bound serves `-H`), so `Ap = H - cI`, `An = -H - cI`, and the shifts
+are added back.
+"""
+function _ctsem_corbound_zterms(block::CTSEMCorBound, values::AbstractVector{T}) where {T}
+    k = block.k
+    base = _ctsem_corbound_base(block, values)
+    Ap = Matrix{T}(undef, k, k)
+    _fill_hollow!(Ap, base, k, T)
+    An = Matrix{T}(undef, k, k)
+    @inbounds for j in 1:k, i in 1:k
+        An[i, j] = i == j ? Ap[i, j] : -Ap[i, j]
+    end
+    shift = -Ap[1, 1]
+    sc = _expm_cov_scratch(T, k)
+    Yp = Matrix{T}(undef, k, k)
+    Yn = Matrix{T}(undef, k, k)
+    my_exp!(Yp, Ap, sc.W1, sc.eb, k)
+    my_exp!(Yn, An, sc.W1, sc.eb, k)
+    logs = Vector{T}(undef, k)
+    @inbounds for j in 1:k
+        logs[j] = log(Yp[j, j]) + log(Yn[j, j]) + 2 * shift
+    end
+    return logs, Ap, An, Yp, Yn
+end
+
+"""Each effect's `log((R^-1)_jj R_jj)` in `block`, or `nothing` where its `R`
+does not factor."""
+function _ctsem_corbound_logs(block::CTSEMCorBound, values::AbstractVector{T}) where {T}
+    block.code == 2 && return first(_ctsem_corbound_zterms(block, values))
+    _, R = _ctsem_corbound_matrix(block, values)
+    M = _ctsem_corbound_inverse(R)
+    M === nothing && return nothing
+    return T[log(R[j, j]) + log(M[j, j]) for j in 1:block.k]
+end
+
+"""
     _ctsem_corbound(objective, values)
 
 The wall on every bounded block, summed: `_CTSEM_CORBOUND`'s docstring. Zero
@@ -483,11 +538,10 @@ function _ctsem_corbound(objective::CTSEMObjective, values::AbstractVector{T}) w
     kappa = _CTSEM_CORBOUND_STEEPNESS
     total = zero(T)
     for block in objective.corbound
-        _, R = _ctsem_corbound_matrix(block, values)
-        M = _ctsem_corbound_inverse(R)
-        M === nothing && return _ctsem_nan(T)
+        logs = _ctsem_corbound_logs(block, values)
+        logs === nothing && return _ctsem_nan(T)
         @inbounds for j in 1:block.k
-            excess = log(R[j, j]) + log(M[j, j]) - limit
+            excess = logs[j] - limit
             excess > 0 && (total -= kappa * excess * excess * excess)
         end
     end
@@ -497,9 +551,13 @@ end
 """
     _ctsem_corbound_gradient!(gradient, objective, values)
 
-Add `_ctsem_corbound`'s gradient. The cotangent of `R` is the wall's
-derivative through `log R_jj + log (R^-1)_jj`, `e_j e_j' / R_jj - m_j m_j' /
-(R^-1)_jj` per effect past the bound, and the construction's own pullback
+Add `_ctsem_corbound`'s gradient. On a `'z'` block, through
+`log exp(H)_jj + log exp(-H)_jj` (`_ctsem_corbound_zterms`): the cotangent of
+`H` is `w (L(H)[e_j e_j'] / exp(H)_jj - L(-H)[e_j e_j'] / exp(-H)_jj)`, `L`
+the exponential's Frechet derivative, self-adjoint at a symmetric matrix and
+blind to the shift. Otherwise the cotangent of `R` is the wall's derivative
+through `log R_jj + log (R^-1)_jj`, `e_j e_j' / R_jj - m_j m_j' / (R^-1)_jj`
+per effect past the bound, and the construction's own pullback
 (`_sdcovsqrt2cov_pullback!`) carries it to the coordinates.
 """
 function _ctsem_corbound_gradient!(gradient::AbstractVector, objective::CTSEMObjective,
@@ -509,6 +567,10 @@ function _ctsem_corbound_gradient!(gradient::AbstractVector, objective::CTSEMObj
     kappa = _CTSEM_CORBOUND_STEEPNESS
     for block in objective.corbound
         k = block.k
+        if block.code == 2
+            _ctsem_corbound_zgradient!(gradient, block, values, limit, kappa)
+            continue
+        end
         base, R = _ctsem_corbound_matrix(block, values)
         M = _ctsem_corbound_inverse(R)
         if M === nothing
@@ -538,6 +600,38 @@ function _ctsem_corbound_gradient!(gradient::AbstractVector, objective::CTSEMObj
             idx = block.index[c]
             idx == 0 || (gradient[idx] += basebar[i, j])
         end
+    end
+    return gradient
+end
+
+"""A `'z'` block's share of `_ctsem_corbound_gradient!`."""
+function _ctsem_corbound_zgradient!(gradient::AbstractVector, block::CTSEMCorBound,
+    values::AbstractVector{T}, limit, kappa) where {T}
+    k = block.k
+    logs, Ap, An, Yp, Yn = _ctsem_corbound_zterms(block, values)
+    Ep = zeros(T, k, k)
+    En = zeros(T, k, k)
+    past = false
+    @inbounds for j in 1:k
+        excess = logs[j] - limit
+        excess > 0 || continue
+        past = true
+        w = -3 * kappa * excess * excess
+        Ep[j, j] = w / Yp[j, j]
+        En[j, j] = -w / Yn[j, j]
+    end
+    past || return gradient
+    sc = _expm_cov_scratch(T, k)
+    Lp = Matrix{T}(undef, k, k)
+    Ln = Matrix{T}(undef, k, k)
+    Y = Matrix{T}(undef, k, k)
+    my_exp_frechet!(Y, Lp, Ap, Ep, sc.fb)
+    my_exp_frechet!(Y, Ln, An, En, sc.fb)
+    c = 0
+    @inbounds for j in 1:k, i in (j + 1):k
+        c += 1
+        idx = block.index[c]
+        idx == 0 || (gradient[idx] += Lp[i, j] + Lp[j, i] + Ln[i, j] + Ln[j, i])
     end
     return gradient
 end
