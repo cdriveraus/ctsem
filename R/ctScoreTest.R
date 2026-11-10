@@ -555,7 +555,7 @@ ctScoreTest <- function(fit, covariates = NULL,
   base <- .ctFitBaseModel(fit)
   if (is.null(base)) base <- .ctFitModelObject(fit)
   pars <- base$pars
-  at <- match(name, pars$param)
+  at <- .ctParamRows(base, name)
   ns <- asNamespace('ctsem')
   slope <- vapply(seq_along(name), function(k) {
     if (kind[k] != 'model' || is.na(at[k])) return(NA_real_)

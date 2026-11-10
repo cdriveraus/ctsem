@@ -53,7 +53,7 @@
   raw <- numeric(length(means))
   for (i in seq_along(means)) {
     name <- names(means)[i]
-    row <- match(name, pars$param)
+    row <- .ctParamRows(model, name)
     transform <- pars$transform[row]
     if (is.na(transform) || !nzchar(transform)) {
       stop("A population mean is stated for ", name, ", which is not a free ",

@@ -71,8 +71,10 @@
 #
 # and an expression is none. Only the declaring cell holds the parameter, so
 # only it carries the parameter's transform, random effect and predictor
-# effects: ctModel() gives the other free cells none of a parameter's
-# defaults. Two PARS cells sharing one label are co-holders, which they are --
+# effects: ctModel() gives the other free cells no random or predictor effect,
+# and a reference keeps its own matrix's default transform and sdscale, which
+# nothing reads -- a parameter's fields are read off the cell that holds it
+# (`.ctParamRows()`). Two PARS cells sharing one label are co-holders, which they are --
 # that is the equality constraint inside PARS. Exempting every PARS label
 # instead, as a first attempt did, hid a disagreement between them.
 .ctSpecHoldsParameter <- function(ctspec, latentNames, TDpredNames,
@@ -105,6 +107,23 @@
     ctspec[[cl]][noparameter] <- if (is.logical(ctspec[[cl]])) FALSE else 'FALSE'
   }
   ctspec
+}
+
+# The row of a model's `pars` that holds each named parameter, where its
+# transform, sdscale and flags are read. A name sits in more than one cell
+# where a PARS label is referred to elsewhere, and matched by name alone the
+# cell first in the table answered: a stated mean of 2 on a PARS parameter
+# that a MANIFESTMEANS cell refers to came out raw 0.2, through that cell's
+# `10 * param`. A name no free cell holds -- a parameter given a value by
+# hand, a state -- falls back to its first row, as before.
+.ctParamRows <- function(model, names) {
+  pars <- model[['pars']]
+  held <- which(.ctSpecHoldsParameter(pars, model[['latentNames']],
+    model[['TDpredNames']]))
+  rows <- held[match(names, pars$param[held])]
+  other <- is.na(rows)
+  rows[other] <- match(names[other], pars$param)
+  rows
 }
 
 .ctSpecCellName <- function(ctspec, i) {

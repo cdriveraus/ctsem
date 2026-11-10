@@ -316,9 +316,7 @@
   table <- spec$parameter_table
   free <- !is.na(table$parnumber)
   parnames <- unique(as.character(table$param[free]))
-  transformOf <- function(name) {
-    model$pars$transform[which(model$pars$param %in% name)[1L]]
-  }
+  transformOf <- function(name) model$pars$transform[.ctParamRows(model, name)]
 
   # Population means: the prior's centre, raw zero, unless stated.
   given <- .ctGenerateValues(values)
@@ -649,9 +647,7 @@
     }
     v
   }
-  transformOf <- function(name) {
-    model$pars$transform[which(model$pars$param %in% name)[1L]]
-  }
+  transformOf <- function(name) model$pars$transform[.ctParamRows(model, name)]
   natural <- vapply(seq_along(parnames), function(k)
     .ctGenerateNatural(transformOf(parnames[k]), values[, parnumber[k]]),
     numeric(nsubjects))

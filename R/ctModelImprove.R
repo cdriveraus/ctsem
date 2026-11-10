@@ -638,7 +638,7 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
     if (startsWith(a, 'popsd_')) {
       tested[[a]] <- list(f = function(r) log1p_exp(2 * r - 1), null = 0)
     } else if (a %in% model$pars$param) {
-      row <- model$pars[match(a, model$pars$param), , drop = FALSE]
+      row <- model$pars[.ctParamRows(model, a), , drop = FALSE]
       tr <- as.character(row$transform)
       if (is.na(tr) || !nzchar(tr)) tr <- 'param'
       cell <- rebuilt$model$pars[rebuilt$model$pars$matrix == row$matrix &
@@ -779,7 +779,7 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   pars <- sub('^popsd_', '', grep('^popsd_', nm, value = TRUE))
   if (length(pars) != nrow(S)) return(NULL)
   model <- .ctFitBaseModel(current)
-  scale <- suppressWarnings(as.numeric(model$pars$sdscale[match(pars, model$pars$param)]))
+  scale <- suppressWarnings(as.numeric(model$pars$sdscale[.ctParamRows(model, pars)]))
   scale[!is.finite(scale) | scale <= 0] <- 1
   L <- .ctImproveEchelonLoadings(S, r) / scale
   out <- unlist(lapply(seq_len(r), function(q) stats::setNames(L[q:nrow(L), q],
@@ -1746,7 +1746,7 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
 # (`log1p_exp(2 * raw - 1) * sdscale`), floored so the optimiser does not start
 # on the boundary where the sd's gradient vanishes.
 .ctImprovePopsdStart <- function(model, par, sd) {
-  sdscale <- suppressWarnings(as.numeric(model$pars$sdscale[match(par, model$pars$param)]))
+  sdscale <- suppressWarnings(as.numeric(model$pars$sdscale[.ctParamRows(model, par)]))
   if (!is.finite(sdscale) || sdscale <= 0) sdscale <- 1
   s <- max(if (is.finite(sd)) sd else 0, 0.05) / sdscale
   setNames((log(expm1(s)) + 1) / 2, paste0('popsd_', par))
