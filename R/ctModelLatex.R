@@ -4,9 +4,7 @@
 ctModelBuildPopCov <- function(ctm,linearise,column='indvarying',label='PCov'){ #for latex
   ctm <- suppressMessages(T0VARredundancies(ctm))
   ctm$pars <- .ctModelCleanctspec(ctm$pars)
-  freepars <- !is.na(ctm$pars$param) &
-    !grepl('\\W', gsub('.', '', ctm$pars$param, fixed=TRUE)) &
-    !ctm$pars$param %in% ctm$latentNames
+  freepars <- .ctSpecHoldsParameter(ctm$pars, ctm$latentNames, ctm$TDpredNames)
   pars <- unique(ctm$pars$param[ctm$pars[[column]] %in% TRUE & freepars])
   d=length(pars)
   m <- matrix(paste0(ifelse(linearise,'','raw'),label,'_',rep(1:d,d),'_',rep(1:d,each=d)),d,d,dimnames = list(pars,pars))
@@ -47,18 +45,19 @@ ctModelBuildPopCov <- function(ctm,linearise,column='indvarying',label='PCov'){ 
 ctModelBuildTIeffects <- function(ctm){ #for latex
   ctm$pars <- .ctModelCleanctspec(ctm$pars)
   tieffects <- unique(colnames(ctm$pars)[grep('_effect',colnames(ctm$pars),fixed=TRUE)])
-  freepars <- !is.na(ctm$pars$param) &
-    !grepl('\\W', gsub('.', '', ctm$pars$param, fixed=TRUE)) &
-    !ctm$pars$param %in% ctm$latentNames
-  pars <- unique(ctm$pars$param[
-    freepars & apply(ctm$pars[,tieffects,drop=FALSE],1,
+  # Only a cell that holds a parameter carries its effects, as in a fit, and
+  # its effects are read there: a cell referring to a PARS label carries none,
+  # and read first it showed the parameter without them.
+  held <- ctm$pars[.ctSpecHoldsParameter(ctm$pars, ctm$latentNames,
+    ctm$TDpredNames),,drop=FALSE]
+  pars <- unique(held$param[apply(held[,tieffects,drop=FALSE],1,
       function(r) any(.ctTipredEffectActive(r)))])
   timat <- matrix(0,length(pars),length(tieffects),dimnames = list(pars,gsub('_effect','',tieffects)))
   if(length(tieffects)){
     for(p in seq_along(pars)){
       # Active as 1, absent as 0: the loop below turns anything non-zero into
       # a label. A fixed effect shows its value instead of a generated name.
-      row <- ctm$pars[match(x = pars[p],ctm$pars$param),tieffects,drop=FALSE]
+      row <- held[match(x = pars[p],held$param),tieffects,drop=FALSE]
       value <- .ctTipredEffectValue(row)
       timat[p,] <- ifelse(.ctTipredEffectActive(row),
         ifelse(is.na(value), 1, value), 0)

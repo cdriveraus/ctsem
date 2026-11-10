@@ -551,3 +551,59 @@ test_that("a cell that holds no parameter takes no random or predictor effect", 
   expect_error(m$matrices$MANIFESTMEANS[1, 1] <- 'mmb * e1||TRUE',
     'cannot vary between units')
 })
+
+test_that("a flag set by hand on a cell that holds no parameter is dropped", {
+  # Setting a matrix's flags by hand is the usual way to make intercepts vary,
+  # and it reaches an expression cell in the same matrix. The setup ignored
+  # the flag there, while `intoverpop = 'auto'`, RAWPOPVAR and
+  # T0VARredundancies() read it.
+  m0 <- suppressMessages(ctModel(type = 'ct', manifestNames = c('A', 'B', 'C'),
+    latentNames = 'X', LAMBDA = matrix(c(1, 'b', 'c'), 3, 1), T0MEANS = 0,
+    CINT = 'cintX||FALSE',
+    MANIFESTMEANS = matrix(c('mmA||FALSE', 'mmB||FALSE', 'mmC + qC * X^2'), 3, 1),
+    PARS = matrix(c('mmC', 'qC'), 2, 1)))
+  mm <- m0$pars$matrix %in% 'MANIFESTMEANS'
+  expr <- mm & m0$pars$row == 3
+
+  only <- m0
+  only$pars$indvarying[expr] <- TRUE
+  expect_false(.ctAnyVarying(only))
+  expect_equal(.ctIntOverPopAuto(only)$route, 'none')
+  expect_null(.ctModelRawPopVarSync(only)[['RAWPOPVAR']])
+
+  all <- m0
+  all$pars$indvarying[mm] <- TRUE
+  expect_setequal(.ctVaryingParams(all), c('mmA', 'mmB'))
+  expect_equal(rownames(.ctModelRawPopVarSync(all)[['RAWPOPVAR']]), c('mmA', 'mmB'))
+  # The model the user holds keeps what they wrote; readers drop it.
+  expect_true(all$pars$indvarying[expr])
+  expect_false(.ctResolveLevels(all)$pars$indvarying[expr])
+
+  # Above the subject too, and on a model already resolved.
+  nested <- only
+  nested$groupIDnames <- 'study'
+  expect_false(.ctAnyVarying(nested))
+  resolved <- .ctResolveLevels(nested)
+  resolved$pars$indvarying_study[expr] <- TRUE
+  expect_false(.ctAnyVarying(resolved))
+
+  # An initial mean written as an expression leaves its state's T0VAR alone.
+  m <- suppressMessages(ctModel(type = 'ct', manifestNames = c('Y1', 'Y2'),
+    latentNames = c('e1', 'e2'), LAMBDA = diag(2),
+    T0MEANS = c('t0a', 't0b * 2'), PARS = matrix('t0b')))
+  t0 <- m$pars$matrix %in% 'T0MEANS'
+  m$pars$indvarying[t0] <- TRUE
+  out <- suppressMessages(T0VARredundancies(m))$pars
+  t0var <- out$matrix %in% 'T0VAR'
+  expect_true(is.na(out$value[t0var & out$row == 2 & out$col == 2]))
+  expect_equal(out$value[t0var & out$row == 1 & out$col == 1], 1e-3)
+
+  # ctModelLatex()'s tables read a parameter off the cell that holds it: a
+  # cell referring to a PARS label, read first, showed it without effects.
+  expect_equal(rownames(ctModelBuildPopCov(all, linearise = TRUE)), c('mmA', 'mmB'))
+  mt <- suppressMessages(ctModel(type = 'ct', manifestNames = c('A', 'B'),
+    latentNames = 'X', LAMBDA = matrix(c(1, 'b'), 2, 1),
+    n.TIpred = 1, TIpredNames = 'age',
+    MANIFESTMEANS = matrix(c('mmr', 'mmB'), 2, 1), PARS = matrix('mmr')))
+  expect_equal(ctModelBuildTIeffects(mt)['mmr', 'age'], 'mmr_age')
+})

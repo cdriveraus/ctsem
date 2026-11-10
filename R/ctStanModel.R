@@ -754,12 +754,8 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   }
   # A free cell that holds no parameter of its own -- an expression, a state,
   # a reference to a PARS cell or a predictor -- takes no default random or
-  # predictor effect: the cells of the parameters it reads say whether those
-  # have them (`.ctSpecHoldsParameter()`). Nothing downstream reads one on it.
-  noparameter <- !is.na(ctspec$param) &
-    !.ctSpecHoldsParameter(ctspec, latentNames, TDpredNames)
-  ctspec$indvarying[noparameter] <- FALSE
-  for(cl in grep('_effect$', names(ctspec), value=TRUE)) ctspec[[cl]][noparameter] <- 'FALSE'
+  # predictor effect (`.ctSpecDropNoParameterFlags()`).
+  ctspec <- .ctSpecDropNoParameterFlags(ctspec, latentNames, TDpredNames)
 
   if(n.TIpred > 0 && !any(.ctTipredEffectActive(ctspec[,paste0(TIpredNames,'_effect')]))) warning('TI predictors included but no effects specified!')
   
@@ -868,19 +864,27 @@ ctStanModel <- ctModelConvertOMX
 # reads as "does not vary" without an error.
 #
 # A model that already has every grouping level's column, and a logical
-# `indvarying`, has been resolved and comes back unchanged, which is what makes
+# `indvarying`, has been resolved and keeps its columns, which is what makes
 # calling this anywhere safe. Level names written into a resolved model's
 # `indvarying` resolve again, replacing the columns rather than losing to them.
+#
+# A flag on a cell that holds no parameter -- an expression, a state, a
+# reference to a PARS cell -- is dropped here too, at every level
+# (`.ctSpecDropNoParameterFlags()`), so a model whose flags were set by hand
+# after ctModel() reads as the one the filter fits. Every time, resolved or not:
+# `m$pars$indvarying[m$pars$matrix %in% 'MANIFESTMEANS'] <- TRUE` is how
+# such a flag is usually set, and a resolved model can be edited the same way.
 .ctResolveLevels <- function(model){
   pars <- model[['pars']]
   if(is.null(pars) || is.null(pars$indvarying)) return(model)
   groups <- as.character(model[['groupIDnames']])
-  if(length(groups) && is.logical(pars$indvarying) &&
-      all(paste0('indvarying_', groups) %in% names(pars))) return(model)
   subject <- model[['subjectIDname']]
   levels <- c(if(is.null(subject)) 'id' else as.character(subject), groups)
   iv <- pars$indvarying
-  if(is.logical(iv) && !length(groups)){
+  if(length(groups) && is.logical(iv) &&
+      all(paste0('indvarying_', groups) %in% names(pars))){
+    # resolved already
+  } else if(is.logical(iv) && !length(groups)){
     pars$indvarying <- iv %in% TRUE
   } else {
     resolved <- matrix(FALSE, nrow(pars), length(levels),
@@ -895,7 +899,8 @@ ctStanModel <- ctModelConvertOMX
       pars[[paste0('sdscale_', g)]] <- pars$sdscale
     }
   }
-  model[['pars']] <- pars
+  model[['pars']] <- .ctSpecDropNoParameterFlags(pars, model[['latentNames']],
+    model[['TDpredNames']], .ctVaryingColumns(model))
   model
 }
 

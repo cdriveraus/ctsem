@@ -84,6 +84,29 @@
   simplename & !is.na(isref) & !isref
 }
 
+# A free cell that holds no parameter of its own takes no random or predictor
+# effect: the cells of the parameters it reads say whether those have them.
+# Nothing downstream reads one on it -- `.ctModelMatSetup()` gives such a cell
+# none -- so a flag there, whether ctModel()'s default or set by hand, is
+# dropped: by ctModel() as it builds the model, and by `.ctResolveLevels()`
+# wherever a model is read, so `intoverpop = 'auto'`, RAWPOPVAR and
+# T0VARredundancies() see what the filter fits. `columns` are the level
+# columns to clear; a predictor column keeps its type, since the augmented
+# route's `type.convert` turns them logical. A fixed cell is left as it is:
+# every reader already treats it as not varying, and a named parameter given a
+# value by hand keeps its flag so the fit can say it cannot vary.
+.ctSpecDropNoParameterFlags <- function(ctspec, latentNames, TDpredNames,
+    columns = 'indvarying') {
+  noparameter <- !is.na(ctspec$param) & is.na(ctspec$value) &
+    !.ctSpecHoldsParameter(ctspec, latentNames, TDpredNames)
+  if (!any(noparameter)) return(ctspec)
+  for (cl in intersect(columns, names(ctspec))) ctspec[[cl]][noparameter] <- FALSE
+  for (cl in grep('_effect$', names(ctspec), value = TRUE)) {
+    ctspec[[cl]][noparameter] <- if (is.logical(ctspec[[cl]])) FALSE else 'FALSE'
+  }
+  ctspec
+}
+
 .ctSpecCellName <- function(ctspec, i) {
   paste0(ctspec$matrix[i], '[', ctspec$row[i], ',', ctspec$col[i], ']')
 }
