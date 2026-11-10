@@ -92,10 +92,12 @@
 # wherever a model is read, so `intoverpop = 'auto'`, RAWPOPVAR and
 # T0VARredundancies() see what the filter fits. `columns` are the level
 # columns to clear; a predictor column keeps its type, since the augmented
-# route's `type.convert` turns them logical.
+# route's `type.convert` turns them logical. A fixed cell is left as it is:
+# every reader already treats it as not varying, and a named parameter given a
+# value by hand keeps its flag so the fit can say it cannot vary.
 .ctSpecDropNoParameterFlags <- function(ctspec, latentNames, TDpredNames,
     columns = 'indvarying') {
-  noparameter <- !is.na(ctspec$param) &
+  noparameter <- !is.na(ctspec$param) & is.na(ctspec$value) &
     !.ctSpecHoldsParameter(ctspec, latentNames, TDpredNames)
   if (!any(noparameter)) return(ctspec)
   for (cl in intersect(columns, names(ctspec))) ctspec[[cl]][noparameter] <- FALSE
