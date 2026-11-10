@@ -158,11 +158,19 @@ jobs:
           } >> ~/.R/Makevars
           printf 'max_size = 5.0G\nsloppiness = include_file_ctime,include_file_mtime,time_macros\n' > ~/.ccache/ccache.conf
           ccache -z
+
+      # LaTeX is for hierarchicalmanual.rnw, built only by the full pre-release
+      # run: every other run passes --no-manual and --no-build-vignettes. On
+      # 2026-11-10 tlmgr stalled on one 36 kB download on Windows and held the
+      # job until the 300-minute cap, so the check never ran there.
       - uses: r-lib/actions/setup-tinytex@v2
+        if: env.BUILD_VIGNETTES == 'true'
         env: 
           TINYTEX_INSTALLER: TinyTeX
           
       - name: Install additional LaTeX packages
+        if: env.BUILD_VIGNETTES == 'true'
+        timeout-minutes: 15
         run: |
           tlmgr install biblatex-apa biblatex babel-english csquotes preprint mathtools caption biber
           
