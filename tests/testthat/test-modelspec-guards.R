@@ -488,3 +488,66 @@ test_that("a model keeps the tipredDefault it was built with", {
   expect_false(off$tipredDefault)
   expect_false(any(as.logical(off$pars$age_effect), na.rm = TRUE))
 })
+
+test_that("a cell that holds no parameter takes no random or predictor effect", {
+  # Free intercepts vary by default, and an intercept written as an expression,
+  # a state or a reference to a PARS cell took that default though it is no
+  # parameter: the setup ignores the flag there, but `intoverpop = 'auto'` read
+  # it, took the Laplace route on a model with nothing to integrate, and the
+  # fit stopped. Whether the parameters such a cell reads vary is said on their
+  # own cells.
+  m <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 3,
+    manifestNames = c('Y1', 'Y2', 'Y3'), latentNames = c('e1', 'e2'),
+    LAMBDA = matrix(c(1, 0, 'l3', 0, 1, 0), 3, 2),
+    n.TIpred = 1, TIpredNames = 'age',
+    T0MEANS = c('t0a', 't0b + e1^2'), CINT = c('cinta', 'cintb * e1'),
+    MANIFESTMEANS = c('mma', 'mmb + 2 * e2', 'mmr'),
+    PARS = matrix(c('t0b', 'cintb', 'mmb', 'mmr'), 4, 1)))
+  p <- m$pars
+  intercept <- p$matrix %in% c('T0MEANS', 'CINT', 'MANIFESTMEANS')
+  none <- intercept & p$param %in% c('t0b + e1^2', 'cintb * e1',
+    'mmb + 2 * e2', 'mmr')
+  expect_equal(sum(none), 4)
+  expect_equal(p$indvarying[none], rep(FALSE, 4))
+  expect_equal(p$age_effect[none], rep('FALSE', 4))
+  # The plain intercepts beside them still take the defaults.
+  plain <- intercept & p$param %in% c('t0a', 'cinta', 'mma')
+  expect_equal(p$indvarying[plain], rep(TRUE, 3))
+  expect_equal(p$age_effect[plain], rep('TRUE', 3))
+  expect_setequal(.ctVaryingParams(m), c('t0a', 'cinta', 'mma'))
+  expect_setequal(.ctModelRawPopVarNames(m$pars), c('t0a', 'cinta', 'mma'))
+
+  # The model that stopped: no intercept of its own free, so nothing varies
+  # and the route integrates nothing.
+  m0 <- suppressMessages(ctModel(type = 'ct', manifestNames = c('A', 'B', 'C'),
+    latentNames = 'X', LAMBDA = matrix(c(1, 'b', 'c'), 3, 1), T0MEANS = 0,
+    CINT = 'cintX||FALSE',
+    MANIFESTMEANS = matrix(c('mmA||FALSE', 'mmB||FALSE', 'mmC + qC * X^2'), 3, 1),
+    PARS = matrix(c('mmC', 'qC'), 2, 1)))
+  expect_false(.ctAnyVarying(m0))
+  expect_equal(.ctIntOverPopAuto(m0)$route, 'none')
+
+  # A state alone keeps its transform and takes no effect, and asking it for
+  # one is refused rather than ignored.
+  ms <- suppressMessages(.guard_model(MANIFESTMEANS = matrix('state[1]')))
+  row <- ms$pars$matrix %in% 'MANIFESTMEANS'
+  expect_false(ms$pars$indvarying[row])
+  expect_equal(ms$pars$transform[row], 'param')
+  expect_error(.guard_model(MANIFESTMEANS = matrix('state[1]||TRUE')),
+    'cannot vary between units')
+
+  # The assignment path reads a cell the same way, and leaves an expression
+  # elsewhere in the matrix without a transform.
+  m$matrices$MANIFESTMEANS[1, 1] <- 'mmb * e1'
+  p <- m$pars
+  mm <- p$matrix %in% 'MANIFESTMEANS'
+  expect_equal(p$indvarying[mm], rep(FALSE, 3))
+  expect_equal(p$transform[mm & p$row < 3], rep(NA_character_, 2))
+  expect_equal(p$age_effect[mm], rep('FALSE', 3))
+  m$matrices$MANIFESTMEANS[1, 1] <- 'mma'
+  expect_true(m$pars$indvarying[mm & m$pars$row == 1])
+  m$matrices$MANIFESTMEANS[1, 1] <- 'mmr'
+  expect_false(m$pars$indvarying[mm & m$pars$row == 1])
+  expect_error(m$matrices$MANIFESTMEANS[1, 1] <- 'mmb * e1||TRUE',
+    'cannot vary between units')
+})
