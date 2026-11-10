@@ -146,6 +146,18 @@ ctModelUnlist<-function(ctmodelobj,
   )
 }
 
+# Which cells' text is an expression or a latent state rather than a name:
+# anything with an operator, a bracket or a state in it. Such a cell takes no
+# transform, except that a state alone keeps 'param', which stands for the
+# state. Like the references `.ctSpecHoldsParameter()` names, it holds no
+# parameter, so it takes no random or predictor effect either; the matrix
+# setup reads none on it (`.ctModelMatSetup()`). Given the intercepts' default
+# random effect, an expression intercept made `intoverpop = 'auto'` take the
+# Laplace route on a model with nothing to integrate, and the fit stopped.
+.ctCellIsExpression <- function(param, latentNames)
+  !is.na(param) & (grepl('\\W', gsub('.', '', param, fixed = TRUE)) |
+    param %in% latentNames)
+
 .ctModelMatrixValue <- function(value){
   if(length(value) != 1) stop('Matrix elements must have length 1')
   if(is.factor(value)) value <- as.character(value)
@@ -188,6 +200,10 @@ ctModelUnlist<-function(ctmodelobj,
 
   pars <- ctm[['pars']]
   tieffects <- colnames(pars)[grep('_effect', colnames(pars), fixed=TRUE)]
+  # Whether a cell holds a parameter of its own, as ctModel() reads it, on
+  # the table as assigned so far.
+  holds <- function(row) .ctSpecHoldsParameter(pars[row, , drop = FALSE],
+    ctm[['latentNames']], ctm[['TDpredNames']], .ctSpecParsLabels(pars))
 
   if(!length(matrices)) return(ctm)
 
@@ -210,7 +226,10 @@ ctModelUnlist<-function(ctmodelobj,
           stop('Could not match one pars row for ', matrixname, '[', rowi, ',', coli, ']')
         }
 
-        wasfixed <- !is.na(pars$value[parrow])
+        # A cell that held no parameter -- a value, an expression, a
+        # reference -- has no flags of a parameter's to keep, so a parameter
+        # written there takes the defaults.
+        fresh <- !holds(parrow)
         parsed <- .ctModelMatrixValue(mat[rowi,coli])
         # A cell assigned here can carry the same fields a cell given to
         # ctModel() can, written either way (R/ctPar.R). Without this the
@@ -239,9 +258,24 @@ ctModelUnlist<-function(ctmodelobj,
             row=rowi,
             col=coli,
             continuoustime=ctm[['continuoustime']])
-          if(wasfixed || is.na(pars$transform[parrow])) pars$transform[parrow] <- defaults$transform
-          if(wasfixed || is.na(pars$sdscale[parrow])) pars$sdscale[parrow] <- defaults$sdscale
-          if(wasfixed || is.na(pars$indvarying[parrow])) pars$indvarying[parrow] <- defaults$indvarying
+          # An expression or a state, read as ctModel() reads one: none of a
+          # free cell's defaults.
+          if(.ctCellIsExpression(parsed$param, ctm[['latentNames']])){
+            if(!all(is.na(spec$indvarying) | spec$indvarying %in% FALSE) ||
+                length(spec$tipreds)) stop(matrixname, '[', rowi, ',', coli,
+              '] = "', parsed$param, '" is an expression or a latent state, ',
+              'which cannot vary between units or carry tipred effects of its ',
+              'own. Set those on the PARS cells of the parameters it reads.',
+              call.=FALSE)
+            pars$transform[parrow] <- if(simpleStateCheck(parsed$param)) 'param' else NA
+            pars$indvarying[parrow] <- FALSE
+            if(is.na(pars$sdscale[parrow])) pars$sdscale[parrow] <- defaults$sdscale
+            if(length(tieffects) > 0) pars[parrow,tieffects] <- 'FALSE'
+            next
+          }
+          if(fresh || is.na(pars$transform[parrow])) pars$transform[parrow] <- defaults$transform
+          if(fresh || is.na(pars$sdscale[parrow])) pars$sdscale[parrow] <- defaults$sdscale
+          if(fresh || is.na(pars$indvarying[parrow])) pars$indvarying[parrow] <- defaults$indvarying
 
           # Anything the cell states explicitly beats the default for that cell.
           if(!is.na(spec$transform)) pars$transform[parrow] <- spec$transform
@@ -264,6 +298,12 @@ ctModelUnlist<-function(ctmodelobj,
             }
             pars[parrow,tieffects] <- 'FALSE'
             pars[parrow,wanted] <- 'TRUE'
+          }
+          # A reference to a PARS cell or a predictor holds no parameter
+          # either, as ctModel() reads one.
+          if(!holds(parrow)){
+            pars$indvarying[parrow] <- FALSE
+            if(length(tieffects) > 0) pars[parrow,tieffects] <- 'FALSE'
           }
         }
       }
@@ -631,8 +671,15 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
           'Put the transform inside the expression itself, and set indvarying ',
           'and tipred effects on the single PARS cell that names the ',
           'parameter.'), call.=FALSE)
+        # A state alone may take a transform, but it is no parameter: nothing
+        # downstream reads a random or predictor effect on it.
+        if((length(split) > 2 && !toupper(split[3]) %in% c('', 'FALSE', 'F')) ||
+            (!is.na(tisplit) && nzchar(tisplit))) stop(paste0('The cell "',
+          trimws(ctspec$param[pi]),'" sets ',ctspec$matrix[pi],'[',ctspec$row[pi],',',
+          ctspec$col[pi],'] from a latent state, which cannot vary between ',
+          'units or carry tipred effects of its own.'), call.=FALSE)
       }
-      
+
       nonzero <- which(!split %in% '')
       ctspec[pi,c('param','transform','indvarying','sdscale')] <- 
         list(NA,ctspec$transform[pi],ctspec$indvarying[pi],1) #base values
@@ -699,16 +746,22 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   }
   
   ctspec <- .ctTIsmoothDefaultEffects(ctspec, TIsmooths, tiexplicit, tipredDefault)
-  if(n.TIpred > 0 && !any(.ctTipredEffectActive(ctspec[,paste0(TIpredNames,'_effect')]))) warning('TI predictors included but no effects specified!')
-  
-  for(ri in 1:nrow(ctspec)){ #set NA's on complex params
-    
-    if(grepl('\\W',gsub('.','',ctspec$param[ri],fixed=TRUE)) || ctspec$param[ri] %in% latentNames){ #if non word chars or state ref
-      ctspec$value[ri] <- NA
-      if(!simpleStateCheck(ctspec$param[ri])) ctspec$transform[ri] <-NA #allow transforms for simplestates
-      if(simpleStateCheck(ctspec$param[ri])) ctspec$transform[ri] <-'param' #allow transforms for simplestates
-    }
+
+  # An expression takes no transform, and a state alone the transform 'param'.
+  for(ri in which(.ctCellIsExpression(ctspec$param, latentNames))){
+    ctspec$value[ri] <- NA
+    ctspec$transform[ri] <- if(simpleStateCheck(ctspec$param[ri])) 'param' else NA
   }
+  # A free cell that holds no parameter of its own -- an expression, a state,
+  # a reference to a PARS cell or a predictor -- takes no default random or
+  # predictor effect: the cells of the parameters it reads say whether those
+  # have them (`.ctSpecHoldsParameter()`). Nothing downstream reads one on it.
+  noparameter <- !is.na(ctspec$param) &
+    !.ctSpecHoldsParameter(ctspec, latentNames, TDpredNames)
+  ctspec$indvarying[noparameter] <- FALSE
+  for(cl in grep('_effect$', names(ctspec), value=TRUE)) ctspec[[cl]][noparameter] <- 'FALSE'
+
+  if(n.TIpred > 0 && !any(.ctTipredEffectActive(ctspec[,paste0(TIpredNames,'_effect')]))) warning('TI predictors included but no effects specified!')
   
 
   # What each cell is -- a number, a name, a name with fields, or an expression

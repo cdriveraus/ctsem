@@ -54,6 +54,36 @@
   unique(lab[nzchar(lab) & !grepl('\\W', lab)])
 }
 
+# Which cells hold a parameter of their own. A simple name in a cell is not
+# always a parameter name:
+#
+#   a latent state or tdpred name  is a reference to that state or predictor,
+#                                  and several matrices may reference the
+#                                  same one -- that is not one parameter
+#                                  appearing twice
+#   a PARS label, outside PARS     is a reference to the PARS cell that
+#                                  declares it; the referencing cell's own
+#                                  transform column is discarded when the
+#                                  reference is rewritten, so it says nothing
+#                                  about the parameter
+#   'stationary'                   marks an initial condition ctFit rewrites
+#                                  (`.ctStationaryElements`)
+#
+# and an expression is none. Only the declaring cell holds the parameter, so
+# only it carries the parameter's transform, random effect and predictor
+# effects: ctModel() gives the other free cells none of a parameter's
+# defaults. Two PARS cells sharing one label are co-holders, which they are --
+# that is the equality constraint inside PARS. Exempting every PARS label
+# instead, as a first attempt did, hid a disagreement between them.
+.ctSpecHoldsParameter <- function(ctspec, latentNames, TDpredNames,
+    parslabels = .ctSpecParsLabels(ctspec)) {
+  simplename <- !is.na(ctspec$param) & is.na(ctspec$value) &
+    !grepl('\\W', gsub('.', '', ctspec$param, fixed = TRUE))
+  isref <- ctspec$param %in% c(latentNames, TDpredNames, 'stationary') |
+    (ctspec$param %in% parslabels & !(ctspec$matrix %in% 'PARS'))
+  simplename & !is.na(isref) & !isref
+}
+
 .ctSpecCellName <- function(ctspec, i) {
   paste0(ctspec$matrix[i], '[', ctspec$row[i], ',', ctspec$col[i], ']')
 }
@@ -261,32 +291,8 @@
   # --- which cells actually hold a parameter -----------------------------
   #
   # The three checks below aggregate over cells that name the same parameter,
-  # so they need to know which cells *hold* one. A simple name in a cell is
-  # not always a parameter name:
-  #
-  #   a latent state or tdpred name  is a reference to that state or predictor,
-  #                                  and several matrices may reference the
-  #                                  same one -- that is not one parameter
-  #                                  appearing twice
-  #   a PARS label, outside PARS     is a reference to the PARS cell that
-  #                                  declares it; the referencing cell's own
-  #                                  transform column is discarded when the
-  #                                  reference is rewritten, so it says nothing
-  #                                  about the parameter
-  #
-  # Only the declaring cell holds the parameter. Note that this still leaves
-  # two PARS cells sharing one label as co-holders, which they are -- that is
-  # the equality constraint inside PARS -- so a disagreement between them is a
-  # real one. Exempting every PARS label instead, as a first attempt did, hid
-  # exactly that case.
-  parslabels <- .ctSpecParsLabels(ctspec)
-  simplename <- !is.na(ctspec$param) & is.na(ctspec$value) &
-    !grepl('\\W', gsub('.', '', ctspec$param, fixed = TRUE))
-  # 'stationary' marks an initial condition ctFit rewrites
-  # (`.ctStationaryElements`); it names no parameter.
-  isref <- ctspec$param %in% c(latentNames, TDpredNames, 'stationary') |
-    (ctspec$param %in% parslabels & !(ctspec$matrix %in% 'PARS'))
-  holds <- simplename & !is.na(isref) & !isref
+  # so they need to know which cells *hold* one (`.ctSpecHoldsParameter()`).
+  holds <- .ctSpecHoldsParameter(ctspec, latentNames, TDpredNames)
 
   # --- one parameter, two different transforms ---------------------------
   #
