@@ -3274,6 +3274,8 @@ function _laplace_unit_curvature_pruned(laplace::CTSEMLaplaceObjective, U::Integ
                 dense[ci, cj] -= (Jw[ci, j] + Jw[cj, i]) / 2
             end
         end
+        hook === nothing ||
+            _laplace_pruned_hook_passes!(laplace, U, values, Ls, base, act, mode, hook)
         return _laplace_block_of(dense, blocks)
     end
     isactive = fill(false, d)
@@ -3314,7 +3316,53 @@ function _laplace_unit_curvature_pruned(laplace::CTSEMLaplaceObjective, U::Integ
         return nothing
     end
     _laplace_by_level(fill_block!, laplace, blocks)
+    hook === nothing ||
+        _laplace_pruned_hook_passes!(laplace, U, values, Ls, base, act, mode, hook)
     return M
+end
+
+"""
+    _laplace_pruned_hook_passes!(laplace, U, values, Ls, base, act, mode, hook)
+
+The passes of the members `_laplace_unit_curvature_pruned` ran in no Jacobian,
+run for `hook`: `_laplace_unit_curvature` hands every member's pass to its
+hook, and a member no block of which has an active coordinate -- a subject
+with nothing observed -- had none. Run along one inactive coordinate, whose
+Jacobian column is exactly zero and is not read, so the hook sees the sweep it
+sees for every other member, at the same type. Without it the hybrid's hooks
+read no deviations for such a member while the profile pass had laid out the
+joint coordinates for them, and ctKalman failed for a new patient with no
+observations ("member 1 integrates 0 deviations in joint coordinates laid out
+for 2").
+"""
+function _laplace_pruned_hook_passes!(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector, Ls::Vector{<:AbstractMatrix}, base::AbstractVector,
+    act::Vector{Int}, mode::Int, hook)
+    blocks = laplace.units.blocks[U]
+    d = length(base)
+    isactive = fill(false, d)
+    @inbounds for c in act
+        isactive[c] = true
+    end
+    column = findfirst(!, isactive)
+    column === nothing && return nothing
+    covered = fill(false, length(laplace.units.members[U]))
+    if length(blocks) <= 1 || d < _LAPLACE_BLOCK_THRESHOLD[]
+        # One Jacobian over every member, wherever there is an active column.
+        isempty(act) || return nothing
+    else
+        for block in blocks
+            any(c -> isactive[c], (block.offset + 1):(block.offset + block.size)) ||
+                continue
+            for m in block.members
+                covered[m] = true
+            end
+        end
+    end
+    rest = findall(!, covered)
+    isempty(rest) && return nothing
+    _laplace_columns_jacobian(laplace, U, values, Ls, base, [column], rest, mode, hook)
+    return nothing
 end
 
 """

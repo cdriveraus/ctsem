@@ -19,6 +19,7 @@ ctKalmanArray(
   indvarstates = FALSE,
   removeObs = F,
   realid = TRUE,
+  newdata = NULL,
   ...
 )
 }
@@ -58,6 +59,13 @@ forward further in time than one observation.}
 \item{realid}{If TRUE (the default), subjects are read as the ids in the data,
 and integers that are not ids there are read as ctsem's numbering of the
 subjects, 1 to N, with a message. If FALSE, they are read as that numbering.}
+
+\item{newdata}{Optional long format data, laid out as the data the model
+was fitted to, to compute for instead of the fit's own: new subjects, the
+fit's subjects with other covariate values, or a record cut short. The
+fit's estimates (or, with \code{pointest=FALSE}, its draws) are used as
+they stand, under the model the fit ran; nothing is refitted. See
+\code{\link{ctPredict}}.}
 
 \item{...}{additional arguments to collpsefunc.}
 }

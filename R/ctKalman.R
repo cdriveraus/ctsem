@@ -156,6 +156,12 @@
 #' @param timestep Either a positive numeric value, 'asdata' to use the times in the dataset, or 'auto' to select 
 #' a timestep automatically (resulting in some interpolation but not excessive computation).
 #' @param maxtime only relevant if timestep is not 'asdata'. Positive numeric denoting max time for computations.
+#' @param newdata Optional long format data, laid out as the data the model
+#' was fitted to, to compute for instead of the fit's own: new subjects, the
+#' fit's subjects with other covariate values, or a record cut short. The
+#' fit's estimates (or, with \code{pointest=FALSE}, its draws) are used as
+#' they stand, under the model the fit ran; nothing is refitted. See
+#' \code{\link{ctPredict}}.
 #' @param ... additional arguments to collpsefunc.
 #'
 #' @return list containing Kalman filter elements, each element in array of
@@ -175,7 +181,9 @@
 #' k=ctKalmanArray(ctstantestfit,subjectpars=TRUE,collapsefunc=mean)
 ctKalmanArray <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=getOption("mc.cores", 2L),
   subjects='all', timestep='asdata',maxtime='asdata',
-  standardisederrors=FALSE, subjectpars=TRUE, indvarstates=FALSE,removeObs=F,realid=TRUE,...){
+  standardisederrors=FALSE, subjectpars=TRUE, indvarstates=FALSE,removeObs=F,realid=TRUE,
+  newdata=NULL,...){
+  if(!is.null(newdata)) fit <- .ctFitReplaceData(fit, newdata)
   if(!identical(subjects,'all') && inherits(fit,'ctFit'))
     subjects <- sort(as.vector(.ctResolveSubjects(fit, subjects, realid)))
   
@@ -511,7 +519,8 @@ ctPredictTIP <- function(sf,tipreds='all',subject=NULL,timestep='auto',doDynamic
 #' indicating the time step to use for interpolating values. Lower values give a more accurate / smooth representation,
 #' but take a little more time to calculate. 
 #' @param subjects subject ids to predict for, or NULL (the default) for the first
-#' subject in the data. With \code{realid=FALSE}, integers denoting subjects from 1 to N.
+#' subject in the data, or every subject in \code{newdata} when that is given.
+#' With \code{realid=FALSE}, integers denoting subjects from 1 to N.
 #' @param removeObs Logical or integer. If TRUE, observations (but not covariates)
 #' are withheld from the filter, so only expectations based on parameters and covariates are returned
 #' (the observations themselves are still reported, for comparison). If a positive integer N, 
@@ -531,16 +540,34 @@ ctPredictTIP <- function(sf,tipreds='all',subject=NULL,timestep='auto',doDynamic
 #'   population parameters alone. Defaults to the innermost id. Ignored for
 #'   other fits.
 #'
-#'   Whichever level is chosen, these are the \emph{smoothed} random effects:
-#'   modes estimated from each subject's whole record, so there is no version
-#'   of them from before a subject's later data arrived. They also stay fixed
-#'   however this call changes the rows being filtered, so a prediction with
-#'   every observation withheld still uses that subject's own random effects
-#'   -- which is what makes it a prediction for that subject rather than for
-#'   the average one.
+#'   With one level of random effects, left in, each subject's predicted and
+#'   updated values take its random effects at their posterior given its rows
+#'   up to each time, and its smoothed values at their mode given its whole
+#'   record. Otherwise every pass takes the modes from each subject's whole
+#'   record. Those whole-record modes stay the fit's however this call changes
+#'   the rows being filtered (selecting subjects, a time grid,
+#'   \code{removeObs}), so with every observation withheld the smoothed values
+#'   still use that subject's own random effects.
 #' @param realid If TRUE (the default), subjects are read as the ids in the data,
 #' and integers that are not ids there are read as ctsem's numbering of the
 #' subjects, 1 to N, with a message. If FALSE, they are read as that numbering.
+#' @param newdata Optional long format data to predict for instead of the
+#' data the model was fitted to, with the same columns: an id, a time, the
+#' manifest variables (\code{NA} where nothing is observed) and the
+#' predictors. New subjects, such as hypothetical people with chosen covariate
+#' values; a subject of the fit under other covariate values; or a record cut
+#' short at some time, to see what was predictable then. The data are put
+#' under the model the fit ran, with its estimates as they stand: nothing is
+#' refitted, and the model keeps its structure whatever the number of
+#' subjects. A subject's predicted (prior) and updated values condition on
+#' its rows in \code{newdata} up to each time, and its smoothed values on all
+#' of them. For a fit with random effects that includes the subject's random
+#' effects, at their posterior given those rows (for a Laplace fit with one
+#' level of random effects; otherwise as \code{randomEffects} describes), so
+#' a subject with no observations gets the population's prediction for its
+#' covariate values. A row at a time with nothing observed gives a prediction
+#' there; a time dependent predictor left \code{NA} is taken as zero, as
+#' \code{\link{ctFit}} takes it.
 #' @param ... additional arguments to pass to \code{\link{plot.ctKalmanDF}}.
 #' @return Returns a list containing matrix objects etaprior, etaupd, etasmooth, y, yprior,
 #' yupd, ysmooth, errprior, errupd, errsmooth, time, loglik,  with values for each time point in each row.
@@ -574,21 +601,36 @@ ctPredictTIP <- function(sf,tipreds='all',subject=NULL,timestep='auto',doDynamic
 #'    geom_line() +
 #'    theme_bw()
 #'
+#' #New subjects: two hypothetical people differing only in TI1, each
+#' #observed once at time 0, predicted to time 4.
+#' newsubjects <- data.frame(id = c('lowTI1', 'highTI1'), time = 0,
+#'   Y1 = 8, Y2 = 12, TD1 = 0, TI1 = c(-1, 1))
+#' newsubjects <- rbind(newsubjects,
+#'   transform(newsubjects, time = 4, Y1 = NA, Y2 = NA))
+#' k <- ctPredict(ctstantestfit, newdata = newsubjects, timerange = c(0, 4),
+#'   timestep = .1)
+#' k[k$Element %in% 'yprior' & k$Time == 4, ]
+#' ctPredict(ctstantestfit, newdata = newsubjects, timerange = c(0, 4),
+#'   timestep = .1, plot = TRUE, kalmanvec = 'yprior', errorvec = 'ypriorcov')
 #'  }
 #' @aliases ctKalman
 #' @export
 
 ctPredict<-function(fit, timerange='asdata', timestep='auto',
   subjects=NULL, removeObs = FALSE, plot=FALSE, 
-  standardisederrors=FALSE,realid=TRUE,randomEffects=NULL,...){
-  
-  
+  standardisederrors=FALSE,realid=TRUE,randomEffects=NULL,newdata=NULL,...){
+
+
   if('ctsemFit' %in% class(fit)) stop('This function is no longer supported with ctsemOMX, try ctsem')
   if(!inherits(fit,c('ctStanFit','ctJuliaFit'))) stop('fit object is not a ctsem fit!')
-  
+
+  # Other data under the fitted model (`.ctFitReplaceData()`), from here on
+  # the data this call predicts for.
+  if(!is.null(newdata)) fit <- .ctFitReplaceData(fit, newdata)
+
   # get subjects ------------------------------------------------------------
   idmap <- .ctFitIdMap(fit) #store now because we may reduce it
-  if(is.null(subjects)) subjects <- idmap[1,1]
+  if(is.null(subjects)) subjects <- if(is.null(newdata)) idmap[1,1] else idmap[,1]
   if('factor' %in% class(idmap$original)) idmap$original <- as.character(idmap$original)
   if('factor' %in% class(subjects)) subjects <- as.character(subjects)
   subjectsarg <- subjects

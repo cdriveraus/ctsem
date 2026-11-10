@@ -1104,6 +1104,46 @@ test_that("sequential predictions are the fitted model's own, row by row", {
   }
 })
 
+test_that("a subject with nothing observed is predicted and reported as the layer does", {
+  skip_without_julia()
+  # A new patient with no data, as ctPredict(newdata =) is asked for: its
+  # effects reach no observed item, so its coordinate is inactive and its
+  # curvature takes no Jacobian (`_laplace_unit_curvature_pruned`), while the
+  # filter still integrates the initial mean's and intercept's deviations,
+  # whose columns need no observation. The curvature's hook saw no pass for
+  # it, and the sequential predictions stopped laying out the joint
+  # coordinates ("integrates 0 deviations ... laid out for 3").
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  handle <- function(s) structure(s, class = c("ctJuliaModel", "ctFitModel"))
+  d <- .pu_means_data()
+  d[d$id == 5, c("Y1", "Y2", "Y3")] <- NA
+  m <- .pu_block_model(c("drift11", "t0m1", "cint2", "mm2"))
+  set.seed(37)
+  x <- NULL
+  out <- list()
+  for (h in c(TRUE, FALSE)) {
+    options(ctsem.laplace.hybrid = h)
+    spec <- .pu_spec(d, m, priors = FALSE)
+    if (h) expect_true(isTRUE(spec$laplace$hybrid$block))
+    if (is.null(x)) x <- rnorm(length(.pu_names(spec)), 0, 0.3)
+    module <- ctsem:::.ctJuliaModule(spec$project)
+    o <- ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE)
+    xx <- ctsem:::.ctJuliaNumericVector(x)
+    out[[as.character(h)]] <- list(
+      seq = ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_sequential(o, xx)),
+      modes = ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_modes(o, xx, 1L)))
+  }
+  for (f in c("eta", "etacov", "y", "ycov", "llrow")) {
+    expect_equal(out[["TRUE"]]$seq[[f]], out[["FALSE"]]$seq[[f]], tolerance = 1e-7,
+      info = f)
+  }
+  for (f in c("raw", "raw_sd")) {
+    expect_equal(as.numeric(out[["TRUE"]]$modes[[f]]),
+      as.numeric(out[["FALSE"]]$modes[[f]]), tolerance = 1e-7, info = f)
+  }
+})
+
 test_that("a unit with every effect in the filter predicts its rows from one pass", {
   skip_without_julia()
   # No coordinate, so one filter pass gives every row

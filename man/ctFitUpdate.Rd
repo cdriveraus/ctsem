@@ -37,6 +37,13 @@ The fit is rebuilt from its own call: the arguments it was made with are
 passed to \code{\link{ctFit}} again, with the model it was given and, unless
 \code{data} is supplied, the data it was fitted to. Arguments in \code{...}
 replace the fit's own.
+
+With \code{refit=FALSE} and \code{data}, the data are instead prepared under
+the model the fit ran, so the fit keeps its structure along with its
+estimates whatever the data -- a single subject included, which
+\code{\link{ctFit}} would set up without random effects. To predict for
+other data, \code{\link{ctPredict}(fit, newdata = data)} does the same
+without an update.
 }
 \examples{
 newfit <- ctFitUpdate(ctstantestfit,refit=FALSE)

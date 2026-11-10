@@ -460,19 +460,17 @@
 #'   includes none, giving the trajectory implied by the population parameters
 #'   alone. Defaults to the innermost id. Ignored for other fits.
 #'
-#'   These are the *smoothed* equivalent whichever level is chosen: the random
-#'   effects are modes estimated from each subject's whole record, so unlike an
-#'   augmented fit -- whose carrier states are updated observation by
-#'   observation -- there is no version of them from before a subject's later
-#'   data arrived. A message says so once per call.
+#'   With one level of random effects, left in, the predicted and updated
+#'   passes take each subject's effects at their posterior given its rows up
+#'   to each row (`ctsem_laplace_sequential`), and the smoothed pass at their
+#'   mode given its whole record. Otherwise every pass takes the whole-record
+#'   modes. A message says which once per call.
 #'
-#'   The modes are the ones the fit arrived at, and they stay fixed however
-#'   this call changes the rows being filtered. Selecting subjects,
-#'   interpolating a time grid or withholding observations with
-#'   \code{removeObs} therefore leaves each subject's parameters alone: a
-#'   prediction with every observation withheld still uses that subject's own
-#'   random effects, which is what makes it a prediction *for that subject*
-#'   rather than for the average one.
+#'   The whole-record modes are the ones the fit arrived at, and they stay
+#'   fixed however this call changes the rows being filtered. Selecting
+#'   subjects, interpolating a time grid or withholding observations with
+#'   \code{removeObs} therefore leaves them alone: with every observation
+#'   withheld the smoothed pass still uses that subject's own random effects.
 #' @keywords internal
 ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   maxtime = "asdata", removeObs = FALSE, pointest = TRUE, nsamples = NA,
@@ -494,9 +492,9 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   # difference is easy to miss and changes what the picture means. An
   # augmented fit's random effects are carrier *states*, updated observation by
   # observation, so its filtered output shows an effect being learned. A
-  # Laplace mode is estimated from all of a subject's data at once, so these
-  # trajectories are the smoothed equivalent throughout -- there is no "before
-  # this subject's later data arrived" version of them.
+  # Laplace fit's predicted and updated passes do the same on one level of
+  # random effects (`.ctBackendSequentialApplies()`); elsewhere they take the
+  # mode from all of a subject's data at once, the smoothed equivalent.
   #
   # Not in `.ctBackendKalmanRaw`, where it used to be. Every julia fit runs a
   # filter pass for its prior residuals, `ctLOO` runs one per fold and the
@@ -1115,19 +1113,53 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 # "I found no carrier states" is a statement about one representation.
 .ctFitHasRandomEffects <- function(fit) length(.ctFitRandomEffectLevels(fit)) > 0L
 
-# A copy of the fit re-prepared against a different long data frame. This is
-# what lets ctPredictTIP() build its covariate grid: it constructs a dataset of
-# pseudo-subjects, one per covariate value, and asks the fitted model to predict
-# for them.
+# A copy of the fit re-prepared against a different long data frame: the fit's
+# estimates under the model the fit ran, with other subjects, rows or values.
+# What ctPredict(newdata =) and ctFitUpdate(data =, refit = FALSE) put new data
+# under a fit with, ctPredictTIP() builds its covariate grid of pseudo-subjects
+# with, and ctLOO() its training folds.
+#
+# Prepared under the fitted model rather than set up afresh from the model as
+# written, so the structure is the fit's whatever the data: ctFit() drops the
+# random effects for a single subject, and a specification set up so for one
+# new patient read the fit's estimates as another model's parameters. The data
+# themselves are read as ctFit() reads them (`.ctFitDataCheck()`, the smooth
+# terms' basis columns, `.ctPrepareData()`, which sets a missing TD predictor
+# to zero), and the prepared data replace the fit's, so `$standata` and `$data`
+# describe the same subjects as the specification. Preparation's messages are
+# about fitting these rows -- a population rank too high for one subject,
+# uncentred predictors -- and nothing is fitted here, so they are not passed on.
 .ctFitReplaceData <- function(fit, datalong) {
-  if (!.ctFitIsJulia(fit) && !is.null(fit$standata)) {
-    fit$standata <- suppressMessages(.ctPrepareData(fit$ctstanmodel, datalong, optimize = TRUE))
-    return(fit)
+  julia <- .ctFitIsJulia(fit)
+  model <- .ctFitModelObject(fit)
+  datalong <- data.frame(datalong)
+  if (length(model$TIsmooths)) datalong <- .ctTIsmoothData(model, datalong,
+    includeOutcome = !isFALSE(fit$args$input$optimcontrol$tipredMissingIncludeOutcome))$data
+  datalong <- .ctFitDataCheck(datalong, model)
+  # The fit's estimator, as ctFit() hands it to the preparation: stan's
+  # schedule of when matrices are recomputed, and whether a missing TI
+  # predictor is imputed or a parameter, follow it.
+  optimize <- !isFALSE(if (!is.null(fit$args$resolved)) fit$args$resolved$optimize else
+    fit$args$optimize)
+  standata <- suppressMessages(.ctPrepareData(model, datalong, optimize = optimize,
+    tipredMissing = if (julia) 'leave' else if (optimize) 'impute' else 'sample'))
+  # Settings ctFit() adds to the prepared data, which are the fit's, not the data's.
+  for (setting in c('verbose', 'savesubjectmatrices', 'gendata', 'savescores')) {
+    if (!is.null(fit$standata[[setting]])) standata[[setting]] <- fit$standata[[setting]]
   }
+  fit$standata <- standata
+  fit$data <- .ctStandataNA(standata)
+  if (!julia) return(fit)
+  # The zeroes the prepared data hold for missing TD predictors (warned of
+  # above), in the frame the specification keeps as well: a prediction over a
+  # time grid rebuilds from that frame, and a missing value there reached the
+  # filter as one.
+  td <- model$TDpredNames
+  if (length(td)) datalong[td][is.na(datalong[td])] <- 0
   spec <- .ctBackendSpec(fit)
-  prepared <- .ctJuliaPrepare(datalong, .ctFitModelObject(fit),
-    project = spec$project, intoverpop = .ctBackendIntOverPop(spec),
-    laplacecontrol = spec$laplace$inner)
+  prepared <- suppressMessages(.ctJuliaPrepare(datalong, model,
+    prepared_data = standata, project = spec$project,
+    intoverpop = .ctBackendIntOverPop(spec), laplacecontrol = spec$laplace$inner))
   # Carry across the two things that are properties of the *fit* rather than of
   # the data, and that re-preparation would otherwise silently drop: the prior
   # specification (a function of the model, and `priors` defaults to FALSE
