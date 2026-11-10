@@ -597,4 +597,13 @@ test_that("a flag set by hand on a cell that holds no parameter is dropped", {
   t0var <- out$matrix %in% 'T0VAR'
   expect_true(is.na(out$value[t0var & out$row == 2 & out$col == 2]))
   expect_equal(out$value[t0var & out$row == 1 & out$col == 1], 1e-3)
+
+  # ctModelLatex()'s tables read a parameter off the cell that holds it: a
+  # cell referring to a PARS label, read first, showed it without effects.
+  expect_equal(rownames(ctModelBuildPopCov(all, linearise = TRUE)), c('mmA', 'mmB'))
+  mt <- suppressMessages(ctModel(type = 'ct', manifestNames = c('A', 'B'),
+    latentNames = 'X', LAMBDA = matrix(c(1, 'b'), 2, 1),
+    n.TIpred = 1, TIpredNames = 'age',
+    MANIFESTMEANS = matrix(c('mmr', 'mmB'), 2, 1), PARS = matrix('mmr')))
+  expect_equal(ctModelBuildTIeffects(mt)['mmr', 'age'], 'mmr_age')
 })
