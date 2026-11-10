@@ -607,3 +607,26 @@ test_that("a flag set by hand on a cell that holds no parameter is dropped", {
     MANIFESTMEANS = matrix(c('mmr', 'mmB'), 2, 1), PARS = matrix('mmr')))
   expect_equal(ctModelBuildTIeffects(mt)['mmr', 'age'], 'mmr_age')
 })
+
+test_that("a parameter's fields are read off the cell that holds it", {
+  # A cell referring to a PARS label keeps its own matrix's default transform
+  # and sdscale, which nothing reads. Looked up by name alone, the cell first
+  # in the table answered: a stated mean of 2 on `mmr` came out raw 0.2,
+  # through MANIFESTMEANS's `10 * param`.
+  m <- suppressMessages(ctModel(type = 'ct', manifestNames = c('A', 'B'),
+    latentNames = 'X', LAMBDA = matrix(c(1, 'b'), 2, 1),
+    MANIFESTMEANS = matrix(c('mmr', 'mmB'), 2, 1),
+    PARS = matrix('mmr|param|TRUE|2')))
+  p <- m$pars
+  held <- which(p$matrix %in% 'PARS')
+  expect_equal(.ctParamRows(m, c('mmr', 'mmB', 'b')),
+    c(held, which(p$param %in% 'mmB'), which(p$param %in% 'b')))
+  expect_lt(which(p$matrix %in% 'MANIFESTMEANS' & p$param %in% 'mmr'), held)
+  # A name no free cell holds keeps its first row.
+  fixed <- m
+  fixed$pars$value[fixed$pars$param %in% 'mmB'] <- 0.5
+  expect_equal(.ctParamRows(fixed, 'mmB'), which(p$param %in% 'mmB'))
+
+  m$fixedpopmeans <- c(mmr = 2)
+  expect_equal(.ctFixedPopMeans(m)$raw, 2)
+})

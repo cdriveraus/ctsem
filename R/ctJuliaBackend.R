@@ -2405,14 +2405,15 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     # `table` is the canonical parameter table, so its `indvarying` is the
     # flag after `.ctJuliaCanonicalModel()` has had its say, and its
     # `parnumber` is the raw index. `sdscale` is not carried on the table, so
-    # it is read from the model's own `pars` by parameter name.
+    # it is read from the model's own `pars`, off the cell holding each
+    # parameter.
     hit <- which(table$indvarying %in% TRUE & !is.na(table$parnumber) &
       table$parnumber > 0L)
     varying <- sort(unique(as.integer(table$parnumber[hit])))
     sdscale <- rep(1, length(varying))
     if (!is.null(model$pars$sdscale)) {
       names_at_index <- .ctJuliaLaplaceNames(table, varying)
-      matched <- match(names_at_index, as.character(model$pars$param))
+      matched <- .ctParamRows(model, names_at_index)
       supplied <- suppressWarnings(as.numeric(model$pars$sdscale[matched]))
       sdscale[is.finite(supplied)] <- supplied[is.finite(supplied)]
     }

@@ -593,3 +593,19 @@ test_that("missingness survives Laplace-route generation unchanged", {
   expect_true(all(is.na(generated$generated$llrow[, missing_rows])))
   expect_false(any(is.na(generated$generated$Y[, -missing_rows, 1])))
 })
+
+test_that("values reach a PARS parameter that another cell refers to", {
+  skip_without_julia()
+  # The manifest mean is the PARS cell's `mmr`, transformed by `param`; the
+  # MANIFESTMEANS cell that refers to it keeps its own default `10 * param`,
+  # which generation once read, so the data came out about 0.2.
+  m <- suppressMessages(ctModel(type = 'ct', manifestNames = 'Y1',
+    latentNames = 'X', LAMBDA = matrix(1), DRIFT = matrix(-1),
+    DIFFUSION = matrix(0.1), MANIFESTVAR = matrix(0.1), T0VAR = matrix(0.1),
+    T0MEANS = matrix(0), CINT = matrix(0), MANIFESTMEANS = matrix('mmr'),
+    PARS = matrix('mmr')))
+  set.seed(5)
+  d <- suppressMessages(ctGenerate(m, n = 20, Tpoints = 5, backend = 'julia',
+    values = c(mmr = 2)))
+  expect_equal(mean(d[, 'Y1']), 2, tolerance = 0.05)
+})
