@@ -246,8 +246,10 @@
       "per person.", call. = FALSE)
     value <- inputs[, covariate]
     observed <- value[!is.na(value)]
-    if (length(observed) < 2L) stop("s(", covariate, ") needs a value of ",
-      covariate, " for at least two persons.", call. = FALSE)
+    # To build a basis; one kept from a fit evaluates at any number of persons,
+    # one new patient's included.
+    if (is.null(s$basis) && length(observed) < 2L) stop("s(", covariate,
+      ") needs a value of ", covariate, " for at least two persons.", call. = FALSE)
     if (is.null(s$basis)) {
       s$basis <- .ctTIsmoothBuild(observed, s$k, covariate)
       smooths[[name]] <- s

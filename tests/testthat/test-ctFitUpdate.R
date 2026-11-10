@@ -99,6 +99,26 @@ test_that("a fit saved by ctsem 3.11.1 is updated with its own arguments", {
   expect_equal(updated$standata, .stan_rebuilt()$standata)
 })
 
+# ctFit() sets a model up for one subject without random effects and with
+# T0VAR fixed. An update with one subject was set up so, and read the fit's
+# estimates as that smaller model's parameters: predictions from neither
+# model, and no error. The subject's predictions are those it gets beside
+# another.
+.one_and_two <- function(fit, long, ids, ...) {
+  one <- .quietly(ctFitUpdate(fit, data = long[long$id %in% ids[1], ], refit = FALSE))
+  two <- .quietly(ctFitUpdate(fit, data = long[long$id %in% ids[1:2], ], refit = FALSE))
+  predict <- function(f) .quietly(ctPredict(f, subjects = ids[1], ...))$value
+  list(one = one, two = two, predicted = list(predict(one), predict(two)))
+}
+
+test_that("one subject updates under the fitted model, as it predicts beside another", {
+  long <- ctsem:::.ctFitLongData(ctstantestfit)
+  got <- .one_and_two(ctstantestfit, long, unique(long$id), timestep = 'asdata')
+  expect_equal(got$one$standata$nsubjects, 1L)
+  expect_equal(got$one$standata$nindvarying, ctstantestfit$standata$nindvarying)
+  expect_equal(got$predicted[[1]], got$predicted[[2]])
+})
+
 test_that("an update that keeps the estimates keeps their backend", {
   expect_error(suppressMessages(ctFitUpdate(ctstantestfit, backend = "julia")),
     "refit=TRUE")
@@ -232,6 +252,46 @@ test_that("new data replaces a julia fit's data and keeps its estimates", {
   # user knows its subjects by.
   predicted <- .quietly(ctKalman(updated, subjects = kept))
   expect_setequal(unique(as.character(predicted$Subject)), as.character(kept))
+})
+
+test_that("one subject updates a julia fit under its model, as beside another", {
+  skip_without_julia()
+  fit <- .update_fits()$optimised
+  data <- .update_data()
+  got <- .one_and_two(fit, data, c(103L, 106L), timerange = c(0, 7), timestep = 1)
+  expect_equal(ctsem:::.ctBackendNpar(got$one$model_spec), length(fit$estimate$raw))
+  expect_equal(got$predicted[[1]], got$predicted[[2]])
+})
+
+test_that("ctPredict(newdata) predicts new and cut-short records under the fit", {
+  skip_without_julia()
+  fit <- .update_fits()$optimised
+  data <- .update_data()
+  # A fitted subject's own rows as new data are that subject, predicted.
+  own <- data[data$id == 104L, ]
+  at <- function(k) k[k$Element %in% c('yprior', 'yupd', 'ysmooth'), 'value']
+  expect_equal(at(.quietly(ctPredict(fit, newdata = own, timestep = 0.5))),
+    at(.quietly(ctPredict(fit, subjects = 104L, timestep = 0.5))))
+  # The same record cut short at time 2 and continued to 7, beside a new
+  # subject with nothing observed: every subject in newdata by default, the
+  # same predictions to time 2, and the population's for the new one.
+  cut <- own[own$time <= 2, ]
+  cut <- rbind(cut, transform(cut[1, ], time = 7, Y1 = NA))
+  blank <- transform(cut, id = 999L, Y1 = NA)
+  k <- .quietly(ctPredict(fit, newdata = rbind(cut, blank), timerange = c(0, 7),
+    timestep = 0.5))
+  expect_setequal(as.character(unique(k$Subject)), c('104', '999'))
+  full <- .quietly(ctPredict(fit, newdata = own, timerange = c(0, 7), timestep = 0.5))
+  early <- function(k) k[k$Subject == '104' & k$Element == 'yprior' & k$Time <= 2, 'value']
+  expect_equal(early(k), early(full))
+  population <- .quietly(ctPredict(fit, newdata = blank, timerange = c(0, 7),
+    timestep = 0.5, randomEffects = 'population'))
+  expect_equal(k[k$Subject == '999' & k$Element == 'ysmooth', 'value'],
+    population[population$Element == 'ysmooth', 'value'])
+  # And from the fit's draws, through ctKalmanArray.
+  draws <- .quietly(ctKalmanArray(fit, newdata = blank, pointest = FALSE, nsamples = 5))
+  expect_equal(dim(draws$yprior), c(5L, nrow(blank), 1L))
+  expect_true(all(is.finite(draws$yprior)))
 })
 
 test_that("a julia refit starts from the estimate and keeps the estimator", {

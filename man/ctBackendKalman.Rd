@@ -62,19 +62,17 @@ latent states are not computed and are \code{NA}.}
   includes none, giving the trajectory implied by the population parameters
   alone. Defaults to the innermost id. Ignored for other fits.
 
-  These are the *smoothed* equivalent whichever level is chosen: the random
-  effects are modes estimated from each subject's whole record, so unlike an
-  augmented fit -- whose carrier states are updated observation by
-  observation -- there is no version of them from before a subject's later
-  data arrived. A message says so once per call.
+  With one level of random effects, left in, the predicted and updated
+  passes take each subject's effects at their posterior given its rows up
+  to each row (`ctsem_laplace_sequential`), and the smoothed pass at their
+  mode given its whole record. Otherwise every pass takes the whole-record
+  modes. A message says which once per call.
 
-  The modes are the ones the fit arrived at, and they stay fixed however
-  this call changes the rows being filtered. Selecting subjects,
-  interpolating a time grid or withholding observations with
-  \code{removeObs} therefore leaves each subject's parameters alone: a
-  prediction with every observation withheld still uses that subject's own
-  random effects, which is what makes it a prediction *for that subject*
-  rather than for the average one.}
+  The whole-record modes are the ones the fit arrived at, and they stay
+  fixed however this call changes the rows being filtered. Selecting
+  subjects, interpolating a time grid or withholding observations with
+  \code{removeObs} therefore leaves them alone: with every observation
+  withheld the smoothed pass still uses that subject's own random effects.}
 
 \item{...}{Passed to \code{collapsefunc}.}
 }

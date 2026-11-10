@@ -359,6 +359,13 @@
 #' \code{data} is supplied, the data it was fitted to. Arguments in \code{...}
 #' replace the fit's own.
 #'
+#' With \code{refit=FALSE} and \code{data}, the data are instead prepared under
+#' the model the fit ran, so the fit keeps its structure along with its
+#' estimates whatever the data -- a single subject included, which
+#' \code{\link{ctFit}} would set up without random effects. To predict for
+#' other data, \code{\link{ctPredict}(fit, newdata = data)} does the same
+#' without an update.
+#'
 #' @param oldfit fit object to be updated, from \code{\link{ctFit}} with either
 #' backend.
 #' @param data replacement long format data object. If not supplied, the data
@@ -400,13 +407,43 @@ ctFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
     message('A sampled fit is not refitted; updating it with refit=FALSE')
     refit <- FALSE
   }
-  if(!refit) message('Trying to do a quick update -- if there are problems, try with refit=TRUE for more robustness')
   # Kept, the estimates are coordinates of the backend that made them.
   if(!refit && !is.null(dots$backend) &&
       !identical(as.character(dots$backend)[1L], if(julia) 'julia' else 'stan'))
     stop("A fit updated with refit=FALSE keeps its estimates, which belong to ",
       "the backend that made them. Use refit=TRUE to fit on another backend.",
       call.=FALSE)
+  # (This was `length(data==1)`, which is TRUE for any data set, so the old
+  # data was rebuilt on every call and then discarded whenever new data was
+  # supplied.)
+  newdata <- !is.null(data) && !(is.atomic(data) && length(data) == 1L &&
+    is.na(data))
+
+  # Other data under the fit, keeping its estimates: prepared under the model
+  # the fit ran, as prediction for new data is (`.ctFitReplaceData()`), not set
+  # up afresh from the model as written. Set up afresh, the structure could
+  # follow the data -- ctFit() drops every random effect and fixes T0VAR for a
+  # single subject -- and the estimates were then read as another model's
+  # parameters, giving predictions from neither, with no error. The fit is
+  # rebuilt on its own data first only where that is asked for or needed:
+  # arguments that change it, a recompile, or a fit made before ctsem 4.0,
+  # whose prepared model this version does not read.
+  if(!refit && newdata){
+    if(length(dots) || isTRUE(recompile) || is.null(oldfit$args$input)) {
+      oldfit <- ctFitUpdate(oldfit, recompile = recompile, refit = FALSE, ...)
+    } else message('Trying to do a quick update -- if there are problems, try with refit=TRUE for more robustness')
+    oldfit <- .ctFitReplaceData(oldfit, data)
+    # Each group's posterior was solved from the old data; with new data it is
+    # another set of groups' posterior, at the same estimate.
+    if(julia && !is.null(oldfit$randomeffects)) {
+      at <- tryCatch(.ctEffectEvaluate(oldfit$model_spec, .ctFitRawEstimate(oldfit)),
+        error = function(e) NULL)
+      oldfit$randomeffects <- if(is.null(at)) NULL else
+        .ctRandomEffectsStore(oldfit, at$posterior)
+    }
+    return(oldfit)
+  }
+  if(!refit) message('Trying to do a quick update -- if there are problems, try with refit=TRUE for more robustness')
 
   args <- .ctFitReplayArgs(oldfit)
   for(n in names(dots)){
@@ -416,42 +453,29 @@ ctFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
   args$inits <- .ctFitRawEstimate(oldfit)
   args$model <- basemodel
   args$ctstanmodel <- NULL
-  # The data the fit was made with, unless replacement data is given. (This was
-  # `length(data==1)`, which is TRUE for any data set, so the old data was
-  # rebuilt on every call and then discarded whenever new data was supplied.)
-  newdata <- !is.null(data) && !(is.atomic(data) && length(data) == 1L &&
-    is.na(data))
+  # The data the fit was made with, unless replacement data is given.
   args$datalong <- if(newdata) data else .ctFitLongData(oldfit)
   newfit <- do.call(ctFit,args)
   if(refit) return(newfit)
 
+  # Rebuilt on the data it was fitted to, so the rows are the fit's own.
   if(julia){
     # A prepared julia model is its own specification, carrying the call, the
     # prepared data and the model beside it; a fit keeps those apart.
     spec <- unclass(newfit)
     spec[c('args', 'standata', 'modelbase')] <- NULL
-    # `nlcontrol$nsubsteps = 'auto'` leaves the fit with a mesh: one substep
-    # count per row of the data it was chosen for, at the estimate. The same
-    # rows keep it; other rows get the one the fit would have chosen for them
-    # at the same estimate.
-    if(is.integer(oldfit$model_spec$max_timestep) && !is.null(spec$substeps)){
-      if(newdata) spec <- .ctJuliaAutoSubsteps(spec,
-        .ctFitRawEstimate(oldfit)[seq_len(.ctBackendNpar(spec))])$spec else
-        spec$max_timestep <- oldfit$model_spec$max_timestep
-    }
+    # What the fit chose for its rows rather than read from the call: an
+    # automatic substep mesh and relinearisation plan, and missing TI
+    # predictor values (`.ctJuliaCarryFit()`).
+    spec <- .ctJuliaCarryFit(spec, oldfit$model_spec, .ctFitRawEstimate(oldfit))
     oldfit$model_spec <- spec
     oldfit$model <- spec$model
-    # Each group's posterior was solved from the old data; with new data it is
-    # another set of groups' posterior, at the same estimate.
-    if(newdata && !is.null(oldfit$randomeffects)) {
-      at <- tryCatch(.ctEffectEvaluate(spec, .ctFitRawEstimate(oldfit)),
-        error = function(e) NULL)
-      oldfit$randomeffects <- if(is.null(at)) NULL else
-        .ctRandomEffectsStore(oldfit, at$posterior)
-    }
   } else {
     if(oldfit$ctstanmodel$recompile || recompile) oldfit$stanmodel <- rstan::stan_model(model_code = newfit$stanmodeltext) else
       oldfit$stanmodel <- stanmodels$ctsm
+    # The model the rebuilt data were prepared under, which a later
+    # replacement of the data prepares under too.
+    oldfit$ctstanmodel <- newfit$ctstanmodel
   }
   oldfit$standata <- newfit$standata
   oldfit$data <- .ctStandataNA(newfit$standata)
@@ -471,6 +495,55 @@ ctFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
 
 #' @export
 ctStanFitUpdate <- ctFitUpdate
+
+# What ctFit() does to a long data frame before preparing it, and what
+# `.ctFitReplaceData()` does to data it puts under a fitted model, so the two
+# read data alike: a count for a discrete time model without times, the columns
+# the model names checked and made numeric, and the rows sorted by subject and
+# time. Smooth TI terms' basis columns are added before this, by the caller,
+# since a fit and a replacement differ in whether the basis exists yet.
+.ctFitDataCheck <- function(datalong, model) {
+  datalong <- data.frame(datalong)
+  idname <- model$subjectIDname
+  # Counted within each subject. This read `model$id`, which is no field of a
+  # model, so the count ran over every row.
+  if(!model$timeName %in% colnames(datalong) && !isTRUE(as.logical(model$continuoustime)) &&
+      idname %in% colnames(datalong)) {
+    datalong[[model$timeName]] <- stats::ave(seq_len(nrow(datalong)),
+      datalong[[idname]], FUN = seq_along)
+  }
+
+  # Every column the model names, checked before anything reads one, and the
+  # missing ones reported together with the role each was named for.
+  dataroles <- list(time = model$timeName, id = idname,
+    manifest = model$manifestNames,
+    `time dependent predictor` = model$TDpredNames,
+    `time independent predictor` = model$TIpredNames)
+  missingcols <- unlist(lapply(names(dataroles), function(role) {
+    absent <- setdiff(dataroles[[role]], colnames(datalong))
+    if(length(absent)) paste0(paste(absent, collapse = ', '), ' (', role, ')')
+  }))
+  if(length(missingcols)) stop(call. = FALSE, 'Columns not found in the data: ',
+    paste(missingcols, collapse = '; '), '.')
+  # as.numeric() turns text into NA with only a warning, which would drop those
+  # observations without a word, so a value that does not read as a number is
+  # refused. The check this replaces tested is.numeric(as.numeric(x)), which is
+  # always TRUE.
+  # Columns that pass, numbers held as text or a logical, are used as numbers.
+  for(x in setdiff(unique(unlist(dataroles)), idname)){
+    values <- datalong[[x]]
+    if(is.numeric(values)) next
+    if(is.logical(values)) { datalong[[x]] <- as.numeric(values); next }
+    numbers <- suppressWarnings(as.numeric(as.character(values)))
+    notnumber <- !is.na(values) & is.na(numbers)
+    if(any(notnumber)) stop(call. = FALSE, 'Column ', x, ' holds values that are not numbers: ',
+      paste0("'", utils::head(unique(as.character(values[notnumber])), 3), "'", collapse = ', '),
+      if(length(unique(values[notnumber])) > 3) ', ...', '.')
+    datalong[[x]] <- numbers
+  }
+
+  datalong[order(datalong[[idname]], datalong[[model$timeName]]), , drop = FALSE]
+}
 
 # The arguments `oldfit` was made with, as `ctFit()` takes them: what
 # `ctFitUpdate()` replays, and what `ctScoreTest()` prepares an extended model
@@ -1437,43 +1510,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     datalong <- smoothed$data
   }
 
-  if(!ctstanmodel$timeName %in% colnames(datalong) && !ctstanmodel$continuoustime) {
-    dtable <- data.table(datalong)
-    dtable[,.ObsCount:=1:.N,by=ctstanmodel$id]
-    datalong[[ctstanmodel$timeName]] <- dtable[['.ObsCount']]
-    rm(dtable)
-  }
-
-  # Every column the model names, checked before anything reads one, and the
-  # missing ones reported together with the role each was named for.
-  dataroles <- list(time = ctstanmodel$timeName, id = ctstanmodel$subjectIDname,
-    manifest = ctstanmodel$manifestNames,
-    `time dependent predictor` = ctstanmodel$TDpredNames,
-    `time independent predictor` = ctstanmodel$TIpredNames)
-  missingcols <- unlist(lapply(names(dataroles), function(role) {
-    absent <- setdiff(dataroles[[role]], colnames(datalong))
-    if(length(absent)) paste0(paste(absent, collapse = ', '), ' (', role, ')')
-  }))
-  if(length(missingcols)) stop(call. = FALSE, 'Columns not found in the data: ',
-    paste(missingcols, collapse = '; '), '.')
-  # as.numeric() turns text into NA with only a warning, which would drop those
-  # observations without a word, so a value that does not read as a number is
-  # refused. The check this replaces tested is.numeric(as.numeric(x)), which is
-  # always TRUE.
-  # Columns that pass, numbers held as text or a logical, are used as numbers.
-  for(x in setdiff(unique(unlist(dataroles)), ctstanmodel$subjectIDname)){
-    values <- datalong[[x]]
-    if(is.numeric(values)) next
-    if(is.logical(values)) { datalong[[x]] <- as.numeric(values); next }
-    numbers <- suppressWarnings(as.numeric(as.character(values)))
-    notnumber <- !is.na(values) & is.na(numbers)
-    if(any(notnumber)) stop(call. = FALSE, 'Column ', x, ' holds values that are not numbers: ',
-      paste0("'", utils::head(unique(as.character(values[notnumber])), 3), "'", collapse = ', '),
-      if(length(unique(values[notnumber])) > 3) ', ...', '.')
-    datalong[[x]] <- numbers
-  }
-
-  datalong <- datalong[order(datalong[[ctstanmodel$subjectIDname]],datalong[[ctstanmodel$timeName]]),] #sort by subject, time.
+  datalong <- .ctFitDataCheck(datalong, ctstanmodel)
   if(isTRUE(sameInitialTimes)) datalong <- .ctSameInitialTimes(datalong, ctstanmodel)
 
   if(!'ctStanModel' %in% class(ctstanmodel)) stop('not a ctStanModel object')

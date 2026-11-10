@@ -15,6 +15,7 @@ ctPredict(
   standardisederrors = FALSE,
   realid = TRUE,
   randomEffects = NULL,
+  newdata = NULL,
   ...
 )
 }
@@ -30,7 +31,8 @@ indicating the time step to use for interpolating values. Lower values give a mo
 but take a little more time to calculate.}
 
 \item{subjects}{subject ids to predict for, or NULL (the default) for the first
-subject in the data. With \code{realid=FALSE}, integers denoting subjects from 1 to N.}
+subject in the data, or every subject in \code{newdata} when that is given.
+With \code{realid=FALSE}, integers denoting subjects from 1 to N.}
 
 \item{removeObs}{Logical or integer. If TRUE, observations (but not covariates)
 are withheld from the filter, so only expectations based on parameters and covariates are returned
@@ -58,13 +60,32 @@ subjects, 1 to N, with a message. If FALSE, they are read as that numbering.}
   population parameters alone. Defaults to the innermost id. Ignored for
   other fits.
 
-  Whichever level is chosen, these are the \emph{smoothed} random effects:
-  modes estimated from each subject's whole record, so there is no version
-  of them from before a subject's later data arrived. They also stay fixed
-  however this call changes the rows being filtered, so a prediction with
-  every observation withheld still uses that subject's own random effects
-  -- which is what makes it a prediction for that subject rather than for
-  the average one.}
+  With one level of random effects, left in, each subject's predicted and
+  updated values take its random effects at their posterior given its rows
+  up to each time, and its smoothed values at their mode given its whole
+  record. Otherwise every pass takes the modes from each subject's whole
+  record. Those whole-record modes stay the fit's however this call changes
+  the rows being filtered (selecting subjects, a time grid,
+  \code{removeObs}), so with every observation withheld the smoothed values
+  still use that subject's own random effects.}
+
+\item{newdata}{Optional long format data to predict for instead of the
+data the model was fitted to, with the same columns: an id, a time, the
+manifest variables (\code{NA} where nothing is observed) and the
+predictors. New subjects, such as hypothetical people with chosen covariate
+values; a subject of the fit under other covariate values; or a record cut
+short at some time, to see what was predictable then. The data are put
+under the model the fit ran, with its estimates as they stand: nothing is
+refitted, and the model keeps its structure whatever the number of
+subjects. A subject's predicted (prior) and updated values condition on
+its rows in \code{newdata} up to each time, and its smoothed values on all
+of them. For a fit with random effects that includes the subject's random
+effects, at their posterior given those rows (for a Laplace fit with one
+level of random effects; otherwise as \code{randomEffects} describes), so
+a subject with no observations gets the population's prediction for its
+covariate values. A row at a time with nothing observed gives a prediction
+there; a time dependent predictor left \code{NA} is taken as zero, as
+\code{\link{ctFit}} takes it.}
 
 \item{...}{additional arguments to pass to \code{\link{plot.ctKalmanDF}}.}
 }
@@ -111,5 +132,16 @@ plot1<-ctPredict(ctstantestfit, timerange=c(0,60), timestep=.1, plot=TRUE,
    geom_line() +
    theme_bw()
 
+#New subjects: two hypothetical people differing only in TI1, each
+#observed once at time 0, predicted to time 4.
+newsubjects <- data.frame(id = c('lowTI1', 'highTI1'), time = 0,
+  Y1 = 8, Y2 = 12, TD1 = 0, TI1 = c(-1, 1))
+newsubjects <- rbind(newsubjects,
+  transform(newsubjects, time = 4, Y1 = NA, Y2 = NA))
+k <- ctPredict(ctstantestfit, newdata = newsubjects, timerange = c(0, 4),
+  timestep = .1)
+k[k$Element \%in\% 'yprior' & k$Time == 4, ]
+ctPredict(ctstantestfit, newdata = newsubjects, timerange = c(0, 4),
+  timestep = .1, plot = TRUE, kalmanvec = 'yprior', errorvec = 'ypriorcov')
  }
 }
