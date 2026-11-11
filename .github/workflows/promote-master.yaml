@@ -1,0 +1,128 @@
+# Moves master to juliaFit's tip once that commit has passed its tests, so that
+# remotes::install_github() -- which installs master -- gets the latest tested
+# development commit without anyone pushing master by hand.
+#
+# It wakes when fast-tests, julia-tests or julia-engine finishes on juliaFit,
+# and looks at juliaFit's tip rather than at the commit that woke it: a push
+# cancels the runs of the commit before, so the tip is the only one worth
+# promoting. The tip goes to master when
+#   - fast-tests and julia-tests each passed on the tip itself, and
+#   - julia-engine passed on a juliaFit commit whose inst/julia is the tip's.
+#     That workflow runs only when inst/julia changes, so an R-only commit
+#     after an engine change counts that change's engine run, and waits for it
+#     while it is still going.
+# Otherwise it stops, and the next completion looks again. R-CMD-check (the
+# five-platform matrix) is not a gate: it runs after master moves.
+#
+# What it cannot do:
+#   - Move master over a change to .github/workflows. GITHUB_TOKEN has no
+#     workflows permission, so the run fails and says so; push master by hand
+#     then: git push origin juliaFit:master
+#   - Start master's push workflows. A ref moved with GITHUB_TOKEN triggers
+#     none, so it dispatches R-CMD-check on master itself; the other suites
+#     ran on this commit already.
+#   - Run from juliaFit. GitHub runs a workflow_run trigger from the default
+#     branch's copy of this file only, so a change here takes effect once it
+#     is on master.
+on:
+  workflow_run:
+    workflows: [fast-tests, julia-tests, julia-engine]
+    types: [completed]
+    branches: [juliaFit]
+  workflow_dispatch:
+
+name: promote-master
+
+permissions:
+  contents: write
+  actions: write
+
+# One at a time; a newer wake-up replaces one still waiting, and each looks at
+# the tip as it is when it runs.
+concurrency:
+  group: promote-master
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Fast-forward master to juliaFit if its tip has passed
+        run: |
+          set -euo pipefail
+          say() { echo "$1"; echo "$1" >> "$GITHUB_STEP_SUMMARY"; }
+
+          tip=$(gh api "repos/$REPO/git/ref/heads/juliaFit" --jq .object.sha)
+          master=$(gh api "repos/$REPO/git/ref/heads/master" --jq .object.sha)
+          if [ "$tip" = "$master" ]; then
+            say "master is already at juliaFit (${tip:0:8})."
+            exit 0
+          fi
+          status=$(gh api "repos/$REPO/compare/$master...$tip" --jq .status)
+          case "$status" in
+            ahead) ;;
+            behind)
+              say "juliaFit (${tip:0:8}) is behind master (${master:0:8}); nothing to do."
+              exit 0 ;;
+            *)
+              say "master (${master:0:8}) has commits juliaFit (${tip:0:8}) lacks: $status. Not moving it."
+              exit 1 ;;
+          esac
+
+          # A workflow passed on the tip if any run of it there succeeded:
+          # this repository, branch juliaFit, from a push or a dispatch.
+          state() {
+            W="$1" gh api "repos/$REPO/actions/runs?head_sha=$tip&per_page=100" --jq '
+              [.workflow_runs[] | select(.name == env.W and .head_branch == "juliaFit"
+                and .head_repository.full_name == env.REPO
+                and (.event == "push" or .event == "workflow_dispatch"))]
+              | if (map(.conclusion) | index("success")) != null then "passed"
+                elif (map(.status != "completed") | any) then "running"
+                elif length == 0 then "not run"
+                elif all(.conclusion == "cancelled") then "cancelled"
+                else "failed" end'
+          }
+          fast=$(state fast-tests)
+          rtests=$(state julia-tests)
+
+          # The engine counts as tested where a julia-engine run on juliaFit
+          # passed on the same inst/julia tree as the tip.
+          engine_tree() {
+            gh api "repos/$REPO/contents/inst?ref=$1" --jq '.[] | select(.name == "julia") | .sha'
+          }
+          want=$(engine_tree "$tip")
+          passes=$(gh api "repos/$REPO/actions/workflows/julia-engine.yaml/runs?branch=juliaFit&status=success&per_page=20" --jq '
+              .workflow_runs[] | select(.head_repository.full_name == env.REPO
+                and (.event == "push" or .event == "workflow_dispatch")) | .head_sha')
+          engine="not yet passed on this inst/julia"
+          for sha in $passes; do
+            if [ "$(engine_tree "$sha")" = "$want" ]; then
+              engine="passed"
+              [ "$sha" = "$tip" ] || engine="passed on ${sha:0:8}, same inst/julia"
+              break
+            fi
+          done
+
+          if [ "$fast" != passed ] || [ "$rtests" != passed ] || [ "${engine%% *}" != passed ]; then
+            say "Not moving master to ${tip:0:8} yet: fast-tests $fast, julia-tests $rtests, julia-engine $engine."
+            exit 0
+          fi
+
+          workflows=$(gh api "repos/$REPO/compare/$master...$tip" --jq '[.files[].filename | select(startswith(".github/workflows/"))] | join(" ")')
+          if [ -n "$workflows" ]; then
+            say "${tip:0:8} passed, but it changes $workflows, and GITHUB_TOKEN may not move master over a workflow change. Push it by hand: git push origin juliaFit:master"
+            exit 1
+          fi
+
+          gh api -X PATCH "repos/$REPO/git/refs/heads/master" -f sha="$tip" -F force=false --jq .object.sha > /dev/null
+          say "master moved from ${master:0:8} to ${tip:0:8}: fast-tests and julia-tests passed, julia-engine $engine."
+          gh workflow run check-standard.yaml --repo "$REPO" --ref master
+          say "R-CMD-check dispatched on master."

@@ -7,7 +7,8 @@
 # any more. `fast-tests.yaml` (tier 1) runs the same CRAN-configuration
 # examples and tests on every push in minutes, and `julia-tests.yaml` (tier 2)
 # runs what CRAN never will; this one runs on master, weekly, on a pull request
-# and on demand.
+# and on demand. promote-master.yaml dispatches it each time it moves master,
+# since a ref moved with GITHUB_TOKEN starts no push workflow.
 #
 # Routine runs skip building and checking vignettes: one of them,
 # vignettes/uncertainty.qmd, takes 4-6 minutes of R/Julia execution on its
