@@ -1,10 +1,11 @@
 # Model implied dynamics for a context-dependent model -------------------------
 #
-# `ctDiscretePars()` reports expm(DRIFT * t): the response, over an interval, to
-# a one unit impulse on each process. For a linear model that is exact. For a
-# model whose DRIFT depends on the state it is the response of the model
+# `ctDiscretePars()` reports expm(J * t), J the drift's Jacobian at one point
+# (JAx; DRIFT itself for a linear model): the response, over an interval, to a
+# one unit impulse on each process. For a linear model that is exact. For a
+# model whose dynamics depend on the state it is the response of the model
 # *linearised at one point*, which is a different and weaker claim -- the real
-# system's DRIFT changes as the trajectory moves, and over a long interval it
+# system's Jacobian changes as the trajectory moves, and over a long interval it
 # may change a lot.
 #
 # Two honest alternatives, both of which need the nonlinear system integrated
@@ -22,12 +23,11 @@
 #                engine returns them from ctsem_kalman as `transition` and the R
 #                side does not surface them.
 #
-# The integrator mirrors the engine's own: over each substep the system is
-# treated as affine, dx/dt = A x + b with A the analytic Jacobian JAx at the
-# current state and b whatever makes that consistent with the true derivative
-# there. That is what the extended Kalman filter does between observations, so
-# a trajectory from here matches one the filter would have produced, and it
-# costs one engine call per substep rather than the four an RK4 would.
+# The trajectories are the engine's (`ctsem_state_trajectories`): the filter's
+# own mean step at the state, over substeps of at most `maxstep`, every draw and
+# every trajectory in one call. Integrated here with an engine call per substep
+# of each trajectory, 27 lags of the ctsem book's nonlinear model at 20 draws
+# took over seven minutes.
 
 # Derivative and local Jacobian of the deterministic system at one state.
 .ctNonlinearDerivative <- function(fit, state, tipreds = NULL, nlatent, raw = NULL) {
@@ -45,46 +45,64 @@
   list(derivative = as.numeric(drift %*% state[index]) + cint, jacobian = jacobian)
 }
 
-# One affine step of length dt, exact for the affine system it linearises.
-.ctNonlinearStep <- function(state, derivative, jacobian, dt, nlatent) {
-  index <- seq_len(nlatent)
-  transition <- as.matrix(Matrix::expm(jacobian * dt))
-  # b is the affine offset consistent with the true derivative at this state.
-  offset <- derivative - as.numeric(jacobian %*% state[index])
-  shift <- try(solve(jacobian, (transition - diag(nlatent)) %*% offset), silent = TRUE)
-  # A singular Jacobian means no closed form for the offset's contribution;
-  # over one substep the first order term is a good enough stand-in.
-  if (inherits(shift, 'try-error')) shift <- offset * dt
-  state[index] <- as.numeric(transition %*% state[index]) + as.numeric(shift)
-  state
-}
-
-#' Deterministic trajectory of the (possibly nonlinear) system
+#' Deterministic trajectories of the (possibly nonlinear) system
 #'
 #' @param fit A ctJuliaFit.
-#' @param state Starting state, one entry per latent process.
-#' @param times Times at which to report the state. Must start at 0.
+#' @param raw Raw parameters, npar by K: one column per trajectory.
+#' @param starts Starting states, nlatent by K.
+#' @param times Times at which to report the states, sorted, the first 0.
 #' @param tipreds Time independent predictor values, or NULL for population.
 #' @param maxstep Largest integration substep.
-#' @return length(times) by nlatent matrix.
+#' @return length(times) by nlatent by K array; NaN from where a trajectory
+#'   leaves the finite reals.
 #' @noRd
-.ctNonlinearTrajectory <- function(fit, state, times, tipreds = NULL, maxstep = 0.1,
-  raw = NULL) {
+.ctNonlinearTrajectories <- function(fit, raw, starts, times, tipreds = NULL,
+  maxstep = 0.1) {
+  raw <- as.matrix(raw)
+  starts <- as.matrix(starts)
+  storage.mode(raw) <- storage.mode(starts) <- "double"
+  module <- .ctJuliaModule(.ctBackendSpec(fit)$project)
+  arguments <- list(.ctJuliaObjective(fit), .ctJuliaPut(raw), .ctJuliaPut(starts),
+    .ctJuliaVector(as.numeric(times)), maxstep = as.numeric(maxstep)[1L])
+  # Passed only when non-empty: JuliaConnectoR hangs on a zero-length vector.
+  if (length(tipreds)) arguments$tipreds <- .ctJuliaVector(as.numeric(tipreds))
+  out <- .ctBackendJuliaValue(do.call(module$ctsem_state_trajectories, arguments))
+  array(as.numeric(out), c(length(times), nrow(starts), ncol(raw)))
+}
+
+#' Model implied regressions by simulation, for many draws at once
+#'
+#' For each draw, the response to a shock on each process as a difference from
+#' that draw's unperturbed trajectory (see \code{.ctNonlinearImpulseResponse}),
+#' every trajectory of every draw integrated in one engine call.
+#'
+#' @param raw Raw parameters, npar by D.
+#' @param shocks nlatent by nlatent by D: column j of slice d the perturbation
+#'   applied for impulse j under draw d.
+#' @return D by length(times) by nlatent by nlatent array,
+#'   [draw, time, response, impulse].
+#' @noRd
+.ctNonlinearImpulseResponses <- function(fit, state, times, raw, shocks,
+  tipreds = NULL, maxstep = 0.1) {
   nlatent <- .ctFitNlatent(fit)
   times <- sort(unique(c(0, as.numeric(times))))
-  out <- matrix(NA_real_, length(times), nlatent)
-  out[1L, ] <- state[seq_len(nlatent)]
-  current <- state
-  for (k in seq_along(times)[-1L]) {
-    span <- times[k] - times[k - 1L]
-    nsteps <- max(1L, ceiling(span / maxstep))
-    dt <- span / nsteps
-    for (step in seq_len(nsteps)) {
-      local <- .ctNonlinearDerivative(fit, current, tipreds, nlatent, raw)
-      current <- .ctNonlinearStep(current, local$derivative, local$jacobian, dt, nlatent)
-      if (!all(is.finite(current[seq_len(nlatent)]))) return(out)
+  raw <- as.matrix(raw)
+  ndraws <- ncol(raw)
+  start <- as.numeric(state[seq_len(nlatent)])
+  # Per draw, its baseline then one trajectory per impulse.
+  width <- nlatent + 1L
+  starts <- matrix(start, nlatent, ndraws * width)
+  for (d in seq_len(ndraws)) {
+    starts[, (d - 1L) * width + 1L + seq_len(nlatent)] <- start + shocks[, , d]
+  }
+  paths <- .ctNonlinearTrajectories(fit, raw[, rep(seq_len(ndraws), each = width),
+    drop = FALSE], starts, times, tipreds, maxstep)
+  out <- array(NA_real_, c(ndraws, length(times), nlatent, nlatent))
+  for (d in seq_len(ndraws)) {
+    baseline <- paths[, , (d - 1L) * width + 1L]
+    for (impulse in seq_len(nlatent)) {
+      out[d, , , impulse] <- paths[, , (d - 1L) * width + 1L + impulse] - baseline
     }
-    out[k, ] <- current[seq_len(nlatent)]
   }
   out
 }
@@ -115,16 +133,13 @@
   nlatent <- .ctFitNlatent(fit)
   times <- sort(unique(c(0, as.numeric(times))))
   if (is.null(shock)) shock <- diag(nlatent)
-  baseline <- .ctNonlinearTrajectory(fit, state, times, tipreds, maxstep, raw)
-  out <- array(NA_real_, dim = c(length(times), nlatent, nlatent))
-  for (impulse in seq_len(nlatent)) {
-    perturbed <- state
-    perturbed[seq_len(nlatent)] <- perturbed[seq_len(nlatent)] + shock[, impulse]
-    out[, , impulse] <- .ctNonlinearTrajectory(fit, perturbed, times, tipreds,
-      maxstep, raw) - baseline
-  }
-  dimnames(out) <- list(NULL, .ctFitModelObject(fit)$latentNames,
-    .ctFitModelObject(fit)$latentNames)
+  if (is.null(raw)) raw <- fit$estimate$raw
+  out <- .ctNonlinearImpulseResponses(fit, state, times, raw = matrix(raw),
+    shocks = array(shock, c(nlatent, nlatent, 1L)), tipreds = tipreds,
+    maxstep = maxstep)
+  out <- array(out[1L, , , ], c(length(times), nlatent, nlatent))
+  latentNames <- .ctFitModelObject(fit)$latentNames[seq_len(nlatent)]
+  dimnames(out) <- list(NULL, latentNames, latentNames)
   out
 }
 
@@ -169,16 +184,50 @@
   list(shock = shock * magnitude, divisor = divisor * magnitude, sd = sdv)
 }
 
+# Each draw's impulse responses from `state`, each divided as its shock says
+# (`.ctNonlinearShockSpec()`): draws x length(times) x nlatent x nlatent, NA for
+# a draw with no stationary variance at the state, which attribute
+# 'nonstationary' counts. Two engine calls whatever the number of draws: one
+# for every draw's matrices at the state, one for every trajectory.
+.ctNonlinearDrawResponses <- function(fit, draws, state, times, tipreds = NULL,
+  impulseType = 'unit', standardise = FALSE, magnitude = 1, maxstep = 0.1) {
+  nlatent <- .ctFitNlatent(fit)
+  ndraws <- nrow(draws)
+  out <- array(NA_real_, c(ndraws, length(times), nlatent, nlatent))
+  # Per draw: the shock's own scale is a function of the parameters, so it
+  # moves with them rather than being fixed from the point estimate.
+  mats <- .ctBackendPopArrays(fit, samples = draws, tipreds = tipreds,
+    state = state)
+  slice <- function(a, d) matrix(a[d, , ], dim(a)[2L], dim(a)[3L])
+  specs <- lapply(seq_len(ndraws), function(d) .ctNonlinearShockSpec(
+    list(asymDIFFUSIONcov = slice(mats$pop_asymDIFFUSIONcov, d),
+      DIFFUSIONcov = slice(mats$pop_DIFFUSIONcov, d)),
+    nlatent, impulseType, standardise, magnitude))
+  ok <- which(!vapply(specs, is.null, logical(1)))
+  if (length(ok)) {
+    shocks <- vapply(specs[ok], function(s) as.matrix(s$shock),
+      matrix(0, nlatent, nlatent))
+    response <- .ctNonlinearImpulseResponses(fit, state, times,
+      raw = t(draws[ok, , drop = FALSE]),
+      shocks = array(shocks, c(nlatent, nlatent, length(ok))),
+      tipreds = tipreds, maxstep = maxstep)
+    for (j in seq_along(ok)) for (k in seq_along(times)) {
+      out[ok[j], k, , ] <- response[j, k, , ] / specs[[ok[j]]]$divisor
+    }
+  }
+  attr(out, 'nonstationary') <- ndraws - length(ok)
+  out
+}
+
 # ctDiscretePars(method='simulate') ------------------------------------------
 #
 # Same output shape as the linearised path -- [sample, subject, time, row, col]
 # -- so ctDiscreteParsPlot and everything downstream is unchanged.
 #
-# One trajectory pair per posterior draw per process, each of many substeps,
-# each substep an engine call. That is thousands of calls where the linearised
-# path does one matrix exponential, so the default draw count is small and
-# stated rather than silently inherited from a plotting argument sized for a
-# cheap computation.
+# One trajectory pair per posterior draw per process, each of many substeps.
+# Far more work than the linearised path's one matrix exponential a lag, so the
+# default draw count is small and stated rather than silently inherited from a
+# plotting argument sized for a cheap computation.
 .ctDiscreteParsSimulate <- function(fit, times, state = 'asymptotic',
   nsamples = 10, maxstep = 0.1, quiet = FALSE, impulseType = 'unit',
   standardise = FALSE, magnitude = 1) {
@@ -198,25 +247,18 @@
   }
   if (!quiet) message('Simulating the nonlinear impulse response from ',
     resolved$label, ', over ', nsamples, ' draw', if (nsamples > 1) 's' else '',
-    '. This integrates the system rather than exponentiating a frozen DRIFT, ',
-    'so it is much slower than method="linearise".')
+    '. This integrates the system rather than exponentiating its Jacobian, ',
+    'so it is slower than method="linearise".')
 
   times <- sort(unique(c(0, as.numeric(times))))
   nlatent <- .ctFitNlatent(fit)
-  out <- array(NA_real_, dim = c(nsamples, 1L, length(times), nlatent, nlatent))
-  nonstationary <- 0L
-  for (draw in seq_len(nsamples)) {
-    # Per draw: the shock's own scale is a function of the parameters, so it
-    # moves with them rather than being fixed from the point estimate.
-    mats <- suppressMessages(ctBackendParMatrices(fit, raw = draws[draw, ],
-      state = start, trim = FALSE))
-    spec <- .ctNonlinearShockSpec(mats, nlatent, impulseType, standardise,
-      magnitude)
-    if (is.null(spec)) { nonstationary <- nonstationary + 1L; next }
-    response <- .ctNonlinearImpulseResponse(fit, start, times, maxstep = maxstep,
-      raw = draws[draw, ], shock = spec$shock)
-    for (k in seq_along(times)) out[draw, 1L, k, , ] <- response[k, , ] / spec$divisor
-  }
+  responses <- .ctNonlinearDrawResponses(fit, draws, start, times,
+    impulseType = impulseType, standardise = standardise, magnitude = magnitude,
+    maxstep = maxstep)
+  # [draw, time, row, col] to [draw, subject, time, row, col]: a unit dimension
+  # in second place leaves the order of the values as it is.
+  out <- array(responses, c(nsamples, 1L, length(times), nlatent, nlatent))
+  nonstationary <- attr(responses, 'nonstationary')
   if (nonstationary > 0 && !quiet) message(nonstationary, ' of ', nsamples,
     ' draws had no stationary variance at this state, so no shock magnitude ',
     'could be derived from the model; those draws are NA.')
@@ -260,6 +302,8 @@
     draws <- draws[round(seq(1, nrow(draws), length.out = nsamples)), , drop = FALSE]
   }
   times <- sort(unique(c(0, as.numeric(times))))
+  # A discrete time model steps whole time units, as ctDiscretePars() reads it.
+  if (!isTRUE(.ctFitModelObject(fit)$continuoustime)) times <- unique(round(times))
   nlatent <- length(latentNames)
   out <- array(NA_real_, dim = c(nsamples, length(values), length(times),
     nlatent, nlatent))
@@ -279,17 +323,8 @@
         signif(values[level], 3), '; its dynamics are not shown.')
       next
     }
-    for (draw in seq_len(nsamples)) {
-      mats <- suppressMessages(ctBackendParMatrices(fit, raw = draws[draw, ],
-        state = state, tipreds = tipreds, trim = FALSE))
-      spec <- .ctNonlinearShockSpec(mats, nlatent, impulseType, standardise)
-      if (is.null(spec)) next
-      response <- .ctNonlinearImpulseResponse(fit, state, times,
-        tipreds = tipreds, raw = draws[draw, ], shock = spec$shock)
-      for (k in seq_along(times)) {
-        out[draw, level, k, , ] <- response[k, , ] / spec$divisor
-      }
-    }
+    out[, level, , , ] <- .ctNonlinearDrawResponses(fit, draws, state, times,
+      tipreds = tipreds, impulseType = impulseType, standardise = standardise)
   }
 
   dimnames(out) <- list(Sample = seq_len(nsamples), Subject = seq_along(values),

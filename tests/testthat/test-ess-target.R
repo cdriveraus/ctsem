@@ -153,3 +153,36 @@ test_that("divergences at the correlation bound are reported and leave the verdi
   expect_false(grepl("couple", note, fixed = TRUE))
   expect_identical(ctsem:::.ctSampleBoundRankNote(diag(5L, 5L)), "")
 })
+
+test_that("a sampler with no R-hat is not judged or reported by one", {
+  # Tempered SMC reports no R-hat (rhat_target Inf, every R-hat NA). After an
+  # N = 1 sampled fit, summary() said the chains "have not converged, so any
+  # estimate with an R-hat above Inf is not a posterior summary", and the
+  # divergence warning named a population sd the model did not have.
+  smc <- list(sampler = "smc", chains = 97L, draws = 25L, warmup = 0L,
+    divergent = 72L, rhat = c(a = NaN, b = NaN), ess = c(a = 300, b = 250),
+    ess_tail = c(a = 280, b = 260), saturated = 0L, max_depth = 10L,
+    unidentified = character(0), ess_target = 200, rhat_target = Inf,
+    stepsize = 0.5, ebfmi = 1, nstages = 3L, nparticles = 97L)
+  v <- ctsem:::.ctSampleDiagnosis(smc)
+  expect_false(v$converged)
+  expect_false(any(grepl("R-hat", v$problems)))
+  expect_true(ctsem:::.ctSampleDiagnosis(utils::modifyList(smc,
+    list(divergent = 0L)))$converged)
+  expect_warning(ctsem:::.ctSampleWarn(smc, randomeffects = FALSE),
+    "could not reach. Raising target_accept", fixed = TRUE)
+  expect_warning(ctsem:::.ctSampleWarn(smc), "population standard deviation")
+  # The summary's line names the divergences, not an R-hat it does not have.
+  fit <- list(sample = smc,
+    estimate = list(rawposterior = matrix(0, 97L * 25L, 2L)))
+  section <- data.frame(Rhat = c(NA, NA), n_eff = c(300, 250),
+    row.names = c("a", "b"))
+  note <- ctsem:::.ctBackendSampleNote(fit, list(section), 97L)
+  expect_false(grepl("R-hat", note))
+  expect_match(note, "72 divergent transitions. The draws may under-represent",
+    fixed = TRUE)
+  # Its print shows effective sizes without an R-hat column.
+  printed <- capture.output(print(structure(smc, class = "ctSampleDiagnostics")))
+  expect_true(any(grepl("smallest effective sample size", printed)))
+  expect_false(any(grepl("rhat", printed)))
+})

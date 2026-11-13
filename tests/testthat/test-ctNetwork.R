@@ -266,7 +266,12 @@ test_that('a state dependent fit is reported once, named, and captioned', {
   expect_equal(cells$matrix, 'DRIFT')
   expect_equal(cells$kind, 'state')
 
-  expect_message(net <- ctNetwork(fit, dt = 1), 'linearisation')
+  # A stan fit reports no Jacobians, so its edges are the cells' values at the
+  # point, and it says so rather than calling them the linearisation (a julia
+  # fit's are: test-nonlinear-reporting-julia.R).
+  said <- 'these edges use their values at'
+  expect_message(net <- ctNetwork(fit, dt = 1), said, fixed = TRUE)
+  expect_false(attr(net, 'jacobian'))
   # Named in the same words as ctSummaryMatrices, summary and ctSubjectPars,
   # which is the whole reason .ctResolveState returns a label at all.
   expect_message(ctNetwork(fit, dt = 1), ctsem:::.ctContextPopLabel, fixed = TRUE)
@@ -280,16 +285,17 @@ test_that('a state dependent fit is reported once, named, and captioned', {
 
   # Once, not once per matrix and not once per interval.
   msgs <- testthat::capture_messages(ctNetwork(fit, dt = 1))
-  expect_equal(sum(grepl('linearisation', msgs)), 1)
+  expect_equal(sum(grepl(said, msgs, fixed = TRUE)), 1)
   msgs <- testthat::capture_messages(ctNetworkPlot(fit, dt = c(.5, 2),
     networks = 'temporal'))
-  expect_equal(sum(grepl('linearisation', msgs)), 1)
+  expect_equal(sum(grepl(said, msgs, fixed = TRUE)), 1)
 
   expect_silent(ctNetwork(fit, dt = 1, quiet = TRUE))
 
   # The figure carries the caveat, because a saved plot outlives the session.
   g <- suppressMessages(ctNetworkPlot(fit, dt = 1))
-  expect_true(grepl('linearisation', g$labels$subtitle))
+  expect_true(grepl("edges use the cells' values at", g$labels$subtitle,
+    fixed = TRUE))
   expect_true(grepl(ctsem:::.ctContextPopLabel, g$labels$subtitle, fixed = TRUE))
 })
 

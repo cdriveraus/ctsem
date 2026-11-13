@@ -207,26 +207,38 @@
 # The kinds come from .ctContextKindLabels and the evaluation point from the
 # label .ctResolveState() returns, so a network reports where it was evaluated in
 # the same words as summary(), ctSummaryMatrices() and ctSubjectPars().
-.ctNetworkStateNote <- function(cells, label){
+#
+# `jacobian` FALSE for a stan fit, whose edges are the cells' values at the
+# point: it reports no Jacobians, and a cell nonlinear in the state has a value
+# there that is no slope.
+.ctNetworkStateNote <- function(cells, label, jacobian = TRUE){
   if(is.null(cells) || !nrow(cells)) return(NULL)
   kinds <- paste0(unique(unname(.ctContextKindLabels[unique(cells$kind)])),
     collapse = ' and ')
   paste0('Cells of ',
     paste0(.ctContextReportableMatrices(cells), collapse = ', '),
-    ' depend on the ', kinds, ', so these edges are a linearisation: they hold ',
-    'at ', label, ', and the network is different elsewhere in the state space. ',
+    ' depend on the ', kinds, ', so ',
+    if(isFALSE(jacobian)) paste0('these edges use their values at ', label,
+      ', which for a cell nonlinear in the state is not the model linearised there') else
+      paste0('these edges are a linearisation: they hold at ', label),
+    ', and the network is different elsewhere in the state space. ',
     'See ctPhasePortrait() and ctStateDependencePlot() for the variation itself.')
 }
+
+# The words a caption and a print use for that point.
+.ctNetworkEdgeWords <- function(jacobian)
+  if(isFALSE(jacobian)) ": edges use the cells' values at " else
+    ': edges are the linearisation at '
 
 # What a figure has to carry when it leaves the session, which is the one thing a
 # reader cannot recover from the picture: where it was evaluated. Shorter than
 # the message, because a subtitle competes with the graph for attention, and
 # absent entirely for a linear system, which has nothing to qualify.
-.ctNetworkStateCaption <- function(cells, label){
+.ctNetworkStateCaption <- function(cells, label, jacobian = TRUE){
   if(is.null(cells) || !nrow(cells)) return(NULL)
   paste0('State dependent ',
     paste0(.ctContextReportableMatrices(cells), collapse = '/'),
-    ': edges are the linearisation at ', label, '.')
+    .ctNetworkEdgeWords(jacobian), label, '.')
 }
 
 # The specification path's counterpart: those cells were omitted, not evaluated,
@@ -327,6 +339,26 @@
       latentNames = m$latentNames[seq_len(nl)],
       manifestNames = m$manifestNames[seq_len(nm)],
       continuoustime = isTRUE(m$continuoustime), source = 'fit')
+    # The edges are the model linearised at the point: the drift's and the
+    # measurement's Jacobians there (JAx, Jy), which are DRIFT and LAMBDA
+    # wherever no cell reads the state. A cell nonlinear in the state has a
+    # value there that is no slope ('a + b*Y' in Y's column has slope
+    # a + 2 b Y). Summarised over the draws as ctSummaryMatrices() summarises
+    # the rest. A stan fit reports no Jacobians; its edges are the cells'
+    # values there, and its messages say so.
+    out$jacobian <- FALSE
+    if(inherits(x, 'ctJuliaFit')){
+      pop <- .ctBackendPopArrays(x, state = resolved$state)
+      dots <- list(...)
+      calc <- if(is.null(dots$calcfunc)) stats::quantile else dots$calcfunc
+      calcargs <- if(is.null(dots$calcfuncargs)) list(probs = .5) else dots$calcfuncargs
+      collapse <- function(a, nr, nc) matrix(apply(
+        a[, seq_len(nr), seq_len(nc), drop = FALSE], c(2, 3),
+        function(v) as.numeric(do.call(calc, c(list(v), calcargs)))), nr, nc)
+      if(!is.null(pop$pop_JAx)) out$DRIFT <- collapse(pop$pop_JAx, nl, nl)
+      if(!is.null(pop$pop_Jy)) out$LAMBDA <- collapse(pop$pop_Jy, nm, nl)
+      out$jacobian <- !is.null(pop$pop_JAx)
+    }
     out$stateLabel <- resolved$label
     out$stateDependent <- .ctNetworkStateDependentCells(x)
   } else stop(call. = FALSE, paste0('ctNetwork() needs a ctModel(type="ct"/"dt") ',
@@ -409,7 +441,13 @@
 #' network. What a fit reports is the system linearised at one point of the
 #' state space, so the graph drawn from it is that linearisation's graph:
 #' somewhere else the edge weights differ, and for a strongly nonlinear model so
-#' does which edges are there at all.
+#' does which edges are there at all. The temporal and contemporaneous networks
+#' then come from the drift's Jacobian at that point (\code{JAx}) and the
+#' measurement network from the measurement's (\code{Jy}), which differ from
+#' DRIFT and LAMBDA there where a cell is nonlinear in the state: a cell
+#' \code{a + b*Y} in the column of process \code{Y} has slope \code{a + 2*b*Y}.
+#' A stan fit reports no Jacobians, so its edges are the cells' values at
+#' \code{T0MEANS}, and it says so.
 #'
 #' When any such cell is present, \code{ctNetwork} says so once, names the
 #' evaluation point, and records the cells in
@@ -469,7 +507,9 @@
 #'     (\code{'latent'} or \code{'manifest'}).}
 #'   \item{\code{DRIFT}, \code{DIFFUSIONcov}, \code{asymDIFFUSIONcov},
 #'     \code{innovation}}{The matrices the networks were derived from, so every
-#'     number above can be checked.}
+#'     number above can be checked. On a julia fit \code{DRIFT} is the drift's
+#'     Jacobian at the evaluation point, DRIFT itself where no cell reads the
+#'     state (see the section on state dependent models).}
 #' }
 #' With attributes \code{dt}, \code{standardise}, \code{impulseType},
 #'   \code{threshold}, \code{networks}, \code{continuoustime}, \code{source},
@@ -581,6 +621,7 @@ ctNetwork <- function(x, dt = 1, state = NULL, standardise = TRUE,
   attributes(out)$continuoustime <- inputs$continuoustime
   attributes(out)$source <- inputs$source
   attributes(out)$stateLabel <- inputs$stateLabel
+  attributes(out)$jacobian <- inputs$jacobian
   attributes(out)$stateDependent <- inputs$stateDependent
   attributes(out)$omitted <- inputs$omitted
   class(out) <- c('ctNetwork', 'list')
@@ -589,7 +630,8 @@ ctNetwork <- function(x, dt = 1, state = NULL, standardise = TRUE,
   # specification path's messages does not also lose this one -- and so that
   # ctNetworkPlot() over a vector of dt says it once rather than per interval.
   if(!quiet){
-    note <- .ctNetworkStateNote(inputs$stateDependent, inputs$stateLabel)
+    note <- .ctNetworkStateNote(inputs$stateDependent, inputs$stateLabel,
+      inputs$jacobian)
     if(!is.null(note)) message(note)
   }
 
@@ -618,7 +660,8 @@ print.ctNetwork <- function(x, ...){
   statedep <- attributes(x)$stateDependent
   if(!is.null(statedep) && nrow(statedep)) cat('state dependent ',
     paste0(.ctContextReportableMatrices(statedep), collapse = '/'),
-    ': edges are the linearisation at ', attributes(x)$stateLabel, '\n', sep = '')
+    .ctNetworkEdgeWords(attributes(x)$jacobian), attributes(x)$stateLabel, '\n',
+    sep = '')
   invisible(x)
 }
 
@@ -881,7 +924,7 @@ ctNetworkPlot <- function(x, dt = 1, state = NULL,
   # the plot has been saved. Nothing is added for a linear system, which has
   # nothing to qualify.
   subtitle <- .ctNetworkStateCaption(attributes(nets[[1]])$stateDependent,
-    attributes(nets[[1]])$stateLabel)
+    attributes(nets[[1]])$stateLabel, attributes(nets[[1]])$jacobian)
   if(is.null(subtitle)) subtitle <- .ctNetworkOmittedCaption(
     attributes(nets[[1]])$omitted)
 

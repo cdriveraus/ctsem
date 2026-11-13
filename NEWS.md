@@ -35,6 +35,7 @@ A major release: ctsem gains a second estimation engine, written in Julia, which
 - `uncertainty='is'` samples adaptively, finding skewed and curved tails the curvature misses, and warns when the Pareto k of its weights exceeds 0.7; its effective sample target is now 200, `optimcontrol$isESS=100` for the previous.
 - `ctDiscretePars()`, `ctPredictTIP()`, `ctExtract()` and `ctKalmanArray()` take subjects as the ids in the data, as `ctPredict()` does; `realid=FALSE` for the previous behaviour.
 - `ctDiscretePars()`'s `observational` is deprecated in favour of `impulseType`: `'unit'` replaces `observational=FALSE` and `'observed'` replaces `observational=TRUE`.
+- For a model whose dynamics depend on the state, `ctDiscretePars()` on a julia fit exponentiates the drift's Jacobian at the evaluation point, the model linearised there, rather than DRIFT's value there; `ctSummaryMatrices(fit, state=)$DRIFT` is the latter.
 - `ctFit()`'s `iter`, `chains` and `control` are deprecated in favour of entries of `sampleControl`, and still honoured with a warning.
 - `ctModelCoverage_check()` is renamed `ctCoverageCheck()`, with camelCase arguments; the old name is defunct.
 - `ctCheckFit()` is defunct; `ctPostPredPlots()` and `ctFitCheckCov()` replace it.

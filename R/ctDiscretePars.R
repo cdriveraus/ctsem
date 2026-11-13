@@ -121,14 +121,19 @@ ctStanParnames <- ctRawParnames
 #'\code{backend='julia'} and \code{subjects='popmean'}. For a linear model the
 #'argument makes no difference, since no cell depends on the state.
 #'@param method How the interval regressions are obtained. \code{'linearise'}
-#'(the default) exponentiates the DRIFT matrix, \code{expm(DRIFT*t)} -- exact
-#'for a linear model, and for a model whose DRIFT depends on the state, the
-#'response of the model linearised at \code{state}. \code{'simulate'}
+#'(the default) exponentiates the drift's Jacobian at the evaluation point,
+#'\code{expm(J*t)} with \code{J} the model's \code{JAx}: the DRIFT matrix itself
+#'for a linear model, where it is exact, and for a model whose dynamics depend
+#'on the state, the response of the model linearised at \code{state}. Where a
+#'cell is nonlinear in the state the two differ: a DRIFT cell \code{a + b*Y}
+#'in the column of process \code{Y} is \code{a + b*Y} there, and contributes
+#'\code{a + 2*b*Y} to the Jacobian. A stan fit carries no Jacobian, and
+#'exponentiates DRIFT as evaluated at \code{T0MEANS}. \code{'simulate'}
 #'integrates the nonlinear system from \code{state} and from \code{state} plus
 #'one unit on each process and differences the trajectories, which is the actual
 #'model implied regression; it starts at 1 and decays to 0 for a stable process,
 #'and reduces exactly to \code{'linearise'} when no cell depends on the state.
-#'\code{'simulate'} requires \code{backend='julia'} and is far slower, so it
+#'\code{'simulate'} requires \code{backend='julia'} and is slower, so it
 #'uses \code{nsamples} posterior draws with a small default.
 #'@param ... additional plotting arguments to control \code{\link{ctDiscreteParsPlot}}
 #'@examples
@@ -283,15 +288,28 @@ ctDiscretePars<-function(fit, subjects='popmean',
 
   samples <- sample(1:dim(e[['pop_DRIFT']])[1],nsamples)
 
-  # browser()
+  # What is exponentiated is the drift's Jacobian at the evaluation point, JAx:
+  # the model linearised there. It is DRIFT itself wherever no cell reads the
+  # state. Where one does, DRIFT's value there is not the linearisation: a cell
+  # 'YtoX + QuadYtoX * Y' in DRIFT[X, Y] is YtoX + QuadYtoX at Y = 1, its
+  # Jacobian entry YtoX + 2 QuadYtoX; and the same dynamics written with the
+  # square in CINT have another DRIFT and the same Jacobian. The Jacobian is
+  # also what standardise's asymDIFFUSIONcov is solved over, and what
+  # method='simulate' tends to at a fixed point as its shock shrinks. A stan
+  # fit carries no Jacobian, so it exponentiates DRIFT as evaluated there, and
+  # says so.
+  jacobian <- !is.null(e$pop_JAx) &&
+    ('popmean' %in% subjects || !is.null(e$subj_JAx))
+
   for(matname in c('DRIFT','DIFFUSIONcov','asymDIFFUSIONcov')){ #,'CINT','T0MEANS', 'T0VAR','MANIFESTMEANS',if(!is.null(e$MANIFESTVAR)) 'MANIFESTVAR','LAMBDA', if(!is.null(e$TDPREDEFFECT)) 'TDPREDEFFECT')){
-    if('popmean' %in% subjects || is.null(e[[paste0('subj_',matname)]])){
-      ctpars[[matname]] <- e[[paste0('pop_',matname)]][samples,,,drop=FALSE]
+    from <- if(matname %in% 'DRIFT' && jacobian) 'JAx' else matname
+    if('popmean' %in% subjects || is.null(e[[paste0('subj_',from)]])){
+      ctpars[[matname]] <- e[[paste0('pop_',from)]][samples,,,drop=FALSE]
     } else {
-      if(dim(e[[paste0('subj_',matname)]])[2] != .ctFitNsubjects(fit)){ #if we computed subject parameters for only the specified subjects
+      if(dim(e[[paste0('subj_',from)]])[2] != .ctFitNsubjects(fit)){ #if we computed subject parameters for only the specified subjects
         parsubjects <- 1:length(subjects)
       } else parsubjects <- subjects
-      ctpars[[matname]] <- e[[paste0('subj_',matname)]][samples,parsubjects,,,drop=FALSE]
+      ctpars[[matname]] <- e[[paste0('subj_',from)]][samples,parsubjects,,,drop=FALSE]
       # ctpars[[matname]]<-  array(ctpars[[matname]],dim=c(prod(dim(ctpars[[matname]])[1:2]),dim(ctpars[[matname]])[-1:-2]))
     }
     # ctpars[[matname]] <- ctpars[[matname]][sample(1:dim(ctpars[[matname]])[1],nsamples),,,drop=FALSE]
@@ -307,9 +325,13 @@ ctDiscretePars<-function(fit, subjects='popmean',
   # figure it produced still left the session with no record of the point.
   stateLabel <- if(!'popmean' %in% subjects) .ctContextSubjectLabel else
     if(is.null(state)) .ctContextPopLabel else .ctResolveState(fit,state)$label
-  .ctContextMessage(fit, stateLabel,
-    paste0("expm(DRIFT*t) is therefore the transition of the model linearised ",
-      "there, not the nonlinear system's own interval regression."))
+  .ctContextMessage(fit, stateLabel, if(jacobian)
+    paste0("expm(JAx*t), with JAx the drift's Jacobian there, is therefore the ",
+      "transition of the model linearised there, not the nonlinear system's own ",
+      "interval regression (method='simulate').") else
+    paste0("expm(DRIFT*t) uses DRIFT as evaluated there, which for a cell ",
+      "nonlinear in the state is not the model linearised there, nor the ",
+      "nonlinear system's own interval regression."))
   if(standardise) .ctContextStandardiseMessage(fit, stateLabel)
 
   out <- ctDiscreteParsDrift(ctpars,times, impulseType, standardise, cov=cov,discreteInput = ctm$continuoustime==FALSE)
@@ -321,6 +343,7 @@ ctDiscretePars<-function(fit, subjects='popmean',
   attributes(out)$cov <- cov
   attributes(out)$standardise <- standardise
   attributes(out)$method <- 'linearise'
+  attributes(out)$jacobian <- jacobian
   class(out) <- c('ctDiscretePars', 'array')
   attributes(out)$stateLabel <- stateLabel
   out <- .ctContextAttach(out, fit)
@@ -687,19 +710,22 @@ ctDiscreteParsPlot<- function(x,indices='all',
   }else title=title
 
   # A state dependent object's figure has to carry its evaluation point. These
-  # curves are expm() of a DRIFT that was linearised somewhere, and which
-  # somewhere is not recoverable from the picture; ctDiscretePars() attached the
-  # cells and the label for exactly this and nothing downstream read them.
+  # curves are the model linearised somewhere (expm of the drift's Jacobian
+  # there; of DRIFT as evaluated there on stan, which has no Jacobian), or
+  # simulated from somewhere, and which somewhere is not recoverable from the
+  # picture; ctDiscretePars() attached the cells and the label for exactly this.
   # Silent for a linear model, whose DRIFT is the same everywhere.
   .cells <- attributes(x)$contextDependent
   .conditional <- !is.null(.cells) && nrow(.cells) > 0 &&
     any(.cells$kind %in% .ctContextProblemKinds)
+  .how <- if(identical(attributes(x)$method, 'simulate')) ': simulated from ' else
+    if(isFALSE(attributes(x)$jacobian)) ': DRIFT evaluated at ' else ': linearised at '
   subtitle <- if(isTRUE(.conditional) && !is.null(attributes(x)$stateLabel))
     paste0('State dependent ',
       paste0(.ctContextReportableMatrices(
         .cells[.cells$kind %in% .ctContextProblemKinds, , drop = FALSE]),
         collapse = '/'),
-      ': linearised at ', attributes(x)$stateLabel, '.') else NULL
+      .how, attributes(x)$stateLabel, '.') else NULL
 
   nlatent=dim(x)[5]
 

@@ -353,9 +353,32 @@ its own here.
 @inline function _ctsem_state_substep!(ws, pars, all_params, sp, tdpreds, tipreds,
     time, h, subject::Int, t::Int, transition::Symbol, qfactor, z, at::Int,
     ::Type{T}) where {T}
-    n = ws.state_dim
     indices = ws.diffusion_state_indices
     k = length(indices)
+    _ctsem_state_mean_substep!(ws, pars, all_params, sp, tdpreds, tipreds, time, h,
+        subject, t, transition)
+    if transition === :euler && ws.continuous_time
+        _ctsem_add_process_noise!(ws.state, indices, qfactor, ws.bufferQ.out, z, at, k,
+            sqrt(h), T)
+    else
+        _ctsem_add_process_noise!(ws.state, indices, qfactor, ws.discrete_ca.dDIFFUSION,
+            z, at, k, one(T), T)
+    end
+    return at + k
+end
+
+"""
+    _ctsem_state_mean_substep!(ws, pars, all_params, sp, tdpreds, tipreds, time, h,
+                               subject, t, transition)
+
+`_ctsem_state_substep!` without its noise: the predict group at the state, the
+diffusion's covariance (which the noise reads), and the mean step. The step a
+noise-free trajectory takes (`ctsem_state_trajectories`).
+"""
+@inline function _ctsem_state_mean_substep!(ws, pars, all_params, sp, tdpreds, tipreds,
+    time, h, subject::Int, t::Int, transition::Symbol)
+    n = ws.state_dim
+    indices = ws.diffusion_state_indices
     apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices,
         sp.predict_transforms, CTSEMRowContext(ws.state, pars, tdpreds, tipreds,
             time, h, subject, t))
@@ -366,9 +389,7 @@ its own here.
         for i in 1:n
             ws.state[i] += (ws.bufferQ.r[i] + pars.CINT[i]) * h
         end
-        _ctsem_add_process_noise!(ws.state, indices, qfactor, ws.bufferQ.out, z, at, k,
-            sqrt(h), T)
-        return at + k
+        return nothing
     end
     if ws.continuous_time
         _compute_discrete_time_form!(ws.discrete_ca, ws.bufferQ, ws.bufferQ.out, pars, h,
@@ -380,10 +401,98 @@ its own here.
             ws.state_dim)
     end
     _ctsem_deterministic_step!(ws, n)
-    _ctsem_add_process_noise!(ws.state, indices, qfactor, ws.discrete_ca.dDIFFUSION, z,
-        at, k, one(T), T)
-    return at + k
+    return nothing
 end
+
+"""
+    ctsem_state_trajectories(objective, values, starts, times; maxstep=0.1,
+                             tipreds=Float64[])
+
+Noise-free trajectories of the latent processes, one per column: column `j`
+starts at `starts[:, j]`, the leading processes (the carriers past them from
+that column's own T0MEANS, as `ctsem_parameter_matrices` builds a state), under
+raw parameters `values[:, j]`, and is carried through `times` (the first 0) by
+the state pass's substep without its noise (`_ctsem_state_mean_substep!`): the
+filter's mean step at the state, in substeps of at most `maxstep`, with time
+dependent predictors at zero and time independent ones at `tipreds`. In
+discrete time a step is one time unit, and `times` must be whole.
+
+For R's model implied impulse responses (`ctDiscretePars(method =
+'simulate')`, the covariate dynamics panel), which integrated in R with an
+engine call per substep of each trajectory: 27 lags of the ctsem book's
+nonlinear model at 20 draws took over seven minutes there.
+
+Returns `length(times) * size(starts, 1)` by `size(values, 2)`, time fastest. A
+trajectory that leaves the finite reals is NaN from the first time it does.
+"""
+function ctsem_state_trajectories(objective::CTSEMObjective, values::AbstractMatrix,
+    starts::AbstractMatrix, times::AbstractVector; maxstep::Real=0.1,
+    tipreds=Float64[])
+    sp = objective.params
+    size(values, 2) == size(starts, 2) || throw(DimensionMismatch(
+        "values and starts need one column per trajectory"))
+    nt = length(times)
+    (nt >= 1 && times[1] == 0 && issorted(times)) || throw(ArgumentError(
+        "times must be sorted and start at 0"))
+    maxstep > 0 || throw(ArgumentError("maxstep must be positive"))
+    ws = _init_continuous_ekf_workspace(Float64, sp)
+    continuous = ws.continuous_time
+    continuous || all(isinteger, times) || throw(ArgumentError(
+        "a discrete time model steps whole time units, so times must be whole"))
+    n = size(starts, 1)
+    n <= ws.state_dim || throw(DimensionMismatch(
+        "starts has $n rows; the model has $(ws.state_dim) states"))
+
+    # Predictor vectors as `ctsem_parameter_matrices` builds them.
+    nsubjectti = isempty(objective.subject_objectives) ? 0 :
+        _ctsem_tipred_length(first(objective.subject_objectives).tipreds)
+    ntipred = max(length(tipreds), nsubjectti, maximum(sp.ti_predictor_indices; init=0))
+    ti = zeros(Float64, ntipred)
+    ti[eachindex(tipreds)] .= Float64.(tipreds)
+    ntdpred = size(first(objective.subject_objectives).tdpreds, 1)
+    tdzero = zeros(Float64, ntdpred)
+
+    pars = ws.pars
+    all_params = getdata(pars)
+    raw = Vector{Float64}(undef, size(values, 1))
+    out = fill(NaN, nt * n, size(values, 2))
+    for column in axes(values, 2)
+        _ctsem_interrupt_check()
+        copyto!(raw, view(values, :, column))
+        _materialize_subject_values!(ws.subject_values, raw, sp, ti)
+        _materialize_all_params!(ws.all_params, ws.subject_values, sp)
+        all_params .= ws.all_params
+        copyto!(ws.state, vec(pars.T0MEANS))
+        for i in 1:n
+            ws.state[i] = starts[i, column]
+            out[(i - 1) * nt + 1, column] = ws.state[i]
+        end
+        prev = Float64(times[1])
+        finite = all(isfinite, view(ws.state, 1:n))
+        for k in 2:nt
+            finite || break
+            span = Float64(times[k]) - prev
+            nsub = continuous ? max(1, ceil(Int, span / maxstep)) : round(Int, span)
+            h = continuous ? span / nsub : 1.0
+            for s in 1:nsub
+                _ctsem_state_mean_substep!(ws, pars, all_params, sp, tdzero, ti,
+                    prev + s * h, h, 1, k, :exponential)
+                finite = all(isfinite, view(ws.state, 1:n))
+                finite || break
+            end
+            finite || break
+            for i in 1:n
+                out[(i - 1) * nt + k, column] = ws.state[i]
+            end
+            prev = Float64(times[k])
+        end
+    end
+    return out
+end
+
+ctsem_state_trajectories(laplace::CTSEMLaplaceObjective, values::AbstractMatrix,
+    starts::AbstractMatrix, times::AbstractVector; kwargs...) =
+    ctsem_state_trajectories(laplace.objective, values, starts, times; kwargs...)
 
 
 ################################################################################
