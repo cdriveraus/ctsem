@@ -315,6 +315,8 @@ test_that("a fitted network's edges are the linearisation it says they are", {
   net <- ctNetwork(fit, dt = 1, standardise = FALSE, state = 'asymptotic',
     quiet = TRUE)
   expect_true(attr(net, 'jacobian'))
+  expect_message(ctNetwork(fit, dt = 1, state = 'asymptotic'),
+    'these edges are a linearisation', fixed = TRUE)
   jac <- apply(ctsem:::.ctBackendPopArrays(fit, state = state)$pop_JAx, c(2, 3),
     stats::median)
   expect_equal(unname(net$DRIFT), unname(jac))
