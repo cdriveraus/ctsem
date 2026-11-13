@@ -2589,9 +2589,16 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 
 # Whichever backend and route produced the fit, say what the residuals are
 # conditional on. The three answers are genuinely different quantities and a
-# reader comparing them across fits needs to know which they have.
+# reader comparing them across fits needs to know which they have. A model
+# with no random effects has nothing to say here: every residual is
+# conditional on the parameters alone, and the last answer, reached by
+# elimination, described effects such a model does not have (the ctsem
+# book's N = 1 model). A fit whose structure cannot be read keeps the note.
 #' @keywords internal
 .ctFitResidualConditioning <- function(fit) {
+  if (!isTRUE(tryCatch(.ctFitHasRandomEffects(fit), error = function(e) TRUE))) {
+    return(NULL)
+  }
   sampled <- !is.null(fit$sample) ||
     identical(fit$uncertainty$settings$method, "sampling")
   laplace <- !is.null(fit$model_spec$laplace)
@@ -2610,7 +2617,14 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # The prior errors, from wherever this fit keeps them.
 #' @keywords internal
 .ctFitPriorErrors <- function(fit) {
-  if (!is.null(fit$priorerrors)) return(fit$priorerrors)
+  # The note is read off the fit each time rather than trusted from when the
+  # errors were stored, so a fit kept from an earlier version says what this
+  # one would.
+  if (!is.null(fit$priorerrors)) {
+    errors <- fit$priorerrors
+    attr(errors, "conditioning") <- .ctFitResidualConditioning(fit)
+    return(errors)
+  }
   # Older objects, and the Stan path, keep a whole filter pass.
   cached <- if (!is.null(fit$kalman)) fit$kalman else fit$stanfit$kalman
   if (!is.null(cached$errprior)) {
