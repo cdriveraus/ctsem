@@ -685,7 +685,10 @@ test_that("a default julia fit carries uncertainty, as an optimized Stan fit doe
   # only as a quietly wrong residual covariance.
   full <- suppressMessages(ctKalmanArray(fit, pointest = TRUE))
   expect_equal(as.numeric(fit$priorerrors), as.numeric(full$errprior))
-  expect_true(nzchar(attr(fit$priorerrors, "conditioning")))
+  # Every intercept is fixed, so nothing varies and there is no random effect
+  # for the residuals to be conditional on.
+  expect_null(attr(fit$priorerrors, "conditioning"))
+  expect_null(out$residCovStdConditioning)
 })
 
 # An actual OU process, so the variance parameters sit in the interior. Fitting
@@ -1102,6 +1105,29 @@ test_that("T0cov is unchanged without random T0MEANS, and on the augmented route
   same(.t0cov_model(T0MEANS = c("t0a||FALSE", "t0b||FALSE")), "laplace")
   # The augmented engine's T0cov holds the block already, above the floor.
   expect_true(all(diag(same(.t0cov_model(), "augmented")) > 1e-3))
+})
+
+test_that("the residuals' note names random effects only where the model has them", {
+  skip_without_julia()
+  set.seed(5)
+  data <- data.frame(id = rep(1:10, each = 4), time = rep(0:3, 10),
+    Y1 = stats::rnorm(40), Y2 = stats::rnorm(40))
+  note <- function(model, route) {
+    spec <- suppressMessages(ctFit(data, model, backend = "julia",
+      intoverpop = route, fit = FALSE))
+    fit <- .summary_pointfit(spec, model,
+      numeric(ctsem:::.ctBackendNpar(spec)), "julia")
+    ctsem:::.ctFitResidualConditioning(fit)
+  }
+  # Free intercepts vary by default: carried as states, or each subject's
+  # estimated from their whole record.
+  expect_match(note(.t0cov_model(), "augmented"), "carried as states")
+  expect_match(note(.t0cov_model(), "laplace"), "whole record")
+  # Nothing varies (the book's N = 1 wearable model printed the first note).
+  fixed <- .t0cov_model(T0MEANS = c("t0a||FALSE", "t0b||FALSE"),
+    MANIFESTMEANS = c("mm1||FALSE", "mm2||FALSE"))
+  expect_null(note(fixed, "augmented"))
+  expect_null(note(fixed, "auto"))
 })
 
 test_that("an RI-CLPM reports the same T0cov on the Laplace and augmented routes", {
