@@ -274,22 +274,59 @@ test_that("method='simulate' reduces exactly to the linearised answer when linea
   }
 })
 
-test_that("method='simulate' finds an effect the linearisation reports as zero", {
+test_that("the linearised panel is the Jacobian's, which a small simulated shock tends to", {
+  fit <- nonlinearFit()
   times <- c(0, 1, 4)
-  simulated <- suppressMessages(ctDiscretePars(nonlinearFit(), times = times,
-    method = 'simulate', nsamples = 3))
-  linearised <- suppressMessages(ctDiscretePars(nonlinearFit(), times = times,
-    state = 'asymptotic', nsamples = 3))
+  state <- ctsem:::.ctResolveState(fit, 'asymptotic')$state
+  mats <- suppressMessages(ctBackendParMatrices(fit, state = state))
 
-  # The impulse response starts at the identity by construction.
+  # eta1's decay rate depends on eta2: DRIFT[1,2] is fixed at 0, so DRIFT's
+  # value at the state says eta2 cannot affect eta1, where the model linearised
+  # there, the Jacobian, has 0.2 dr11 eta1 in that place. The panel used to
+  # exponentiate DRIFT's value, and said it was the linearisation.
+  expect_equal(unname(mats$DRIFT[1, 2]), 0)
+  expect_gt(abs(mats$JAx[1, 2]), 1e-3)
+  linearised <- suppressMessages(ctDiscretePars(fit, times = times,
+    state = 'asymptotic', nsamples = 3))
+  expect_true(attr(linearised, 'jacobian'))
+  expect_gt(abs(apply(linearised, c(3, 4, 5), median)[3, 1, 2]), 1e-3)
+
+  # At a fixed point the response to a shock shrinking to zero is the
+  # linearisation's: an independent check of both the Jacobian the panel reads
+  # and the engine's trajectories.
+  eps <- 1e-5
+  small <- ctsem:::.ctNonlinearImpulseResponse(fit, state, times,
+    raw = fit$estimate$raw, shock = diag(eps, 2)) / eps
+  for (k in seq_along(times)) expect_equal(unname(small[k, , ]),
+    unname(as.matrix(Matrix::expm(mats$JAx * times[k]))), tolerance = 1e-4)
+
+  # The simulated panel starts at the identity by construction and finds the
+  # effect too, at a shock of one sd.
+  simulated <- suppressMessages(ctDiscretePars(fit, times = times,
+    method = 'simulate', nsamples = 3))
   expect_equal(unname(apply(simulated, c(3, 4, 5), median)[1, , ]), diag(2),
     tolerance = 1e-8)
-
-  # DRIFT[1,2] is fixed at 0, so the linearised panel says eta2 can never affect
-  # eta1. It can: eta1's decay *rate* depends on eta2, which no frozen DRIFT
-  # can express. This is the whole reason the method exists.
-  expect_equal(apply(linearised, c(3, 4, 5), median)[3, 1, 2], 0)
   expect_true(abs(apply(simulated, c(3, 4, 5), median)[3, 1, 2]) > 1e-3)
+})
+
+test_that("a fitted network's edges are the linearisation it says they are", {
+  fit <- nonlinearFit()
+  state <- ctsem:::.ctResolveState(fit, 'asymptotic')$state
+  net <- ctNetwork(fit, dt = 1, standardise = FALSE, state = 'asymptotic',
+    quiet = TRUE)
+  expect_true(attr(net, 'jacobian'))
+  jac <- apply(ctsem:::.ctBackendPopArrays(fit, state = state)$pop_JAx, c(2, 3),
+    stats::median)
+  expect_equal(unname(net$DRIFT), unname(jac))
+  expect_gt(abs(net$DRIFT[1, 2]), 1e-3)
+  expect_equal(unname(net$temporal), unname(as.matrix(Matrix::expm(jac))),
+    tolerance = 1e-8)
+  # Where no cell reads the state the Jacobians are DRIFT and LAMBDA.
+  linear <- linearFit()
+  lnet <- ctNetwork(linear, dt = 1, standardise = FALSE, quiet = TRUE)
+  mats <- suppressMessages(ctSummaryMatrices(linear))
+  expect_equal(unname(lnet$DRIFT), unname(as.matrix(mats$DRIFT)))
+  expect_equal(unname(lnet$measurement), unname(as.matrix(mats$LAMBDA)))
 })
 
 test_that("method='simulate' is refused where it cannot be honoured", {

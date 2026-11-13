@@ -76,7 +76,9 @@ A list of class \code{ctNetwork}:
     (\code{'latent'} or \code{'manifest'}).}
   \item{\code{DRIFT}, \code{DIFFUSIONcov}, \code{asymDIFFUSIONcov},
     \code{innovation}}{The matrices the networks were derived from, so every
-    number above can be checked.}
+    number above can be checked. On a julia fit \code{DRIFT} is the drift's
+    Jacobian at the evaluation point, DRIFT itself where no cell reads the
+    state (see the section on state dependent models).}
 }
 With attributes \code{dt}, \code{standardise}, \code{impulseType},
   \code{threshold}, \code{networks}, \code{continuoustime}, \code{source},
@@ -133,7 +135,13 @@ referencing a latent process, and then there is no such thing as \emph{the}
 network. What a fit reports is the system linearised at one point of the
 state space, so the graph drawn from it is that linearisation's graph:
 somewhere else the edge weights differ, and for a strongly nonlinear model so
-does which edges are there at all.
+does which edges are there at all. The temporal and contemporaneous networks
+then come from the drift's Jacobian at that point (\code{JAx}) and the
+measurement network from the measurement's (\code{Jy}), which differ from
+DRIFT and LAMBDA there where a cell is nonlinear in the state: a cell
+\code{a + b*Y} in the column of process \code{Y} has slope \code{a + 2*b*Y}.
+A stan fit reports no Jacobians, so its edges are the cells' values at
+\code{T0MEANS}, and it says so.
 
 When any such cell is present, \code{ctNetwork} says so once, names the
 evaluation point, and records the cells in

@@ -92,14 +92,19 @@ system's own fixed point; or supply a numeric state vector. Requires
 argument makes no difference, since no cell depends on the state.}
 
 \item{method}{How the interval regressions are obtained. \code{'linearise'}
-(the default) exponentiates the DRIFT matrix, \code{expm(DRIFT*t)} -- exact
-for a linear model, and for a model whose DRIFT depends on the state, the
-response of the model linearised at \code{state}. \code{'simulate'}
+(the default) exponentiates the drift's Jacobian at the evaluation point,
+\code{expm(J*t)} with \code{J} the model's \code{JAx}: the DRIFT matrix itself
+for a linear model, where it is exact, and for a model whose dynamics depend
+on the state, the response of the model linearised at \code{state}. Where a
+cell is nonlinear in the state the two differ: a DRIFT cell \code{a + b*Y}
+in the column of process \code{Y} is \code{a + b*Y} there, and contributes
+\code{a + 2*b*Y} to the Jacobian. A stan fit carries no Jacobian, and
+exponentiates DRIFT as evaluated at \code{T0MEANS}. \code{'simulate'}
 integrates the nonlinear system from \code{state} and from \code{state} plus
 one unit on each process and differences the trajectories, which is the actual
 model implied regression; it starts at 1 and decays to 0 for a stable process,
 and reduces exactly to \code{'linearise'} when no cell depends on the state.
-\code{'simulate'} requires \code{backend='julia'} and is far slower, so it
+\code{'simulate'} requires \code{backend='julia'} and is slower, so it
 uses \code{nsamples} posterior draws with a small default.}
 
 \item{realid}{If TRUE (the default), subjects are read as the ids in the data,
