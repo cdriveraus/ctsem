@@ -14,12 +14,14 @@
 #' based on 1st and 3rd.
 #' @param includeMeanUncertainty if TRUE, output includes sampling variation in the mean parameters. If FALSE,
 #' mean parameters are fixed at their median, only uncertainty in time independent predictor effects is included.  
-#' @param whichTIpreds integer vector specifying which of the tipreds in the fit object you want to
-#' use to calculate effects. Unless quadratic / higher order versions of predictors have been 
-#' included, selecting more than one probably doesn't make sense. If for instance a squared
-#' predictor has been included, then you can specify both the linear and squared version. 
-#' The x axis of the plot (if generated) will be based off the first indexed predictor. To 
-#' check what predictors are in the model, run \code{fit$ctstanmodel$TIpredNames}.
+#' @param whichTIpreds Which of the model's time independent predictors to
+#' calculate effects for: their names, as given in \code{TIpredNames} in
+#' \code{\link{ctModel}} (\code{whichTIpreds = 'TI2'}), or their positions in
+#' that list (\code{whichTIpreds = 2}). Unless quadratic / higher order
+#' versions of predictors have been included, selecting more than one probably
+#' doesn't make sense. If for instance a squared predictor has been included,
+#' then you can specify both the linear and squared version. The x axis of the
+#' plot (if generated) is based on the first predictor selected.
 #' A smooth term (\code{s(age)} in \code{\link{ctModel}}'s \code{TIpredNames}) is
 #' selected by its covariate's name, \code{whichTIpreds = 'age'}, and is drawn
 #' over that covariate, with each person's own value at their covariate value
@@ -76,6 +78,13 @@ ctTIpredEffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
     stop('This model has no time independent predictors, so there are no ',
       'effects to report. Add them with n.TIpred and TIpredNames in ctModel().',
       call.=FALSE)
+  }
+  # Names as the julia path takes them, so the argument means the same on
+  # both backends.
+  if(is.character(whichTIpreds)){
+    whichTIpreds <- match(whichTIpreds, fit$ctstanmodel$TIpredNames)
+    if(anyNA(whichTIpreds)) stop('whichTIpreds names a predictor this model ',
+      'does not have.', call.=FALSE)
   }
   ctspec <- fit$ctstanmodel$pars
   e<-ctExtract(fit)
