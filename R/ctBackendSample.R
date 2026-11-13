@@ -1801,7 +1801,8 @@
   verdict <- .ctSampleDiagnosis(out$sample)
   out$sample$converged <- verdict$converged
   out$sample$diagnosis <- verdict$problems
-  .ctSampleWarn(out$sample)
+  .ctSampleWarn(out$sample, randomeffects = tryCatch(.ctFitHasRandomEffects(fit),
+    error = function(e) TRUE))
   out
 }
 
@@ -1889,8 +1890,9 @@
   }
   # NA, not TRUE, when nothing could be computed: every R-hat is NaN only when
   # every chain sat still, and calling that convergence is the failure mode this
-  # whole field exists to avoid.
-  converged <- if (!is.finite(worst)) {
+  # whole field exists to avoid. A sampler that reports no R-hat by design
+  # (tempered SMC, whose ceiling is Inf) is judged by its divergences alone.
+  converged <- if (!is.finite(rhatmax)) divergent == 0L else if (!is.finite(worst)) {
     problems <- c(problems, "R-hat could not be computed for any parameter")
     NA
   } else !(worst > rhatmax || divergent > 0L)
@@ -1967,15 +1969,20 @@
 # them. Deliberately not silent: a divergent transition means the sampler could
 # not follow the geometry there, and a posterior summarised over draws it could
 # not reach is wrong in a way no amount of averaging fixes.
-.ctSampleWarn <- function(diagnostics) {
+#
+# `randomeffects` says whether the model has population standard deviations,
+# the usual place a divergence comes from; a model without them is not sent
+# looking for one.
+.ctSampleWarn <- function(diagnostics, randomeffects = TRUE) {
   total <- sum(.ctSampleChainDraws(diagnostics))
   divergent <- .ctSampleDivergent(diagnostics)
   if (divergent > 0L) {
     warning(divergent, " of ", total, " transitions diverged. The ",
       "sampler could not follow the posterior's geometry there, so these draws ",
-      "under-represent whatever it could not reach -- most often a population ",
-      "standard deviation near zero. Raising control$target_accept towards ",
-      "0.95 shortens the steps and often clears it.", call. = FALSE)
+      "under-represent whatever it could not reach",
+      if (isTRUE(randomeffects)) " -- most often a population standard deviation near zero",
+      ". Raising target_accept towards 0.95 (sampleControl in ctFit, control ",
+      "in ctFitUncertainty) shortens the steps and often clears it.", call. = FALSE)
   }
   bound <- .ctSampleDivergentBound(diagnostics)
   if (bound > 0L) {
@@ -2119,10 +2126,14 @@ print.ctSampleDiagnostics <- function(x, ...) {
       if (any(x$ebfmi < 0.3, na.rm = TRUE)) "  (below 0.3 suggests a funnel)" else "",
       "\n", sep = "")
   }
-  worst <- order(-x$rhat)[seq_len(min(5L, length(x$rhat)))]
-  cat("  worst R-hat and effective sample size (bulk, tail):\n")
-  table <- data.frame(parameter = names(x$rhat)[worst],
-    rhat = round(x$rhat[worst], 4), ess = round(x$ess[worst]))
+  # SMC reports no R-hat, so its table is the smallest effective sizes.
+  worst <- (if (smc) order(x$ess) else order(-x$rhat))[seq_len(min(5L, length(x$ess)))]
+  cat(if (smc) "  smallest effective sample size (bulk, tail):\n" else
+    "  worst R-hat and effective sample size (bulk, tail):\n")
+  labels <- if (is.null(names(x$ess))) names(x$rhat) else names(x$ess)
+  table <- data.frame(parameter = labels[worst])
+  if (!smc) table$rhat <- round(x$rhat[worst], 4)
+  table$ess <- round(x$ess[worst])
   if (length(x$ess_tail) == length(x$ess)) table$ess_tail <- round(x$ess_tail[worst])
   print(table, row.names = FALSE)
   # Last, because it is the conclusion. A reader who stops at the table above
