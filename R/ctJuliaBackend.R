@@ -5779,7 +5779,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   callback = NULL, objective = NULL, progress_label = NULL,
   progress_budget = FALSE, pin = NULL, resumed = FALSE, inverse = NULL,
   hessian = NULL, hessian_at = NULL, walked = FALSE, checkpoint = NULL,
-  probed = FALSE) {
+  probed = FALSE, pairs = FALSE) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   # A caller may hand in the objective to maximise. `intoverstates=FALSE` does,
   # passing the joint one over `[theta; z]`; everything below is unchanged by
@@ -6205,6 +6205,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # estimate). Sent only when asked, for the reason above.
   if (isTRUE(walked)) common$newton_final <- "walked"
   if (identical(walked, "dear")) common$newton_final <- "dear"
+  # `pairs`: L-BFGS starts from the curvature the objective holds from its
+  # last run and leaves this run's there (the engine's `lbfgs_pairs =
+  # :objective`), for a fit whose stages are runs on one objective, or on
+  # objectives that differ by a known quadratic term: the smoothing passes
+  # (`.ctJuliaOptimiseFit()`, `ctsem_lbfgs_carry!`). Sent only when asked.
+  if (isTRUE(pairs)) common$lbfgs_pairs <- "objective"
   # `probed`: the caller's last stage probed for an overshoot where `hessian`
   # was taken and found none, so this one does not probe again where it ends
   # beside that point (the engine's `:cleared`).
@@ -7033,12 +7039,22 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   walkfirst <- isTRUE(intoverstates) && !isTRUE(optimcontrol$estonly) &&
     !identical(optimcontrol$certify, FALSE) && !is.null(model_spec$penalty) &&
     NROW(model_spec$penalty) > 0L && is.null(checkpoint$hessian)
+  # A fit with smoothing parameters is several runs on objectives that differ
+  # by the penalty alone, so each starts from the curvature the last ended
+  # with (`pairs`, carried across a change of them below); the first starts
+  # cold, whatever an earlier fit left on an objective R had cached.
+  smoothing <- is.null(jointobjective) && !is.null(model_spec$penalty) &&
+    NROW(model_spec$penalty) > 0L
+  heldobjective <- function(spec) .ctJuliaObjective(structure(spec,
+    class = c("ctJuliaModel", "ctFitModel")), hybrid = TRUE)
+  if (smoothing) .ctJuliaCall("ContinuousTimeSEM.ctsem_lbfgs_forget!",
+    heldobjective(model_spec))
   result <- keepknown(.ctJuliaOptimise(model_spec, start,
     optimcontrol = startcontrol, gradient = gradient, cores = cores,
     verbose = verbose, callback = optimcontrol$callback,
     objective = jointobjective, checkpoint = checkpoint,
     hessian = checkpoint$hessian, hessian_at = checkpoint$hessian_at,
-    walked = if (walkfirst) "dear" else FALSE))
+    walked = if (walkfirst) "dear" else FALSE, pairs = smoothing))
   optimum <- as.numeric(result$minimizer)[seq_len(npar)]
   # Its modes and Hessian were the first run's; later runs start from their
   # own (`laplace_known`), and form their own.
@@ -7072,7 +7088,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       cores = cores,
       verbose = verbose, callback = optimcontrol$callback,
       objective = jointobjective, checkpoint = checkpoint,
-      walked = if (walkfirst) "dear" else FALSE), first))
+      walked = if (walkfirst) "dear" else FALSE, pairs = smoothing), first))
   }
   if (!is.null(substeps)) message(.ctJuliaSubstepMessage(substeps))
   # What the curvature says about the point the optimiser stopped at, and a
@@ -7176,8 +7192,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   }
   # Smoothing parameters (R/ctTIpredSmooth.R): the generalised Fellner-Schall
   # fixed point on the quadratic model the curvature gives, and the fit
-  # re-optimised at it, until the parameters stop moving by more than a per
-  # cent. A pass starts where that quadratic model puts the optimum, with its
+  # re-optimised at it, until no term's effective degrees of freedom moves by
+  # more than a hundredth (`.ctTIsmoothMoved()`). A pass starts where that quadratic model puts the optimum, with its
   # Hessian, so it is mostly a finish. Without a certification (`estonly`) the
   # smoothing parameters stay where they started.
   #
@@ -7203,7 +7219,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         hessian = hessian, hessian_at = hessian_at, checkpoint = checkpoint,
         # A stage handed the last certified stage's Hessian starts beside
         # where that stage probed for an overshoot.
-        probed = !is.null(hessian)))
+        probed = !is.null(hessian), pairs = TRUE))
       correct(.ctJuliaAddRunCounts(stage, result))
     }
     curvature <- NULL
@@ -7223,12 +7239,35 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         theta <- as.numeric(result$minimizer)
         gfs <- .ctTIsmoothLambda(model_spec$penalty, curvature, theta,
           gradient = as.numeric(result$gradient))
-        moved <- max(abs(log(gfs$lambda) - log(model_spec$penalty$lambda)))
         model_spec$penalty$edf <- gfs$edf
-        settled <- moved < 0.01
+        settled <- .ctTIsmoothMoved(gfs) < 0.01
         if (settled && certified) break
         if (!settled) {
+          # The objective at the new parameters is the old one with more or
+          # less precision on the penalised coefficients, so L-BFGS's
+          # curvature goes with it, each pair changed by exactly that
+          # (`ctsem_lbfgs_carry!`): a pass that started cold learnt again
+          # what the stage before it ended with. Only where the pass starts
+          # within a standard error of where that curvature was learnt, the
+          # distance over which a curvature is taken as constant: the first
+          # pass often starts far off, where the model puts the optimum for
+          # parameters that moved a hundredfold, and pairs from elsewhere
+          # then give one long step. On test-julia-tismooth.R's fixture that
+          # step took a scale's raw value from -0.9 to -65, where the
+          # objective is flat and 0.09 lower, and the fit stayed there.
+          before <- model_spec
           model_spec$penalty$lambda <- gfs$lambda
+          step <- gfs$point - theta
+          if (isTRUE(-sum(step * (gfs$hessian %*% step)) <= 1)) {
+            .ctJuliaCall("ContinuousTimeSEM.ctsem_lbfgs_carry!",
+              heldobjective(model_spec), heldobjective(before),
+              .ctJuliaVector(as.integer(unlist(model_spec$penalty$index))),
+              .ctJuliaVector(as.numeric(rep(model_spec$penalty$lambda -
+                before$penalty$lambda, lengths(model_spec$penalty$index)))))
+          } else {
+            .ctJuliaCall("ContinuousTimeSEM.ctsem_lbfgs_forget!",
+              heldobjective(model_spec))
+          }
           smoothpasses <- pass
           # The exact Hessian the settled parameters were checked on moved
           # them a little further. The penalty is quadratic, so that Hessian
@@ -7252,7 +7291,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
             gfs$point, optimcontrol = stagecontrol, gradient = gradient,
             cores = cores, verbose = verbose, callback = optimcontrol$callback,
             hessian = gfs$hessian, hessian_at = theta, walked = TRUE,
-            checkpoint = checkpoint), result))
+            checkpoint = checkpoint, pairs = TRUE), result))
           walked <- .ctJuliaWalkedHessian(walk)
           result <- walk
           if (!is.null(walked)) {

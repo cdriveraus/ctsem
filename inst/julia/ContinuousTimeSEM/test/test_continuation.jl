@@ -537,6 +537,51 @@ end
     @test C._ctsem_lbfgs_held(laplace) === nothing
 end
 
+@testset "held pairs go to an objective that differs by a quadratic term" begin
+    # A smoothing pass's objective is the last one with more precision on the
+    # penalised coefficients (`ctsem_lbfgs_carry!`): each pair's `y` changes
+    # by that precision times its `s` there, the learned diagonal by the
+    # precision, and nothing else.
+    C = ContinuousTimeSEM
+    laplace, values = _fresh_2d3_prior()
+    theta = collect(Float64, values)
+    n = length(theta)
+    run(o, from; kw...) = C.ctsem_optimize(o, from; maxiter=500, g_tol=1e-6,
+        newton=false, certify=false, progress=false, verbose=false,
+        overshoot_probe=:off, kw...)
+    other = first(_fresh_2d3_prior())
+    # Nothing held, nothing handed over.
+    @test C.ctsem_lbfgs_carry!(other, laplace, [1], [1.0]) == 0
+    @test C._ctsem_lbfgs_held(other) === nothing
+    run(laplace, theta; lbfgs_pairs=:objective)
+    held = C._ctsem_lbfgs_held(laplace)
+    @test held isa C.CTSEMLBFGSMemory && !isempty(held.S)
+    index = [1, n]; delta = [0.5, 2.0]
+    shift = zeros(n); shift[index] .= delta
+    @test C.ctsem_lbfgs_carry!(other, laplace, index, delta) == length(held.S)
+    got = C._ctsem_lbfgs_held(other)
+    @test got !== held && length(got.S) == length(held.S)
+    @test all(got.S[k] == held.S[k] for k in eachindex(held.S))
+    @test all(got.Y[k] ≈ held.Y[k] .+ shift .* held.S[k] for k in eachindex(held.S))
+    @test all(got.rho[k] ≈ 1 / sum(got.S[k] .* got.Y[k]) for k in eachindex(got.S))
+    @test held.diagonal === nothing || got.diagonal ≈ held.diagonal .+ shift
+    # The source keeps its own, untouched.
+    @test C._ctsem_lbfgs_held(laplace) === held
+    # A pair the change leaves without curvature is dropped.
+    @test C.ctsem_lbfgs_carry!(other, laplace, collect(1:n), fill(-1e8, n)) == 0
+    @test_throws BoundsError C.ctsem_lbfgs_carry!(other, laplace, [n + 1], [1.0])
+    @test_throws DimensionMismatch C.ctsem_lbfgs_carry!(other, laplace, [1, 2], [1.0])
+    # Forgotten, the next run starts cold; a plain objective holds pairs too.
+    C.ctsem_lbfgs_forget!(laplace)
+    @test C._ctsem_lbfgs_held(laplace) === nothing
+    plain = laplace.objective
+    @test C._ctsem_lbfgs_held(plain) === nothing
+    C._ctsem_lbfgs_hold!(plain, held)
+    @test C._ctsem_lbfgs_held(plain) === held
+    C.ctsem_lbfgs_forget!(plain)
+    @test C._ctsem_lbfgs_held(plain) === nothing
+end
+
 # --- nested units by frozen draws ---------------------------------------------
 #
 # Under `draws_all` a unit whose block tree nests gets draws per block, each

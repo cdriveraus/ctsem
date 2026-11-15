@@ -322,8 +322,8 @@
 # quadratic model a fit's Hessian gives at its estimate. `hessian` is the log
 # posterior's at `theta`, with the penalties at `penalty$lambda`, and
 # `gradient` its gradient there. Returns the new lambdas, each term's
-# effective degrees of freedom, and where the quadratic model puts the optimum
-# at them.
+# effective degrees of freedom at them (`edf`) and at the lambdas it came
+# with (`edf0`), and where the quadratic model puts the optimum at them.
 .ctTIsmoothLambda <- function(penalty, hessian, theta, gradient = NULL,
   maxiter = 200L, tol = 1e-6) {
   npar <- length(theta)
@@ -338,7 +338,7 @@
   datagradient <- gradient
   datagradient[at] <- datagradient[at] + old * theta[at]
   lambda <- penalty$lambda
-  edf <- rep(NA_real_, length(lambda))
+  edf <- edf0 <- rep(NA_real_, length(lambda))
   for (iter in seq_len(maxiter)) {
     precision <- rep(lambda, lengths(index))
     information <- data
@@ -356,6 +356,7 @@
       size <- sum(point[j]^2)
       updated[g] <- if (size > 0) max(edf[g], 0) / size else Inf
     }
+    if (iter == 1L) edf0 <- edf
     updated <- pmin(pmax(updated, 1e-8), 1e10)
     change <- max(abs(log(updated) - log(lambda)))
     lambda <- updated
@@ -370,13 +371,26 @@
   # No direction with curvature at all: the smoothing parameters stay, and so
   # does the point.
   if (is.null(V)) return(list(lambda = penalty$lambda,
-    edf = rep(NA_real_, length(penalty$lambda)), point = theta,
+    edf = rep(NA_real_, length(penalty$lambda)),
+    edf0 = rep(NA_real_, length(penalty$lambda)), point = theta,
     hessian = -information, iterations = 0L))
   point <- theta + as.numeric(V %*% pengradient)
   edf <- vapply(seq_along(lambda), function(g)
     length(index[[g]]) - lambda[g] * sum(diag(V)[index[[g]]]), numeric(1))
-  list(lambda = lambda, edf = edf, point = point,
+  list(lambda = lambda, edf = edf, edf0 = edf0, point = point,
     hessian = -information, iterations = iter)
+}
+
+# How far a smoothing step moved the model: the largest change in any term's
+# effective degrees of freedom, which is what a smoothing parameter sets. Not
+# the change in the parameters themselves: a term at its linear limit, or with
+# no penalty left, takes any lambda beyond it at the same curve, and judged
+# by lambda its passes went on until the clamp (four of the affect pilot's six
+# terms end at 1e10) or the pass limit. Zero where the step had no curvature
+# to read.
+.ctTIsmoothMoved <- function(gfs) {
+  moved <- suppressWarnings(max(abs(gfs$edf - gfs$edf0)))
+  if (is.finite(moved)) moved else 0
 }
 
 # The inverse of a penalised information over the directions the data give it

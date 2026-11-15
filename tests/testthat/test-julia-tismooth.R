@@ -401,3 +401,23 @@ test_that("the Laplace Hessian takes a smooth's columns from its target's", {
     ctsem:::.ctJuliaNumericVector(x), localised = FALSE))
   expect_equal(as.matrix(fast), as.matrix(slow), tolerance = 1e-5)
 })
+
+test_that("smoothing parameters are settled when the curve's degrees of freedom are", {
+  # A term at its linear limit: its coefficients at zero, each well
+  # determined. From anywhere beyond the limit its lambda runs to the clamp at
+  # no change in the curve, which the effective degrees of freedom say and a
+  # change in lambda does not. No fit.
+  penalty <- data.frame(lambda = 1e6)
+  penalty$index <- list(1:3)
+  info <- diag(c(100, 100, 100, 50))
+  theta <- c(0, 0, 0, 0.3)
+  gfs <- ctsem:::.ctTIsmoothLambda(penalty,
+    -(info + diag(c(rep(penalty$lambda, 3), 0))), theta)
+  expect_gt(abs(log(gfs$lambda / penalty$lambda)), 1)
+  expect_lt(ctsem:::.ctTIsmoothMoved(gfs), 0.01)
+  # The same term from a weak penalty has its three degrees of freedom to lose.
+  penalty$lambda <- 1
+  gfs <- ctsem:::.ctTIsmoothLambda(penalty,
+    -(info + diag(c(rep(penalty$lambda, 3), 0))), theta)
+  expect_gt(ctsem:::.ctTIsmoothMoved(gfs), 1)
+})
