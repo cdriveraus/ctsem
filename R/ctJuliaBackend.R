@@ -5764,7 +5764,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   gradient = "adjoint", cores = 1L, verbose = 0L, maxiter = NULL,
   callback = NULL, objective = NULL, progress_label = NULL,
   progress_budget = FALSE, pin = NULL, resumed = FALSE, inverse = NULL,
-  hessian = NULL, hessian_at = NULL, walked = FALSE, checkpoint = NULL) {
+  hessian = NULL, hessian_at = NULL, walked = FALSE, checkpoint = NULL,
+  probed = FALSE) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   # A caller may hand in the objective to maximise. `intoverstates=FALSE` does,
   # passing the joint one over `[theta; z]`; everything below is unchanged by
@@ -6190,6 +6191,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # estimate). Sent only when asked, for the reason above.
   if (isTRUE(walked)) common$newton_final <- "walked"
   if (identical(walked, "dear")) common$newton_final <- "dear"
+  # `probed`: the caller's last stage probed for an overshoot where `hessian`
+  # was taken and found none, so this one does not probe again where it ends
+  # beside that point (the engine's `:cleared`).
+  if (isTRUE(probed) && identical(common$overshoot_probe, "magnitude")) {
+    common$overshoot_probe <- "cleared"
+  }
   # The last run's local curvature (`lbfgs_local`): its inverse, kept here
   # rather than on the result, where a fit would carry its n x n matrix, and
   # its builds, for a resume to start from (`local`).
@@ -7174,15 +7181,21 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     smoothpasses <- 0L
     stagecontrol <- utils::modifyList(optimcontrol, list(batch = FALSE,
       saem = FALSE, stochastic = FALSE))
-    certified_stage <- function(from) {
+    certified_stage <- function(from, hessian = NULL, hessian_at = NULL) {
       stage <- keepknown(.ctJuliaOptimise(model_spec, from,
         optimcontrol = stagecontrol, gradient = gradient, cores = cores,
         verbose = verbose, callback = optimcontrol$callback,
-        checkpoint = checkpoint))
+        hessian = hessian, hessian_at = hessian_at, checkpoint = checkpoint,
+        # A stage handed the last certified stage's Hessian starts beside
+        # where that stage probed for an overshoot.
+        probed = !is.null(hessian)))
       correct(.ctJuliaAddRunCounts(stage, result))
     }
     curvature <- NULL
     certified <- TRUE
+    # Whether the exact Hessian in hand is this loop's own, formed once the
+    # parameters had settled on walked curvature (below).
+    checked <- FALSE
     if (certifying) {
       # The first stage's walk where it ended on one (`walkfirst`), else its
       # certification's Hessian.
@@ -7202,6 +7215,21 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         if (!settled) {
           model_spec$penalty$lambda <- gfs$lambda
           smoothpasses <- pass
+          # The exact Hessian the settled parameters were checked on moved
+          # them a little further. The penalty is quadratic, so that Hessian
+          # with the new precisions (`gfs$hessian`) is the new objective's
+          # exact one at the same point: the pass is a certified stage that
+          # starts on it, and keeps it where the estimate moves within its
+          # reach, rather than a walk and then another exact Hessian. On
+          # test-julia-tismooth.R's Krylov fixture that was the second of two.
+          if (certified && checked) {
+            correction <- certified_stage(gfs$point, hessian = gfs$hessian,
+              hessian_at = theta)
+            result <- correction$result
+            curvature <- correction$hessian
+            if (is.null(curvature)) break
+            next
+          }
           # Checkpointed as every stage is: the record carries the smoothing
           # parameters (`.ctJuliaCheckpointState()`), so a resume goes on from
           # this pass rather than from the first stage's.
@@ -7224,6 +7252,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         result <- correction$result
         curvature <- correction$hessian
         certified <- TRUE
+        checked <- TRUE
         if (is.null(curvature)) break
       }
       if (!certified) {

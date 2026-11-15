@@ -2970,10 +2970,16 @@ function _ctsem_optimise_verdict(objective, minimizer, start_values, value,
         g_tol, converge_tol;
         label::AbstractString="ctsem_optimize", verbose::Bool=false,
         overshoot_probe=_CTSEM_OVERSHOOT_PROBE[], progress=nothing,
-        candidates=nothing, widen::Bool=true)
+        candidates=nothing, widen::Bool=true, held_start::Bool=false)
     moved =isempty(minimizer) ? 0.0 : maximum(abs, minimizer .- start_values)
     saturated = !isempty(saturated_parameters)
-    stalled = moved == 0 && (!isfinite(value) || gradient_norm > max(g_tol, 1e-6))
+    # `held_start`: the run began where another stage ended, on that stage's
+    # Hessian, and went to the finish there (`_ctsem_finish_first`). Ending
+    # where it began -- converged by that Hessian, or its step one the
+    # objective does not resolve -- is no optimiser that never left its
+    # starting values.
+    stalled = moved == 0 && !held_start &&
+        (!isfinite(value) || gradient_norm > max(g_tol, 1e-6))
     finite_gradient = isfinite(gradient_norm)
     # Both `Inf` before there is anything to report, so a fit that never took a
     # step cannot pass here on an uninitialised number.
@@ -3145,11 +3151,13 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # Validated here rather than at the probe, which runs after the fit: a
     # misspelled mode should cost nothing, not a whole optimisation.
     #
-    # `:cleared` (`"cleared"` from R): the caller's probe at `start` found
-    # nothing to pull back -- a stage R resumes on a certification's verdict,
-    # whose predecessor probed where it ended -- so the probe is not run again
-    # where this run ends within `newton_reuse` standard errors of `start`,
-    # and is `:magnitude` where it ends farther. The pullbacks are of a
+    # `:cleared` (`"cleared"` from R): the caller's probe found nothing to pull
+    # back at `start`, or at `newton_hessian_at` where the stage holds a
+    # Hessian -- a stage R resumes on a certification's verdict, whose
+    # predecessor probed where it ended, or a smoothing pass after the
+    # certified stage -- so the probe is not run again where this run ends
+    # within `newton_reuse` standard errors of both, and is `:magnitude` where
+    # it ends farther. The pullbacks are of a
     # tenth of a coordinate's size and more, far coarser than that. On the
     # affect pilot each such probe was one to two and a half hours, after
     # every stage, and none found anything.
@@ -4042,15 +4050,22 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # place: see `_ctsem_optimise_verdict`. Against the bar the run's
     # resolution set (`_ctsem_tolerance`), as R's certification reads it.
     converge_floor = _ctsem_tolerance(converge_tol, directional)
-    # The caller's probe at the start stands for this point (`:cleared`): the
-    # run ended within `newton_reuse` standard errors of it, by the Hessian
-    # the finish returned or, with none, the one the stage was handed.
+    # The caller's probe stands for this point (`:cleared`): the run ended
+    # within `newton_reuse` standard errors of its start and of where its
+    # held Hessian was taken, by the Hessian the finish returned or, with
+    # none, the one the stage was handed.
     cleared_here = probe_cleared && let Hc = (finish !== nothing &&
             finish.hessian !== nothing) ? finish.hessian : newton_hessian
-        Hc isa AbstractMatrix && size(Hc) == (length(minimizer), length(minimizer)) &&
-            all(isfinite, Hc) && _ctsem_hessian_distance(
-                _ctsem_information_split(-Matrix{Float64}(Hc); rtol=flat_rtol),
-                start_values, minimizer) <= newton_reuse
+        if Hc isa AbstractMatrix && size(Hc) == (length(minimizer), length(minimizer)) &&
+                all(isfinite, Hc)
+            cs = _ctsem_information_split(-Matrix{Float64}(Hc); rtol=flat_rtol)
+            _ctsem_hessian_distance(cs, start_values, minimizer) <= newton_reuse &&
+                (newton_hessian_at === nothing ||
+                 length(newton_hessian_at) != length(minimizer) ||
+                 _ctsem_hessian_distance(cs, newton_hessian_at, minimizer) <= newton_reuse)
+        else
+            false
+        end
     end
     verdict = _ctsem_optimise_verdict(objective, minimizer, start_values,
         final.value, gradient_norm, _ctsem_predicted_gain(directional),
@@ -4079,13 +4094,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             (finish === nothing || finish.hessian === nothing) ? nothing :
                 finish.hessian,
             flat_rtol, stall_ratio; capped=stop_reason == "cap"),
-        widen=stop_reason != "cap")
+        widen=stop_reason != "cap", held_start=first_finish[])
     saturated = verdict.saturated
-    # A stage that went to the finish from its start began where another
-    # stage ended, on that stage's Hessian: ending there again, its step one
-    # the objective does not resolve, is no optimiser that never left its
-    # starting values.
-    stalled = verdict.stalled && !first_finish[]
+    stalled = verdict.stalled
     # The modes the run ends with, for the fit (`_ctsem_fit_modes`): its
     # anchored maxima, before the clearing below, and what the closing search
     # adds.
