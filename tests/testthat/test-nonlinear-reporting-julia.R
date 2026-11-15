@@ -331,6 +331,86 @@ test_that("a fitted network's edges are the linearisation it says they are", {
   expect_equal(unname(lnet$measurement), unname(as.matrix(mats$LAMBDA)))
 })
 
+# The Jacobian at the estimate, against the slopes of the model's own drift
+# written out by hand from summary()'s estimates: f1 = dr11 (1 + 0.2 eta2)
+# eta1 + c1 and f2 = d21 eta1 + d22 eta2 + c2.
+.handJacobian <- function(fit, s) {
+  pm <- summary(fit, parmatrices = FALSE, digits = 12)$popmeans
+  m <- stats::setNames(pm$mode, rownames(pm))
+  matrix(c(m[['dr11']] * (1 + 0.2 * s[2]), m[['d21']],
+    0.2 * m[['dr11']] * s[1], m[['d22']]), 2, 2)
+}
+
+test_that("ctSummaryMatrices gives the Jacobians at the estimate, and its transition", {
+  fit <- nonlinearFit()
+  s <- c(eta1 = 0.7, eta2 = -1.3)
+  J <- .handJacobian(fit, s)
+  mats <- suppressMessages(ctSummaryMatrices(fit, state = s))
+  expect_equal(unname(mats$estimate$JAx), J, tolerance = 1e-8)
+  # DRIFT holds the cells' values there, not their slopes.
+  expect_equal(unname(mats$estimate$DRIFT[1, 2]), 0)
+  expect_equal(unname(mats$estimate$dtDRIFT), unname(as.matrix(Matrix::expm(J))),
+    tolerance = 1e-8)
+  # No measurement cell reads the state.
+  expect_equal(unname(mats$estimate$Jy), unname(mats$estimate$LAMBDA))
+  # The draws' summary carries them too, named as DRIFT and LAMBDA are.
+  expect_identical(dimnames(mats$JAx), dimnames(mats$DRIFT))
+  expect_identical(dimnames(mats$Jy), dimnames(mats$LAMBDA))
+  # DRIFT is lower triangular here, so its exponential has no eta2 -> eta1
+  # effect; the Jacobian's does.
+  expect_gt(abs(mats$dtDRIFT[1, 2]), 1e-3)
+  # summary() lists neither Jacobian: for a linear model they repeat DRIFT and
+  # LAMBDA.
+  table <- suppressMessages(summary(fit))$parmatrices
+  expect_false(any(table$matrix %in% c('JAx', 'Jy')))
+})
+
+test_that("ctDiscretePars carries the effects at the estimate, which summary and the plot read", {
+  fit <- nonlinearFit()
+  s <- c(eta1 = 0.7, eta2 = -1.3)
+  J <- .handJacobian(fit, s)
+  times <- c(0, 1, 2.5)
+  dp <- suppressMessages(ctDiscretePars(fit, times = times, state = s, nsamples = 5))
+  estimate <- attr(dp, 'estimate')
+  expect_identical(dimnames(estimate), dimnames(dp)[-1])
+  for (k in seq_along(times)) expect_equal(unname(estimate[1, k, , ]),
+    unname(as.matrix(Matrix::expm(J * times[k]))), tolerance = 1e-8)
+
+  out <- summary(dp)
+  peak <- out[out$row == 'eta1' & out$col == 'eta2' & out$quantity == 'peak', ]
+  curve <- estimate[1, , 'eta1', 'eta2']
+  expect_equal(peak$estimate, unname(curve[which.max(abs(curve))]))
+
+  line <- ctDiscreteParsPlot(dp, indices = matrix(c(1, 2), 1), ggcode = TRUE)$dt
+  expect_equal(line$value, unname(curve))
+  median <- ctDiscreteParsPlot(dp, indices = matrix(c(1, 2), 1), ggcode = TRUE,
+    line = 'median')$dt
+  expect_equal(median$value, unname(apply(unclass(dp)[, 1, , 1, 2], 2, stats::median)))
+  expect_equal(median$ymin, line$ymin)
+})
+
+test_that("the estimate's standardised effects and simulated response reduce when linear", {
+  linear <- linearFit()
+  mats <- suppressMessages(ctSummaryMatrices(linear))$estimate
+  # The stationary covariance solved here, from DRIFT and DIFFUSIONcov at the
+  # estimate: A S + S A' + Q = 0.
+  A <- unname(as.matrix(mats$DRIFT))
+  Q <- unname(as.matrix(mats$DIFFUSIONcov))
+  S <- matrix(-solve(kronecker(diag(2), A) + kronecker(A, diag(2)), c(Q)), 2, 2)
+  sd <- sqrt(diag(S))
+  dp <- suppressMessages(ctDiscretePars(linear, times = 1, standardise = TRUE,
+    nsamples = 5))
+  expect_equal(unname(attr(dp, 'estimate')[1, 1, , ]),
+    as.matrix(Matrix::expm(A)) * outer(1 / sd, sd), tolerance = 1e-8)
+
+  times <- c(0, 1, 2.5)
+  simulated <- suppressMessages(ctDiscretePars(linear, times = times,
+    method = 'simulate', nsamples = 2))
+  linearised <- suppressMessages(ctDiscretePars(linear, times = times, nsamples = 2))
+  expect_equal(attr(simulated, 'estimate'), attr(linearised, 'estimate'),
+    tolerance = 1e-8)
+})
+
 test_that("method='simulate' is refused where it cannot be honoured", {
   expect_error(ctDiscretePars(ctstantestfit, times = 1, method = 'simulate'),
     "backend='julia'")

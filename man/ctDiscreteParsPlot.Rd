@@ -18,7 +18,8 @@ ctDiscreteParsPlot(
   colour = "Effect",
   title = "auto",
   polygonalpha = 0.1,
-  ggcode = FALSE
+  ggcode = FALSE,
+  line = c("estimate", "median")
 )
 }
 \arguments{
@@ -31,7 +32,8 @@ matrix specifying which indices of the output matrix to plot.
 'all' plots all AR and CR effects at once.}
 
 \item{quantiles}{numeric vector of length 3, with values between 0 and 1, specifying which quantiles to plot.
-The default plots 95\% credible intervals and the posterior median at 50\%.}
+The default plots 95\% credible intervals as the band, and the posterior median at 50\% as the line
+where \code{line} does not draw the estimate.}
 
 \item{latentNames}{Vector of character strings denoting names for the latent variables.
 'auto' just uses eta1 eta2 etc.}
@@ -55,8 +57,14 @@ zooms to them; intervals reaching past them are drawn to the edge.}
 the fill.}
 
 \item{ggcode}{if TRUE, returns a list containing the data.table to plot (for each curve and time interval,
-the three \code{quantiles} of the draws, as \code{ymin}, \code{value} and \code{ymax}), and a character string that can be
+the outer \code{quantiles} of the draws as \code{ymin} and \code{ymax}, and the line as \code{value}), and a character string that can be
 evaluated (with the necessary arguments such as ylab etc filled in). For modifying plots.}
+
+\item{line}{What the line is. \code{'estimate'} (the default) draws the
+effects at the fit's estimate where \code{x} carries them
+(\code{attr(x, 'estimate')}: an optimised fit's population effects), and the
+middle of \code{quantiles} otherwise; \code{'median'} always draws the middle
+of \code{quantiles}. The band is the draws' either way.}
 }
 \value{
 A ggplot2 object. This can be modified by the various ggplot2 functions, or displayed using print(x).

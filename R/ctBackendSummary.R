@@ -778,15 +778,23 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # and Julia backends collapse identical inputs with identical code. Anything
 # that changes about how ctsem summarises system matrices changes here, once.
 
+# `jacobians` adds the drift's and the measurement's Jacobians at the
+# evaluation point, `JAx` and `Jy`, where the draws carry them (julia):
+# ctSummaryMatrices() reports them, summary()'s table does not, since for a
+# linear model they repeat DRIFT and LAMBDA. `dtDRIFT` exponentiates JAx
+# wherever the draws carry it, as ctDiscretePars() does: the transition of the
+# model linearised at the evaluation point, which is expm(DRIFT * t) for a
+# linear model and not, for a cell nonlinear in the state, expm of DRIFT's
+# value there.
 .ctSummaryMatricesFromArrays <- function(e, continuoustime, latentNames, manifestNames,
   TDpredNames, calcfunc = quantile, calcfuncargs = list(probs = 0.5), timeinterval = 1,
-  binaryNames = NULL) {
+  binaryNames = NULL, jacobians = FALSE) {
 
   mats <- .ctMatricesList()
   mats <- c(names(mats$base), names(mats$asymptotic), names(mats$extra),
-    names(mats$julia))
+    names(mats$julia), if (isTRUE(jacobians)) c("JAx", "Jy"))
   if (isTRUE(continuoustime)) {
-    d <- list(DRIFT = e$pop_DRIFT)
+    d <- list(DRIFT = if (!is.null(e$pop_JAx)) e$pop_JAx else e$pop_DRIFT)
     dd <- ctDiscreteParsDrift(d, timeinterval, impulseType = 'unit', standardise = FALSE,
       cov = FALSE, quiet = TRUE)
     e$pop_dtDRIFT <- array(dd, dim = dim(dd)[-2:-3])
@@ -811,11 +819,23 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     out$DRIFT <- out$DRIFT[1:nlatent, 1:nlatent, drop = FALSE]
     out$T0VAR <- out$T0VAR[1:nlatent, 1:nlatent, drop = FALSE]
     out$T0cov <- out$T0cov[1:nlatent, 1:nlatent, drop = FALSE]
+    # The carriers' rows of the transition are constant states and their
+    # columns the effects they carry, so the processes' own block is the
+    # transition of DRIFT's block, as DRIFT's block is the processes' drift.
+    for (name in intersect(c("dtDRIFT", "JAx"), names(out))) {
+      out[[name]] <- out[[name]][1:nlatent, 1:nlatent, drop = FALSE]
+    }
+    if (!is.null(out$Jy)) out$Jy <- out$Jy[, 1:nlatent, drop = FALSE]
   }
 
   ln <- latentNames
   mn <- manifestNames
   tdn <- TDpredNames
+  for (name in intersect(c("dtDRIFT", "JAx"), names(out))) {
+    if (identical(dim(out[[name]]), rep(length(ln), 2L))) dimnames(out[[name]]) <- list(ln, ln)
+  }
+  if (!is.null(out$Jy) && identical(dim(out$Jy), c(length(mn), length(ln))))
+    dimnames(out$Jy) <- list(mn, ln)
   dimnames(out$DRIFT) <- list(ln, ln)
   dimnames(out$DIFFUSIONcov) <- list(ln, ln)
   dimnames(out$DIFFUSION) <- list(ln, ln)
@@ -873,19 +893,53 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       latentNames = model$latentNames, manifestNames = model$manifestNames,
       TDpredNames = model$TDpredNames, calcfunc = calcfunc,
       calcfuncargs = calcfuncargs, timeinterval = timeinterval,
-      binaryNames = model$manifestNames[model$manifesttype %in% 1]),
+      binaryNames = model$manifestNames[model$manifesttype %in% 1], jacobians = TRUE),
       .ctSummaryPopulationMatrices(.ctBackendPopulationArrays(constrained),
         calcfunc, calcfuncargs))
   }
   out <- at(NULL, calcfunc, calcfuncargs)
-  # The matrices at the estimate, unrounded, where the fit has one: an
-  # optimised fit's, beside the summary of its draws. A sampled fit's `raw` is
-  # its posterior mean, which is no estimate (summary()'s `mode` columns are
-  # absent there for the same reason).
-  if (is.null(fit$sample) && length(fit$estimate$raw)) {
-    out$estimate <- at(matrix(as.numeric(fit$estimate$raw), nrow = 1L), mean, list())
-  }
+  # The matrices at the estimate, unrounded, where the fit has one, beside the
+  # summary of its draws.
+  raw <- .ctFitEstimateRaw(fit)
+  if (!is.null(raw)) out$estimate <- at(raw, mean, list())
   out
+}
+
+# A fit's estimate as a one-row matrix of raw parameters, or NULL where it has
+# none: an optimised fit's. A sampled fit's `raw` is its posterior mean, which
+# is no estimate (summary()'s `mode` columns are absent there for the same
+# reason). ctSummaryMatrices() and ctDiscretePars() report their `estimate`
+# from this, on both backends, so the two give the same point.
+.ctFitEstimateRaw <- function(fit) {
+  if (inherits(fit, "ctStanFit")) {
+    if (length(fit$stanfit$stanfit@sim) == 0L && length(fit$stanfit$rawest)) {
+      return(matrix(as.numeric(fit$stanfit$rawest), nrow = 1L))
+    }
+    return(NULL)
+  }
+  if (is.null(fit$sample) && length(fit$estimate$raw)) {
+    return(matrix(as.numeric(fit$estimate$raw), nrow = 1L))
+  }
+  NULL
+}
+
+# The population arrays at that estimate, one draw deep, as ctExtract() gives
+# them over the draws; NULL where the fit has no estimate. `state` as
+# ctExtract()'s, resolved. A stan fit's leave out `popcov`, which stan
+# simulates at each point: two calls gave covariances 0.35 apart, which is no
+# estimate.
+.ctFitEstimateArrays <- function(fit, state = NULL) {
+  raw <- .ctFitEstimateRaw(fit)
+  if (is.null(raw)) return(NULL)
+  if (inherits(fit, "ctStanFit")) {
+    e <- stan_constrainsamples(sm = fit$stanmodel, standata = fit$standata,
+      samples = raw, cores = 1L, savescores = FALSE, savesubjectmatrices = FALSE,
+      dokalman = FALSE, quiet = TRUE)
+    e$popcov <- NULL
+    return(e)
+  }
+  .ctBackendPopArrays(fit, samples = raw,
+    constrained = .ctBackendConstrained(fit, raw), state = state)
 }
 
 

@@ -106,7 +106,16 @@ ctStanRawSamples<-function(fit){
 #'the initial latent covariance over subjects: \code{T0VAR} plus the
 #'population covariance of any individually varying \code{T0MEANS}), the
 #'asymptotic \code{asymCINT} and \code{asymDIFFUSIONcov}, and
-#'\code{dtDRIFT} at \code{timeinterval}. Where parameters vary over subjects,
+#'\code{dtDRIFT} at \code{timeinterval}. On \code{backend='julia'}, also the
+#'Jacobians of the drift and of the measurement at the evaluation point,
+#'\code{JAx} (latent by latent) and \code{Jy} (manifest by latent): the local
+#'effects of the model linearised at \code{state}. They equal \code{DRIFT} and
+#'\code{LAMBDA} for a linear model; where a cell is nonlinear in the state they
+#'do not, since a \code{DRIFT} cell \code{a + q*Y} in the column of process
+#'\code{Y} holds \code{a + q*Y} there and contributes \code{a + 2*q*Y} to
+#'\code{JAx}. \code{dtDRIFT} is \code{expm(JAx * timeinterval)} where there is
+#'a \code{JAx}, the transition \code{\link{ctDiscretePars}} reports, and
+#'\code{expm(DRIFT * timeinterval)} on stan. Where parameters vary over subjects,
 #'also their population covariance on the natural scale, \code{popcov}, and
 #'their raw-scale correlations, \code{rawpopcorr}, named by parameter (with
 #'several grouping levels, \code{popcov.<level>} and \code{rawpopcorr.<level>}).
@@ -116,7 +125,9 @@ ctStanRawSamples<-function(fit){
 #'
 #'On an optimised fit, \code{estimate} holds the same matrices at the fit's
 #'estimate, unrounded: \code{ctSummaryMatrices(fit)$estimate$DRIFT} is the
-#'estimated drift matrix, which a summary of the draws need not equal. A
+#'estimated drift matrix, which a summary of the draws need not equal, and
+#'\code{ctSummaryMatrices(fit, state = s)$estimate$JAx} the model linearised
+#'at \code{s} at the estimate. A
 #'\code{backend='stan'} fit's has no \code{popcov}, which stan simulates.
 #'@aliases ctStanContinuousPars
 #'@export
@@ -155,20 +166,15 @@ ctSummaryMatrices.ctStanFit <- function(fit,
       latentNames = fit$ctstanmodel$latentNames,
       manifestNames = fit$ctstanmodel$manifestNames,
       TDpredNames = fit$ctstanmodel$TDpredNames,
-      calcfunc = calcfunc, calcfuncargs = calcfuncargs, timeinterval = timeinterval),
+      calcfunc = calcfunc, calcfuncargs = calcfuncargs, timeinterval = timeinterval,
+      jacobians = TRUE),
       .ctSummaryPopulationMatrices(e, calcfunc, calcfuncargs))
   }
   out <- at(ctExtract(fit,cores=1), calcfunc, calcfuncargs)
   # The matrices at an optimised fit's estimate, unrounded, as the julia method
-  # gives them -- without popcov, which stan simulates at each point: two calls
-  # gave covariances 0.35 apart, which is no estimate.
-  if (length(fit$stanfit$stanfit@sim) == 0L && length(fit$stanfit$rawest)) {
-    estimate <- stan_constrainsamples(sm = fit$stanmodel, standata = fit$standata,
-      samples = matrix(fit$stanfit$rawest, nrow = 1L), cores = 1L,
-      savescores = FALSE, savesubjectmatrices = FALSE, dokalman = FALSE, quiet = TRUE)
-    estimate$popcov <- NULL
-    out$estimate <- at(estimate, mean, list())
-  }
+  # gives them (.ctFitEstimateArrays(), which leaves out popcov).
+  estimate <- .ctFitEstimateArrays(fit)
+  if (!is.null(estimate)) out$estimate <- at(estimate, mean, list())
   .ctContextMessage(fit, .ctContextPopLabel)
   .ctContextAttach(out, fit)
 }

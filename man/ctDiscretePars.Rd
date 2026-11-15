@@ -124,6 +124,14 @@ coefficients, by sample, subject, time interval, row and column, of class
 \code{ctDiscretePars}: \code{summary()} gives each curve's peak, the lag of
 the peak, the lag at which it has fallen to half the peak (a half-life), and
 the area under it, with their uncertainty (\code{\link{summary.ctDiscretePars}}).
+On an optimised fit, with \code{subjects = 'popmean'}, the same
+coefficients at the fit's estimate are \code{attr(x, 'estimate')}, by
+subject, time interval, row and column: for \code{'linearise'} computed from
+the matrices \code{ctSummaryMatrices(fit, state = )$estimate} reports, for
+\code{'simulate'} simulated at the estimate. The draws' mean or median need
+not equal them. \code{summary()} reads their quantities into an
+\code{estimate} column, and \code{\link{ctDiscreteParsPlot}} draws them as
+its line. A sampled fit has no estimate, and gives none.
 With \code{plot = TRUE}, a ggplot object.
 }
 \description{

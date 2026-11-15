@@ -263,6 +263,16 @@
     ' draws had no stationary variance at this state, so no shock magnitude ',
     'could be derived from the model; those draws are NA.')
 
+  # The same response at the fit's estimate, where it has one: one trajectory
+  # pair a process more, [subject, time, row, col].
+  raw <- .ctFitEstimateRaw(fit)
+  if (!is.null(raw)) {
+    estimate <- .ctNonlinearDrawResponses(fit, raw, start, times,
+      impulseType = impulseType, standardise = standardise, magnitude = magnitude,
+      maxstep = maxstep)
+    attr(out, 'estimate') <- array(estimate, c(1L, length(times), nlatent, nlatent))
+  }
+
   attr(out, 'times') <- times
   attr(out, 'stateLabel') <- resolved$label
   out

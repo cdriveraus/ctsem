@@ -343,22 +343,12 @@
     # measurement's Jacobians there (JAx, Jy), which are DRIFT and LAMBDA
     # wherever no cell reads the state. A cell nonlinear in the state has a
     # value there that is no slope ('a + b*Y' in Y's column has slope
-    # a + 2 b Y). Summarised over the draws as ctSummaryMatrices() summarises
+    # a + 2 b Y). ctSummaryMatrices() summarises them over the draws as it does
     # the rest. A stan fit reports no Jacobians; its edges are the cells'
     # values there, and its messages say so.
-    out$jacobian <- FALSE
-    if(inherits(x, 'ctJuliaFit')){
-      pop <- .ctBackendPopArrays(x, state = resolved$state)
-      dots <- list(...)
-      calc <- if(is.null(dots$calcfunc)) stats::quantile else dots$calcfunc
-      calcargs <- if(is.null(dots$calcfuncargs)) list(probs = .5) else dots$calcfuncargs
-      collapse <- function(a, nr, nc) matrix(apply(
-        a[, seq_len(nr), seq_len(nc), drop = FALSE], c(2, 3),
-        function(v) as.numeric(do.call(calc, c(list(v), calcargs)))), nr, nc)
-      if(!is.null(pop$pop_JAx)) out$DRIFT <- collapse(pop$pop_JAx, nl, nl)
-      if(!is.null(pop$pop_Jy)) out$LAMBDA <- collapse(pop$pop_Jy, nm, nl)
-      out$jacobian <- !is.null(pop$pop_JAx)
-    }
+    out$jacobian <- !is.null(mats$JAx)
+    if(out$jacobian) out$DRIFT <- trim(mats$JAx, nl, nl)
+    if(!is.null(mats$Jy)) out$LAMBDA <- trim(mats$Jy, nm, nl)
     out$stateLabel <- resolved$label
     out$stateDependent <- .ctNetworkStateDependentCells(x)
   } else stop(call. = FALSE, paste0('ctNetwork() needs a ctModel(type="ct"/"dt") ',
