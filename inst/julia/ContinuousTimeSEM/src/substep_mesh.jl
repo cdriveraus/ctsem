@@ -293,6 +293,21 @@ function _ctsem_subject_mesh(sub, x::Vector{Float64}, tol::Float64, cap::Int, pa
     return (mesh, true, used)
 end
 
+# Whether any row of `objective` iterates its measurement update, so that a
+# plan is learnt at all, and whether any subject's mesh is measured rather
+# than the floor (`_ctsem_subject_mesh`). Neither depends on the values a
+# subject is filtered at, so a caller that would work to find those values --
+# the Laplace route, a mode for every unit -- asks first.
+function _ctsem_relin_planned(objective::CTSEMObjective)
+    subjects = objective.subject_objectives
+    (isempty(subjects) || !_CTSEM_RELINEARISE[]) && return false
+    return _get_or_init_objective_workspace!(first(subjects), Float64).relinearise
+end
+
+_ctsem_mesh_measured(objective::CTSEMObjective) = any(sub ->
+    !isempty(_get_or_init_objective_workspace!(sub, Float64).predict_param_indices),
+    objective.subject_objectives)
+
 """
     ctsem_relin_plan(objective, values)
 
@@ -316,9 +331,8 @@ row iterates -- a linear measurement, or the iteration switched off
 vector, which JuliaConnectoR cannot carry back to R.
 """
 function ctsem_relin_plan(objective::CTSEMObjective, values::AbstractVecOrMat)
+    _ctsem_relin_planned(objective) || return nothing
     subjects = objective.subject_objectives
-    (isempty(subjects) || !_CTSEM_RELINEARISE[]) && return nothing
-    _get_or_init_objective_workspace!(first(subjects), Float64).relinearise || return nothing
     persubject = values isa AbstractMatrix
     persubject && size(values, 1) != length(subjects) && throw(DimensionMismatch(
         "one row of parameters per subject is required"))

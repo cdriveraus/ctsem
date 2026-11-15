@@ -887,6 +887,26 @@ end
 ctsem_max_chunks() = (max_chunks=_CTSEM_MAX_CHUNKS[], nthreads=Threads.nthreads(),
     blas_threads=LinearAlgebra.BLAS.get_num_threads())
 
+"""
+    _ctsem_with_max_chunks(f, n)
+
+`f()` under the chunk ceiling `n`, the ceiling it found put back after: for an
+entry point that is handed its caller's `cores` and finds out for itself
+whether it has threaded work to do. Set from R around the call, a ceiling is
+three bridge round trips whether or not the call does anything. `n <= 0`
+leaves the ceiling as it is.
+"""
+function _ctsem_with_max_chunks(f, n::Integer)
+    n > 0 || return f()
+    previous = _CTSEM_MAX_CHUNKS[]
+    ctsem_set_max_chunks!(n)
+    try
+        return f()
+    finally
+        ctsem_set_max_chunks!(previous)
+    end
+end
+
 @inline function _ctsem_nchunks(nsubjects::Int)
     requested = _CTSEM_MAX_CHUNKS[]
     available = requested == 0 ? Threads.nthreads() : min(requested, Threads.nthreads())
