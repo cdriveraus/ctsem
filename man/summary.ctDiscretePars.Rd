@@ -16,7 +16,10 @@
 \value{
 A data frame, one row per subject, pair of processes (\code{row} the
   one affected, \code{col} the one acting) and quantity, with the mean, sd
-  and quantiles over draws. The quantities:
+  and quantiles over draws, and where the object carries the fit's estimate
+  (an optimised fit's population effects, \code{attr(object, 'estimate')}),
+  the quantity read off the estimate's curve, \code{estimate}. The
+  quantities:
   \describe{
     \item{\code{peak}}{The value of largest magnitude, with its sign.}
     \item{\code{peaktime}}{The lag at which it occurs.}

@@ -165,6 +165,14 @@ ctStanParnames <- ctRawParnames
 #'\code{ctDiscretePars}: \code{summary()} gives each curve's peak, the lag of
 #'the peak, the lag at which it has fallen to half the peak (a half-life), and
 #'the area under it, with their uncertainty (\code{\link{summary.ctDiscretePars}}).
+#'On an optimised fit, with \code{subjects = 'popmean'}, the same
+#'coefficients at the fit's estimate are \code{attr(x, 'estimate')}, by
+#'subject, time interval, row and column: for \code{'linearise'} computed from
+#'the matrices \code{ctSummaryMatrices(fit, state = )$estimate} reports, for
+#'\code{'simulate'} simulated at the estimate. The draws' mean or median need
+#'not equal them. \code{summary()} reads their quantities into an
+#'\code{estimate} column, and \code{\link{ctDiscreteParsPlot}} draws them as
+#'its line. A sampled fit has no estimate, and gives none.
 #'With \code{plot = TRUE}, a ggplot object.
 #'@aliases ctStanDiscretePars
 #'@export
@@ -213,6 +221,8 @@ ctDiscretePars<-function(fit, subjects='popmean',
     times <- attr(out,'times')
     dimnames(out) <- list(Sample=seq_len(dim(out)[1]), Subject='popmean',
       `Time interval`=times, row=ctmS$latentNames, col=ctmS$latentNames)
+    if(!is.null(attr(out, 'estimate')))
+      dimnames(attr(out, 'estimate')) <- dimnames(out)[-1]
     attributes(out)$impulseType <- impulseType
     attributes(out)$cov <- FALSE
     attributes(out)$standardise <- standardise
@@ -339,11 +349,32 @@ ctDiscretePars<-function(fit, subjects='popmean',
   dimnames(out)<- list(Sample=samples, Subject=if('popmean' %in% subjects) subjects else subjectLabels,
     `Time interval`=times, row=latentNames, col=latentNames)
 
+  # The same effects at the fit's estimate, where it has one, from the
+  # matrices ctSummaryMatrices(fit, state = )$estimate reports. The
+  # population's only: a subject's matrices come from its own filter pass over
+  # the draws.
+  estimate <- NULL
+  if('popmean' %in% subjects){
+    atEstimate <- .ctFitEstimateArrays(fit, state = stateArgs$state)
+    if(!is.null(atEstimate)){
+      estpars <- list()
+      for(matname in c('DRIFT','DIFFUSIONcov','asymDIFFUSIONcov')){
+        from <- if(matname %in% 'DRIFT' && jacobian) 'JAx' else matname
+        estpars[[matname]] <- atEstimate[[paste0('pop_',from)]][1,,,drop=FALSE]
+      }
+      estimate <- ctDiscreteParsDrift(estpars, times, impulseType, standardise, cov=cov,
+        discreteInput = ctm$continuoustime==FALSE, quiet=TRUE)
+      estimate <- array(estimate, dim = dim(estimate)[-1],
+        dimnames = dimnames(out)[-1])
+    }
+  }
+
   attributes(out)$impulseType <- impulseType
   attributes(out)$cov <- cov
   attributes(out)$standardise <- standardise
   attributes(out)$method <- 'linearise'
   attributes(out)$jacobian <- jacobian
+  attributes(out)$estimate <- estimate
   class(out) <- c('ctDiscretePars', 'array')
   attributes(out)$stateLabel <- stateLabel
   out <- .ctContextAttach(out, fit)
@@ -373,7 +404,10 @@ ctStanDiscretePars <- ctDiscretePars
 #' @param ... Not used.
 #' @return A data frame, one row per subject, pair of processes (\code{row} the
 #'   one affected, \code{col} the one acting) and quantity, with the mean, sd
-#'   and quantiles over draws. The quantities:
+#'   and quantiles over draws, and where the object carries the fit's estimate
+#'   (an optimised fit's population effects, \code{attr(object, 'estimate')}),
+#'   the quantity read off the estimate's curve, \code{estimate}. The
+#'   quantities:
 #'   \describe{
 #'     \item{\code{peak}}{The value of largest magnitude, with its sign.}
 #'     \item{\code{peaktime}}{The lag at which it occurs.}
@@ -398,20 +432,25 @@ summary.ctDiscretePars <- function(object, probs = c(.025, .5, .975), ...) {
   times <- as.numeric(dimnames(object)[[3L]])
   dims <- dim(object)
   names <- dimnames(object)
+  estimate <- attr(object, "estimate")
   rows <- list()
   for (i in seq_len(dims[2L])) for (r in seq_len(dims[4L])) for (c in seq_len(dims[5L])) {
     V <- matrix(unclass(object)[, i, , r, c], nrow = dims[1L])
     quantities <- .ctCurveQuantities(V, times)
+    atEstimate <- if (!is.null(estimate)) .ctCurveQuantities(
+      matrix(estimate[i, , r, c], nrow = 1L), times)
     for (q in names(quantities)) {
       v <- quantities[[q]]
       ok <- is.finite(v)
       summarised <- if (any(ok)) c(mean(v[ok]), if (sum(ok) > 1L) stats::sd(v[ok]) else
         NA_real_, stats::quantile(v[ok], probs, names = FALSE)) else
         rep(NA_real_, 2L + length(probs))
-      rows[[length(rows) + 1L]] <- data.frame(Subject = names[[2L]][i],
+      one <- data.frame(Subject = names[[2L]][i],
         row = names[[4L]][r], col = names[[5L]][c], quantity = q,
-        t(summarised), beyond = if (q == "halftime") mean(!ok) else NA_real_,
-        stringsAsFactors = FALSE)
+        t(summarised), stringsAsFactors = FALSE)
+      if (!is.null(atEstimate)) one$estimate <- atEstimate[[q]]
+      one$beyond <- if (q == "halftime") mean(!ok) else NA_real_
+      rows[[length(rows) + 1L]] <- one
     }
   }
   out <- do.call(rbind, rows)
@@ -647,7 +686,13 @@ ctDiscreteParsDrift<-function(ctpars,times, impulseType,  standardise,cov=FALSE,
 #''CR' specifies all off-diagonals,for discrete time cross regression parameters.
 #''all' plots all AR and CR effects at once.
 #'@param quantiles numeric vector of length 3, with values between 0 and 1, specifying which quantiles to plot.
-#'The default plots 95\% credible intervals and the posterior median at 50\%.
+#'The default plots 95\% credible intervals as the band, and the posterior median at 50\% as the line
+#'where \code{line} does not draw the estimate.
+#'@param line What the line is. \code{'estimate'} (the default) draws the
+#'effects at the fit's estimate where \code{x} carries them
+#'(\code{attr(x, 'estimate')}: an optimised fit's population effects), and the
+#'middle of \code{quantiles} otherwise; \code{'median'} always draws the middle
+#'of \code{quantiles}. The band is the draws' either way.
 #'@param latentNames Vector of character strings denoting names for the latent variables.
 #''auto' just uses eta1 eta2 etc.
 #'@param polygonalpha Numeric between 0 and 1 to multiply the alpha of
@@ -661,7 +706,7 @@ ctDiscreteParsDrift<-function(ctpars,times, impulseType,  standardise,cov=FALSE,
 #'@param title Character string. 'auto' generates automatically, NULL can be used to disable title.
 #'@param splitSubjects if TRUE, subjects are plotted separately, if FALSE they are combined.
 #'@param ggcode if TRUE, returns a list containing the data.table to plot (for each curve and time interval,
-#'the three \code{quantiles} of the draws, as \code{ymin}, \code{value} and \code{ymax}), and a character string that can be
+#'the outer \code{quantiles} of the draws as \code{ymin} and \code{ymax}, and the line as \code{value}), and a character string that can be
 #'evaluated (with the necessary arguments such as ylab etc filled in). For modifying plots.
 #'@return A ggplot2 object. This can be modified by the various ggplot2 functions, or displayed using print(x).
 #'@examples
@@ -681,9 +726,13 @@ ctDiscreteParsPlot<- function(x,indices='all',
   quantiles=c(.025,.5,.975), latentNames='auto',
   ylab='Coefficient',xlab='Time interval',ylim=NA,facets=NA,splitSubjects=TRUE,
   colour='Effect',title='auto',
-  polygonalpha=.1,ggcode=FALSE){
+  polygonalpha=.1,ggcode=FALSE,line=c('estimate','median')){
 
   if(is.data.frame(indices)) indices <- as.matrix(indices)
+  line <- match.arg(line)
+  # The line at the fit's estimate where the object carries it, one subject
+  # (the population) deep, so it serves split or combined subjects alike.
+  estimate <- if(line %in% 'estimate') attributes(x)$estimate
 
   impulseLabel <- NULL
   if(!is.null(title)){
@@ -766,10 +815,12 @@ ctDiscreteParsPlot<- function(x,indices='all',
       z <- z[is.finite(z)]
       if(length(z)) stats::quantile(z, quantiles[1:3], names = FALSE) else rep(NA_real_, 3)
     })
+    value <- if(!is.null(estimate) && dim(estimate)[1] == length(subjects))
+      c(estimate[, , pairs[k, 1], pairs[k, 2]]) else c(q[2, , ])
     data.table(Subject = rep(subjects, times = length(times)),
       `Time interval` = rep(times, each = length(subjects)),
       row = latentNames[pairs[k, 1]], col = latentNames[pairs[k, 2]],
-      ymin = c(q[1, , ]), value = c(q[2, , ]), ymax = c(q[3, , ]))
+      ymin = c(q[1, , ]), value = value, ymax = c(q[3, , ]))
   }))
   ym$row <- factor(ym$row, levels = levs)
   ym$col <- factor(ym$col, levels = levs)

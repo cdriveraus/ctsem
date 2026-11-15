@@ -120,3 +120,16 @@ test_that("the plot's data are the quantiles of the draws at each lag", {
   expect_s3_class(ctDiscreteParsPlot(x, indices = rbind(c(2, 1)),
     facets = c('Subject', 'Effect')), 'ggplot')
 })
+
+# The estimate's effects, on stan's bundled fit where it was optimised: the
+# exponential of the drift ctSummaryMatrices() reports at the estimate.
+test_that("an optimised stan fit's effects at its estimate are expm of its estimated drift", {
+  skip_if_not(exists('ctstantestfit'))
+  skip_if(is.null(ctsem:::.ctFitEstimateRaw(ctstantestfit)))
+  times <- c(0, .5, 2)
+  dp <- suppressMessages(ctDiscretePars(ctstantestfit, times = times, nsamples = 5))
+  drift <- unname(as.matrix(suppressMessages(ctSummaryMatrices(ctstantestfit))$estimate$DRIFT))
+  for (k in seq_along(times)) expect_equal(unname(attr(dp, 'estimate')[1, k, , ]),
+    as.matrix(Matrix::expm(drift * times[k])), tolerance = 1e-8)
+  expect_false(anyNA(summary(dp)$estimate[summary(dp)$quantity == 'peak']))
+})
