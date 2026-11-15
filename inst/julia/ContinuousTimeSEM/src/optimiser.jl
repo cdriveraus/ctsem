@@ -3222,7 +3222,10 @@ passes in `.ctJuliaOptimiseFit()`). `final = :dear` does so only where the walk
 was on the Krylov model, the exact Hessian being dear, and finishes as
 `:exact` elsewhere: where the walk began on an exact Hessian, the one the
 certification needs is already formed or cheap (the first stage of a fit
-with smoothing parameters to estimate).
+with smoothing parameters to estimate). On `curvature = :krylov` neither forms
+an exact Hessian in place of the model: the walk ends where the model cannot be
+extended or cannot make a step, and a `hessian0` that cannot make one gives way
+to the model.
 
 `take_steps = false` gives the certification's numbers alone: the Hessian at `x`,
 the ladder's measurement along any negative curvature there and the probe, with
@@ -3730,11 +3733,12 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             # last extended at, from that point's gradient (`CTSEMKrylov`).
             # Where it cannot be -- no products there, or it has cost what the
             # exact Hessian would -- the walk ends, and the exact Hessian here
-            # takes over (the rewalk below).
+            # takes over (the rewalk below). A stage that is not certified
+            # (`final`) ends there instead, on the model it walked.
             if krylov && !fresh
                 Hk = krylov_at(x, G)
                 if Hk === nothing
-                    krylov = false
+                    final === :exact && (krylov = false)
                     break
                 end
                 H = Hk; Hs = Hk; hat = copy(x)
@@ -3848,10 +3852,16 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             # measure of what its steps find: on the affect pilot's tied fit
             # (2026-11-12, dev1) forty steps, two to four products and a
             # gradient each, moved the gradient between 3.4 and 4.7 and the
-            # value by nothing, three hours.
+            # value by nothing, three hours. A stage held to a looser `tol`
+            # than the certification's -- one that is not certified, whose
+            # caller changes the objective next -- ends on that: resumed from
+            # the tied fit's checkpoint (2026-11-15, dev2) such a stage's
+            # steps each gained about a thousandth of a nat, eight minutes
+            # apiece, and had up to 421 products to spend so.
             if krylov && k >= 2
                 half = k ÷ 2
-                if (walk_values[half + 1] - f) / (k - half) < certify_now()
+                if (walk_values[half + 1] - f) / (k - half) <
+                        max(certify_now(), tol_now())
                     break
                 end
             end
@@ -3909,6 +3919,24 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                     _ctsem_refused!(resolution, gain)
                     converged = gain <= certify_now()
                     break
+                end
+                # A stage that is not certified (`final`) forms no exact
+                # Hessian where the finish's is the Krylov model, the exact
+                # one being dear: its caller changes the objective next and
+                # certifies once the changes settle. A step the model cannot
+                # make ends the walk, and a matrix the caller handed that
+                # cannot make one gives way to the model, as a walk that ends
+                # unconverged on an exact Hessian does (the rewalk below).
+                if final !== :exact && curvature === :krylov
+                    krylov && break
+                    Hk = krylov_at(x, G)
+                    if Hk !== nothing
+                        H = Hk; Hs = Hk; hat = copy(x); exact = false
+                        krylov = true; fresh = true
+                        walk_start = steps; walk_values = [f]
+                        prevgain = Inf; prevwhole = true; prevrho = 1.0; radius = Inf
+                        continue
+                    end
                 end
                 H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
                 krylov = false
