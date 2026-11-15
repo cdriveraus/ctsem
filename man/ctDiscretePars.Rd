@@ -86,8 +86,14 @@ If subject matrices were saved during fiting, not used.}
 \item{state}{Evaluation point for any matrix cell that depends on the latent
 state or a time dependent predictor -- see \code{\link{ctContextDependence}}.
 \code{NULL} (the default) or \code{'T0MEANS'} uses the population initial
-state, \code{'mean'} the mean smoothed latent state, \code{'asymptotic'} the
-system's own fixed point; or supply a numeric state vector. Requires
+state, with time dependent predictors at zero, which for a model whose
+dynamics depend on the state can be far from where the data are;
+\code{'mean'} the mean smoothed latent state, \code{'asymptotic'} the
+system's own fixed point; or supply a numeric state vector. The initial state
+and the fixed point are each draw's own, so the intervals include where they
+are; \code{'mean'} is the estimate's, used for every draw, so its intervals
+leave out where that state is. A process that does not change (a latent
+predictor) is held at its initial value in finding the fixed point. Requires
 \code{backend='julia'} and \code{subjects='popmean'}. For a linear model the
 argument makes no difference, since no cell depends on the state.}
 
@@ -99,11 +105,20 @@ on the state, the response of the model linearised at \code{state}. Where a
 cell is nonlinear in the state the two differ: a DRIFT cell \code{a + b*Y}
 in the column of process \code{Y} is \code{a + b*Y} there, and contributes
 \code{a + 2*b*Y} to the Jacobian. A stan fit carries no Jacobian, and
-exponentiates DRIFT as evaluated at \code{T0MEANS}. \code{'simulate'}
-integrates the nonlinear system from \code{state} and from \code{state} plus
-one unit on each process and differences the trajectories, which is the actual
-model implied regression; it starts at 1 and decays to 0 for a stable process,
-and reduces exactly to \code{'linearise'} when no cell depends on the state.
+exponentiates DRIFT as evaluated at \code{T0MEANS}. The linearisation holds
+\code{J} fixed over the interval, so it is a fair interval regression near a
+fixed point, or over intervals short beside the dynamics; away from a fixed
+point the state moves during the interval, the nonlinear system's response
+can differ from it, and \code{'simulate'} is the check. \code{'simulate'}
+integrates the nonlinear system from \code{state}, and from \code{state}
+plus a shock of one stationary standard deviation in each process in turn
+(with the companion movements \code{impulseType} gives), and differences the
+trajectories, divided back to one unit (one standard deviation when
+\code{standardise=TRUE}): the model implied regression for a shock of that
+size. It starts at 1 and decays to 0 for a stable process, and reduces
+exactly to \code{'linearise'} when no cell depends on the state; for a
+strongly nonlinear system the curve depends on the shock's size, and near a
+fixed point the difference from \code{'linearise'} is that size's effect.
 \code{'simulate'} requires \code{backend='julia'} and is slower, so it
 uses \code{nsamples} posterior draws with a small default.}
 
@@ -131,7 +146,9 @@ the matrices \code{ctSummaryMatrices(fit, state = )$estimate} reports, for
 \code{'simulate'} simulated at the estimate. The draws' mean or median need
 not equal them. \code{summary()} reads their quantities into an
 \code{estimate} column, and \code{\link{ctDiscreteParsPlot}} draws them as
-its line. A sampled fit has no estimate, and gives none.
+its line. A sampled fit has no estimate, and gives none; nor do
+\code{subjects} other than \code{'popmean'}, whose matrices come from each
+subject's filter pass over the draws.
 With \code{plot = TRUE}, a ggplot object.
 }
 \description{

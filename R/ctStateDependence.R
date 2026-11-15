@@ -117,12 +117,21 @@ ctStateDependencePlot <- function(fit, along = 1, extent = "data", gridsize = 25
     draws <- draws[round(seq(1, nrow(draws), length.out = nsamples)), , drop = FALSE]
   }
 
+  # The other processes are held at each draw's own fixed point under
+  # 'asymptotic' (a column a draw), as every report evaluates it, and at `base`
+  # otherwise. The point is built here: a resolved 'asymptotic' carries a mark
+  # that would have the draws' fixed points replace the grid's value too.
+  held <- if (identical(attr(base, "perdraw"), "asymptotic")) {
+    t(.ctContextAsymptoticStates(fit, draws, start = as.numeric(base),
+      tipreds = tipreds))
+  } else as.numeric(base)
+
   # One engine call per grid point covers the whole posterior at that point:
   # `state` is a keyword of the materialisation, the draws are its columns.
   collected <- vector("list", length(grid))
   for (i in seq_along(grid)) {
-    point <- base
-    point[along] <- grid[i]
+    point <- held
+    if (is.matrix(point)) point[along, ] <- grid[i] else point[along] <- grid[i]
     arrays <- try(.ctBackendPopArrays(fit, samples = draws, state = point,
       tipreds = tipreds), silent = TRUE)
     if (inherits(arrays, "try-error")) next
