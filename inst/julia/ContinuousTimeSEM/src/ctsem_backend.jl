@@ -3579,16 +3579,14 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # never meets: on the affect pilot's tied fit a stage resumed 0.017
     # standard errors from its optimum walked fifty iterations at an unchanged
     # value, and its finish then formed the Hessian again, eight hours.
-    held = finishing && maxiter > 0 && newton_hessian !== nothing &&
-        newton_hessian_at !== nothing && batcher === nothing && !sgd &&
+    held = finishing && maxiter > 0 && newton_hessian isa AbstractMatrix &&
+        newton_hessian_at isa AbstractVector && batcher === nothing && !sgd &&
         saem_result === nothing
-    first_finish = Ref(false)
-    at_start = held ? function (x, f, G)
-        first_finish[] = isfinite(f) && f < invalid_objective &&
-            _ctsem_finish_first(newton_hessian, newton_hessian_at, x, G,
-                newton_reuse, flat_rtol)
-        return first_finish[]
-    end : nothing
+    at_start = held ? CTSEMHeldStart(true, Matrix{Float64}(newton_hessian),
+        collect(Float64, newton_hessian_at), Float64(newton_reuse),
+        Float64(flat_rtol), Float64(invalid_objective), Ref(false)) :
+        CTSEMHeldStart()
+    first_finish = at_start.taken
     result = _ctsem_lbfgs(fg!, lbfgs_start; memory=lbfgs_m, pairs=pairs0,
         diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
         metric=_ctsem_metric(precondition, length(start_values)),

@@ -142,6 +142,41 @@ struct CTSEMLBFGSResult
     memory::CTSEMLBFGSMemory
 end
 
+"""
+    CTSEMHeldStart
+
+What `_ctsem_lbfgs` asks of its starting point for a stage that holds an exact
+Hessian (`ctsem_optimize`'s `newton_hessian`): the Hessian of the MAXIMISED
+objective and where it was taken, the reuse radius and flat rule
+`_ctsem_finish_first` reads, the objective's invalid-point sentinel, and
+whether the start was taken for the finish (`taken`). One concrete type
+whether or not a stage holds a Hessian (`active`), and the default of
+`_ctsem_lbfgs`'s keyword, so that L-BFGS is compiled once: a closure here, or
+`nothing` beside a closure, is a second copy of its whole body at every
+objective.
+"""
+struct CTSEMHeldStart
+    active::Bool
+    hessian::Matrix{Float64}
+    at::Vector{Float64}
+    reuse::Float64
+    flat_rtol::Float64
+    invalid::Float64
+    taken::Base.RefValue{Bool}
+end
+CTSEMHeldStart() = CTSEMHeldStart(false, zeros(0, 0), Float64[], 0.0, 0.0, Inf, Ref(false))
+
+"""Whether L-BFGS ends at its start `x`, value `f` and gradient `G` there, for
+the finish to take over (`CTSEMHeldStart`, `_ctsem_finish_first`); recorded in
+`taken`."""
+function _ctsem_held_start!(h::CTSEMHeldStart, x::Vector{Float64}, f::Float64,
+        G::Vector{Float64})
+    h.active || return false
+    h.taken[] = isfinite(f) && f < h.invalid &&
+        _ctsem_finish_first(h.hessian, h.at, x, G, h.reuse, h.flat_rtol)
+    return h.taken[]
+end
+
 # L-BFGS on from `x` after `result`, from the curvature pairs it ended with,
 # its iterations counted on from `iteration0` and its calls added to
 # `result`'s: where a finish handed the point back, or where the run took modes
@@ -380,7 +415,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         inverse::Union{Nothing,Matrix{Float64}}=nothing,
         structured=nothing, coreset=nothing,
         jump::Union{Nothing,CTSEMJump}=nothing, local_curvature=nothing,
-        at_start=nothing)
+        at_start::CTSEMHeldStart=CTSEMHeldStart())
     n = length(x0)
     x = collect(Float64, x0)
     dinv = metric === nothing ? ones(n) : begin
@@ -413,10 +448,9 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     # starting point is the last row its predecessor already recorded.
     stopped = callback !== nothing && iteration0 == 0 &&
         callback(CTSEMIterate(0, f, maximum(abs, G; init=0.0))) === true
-    # `at_start(x, f, G)`: the caller's word on the starting point, once it is
-    # evaluated; `true` ends the run there with no step (`ctsem_optimize`
-    # hands a stage that starts within its held Hessian's reach to the finish).
-    stopped || (stopped = at_start !== nothing && at_start(x, f, G) === true)
+    # `at_start`: a stage that starts within its held Hessian's reach ends
+    # here with no step, for the finish to take over (`CTSEMHeldStart`).
+    stopped || (stopped = _ctsem_held_start!(at_start, x, f, G))
     # Length `initial_alpha` in the metric's norm: a short first step when
     # there is no curvature history, measured so that a unit means the same
     # amount of model in every coordinate.
