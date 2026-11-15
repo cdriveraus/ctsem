@@ -7165,8 +7165,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       plain <- plaincorrection$result
     }
     if (!inherits(plain, "try-error")) {
-      withsaem <- .ctLaplaceCorrectedValue(model_spec, as.numeric(saemrun$minimizer))
-      without <- .ctLaplaceCorrectedValue(model_spec, as.numeric(plain$minimizer))
+      # At the fit's cores: between stages the ceiling is the session's default.
+      withsaem <- .ctBackendWithMaxChunks(cores,
+        .ctLaplaceCorrectedValue(model_spec, as.numeric(saemrun$minimizer)))
+      without <- .ctBackendWithMaxChunks(cores,
+        .ctLaplaceCorrectedValue(model_spec, as.numeric(plain$minimizer)))
       chosen <- if (all(is.finite(c(withsaem[["corrected"]], without[["corrected"]]))) &&
           without[["corrected"]] > withsaem[["corrected"]] + 1e-3) "without" else "saem"
       # Both runs counted, whichever is kept (`.ctJuliaAddRunCounts()`).
@@ -7234,9 +7237,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       certified <- is.null(curvature)
       if (certified) curvature <- correction$hessian
     }
+    # The first stage ended on the Krylov model's walk, so every curvature
+    # before the certified stage is that model: each smoothing step then takes
+    # the smooths' own columns exactly (`.ctTIsmoothExactColumns()`). Where
+    # the stages walk an exact Hessian the matrix in hand is one already.
+    modelled <- !certified
     if (!is.null(curvature)) {
       for (pass in seq_len(10L)) {
         theta <- as.numeric(result$minimizer)
+        if (modelled && !certified) curvature <- .ctTIsmoothExactColumns(
+          model_spec, curvature, theta, cores)
         gfs <- .ctTIsmoothLambda(model_spec$penalty, curvature, theta,
           gradient = as.numeric(result$gradient))
         model_spec$penalty$edf <- gfs$edf
