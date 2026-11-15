@@ -285,9 +285,19 @@
     stop("Pass state= (a point in the process space) or filterstate= (a whole ",
       "filter state, carriers included), not both.", call. = FALSE)
   }
-  point <- if (length(filterstate)) as.numeric(filterstate) else
-    if (length(state)) .ctContextDynamicState(fit, state) else NULL
-  if (length(point)) arguments$state <- .ctJuliaVector(point)
+  # A matrix `state` is one point per draw, a column each (per-draw fixed
+  # points, `.ctContextAsymptoticStates()`).
+  if (is.matrix(state)) {
+    if (nrow(state) != .ctFitNlatent(fit) || ncol(state) != ncol(raw)) stop(
+      "state as a matrix needs one column of ", .ctFitNlatent(fit),
+      " entries per draw.", call. = FALSE)
+    storage.mode(state) <- "double"
+    arguments$state <- .ctJuliaPut(state)
+  } else {
+    point <- if (length(filterstate)) as.numeric(filterstate) else
+      if (length(state)) .ctContextDynamicState(fit, state) else NULL
+    if (length(point)) arguments$state <- .ctJuliaVector(as.numeric(point))
+  }
   # `rows` selects flat positions engine-side. The materialization is under
   # 0.02 s either way; what this saves is the bridge, which moves about 1 MB/s
   # and does not care that 98% of what it is carrying will be dropped on
@@ -515,6 +525,13 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   }
   layout <- .ctBackendSummaryLayout(fit)
   if (is.null(samples)) samples <- .ctBackendRawSamples(fit)
+  # 'asymptotic' is each draw's own fixed point, found from the estimate's
+  # (`.ctResolveState()` marks it so): one draw's matrices at another draw's
+  # fixed point would leave out of the interval where that point is.
+  if (identical(attr(state, "perdraw"), "asymptotic")) {
+    state <- t(.ctContextAsymptoticStates(fit, samples, start = as.numeric(state),
+      tipreds = tipreds, time = time, dt = dt))
+  }
   flat <- .ctBackendParMatricesFlat(fit, t(samples), tipreds = tipreds, state = state,
     time = time, dt = dt)
   # The population covariance is the same at any predictor value or state, and

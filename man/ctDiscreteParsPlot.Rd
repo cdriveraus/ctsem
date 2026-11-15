@@ -73,6 +73,14 @@ A ggplot2 object. This can be modified by the various ggplot2 functions, or disp
 Plots the output from \code{\link{ctDiscretePars}}, for model implied regression strengths at specified times for continuous time models fit with ctStanFit.
 \code{ctStanDiscreteParsPlot} is maintained as a backward-compatible alias.
 }
+\details{
+For a model whose dynamics depend on the state, the curves are the model
+linearised at one point, or simulated from it, and the subtitle names the
+point. The default, the population initial state with time dependent
+predictors at zero, can be far from where the data are; choose the point, and
+whether to linearise or simulate, with \code{ctDiscretePars(state = , method = )},
+whose help says when the linearisation is a fair interval regression.
+}
 \examples{
 data.table::setDTthreads(1) #ignore this line
 x <- ctDiscretePars(ctstantestfit)

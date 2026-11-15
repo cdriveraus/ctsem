@@ -472,12 +472,16 @@ NULL
 # request -- there is nothing a caller can say about a carrier that the
 # parameter vector does not already say.
 .ctContextDynamicState <- function(fit, state) {
+  # Kept: a resolved 'asymptotic' is passed on as its vector, and each draw's
+  # own fixed point is found from it where the draws are evaluated.
+  perdraw <- attr(state, "perdraw")
   state <- as.numeric(state)
   nlatent <- .ctFitNlatent(fit)
   if (length(state) != nlatent) {
     stop("state must have ", nlatent, " entries (one per latent process); got ",
       length(state), ".", call. = FALSE)
   }
+  attr(state, "perdraw") <- perdraw
   state
 }
 
@@ -500,35 +504,90 @@ NULL
 # Newton, using the engine's own JAx as the Jacobian rather than finite
 # differences -- JAx is exactly d(drift)/d(state), so one engine call per
 # iteration does the whole step. For a linear model this lands on asymCINT in a
-# single iteration, which is the invariant the test checks.
+# single iteration, which is the invariant the test checks. At the estimate,
+# from the population T0MEANS.
 .ctContextAsymptoticState <- function(fit, tolerance = 1e-8, maxiter = 50L,
   tipreds = NULL) {
-  nlatent <- .ctFitNlatent(fit)
-  x <- .ctContextBaseState(fit, tipreds)
-  discrete <- !isTRUE(.ctFitModelObject(fit)$continuoustime)
-  for (iteration in seq_len(maxiter)) {
-    mats <- suppressMessages(ctBackendParMatrices(fit, state = x,
-      tipreds = tipreds, trim = FALSE))
-    drift <- mats$DRIFT[seq_len(nlatent), seq_len(nlatent), drop = FALSE]
-    cint <- as.numeric(mats$CINT[seq_len(nlatent), 1])
-    jacobian <- mats$JAx[seq_len(nlatent), seq_len(nlatent), drop = FALSE]
-    if (all(!is.finite(jacobian)) || all(jacobian == 0)) jacobian <- drift
-    # Discrete time asks where x = A x + c, i.e. (A - I) x + c = 0.
-    if (discrete) {
-      drift <- drift - diag(nlatent)
-      jacobian <- jacobian - diag(nlatent)
-    }
-    residual <- as.numeric(drift %*% x) + cint
-    if (max(abs(residual)) < tolerance) return(x)
-    step <- try(solve(jacobian, residual), silent = TRUE)
-    if (inherits(step, "try-error")) {
-      stop("No asymptotic state: the system is singular at the current iterate. ",
-        "Use state='mean' or supply a state.", call. = FALSE)
-    }
-    x <- x - step
+  x <- .ctContextAsymptoticStates(fit, matrix(as.numeric(fit$estimate$raw), nrow = 1L),
+    start = .ctContextBaseState(fit, tipreds), tipreds = tipreds,
+    tolerance = tolerance, maxiter = maxiter)
+  if (attr(x, "singular") > 0) {
+    stop("No asymptotic state: the system is singular at the current iterate. ",
+      "Use state='mean' or supply a state.", call. = FALSE)
   }
-  stop("No asymptotic state found in ", maxiter, " iterations -- the system may ",
-    "have no stable fixed point. Use state='mean' or supply a state.", call. = FALSE)
+  if (attr(x, "unresolved") > 0) {
+    stop("No asymptotic state found in ", maxiter, " iterations -- the system may ",
+      "have no stable fixed point. Use state='mean' or supply a state.", call. = FALSE)
+  }
+  as.numeric(x[1L, ])
+}
+
+# Each draw's own fixed point, by Newton from `start` (the estimate's), every
+# draw's matrices in one engine call an iteration: draws x nlatent, NaN for a
+# draw with none near the start, which attribute 'unresolved' counts
+# ('singular' those whose Jacobian could not be solved).
+.ctContextAsymptoticStates <- function(fit, samples, start, tipreds = NULL,
+  time = 0, dt = 0, tolerance = 1e-8, maxiter = 50L) {
+  samples <- if (is.matrix(samples)) samples else matrix(as.numeric(samples), nrow = 1L)
+  nlatent <- .ctFitNlatent(fit)
+  index <- seq_len(nlatent)
+  discrete <- !isTRUE(.ctFitModelObject(fit)$continuoustime)
+  x <- matrix(as.numeric(start)[index], nrow(samples), nlatent, byrow = TRUE)
+  open <- rep(TRUE, nrow(samples))
+  singular <- rep(FALSE, nrow(samples))
+  for (iteration in seq_len(maxiter)) {
+    active <- which(open)
+    if (!length(active)) break
+    mats <- .ctBackendPopArrays(fit, samples = samples[active, , drop = FALSE],
+      tipreds = tipreds, state = t(x[active, , drop = FALSE]), time = time, dt = dt)
+    jacobians <- if (is.null(mats$pop_JAx)) mats$pop_DRIFT else mats$pop_JAx
+    for (j in seq_along(active)) {
+      d <- active[j]
+      step <- .ctFixedPointStep(
+        drift = matrix(mats$pop_DRIFT[j, index, index], nlatent, nlatent),
+        cint = as.numeric(mats$pop_CINT[j, index, 1L]),
+        jacobian = matrix(jacobians[j, index, index], nlatent, nlatent),
+        x = x[d, ], discrete = discrete, tolerance = tolerance)
+      if (is.null(step)) {
+        open[d] <- FALSE
+        singular[d] <- TRUE
+      } else if (!length(step)) {
+        open[d] <- FALSE
+      } else x[d, ] <- x[d, ] - step
+    }
+  }
+  unresolved <- open | singular
+  x[unresolved, ] <- NaN
+  attr(x, "unresolved") <- sum(unresolved)
+  attr(x, "singular") <- sum(singular)
+  x
+}
+
+# One Newton step towards DRIFT(x) x + CINT(x) = 0 on the drift's Jacobian:
+# numeric(0) where x is there already, NULL where no step can be taken. A
+# process whose rate of change is identically zero at x -- a zero row of the
+# Jacobian and of the residual, as a latent predictor held constant has --
+# has every value as a fixed point, so it is held where it is and the rest are
+# solved given it: the ctsem book's latent TI predictor made every such model
+# singular here.
+.ctFixedPointStep <- function(drift, cint, jacobian, x, discrete, tolerance) {
+  n <- length(x)
+  if (all(!is.finite(jacobian)) || all(jacobian == 0)) jacobian <- drift
+  # Discrete time asks where x = A x + c, i.e. (A - I) x + c = 0.
+  if (discrete) {
+    drift <- drift - diag(n)
+    jacobian <- jacobian - diag(n)
+  }
+  residual <- as.numeric(drift %*% x) + cint
+  if (!all(is.finite(residual)) || !all(is.finite(jacobian))) return(NULL)
+  if (max(abs(residual)) < tolerance) return(numeric(0))
+  free <- rowSums(abs(jacobian)) > 0 | abs(residual) >= tolerance
+  solved <- try(solve(jacobian[free, free, drop = FALSE], residual[free]),
+    silent = TRUE)
+  if (inherits(solved, "try-error") || !all(is.finite(solved))) return(NULL)
+  step <- numeric(n)
+  step[free] <- solved
+  step
 }
 
 # Is `state` asking for anything other than the default evaluation point?
@@ -561,7 +620,11 @@ NULL
 #'
 #' @return list(state = NULL or numeric, one entry per latent process; label =
 #'   character).
-#'   A NULL state means "the engine's own default", which is T0MEANS.
+#'   A NULL state means "the engine's own default", which is T0MEANS: each
+#'   draw's own. 'asymptotic' is the estimate's fixed point, marked
+#'   (attribute 'perdraw') so that each draw is evaluated at its own, found
+#'   from it. 'mean' is the estimate's mean smoothed state for every draw:
+#'   a smoother pass a draw would cost far more than the rest of the report.
 #' @noRd
 .ctResolveState <- function(fit, state = NULL, tipreds = NULL) {
   if (is.null(state)) return(list(state = NULL, label = .ctContextPopLabel))
@@ -572,9 +635,11 @@ NULL
     }
     if (identical(state, "mean")) {
       return(list(state = .ctContextMeanState(fit),
-        label = "the mean smoothed latent state"))
+        label = "the estimate's mean smoothed latent state"))
     }
-    return(list(state = .ctContextAsymptoticState(fit, tipreds = tipreds),
+    point <- .ctContextAsymptoticState(fit, tipreds = tipreds)
+    attr(point, "perdraw") <- "asymptotic"
+    return(list(state = point,
       label = "the system's asymptotic (fixed point) state"))
   }
   list(state = .ctContextDynamicState(fit, state), label = "the supplied state")

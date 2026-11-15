@@ -118,7 +118,7 @@ test_that('ctExtract honours state= on julia and records the point', {
 
   # Same words as ctSummaryMatrices() uses for the same points.
   expect_identical(attr(default, 'evaluatedAt'), ctsem:::.ctContextPopLabel)
-  expect_identical(attr(mean, 'evaluatedAt'), 'the mean smoothed latent state')
+  expect_identical(attr(mean, 'evaluatedAt'), "the estimate's mean smoothed latent state")
   expect_identical(attr(asymptotic, 'evaluatedAt'),
     "the system's asymptotic (fixed point) state")
   expect_identical(attr(atfive, 'evaluatedAt'), 'the supplied state')
@@ -303,7 +303,7 @@ test_that("the linearised panel is the Jacobian's, which a small simulated shock
   # The simulated panel starts at the identity by construction and finds the
   # effect too, at a shock of one sd.
   simulated <- suppressMessages(ctDiscretePars(fit, times = times,
-    method = 'simulate', nsamples = 3))
+    method = 'simulate', nsamples = 3, state = 'asymptotic'))
   expect_equal(unname(apply(simulated, c(3, 4, 5), median)[1, , ]), diag(2),
     tolerance = 1e-8)
   expect_true(abs(apply(simulated, c(3, 4, 5), median)[3, 1, 2]) > 1e-3)
@@ -414,6 +414,36 @@ test_that("the estimate's standardised effects and simulated response reduce whe
 test_that("method='simulate' is refused where it cannot be honoured", {
   expect_error(ctDiscretePars(ctstantestfit, times = 1, method = 'simulate'),
     "backend='julia'")
+})
+
+# 'asymptotic' is each draw's own fixed point: checked against the drift's
+# residual at it, and the draw's Jacobian there, each from a separate call per
+# draw.
+test_that("'asymptotic' evaluates each draw at its own fixed point", {
+  fit <- nonlinearFit()
+  rows <- round(seq(1, nrow(ctsem:::.ctBackendRawSamples(fit)), length.out = 5))
+  draws <- ctsem:::.ctBackendRawSamples(fit)[rows, , drop = FALSE]
+  start <- ctsem:::.ctContextAsymptoticState(fit)
+  states <- ctsem:::.ctContextAsymptoticStates(fit, draws, start)
+  expect_equal(attr(states, 'unresolved'), 0L)
+  expect_true(all(apply(states, 2, stats::sd) > 1e-4))
+  extracted <- suppressMessages(ctExtract(fit, state = 'asymptotic', nsamples = 5))
+  for (d in seq_len(nrow(draws))) {
+    m <- suppressMessages(ctBackendParMatrices(fit, raw = draws[d, ],
+      state = states[d, ], trim = FALSE))
+    expect_lt(max(abs(m$DRIFT[1:2, 1:2] %*% states[d, ] + m$CINT[1:2, 1])), 1e-6)
+    expect_equal(unname(extracted$pop_JAx[d, , ]), unname(m$JAx[1:2, 1:2]),
+      tolerance = 1e-10)
+  }
+  # At the estimate the estimate's own.
+  mats <- suppressMessages(ctSummaryMatrices(fit, state = 'asymptotic'))$estimate
+  at <- suppressMessages(ctBackendParMatrices(fit, state = start, trim = FALSE))
+  expect_equal(unname(mats$JAx), unname(at$JAx[1:2, 1:2]), tolerance = 1e-10)
+  # 'simulate' starts where 'linearise' evaluates: by default each draw's own
+  # initial state, as the help says.
+  sim <- suppressMessages(ctDiscretePars(fit, times = c(0, 1), method = 'simulate',
+    nsamples = 2))
+  expect_identical(attr(sim, 'stateLabel'), ctsem:::.ctContextPopLabel)
 })
 
 test_that('the covariate dynamics panel is built from each level\'s own state', {

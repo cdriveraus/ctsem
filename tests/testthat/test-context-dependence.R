@@ -519,3 +519,26 @@ test_that('standardising a context dependent system says the scale is local', {
   # And a linear model says nothing.
   expect_null(ctsem:::.ctContextStandardiseNote(stub('d11', 3L)))
 })
+
+# A process whose rate of change is identically zero -- a latent predictor held
+# constant -- has every value as a fixed point. The step holds it and solves
+# the rest given it, where solving all of them was singular.
+test_that('the fixed point step holds a constant process and solves the rest', {
+  drift <- matrix(c(-.5, 0, .2, 0), 2, 2)
+  cint <- c(.1, 0)
+  x <- c(0, 1)
+  step <- ctsem:::.ctFixedPointStep(drift, cint, drift, x, discrete = FALSE,
+    tolerance = 1e-10)
+  x <- x - step
+  expect_equal(x, c((.1 + .2) / .5, 1))
+  expect_length(ctsem:::.ctFixedPointStep(drift, cint, drift, x, discrete = FALSE,
+    tolerance = 1e-10), 0L)
+  # A process with no drift and an intercept has no fixed point at all.
+  expect_null(ctsem:::.ctFixedPointStep(drift, c(.1, .3), drift, c(0, 1),
+    discrete = FALSE, tolerance = 1e-10))
+  # Discrete time: x = A x + c, a constant process's row of A the identity's.
+  A <- matrix(c(.5, 0, .2, 1), 2, 2)
+  step <- ctsem:::.ctFixedPointStep(A, cint, A, c(0, 1), discrete = TRUE,
+    tolerance = 1e-10)
+  expect_equal(c(0, 1) - step, c((.1 + .2) / .5, 1))
+})

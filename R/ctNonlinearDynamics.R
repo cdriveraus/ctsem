@@ -88,12 +88,15 @@
   times <- sort(unique(c(0, as.numeric(times))))
   raw <- as.matrix(raw)
   ndraws <- ncol(raw)
-  start <- as.numeric(state[seq_len(nlatent)])
+  # One start for every draw, or (a matrix) a column each.
+  start <- if (is.matrix(state)) state[seq_len(nlatent), , drop = FALSE] else
+    matrix(as.numeric(state[seq_len(nlatent)]), nlatent, ndraws)
   # Per draw, its baseline then one trajectory per impulse.
   width <- nlatent + 1L
-  starts <- matrix(start, nlatent, ndraws * width)
+  starts <- matrix(NA_real_, nlatent, ndraws * width)
   for (d in seq_len(ndraws)) {
-    starts[, (d - 1L) * width + 1L + seq_len(nlatent)] <- start + shocks[, , d]
+    starts[, (d - 1L) * width + 1L] <- start[, d]
+    starts[, (d - 1L) * width + 1L + seq_len(nlatent)] <- start[, d] + shocks[, , d]
   }
   paths <- .ctNonlinearTrajectories(fit, raw[, rep(seq_len(ndraws), each = width),
     drop = FALSE], starts, times, tipreds, maxstep)
@@ -189,15 +192,26 @@
 # a draw with no stationary variance at the state, which attribute
 # 'nonstationary' counts. Two engine calls whatever the number of draws: one
 # for every draw's matrices at the state, one for every trajectory.
+#
+# Each draw starts where the linearised path evaluates it: at its own T0MEANS
+# for state = NULL, at its own fixed point for a resolved 'asymptotic'
+# (attribute 'perdraw'), and at `state` otherwise.
 .ctNonlinearDrawResponses <- function(fit, draws, state, times, tipreds = NULL,
   impulseType = 'unit', standardise = FALSE, magnitude = 1, maxstep = 0.1) {
   nlatent <- .ctFitNlatent(fit)
   ndraws <- nrow(draws)
   out <- array(NA_real_, c(ndraws, length(times), nlatent, nlatent))
+  if (identical(attr(state, "perdraw"), "asymptotic")) {
+    state <- t(.ctContextAsymptoticStates(fit, draws, start = as.numeric(state),
+      tipreds = tipreds))
+  }
   # Per draw: the shock's own scale is a function of the parameters, so it
   # moves with them rather than being fixed from the point estimate.
   mats <- .ctBackendPopArrays(fit, samples = draws, tipreds = tipreds,
     state = state)
+  if (is.null(state)) {
+    state <- t(matrix(mats$pop_T0MEANS[, seq_len(nlatent), 1L], ndraws, nlatent))
+  }
   slice <- function(a, d) matrix(a[d, , ], dim(a)[2L], dim(a)[3L])
   specs <- lapply(seq_len(ndraws), function(d) .ctNonlinearShockSpec(
     list(asymDIFFUSIONcov = slice(mats$pop_asymDIFFUSIONcov, d),
@@ -207,7 +221,8 @@
   if (length(ok)) {
     shocks <- vapply(specs[ok], function(s) as.matrix(s$shock),
       matrix(0, nlatent, nlatent))
-    response <- .ctNonlinearImpulseResponses(fit, state, times,
+    response <- .ctNonlinearImpulseResponses(fit,
+      if (is.matrix(state)) state[, ok, drop = FALSE] else state, times,
       raw = t(draws[ok, , drop = FALSE]),
       shocks = array(shocks, c(nlatent, nlatent, length(ok))),
       tipreds = tipreds, maxstep = maxstep)
@@ -228,7 +243,7 @@
 # Far more work than the linearised path's one matrix exponential a lag, so the
 # default draw count is small and stated rather than silently inherited from a
 # plotting argument sized for a cheap computation.
-.ctDiscreteParsSimulate <- function(fit, times, state = 'asymptotic',
+.ctDiscreteParsSimulate <- function(fit, times, state = NULL,
   nsamples = 10, maxstep = 0.1, quiet = FALSE, impulseType = 'unit',
   standardise = FALSE, magnitude = 1) {
 
@@ -237,8 +252,10 @@
       "nonlinear system needs the matrices re-materialised at each step, which ",
       "the stan backend cannot do after fitting."))
 
+  # The same point 'linearise' takes for the same `state`: NULL is each draw's
+  # own T0MEANS, as the help says.
   resolved <- .ctResolveState(fit, state)
-  start <- if (is.null(resolved$state)) .ctContextBaseState(fit) else resolved$state
+  start <- resolved$state
 
   draws <- .ctBackendRawSamples(fit)
   nsamples <- max(1L, min(as.integer(nsamples), nrow(draws)))
@@ -333,6 +350,8 @@
         signif(values[level], 3), '; its dynamics are not shown.')
       next
     }
+    # Each draw from its own fixed point at this level, found from this one.
+    attr(state, "perdraw") <- "asymptotic"
     out[, level, , , ] <- .ctNonlinearDrawResponses(fit, draws, state, times,
       tipreds = tipreds, impulseType = impulseType, standardise = standardise)
   }

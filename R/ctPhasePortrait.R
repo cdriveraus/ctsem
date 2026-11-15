@@ -173,7 +173,9 @@ ctPhasePortrait <- function(fit, latents = 1:2, extent = "data", gridsize = 15,
       .ctContextBaseState(fit, tipreds)
     } else {
       stateLabel <- resolved$label
-      resolved$state
+      # The plane is drawn at the estimate, through this one point; unmarked,
+      # so that nothing evaluating it moves it to a draw's own fixed point.
+      as.numeric(resolved$state)
     }
   } else {
     as.numeric(suppressMessages(ctSummaryMatrices(fit))$T0MEANS)[seq_len(nlatent)]

@@ -329,6 +329,8 @@ the parameter vector being materialised. A full-length vector still overwrites
 them, which is what reporting one person's matrices at a state that person's
 own random effects produced needs; the R side spells that `filterstate=` and
 the evaluation point `state=`, so the two cannot be confused for each other.
+A matrix `state` holds one point per column of `values`: each draw at its own
+point, as its own fixed point is (the R side's per-draw `'asymptotic'`).
 
 `rows` selects flat positions to return, and exists because of what happens
 *after* this function: JuliaConnectoR moves about 1 MB/s, and a caller wanting
@@ -358,6 +360,8 @@ function ctsem_parameter_matrices(objective::CTSEMObjective, values::AbstractMat
     update_indices = findall(sp.update_transforms_indices)
     td_indices = findall(sp.td_transforms_indices)
     ntdpred = size(first(objective.subject_objectives).tdpreds, 1)
+    state isa AbstractMatrix && size(state, 2) != size(values, 2) &&
+        throw(DimensionMismatch("state has $(size(state, 2)) columns; values has $(size(values, 2))"))
 
     out = zeros(Float64, layout.size, size(values, 2))
     # Single stationary elements are placed by the filter's own functions, on
@@ -406,10 +410,11 @@ function ctsem_parameter_matrices(objective::CTSEMObjective, values::AbstractMat
         # makes that unreachable, and lets a caller pass the dynamic processes
         # alone, which is the only part it has any business choosing.
         current = Vector{Float64}(vec(pars.T0MEANS))
-        if !isempty(state)
-            length(state) <= length(current) || throw(DimensionMismatch(
-                "state has $(length(state)) entries; the model has $(length(current))"))
-            copyto!(current, 1, state, 1, length(state))
+        point = state isa AbstractMatrix ? view(state, :, column) : state
+        if !isempty(point)
+            length(point) <= length(current) || throw(DimensionMismatch(
+                "state has $(length(point)) entries; the model has $(length(current))"))
+            copyto!(current, 1, point, 1, length(point))
         end
         tdzero = zeros(Float64, ntdpred)
         context = CTSEMRowContext(current, pars, tdzero, ti, Float64(time), Float64(dt), 1, 1)

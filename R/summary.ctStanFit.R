@@ -89,10 +89,16 @@ ctStanRawSamples<-function(fit){
 #'@param timeinterval time interval for discrete time parameter matrix computation.
 #'@param state The latent state at which state dependent matrix cells are
 #'evaluated: \code{'T0MEANS'} (the default), \code{'mean'}, \code{'asymptotic'},
-#'or a numeric state vector. Only \code{backend='julia'} can materialise the
-#'matrices anywhere other than the default, so anything else is an error on a
-#'stan fit rather than being silently ignored. Irrelevant to a linear model,
-#'whose matrices are the same everywhere.
+#'or a numeric state vector. The default is the population initial state, with
+#'time dependent predictors at zero, which for a model whose dynamics depend on
+#'the state can be far from where the data are; \code{'mean'} (the mean
+#'smoothed latent state) or \code{'asymptotic'} (the system's fixed point) is
+#'then usually the better point. The initial state and the fixed point are each
+#'draw's own; \code{'mean'} is the estimate's, used for every draw, so a summary
+#'of the draws there leaves out where that state is. Only \code{backend='julia'}
+#'can materialise the matrices anywhere other than the default, so anything else
+#'is an error on a stan fit rather than being silently ignored. Irrelevant to a
+#'linear model, whose matrices are the same everywhere.
 #'@param ... arguments passed to the method for the fit's backend.
 #'@examples
 #'\donttest{
@@ -115,7 +121,10 @@ ctStanRawSamples<-function(fit){
 #'\code{Y} holds \code{a + q*Y} there and contributes \code{a + 2*q*Y} to
 #'\code{JAx}. \code{dtDRIFT} is \code{expm(JAx * timeinterval)} where there is
 #'a \code{JAx}, the transition \code{\link{ctDiscretePars}} reports, and
-#'\code{expm(DRIFT * timeinterval)} on stan. Where parameters vary over subjects,
+#'\code{expm(DRIFT * timeinterval)} on stan. For a model whose dynamics depend
+#'on the state it holds \code{JAx} fixed over the interval: a fair interval
+#'regression near a fixed point or over a short interval, and away from a fixed
+#'point one \code{ctDiscretePars(method = 'simulate')} should check. Where parameters vary over subjects,
 #'also their population covariance on the natural scale, \code{popcov}, and
 #'their raw-scale correlations, \code{rawpopcorr}, named by parameter (with
 #'several grouping levels, \code{popcov.<level>} and \code{rawpopcorr.<level>}).
@@ -127,7 +136,7 @@ ctStanRawSamples<-function(fit){
 #'estimate, unrounded: \code{ctSummaryMatrices(fit)$estimate$DRIFT} is the
 #'estimated drift matrix, which a summary of the draws need not equal, and
 #'\code{ctSummaryMatrices(fit, state = s)$estimate$JAx} the model linearised
-#'at \code{s} at the estimate. A
+#'at \code{s} at the estimate. A sampled fit has no estimate, and a
 #'\code{backend='stan'} fit's has no \code{popcov}, which stan simulates.
 #'@aliases ctStanContinuousPars
 #'@export
