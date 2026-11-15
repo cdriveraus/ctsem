@@ -348,6 +348,51 @@ test_that("a stored Hessian is reused within the fit's hessianreuse standard err
     trace = list(objective = c(value - 5, value))), list(...))
 }
 
+# A run that ended without a finish has no Hessian to certify on, and the
+# certification forms it. At the fit's `cores`: the stage's own region has put
+# the ceiling back by then, and under the session's default this Hessian took
+# the affect pilot's tied fit 47 hours where the same one inside the run took 8.
+test_that("the certification's own Hessian is formed at the fit's cores", {
+  bare <- .fake_result(NULL, c(2, 5), value = -100)
+  asked <- NULL
+  testthat::local_mocked_bindings(.ctBackendEndgameAt = function(spec, est,
+      gradient = "adjoint", verbose = 0, cores = NA_integer_) {
+    asked <<- cores
+    NULL
+  }, .package = "ctsem")
+  ctsem:::.ctBackendCorrectResult(bare, spec = list(), npar = 2L,
+    tolerance = 1e-6, maxtries = 0L, cores = 7L)
+  expect_identical(asked, 7L)
+})
+
+# A gap the run's finish found the objective refuses -- its exact Hessian's
+# step, promising that gain, found none of it at any radius -- is not resumed
+# for: what an exact Newton step cannot find, another stage does not.
+test_that("a gap the objective does not resolve is not resumed for", {
+  # A gap of one nat, which the finish's step on this Hessian was refused.
+  rough <- .fake_result(-diag(c(4, 25)), c(2, 5), value = -100, resolution = 1)
+  tried <- 0L
+  optimise <- function(from, endgame = NULL) {
+    tried <<- tried + 1L
+    rough
+  }
+  out <- ctsem:::.ctBackendCorrectResult(rough, spec = list(), npar = 2L,
+    tolerance = 1e-6, maxtries = 2L, optimise = optimise)
+  expect_equal(tried, 0L)
+  expect_equal(out$certification$status, "suboptimal")
+  expect_true(out$certification$unresolved)
+  expect_match(out$certification$reason, "not smooth")
+  expect_length(out$corrections, 0L)
+  # A refusal of another size earlier in the run is not this gap's.
+  other <- utils::modifyList(rough, list(resolution = 0.3))
+  ctsem:::.ctBackendCorrectResult(other, spec = list(), npar = 2L,
+    tolerance = 1e-6, maxtries = 1L, optimise = optimise)
+  expect_equal(tried, 1L)
+  expect_true(ctsem:::.ctBackendGapRefused(0.21905, 0.21905 * (1 + 1e-9)))
+  expect_false(ctsem:::.ctBackendGapRefused(0, 0.2))
+  expect_false(ctsem:::.ctBackendGapRefused(NULL, 0.2))
+})
+
 test_that("a fit short of its optimum is resumed under its own rules", {
   # A gap of one nat: the finish did not close it (a line search that ran out,
   # say), so the certification says suboptimal.
@@ -368,6 +413,18 @@ test_that("a fit short of its optimum is resumed under its own rules", {
   # from: the Hessian and where it was taken.
   expect_identical(seen[[1L]]$endgame$hessian, short$hessian)
   expect_equal(seen[[1L]]$endgame$evaluated_at, c(0, 0))
+  # And told that the stage that ended there probed for an overshoot and found
+  # none, so the resumed stage need not probe again beside it. Not after the
+  # iteration cap, where the probe pulls back flat transforms only.
+  expect_true(seen[[1L]]$endgame$cleared)
+  capped <- list()
+  ctsem:::.ctBackendCorrectResult(utils::modifyList(short, list(stop_reason = "cap")),
+    spec = list(), npar = 2L, tolerance = 1e-6, maxtries = 2L,
+    optimise = function(from, endgame = NULL) {
+      capped[[length(capped) + 1L]] <<- endgame
+      done
+    })
+  expect_false(capped[[1L]]$cleared)
   expect_identical(out$result, done)
   expect_equal(out$certification$status, "certified")
   expect_length(out$corrections, 1L)

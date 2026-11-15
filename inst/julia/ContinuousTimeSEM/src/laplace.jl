@@ -9083,29 +9083,59 @@ its modes in `laplace.modes`, as `ctsem_laplace_subject_values` does.
 The keywords, and what is returned, are the `CTSEMObjective` method's. Each
 subject's shifted vector is one row of the matrix that method takes, before
 TI-predictor effects, which the filter adds exactly as it does in the fit.
+`cores` is the caller's chunk ceiling for the mode solves
+(`_laplace_modes_or_origin`). No mode is solved where no subject's mesh is
+measured (`_ctsem_mesh_measured`): the floor is the answer wherever a subject
+is filtered.
 """
 function ctsem_auto_substeps(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    kwargs...)
+    cores::Integer=0, kwargs...)
     theta = _laplace_extend(laplace, collect(Float64, values))
     Ls = _laplace_popchols(theta, laplace.spec)
-    shifted = _laplace_shifted_values(laplace, theta, Ls, function (U)
-        solved = _laplace_solve_unit_mode!(laplace, U, theta, Ls)
-        return isfinite(solved.value) ? solved.u :
-            zeros(Float64, laplace.units.dims[U])
-    end)
+    effects = _laplace_modes_or_origin(laplace, theta, Ls;
+        solve=_ctsem_mesh_measured(laplace.objective), cores=cores)
+    shifted = _laplace_shifted_values(laplace, theta, Ls, U -> effects[U])
     return ctsem_auto_substeps(laplace.objective, shifted; kwargs...)
 end
 
-# The plan likewise, each subject at its random-effect modes.
-function ctsem_relin_plan(laplace::CTSEMLaplaceObjective, values::AbstractVector)
+# The plan likewise, each subject at its random-effect modes, and none solved
+# where no row iterates: a linear measurement has no plan to learn.
+function ctsem_relin_plan(laplace::CTSEMLaplaceObjective, values::AbstractVector;
+    cores::Integer=0)
+    _ctsem_relin_planned(laplace.objective) || return nothing
     theta = _laplace_extend(laplace, collect(Float64, values))
     Ls = _laplace_popchols(theta, laplace.spec)
-    shifted = _laplace_shifted_values(laplace, theta, Ls, function (U)
-        solved = _laplace_solve_unit_mode!(laplace, U, theta, Ls)
-        return isfinite(solved.value) ? solved.u :
-            zeros(Float64, laplace.units.dims[U])
-    end)
+    effects = _laplace_modes_or_origin(laplace, theta, Ls; cores=cores)
+    shifted = _laplace_shifted_values(laplace, theta, Ls, U -> effects[U])
     return ctsem_relin_plan(laplace.objective, shifted)
+end
+
+"""
+    _laplace_modes_or_origin(laplace, theta, Ls; solve=true, cores=0)
+
+Each unit's conditional mode at `theta`, the origin for a unit whose inner
+problem is not finite there: where a substep mesh or an iteration plan is
+measured. Solved on the pool under the chunk ceiling `cores`, as an evaluation
+solves them (`ctsem_laplace_subject_values`). One unit after another, as they
+were until 2026-11-15, a fit's start searched every unit's mode on one thread
+before its first evaluation, and before asking whether any row iterates, so
+for a linear measurement too: 18 minutes of each start of the affect pilot's
+tied model at sixteen threads (dev2). `solve = false` is the origin for every
+unit, for a caller whose answer does not depend on where a subject is filtered.
+"""
+function _laplace_modes_or_origin(laplace::CTSEMLaplaceObjective,
+    theta::Vector{Float64}, Ls; solve::Bool=true, cores::Integer=0)
+    units = eachindex(laplace.units.members)
+    effects = [zeros(Float64, laplace.units.dims[U]) for U in units]
+    solve || return effects
+    _ctsem_with_max_chunks(cores) do
+        _laplace_parallel(laplace, units) do U
+            solved = _laplace_solve_unit_mode!(laplace, U, theta, Ls)
+            isfinite(solved.value) && (effects[U] = copy(solved.u))
+            return true
+        end
+    end
+    return effects
 end
 
 """

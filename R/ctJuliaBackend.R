@@ -5427,11 +5427,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # at its random-effect modes at `values`, the point the Laplace term evaluates
 # (laplace.jl). A non-finite likelihood at `values` leaves the spec as it was,
 # and the summary says so.
-.ctJuliaAutoSubsteps <- function(spec, values) {
+.ctJuliaAutoSubsteps <- function(spec, values, cores = NA_integer_) {
   module <- .ctJuliaModule(spec$project)
   objective <- .ctJuliaObjective(structure(spec, class = c("ctJuliaModel", "ctFitModel")))
-  arguments <- list(objective, .ctJuliaNumericVector(values), tol = as.numeric(spec$substeps$tol),
-    max_substeps = as.integer(spec$substeps$max), floor_rule = as.numeric(spec$substeps$floor))
+  arguments <- c(list(objective, .ctJuliaNumericVector(values), tol = as.numeric(spec$substeps$tol),
+    max_substeps = as.integer(spec$substeps$max), floor_rule = as.numeric(spec$substeps$floor)),
+    .ctJuliaModeCores(spec, cores))
   # Re-meshing at the optimum: the engine starts from one step per interval and
   # may find the filter not finite there on a stiff model; the mesh the fit was
   # found with is then its fallback.
@@ -5452,12 +5453,25 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # iterating each row to its mode takes. On the Laplace route each subject is
 # at its random-effect modes. NULL where no row iterates -- a linear
 # measurement -- which is the same as no plan.
-.ctJuliaRelinPlan <- function(spec, values) {
+.ctJuliaRelinPlan <- function(spec, values, cores = NA_integer_) {
   module <- .ctJuliaModule(spec$project)
   objective <- .ctJuliaObjective(structure(spec, class = c("ctJuliaModel", "ctFitModel")))
-  plan <- module$ctsem_relin_plan(objective, .ctJuliaNumericVector(values))
+  plan <- do.call(module$ctsem_relin_plan, c(list(objective,
+    .ctJuliaNumericVector(values)), .ctJuliaModeCores(spec, cores)))
   spec$relinsteps <- if (length(plan)) as.integer(plan) else NULL
   spec
+}
+
+# The `cores` argument of an engine call that solves every unit's mode on the
+# Laplace route before it measures anything (the mesh and the plan above): the
+# engine sets the ceiling itself, and only once it knows there are modes to
+# solve, where a ceiling set here would be three round trips around a call
+# that for most models returns at once. Nothing on the filter's own routes,
+# whose methods solve no mode and take no `cores`.
+.ctJuliaModeCores <- function(spec, cores) {
+  cores <- suppressWarnings(as.integer(cores)[1L])
+  if (is.null(spec$laplace) || is.na(cores) || cores < 1L) return(list())
+  list(cores = cores)
 }
 
 # The fitted specification's integration step, carried onto `spec`: the same
@@ -5764,7 +5778,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   gradient = "adjoint", cores = 1L, verbose = 0L, maxiter = NULL,
   callback = NULL, objective = NULL, progress_label = NULL,
   progress_budget = FALSE, pin = NULL, resumed = FALSE, inverse = NULL,
-  hessian = NULL, hessian_at = NULL, walked = FALSE, checkpoint = NULL) {
+  hessian = NULL, hessian_at = NULL, walked = FALSE, checkpoint = NULL,
+  probed = FALSE) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   # A caller may hand in the objective to maximise. `intoverstates=FALSE` does,
   # passing the joint one over `[theta; z]`; everything below is unchanged by
@@ -6190,6 +6205,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # estimate). Sent only when asked, for the reason above.
   if (isTRUE(walked)) common$newton_final <- "walked"
   if (identical(walked, "dear")) common$newton_final <- "dear"
+  # `probed`: the caller's last stage probed for an overshoot where `hessian`
+  # was taken and found none, so this one does not probe again where it ends
+  # beside that point (the engine's `:cleared`).
+  if (isTRUE(probed) && identical(common$overshoot_probe, "magnitude")) {
+    common$overshoot_probe <- "cleared"
+  }
   # The last run's local curvature (`lbfgs_local`): its inverse, kept here
   # rather than on the result, where a fit would carry its n x n matrix, and
   # its builds, for a resume to start from (`local`).
@@ -6228,6 +6249,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         storage.mode(hessian) <- "double"
         args$newton_hessian <- hessian
         args$newton_hessian_at <- .ctJuliaVector(as.numeric(endgame$evaluated_at))
+      }
+      # The verdict's stage probed for an overshoot where it ended, which is
+      # where this one starts (`.ctBackendCorrectResult()`).
+      if (isTRUE(endgame$cleared) && identical(args$overshoot_probe, "magnitude")) {
+        args$overshoot_probe <- "cleared"
       }
     }
     held <- !is.null(pin) && length(pin$index)
@@ -6436,7 +6462,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       escape = function(r) .ctBackendStallEscape(r, optimcontrol, model_spec,
         verbose, escapes = !state_explicit),
       certify = isTRUE(common$certify) && !isTRUE(walked) &&
-        is.null(.ctJuliaWalkedHessian(result)), verbose = verbose)
+        is.null(.ctJuliaWalkedHessian(result)), verbose = verbose,
+      cores = cores)
     result <- retried$result
     result$stall_escapes <- retried$escapes
     # The work of every stage the loop did not keep, added to the kept stage's
@@ -6962,7 +6989,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # and start vector are rebuilt whenever the mesh changes.
   substeps <- NULL
   remesh <- function(values) {
-    chosen <- .ctJuliaAutoSubsteps(model_spec, values)
+    chosen <- .ctJuliaAutoSubsteps(model_spec, values, cores = cores)
     model_spec <<- chosen$spec
     if (!is.null(jointobjective)) {
       jointobjective <<- .ctJuliaJointObjective(model_spec, npar)
@@ -6979,7 +7006,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # (`.ctJuliaRelinPlan()`). Not on the state-explicit target, which has no
   # measurement update.
   replan <- is.null(jointobjective)
-  if (replan) model_spec <- .ctJuliaRelinPlan(model_spec, start[seq_len(npar)])
+  if (replan) model_spec <- .ctJuliaRelinPlan(model_spec, start[seq_len(npar)],
+    cores = cores)
   # The engine loaded first, so a first fit's install and compile -- minutes,
   # once per machine -- is not counted as this fit's own time, which says how
   # slow work repeating the fit would be (`.ctWorkerFitSeconds`). Counted, it
@@ -7029,7 +7057,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   }
   if (replan && length(model_spec$relinsteps)) {
     before <- model_spec$relinsteps
-    model_spec <- .ctJuliaRelinPlan(model_spec, optimum)
+    model_spec <- .ctJuliaRelinPlan(model_spec, optimum, cores = cores)
     moved <- moved || !identical(model_spec$relinsteps, before)
   }
   if (moved) {
@@ -7168,15 +7196,21 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     smoothpasses <- 0L
     stagecontrol <- utils::modifyList(optimcontrol, list(batch = FALSE,
       saem = FALSE, stochastic = FALSE))
-    certified_stage <- function(from) {
+    certified_stage <- function(from, hessian = NULL, hessian_at = NULL) {
       stage <- keepknown(.ctJuliaOptimise(model_spec, from,
         optimcontrol = stagecontrol, gradient = gradient, cores = cores,
         verbose = verbose, callback = optimcontrol$callback,
-        checkpoint = checkpoint))
+        hessian = hessian, hessian_at = hessian_at, checkpoint = checkpoint,
+        # A stage handed the last certified stage's Hessian starts beside
+        # where that stage probed for an overshoot.
+        probed = !is.null(hessian)))
       correct(.ctJuliaAddRunCounts(stage, result))
     }
     curvature <- NULL
     certified <- TRUE
+    # Whether the exact Hessian in hand is this loop's own, formed once the
+    # parameters had settled on walked curvature (below).
+    checked <- FALSE
     if (certifying) {
       # The first stage's walk where it ended on one (`walkfirst`), else its
       # certification's Hessian.
@@ -7196,6 +7230,21 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         if (!settled) {
           model_spec$penalty$lambda <- gfs$lambda
           smoothpasses <- pass
+          # The exact Hessian the settled parameters were checked on moved
+          # them a little further. The penalty is quadratic, so that Hessian
+          # with the new precisions (`gfs$hessian`) is the new objective's
+          # exact one at the same point: the pass is a certified stage that
+          # starts on it, and keeps it where the estimate moves within its
+          # reach, rather than a walk and then another exact Hessian. On
+          # test-julia-tismooth.R's Krylov fixture that was the second of two.
+          if (certified && checked) {
+            correction <- certified_stage(gfs$point, hessian = gfs$hessian,
+              hessian_at = theta)
+            result <- correction$result
+            curvature <- correction$hessian
+            if (is.null(curvature)) break
+            next
+          }
           # Checkpointed as every stage is: the record carries the smoothing
           # parameters (`.ctJuliaCheckpointState()`), so a resume goes on from
           # this pass rather than from the first stage's.
@@ -7218,6 +7267,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         result <- correction$result
         curvature <- correction$hessian
         certified <- TRUE
+        checked <- TRUE
         if (is.null(curvature)) break
       }
       if (!certified) {

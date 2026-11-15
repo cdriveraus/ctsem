@@ -887,6 +887,26 @@ end
 ctsem_max_chunks() = (max_chunks=_CTSEM_MAX_CHUNKS[], nthreads=Threads.nthreads(),
     blas_threads=LinearAlgebra.BLAS.get_num_threads())
 
+"""
+    _ctsem_with_max_chunks(f, n)
+
+`f()` under the chunk ceiling `n`, the ceiling it found put back after: for an
+entry point that is handed its caller's `cores` and finds out for itself
+whether it has threaded work to do. Set from R around the call, a ceiling is
+three bridge round trips whether or not the call does anything. `n <= 0`
+leaves the ceiling as it is.
+"""
+function _ctsem_with_max_chunks(f, n::Integer)
+    n > 0 || return f()
+    previous = _CTSEM_MAX_CHUNKS[]
+    ctsem_set_max_chunks!(n)
+    try
+        return f()
+    finally
+        ctsem_set_max_chunks!(previous)
+    end
+end
+
 @inline function _ctsem_nchunks(nsubjects::Int)
     requested = _CTSEM_MAX_CHUNKS[]
     available = requested == 0 ? Threads.nthreads() : min(requested, Threads.nthreads())
@@ -2970,10 +2990,16 @@ function _ctsem_optimise_verdict(objective, minimizer, start_values, value,
         g_tol, converge_tol;
         label::AbstractString="ctsem_optimize", verbose::Bool=false,
         overshoot_probe=_CTSEM_OVERSHOOT_PROBE[], progress=nothing,
-        candidates=nothing, widen::Bool=true)
+        candidates=nothing, widen::Bool=true, held_start::Bool=false)
     moved =isempty(minimizer) ? 0.0 : maximum(abs, minimizer .- start_values)
     saturated = !isempty(saturated_parameters)
-    stalled = moved == 0 && (!isfinite(value) || gradient_norm > max(g_tol, 1e-6))
+    # `held_start`: the run began where another stage ended, on that stage's
+    # Hessian, and went to the finish there (`_ctsem_finish_first`). Ending
+    # where it began -- converged by that Hessian, or its step one the
+    # objective does not resolve -- is no optimiser that never left its
+    # starting values.
+    stalled = moved == 0 && !held_start &&
+        (!isfinite(value) || gradient_norm > max(g_tol, 1e-6))
     finite_gradient = isfinite(gradient_norm)
     # Both `Inf` before there is anything to report, so a fit that never took a
     # step cannot pass here on an uninitialised number.
@@ -3076,12 +3102,21 @@ pairs it had whatever this says.
 `newton_hessian`, the Hessian of the maximised objective at
 `newton_hessian_at`, is one the caller already holds, for the finish to walk
 on rather than form again where Hessians are dear (`_ctsem_newton_finish`'s
-`hessian0`). The stall watch's `stall_alone`, and with it these two, are set
-only on a stage resumed after a certification (see `CTSEMStallWatch`).
+`hessian0`). A stage that starts where that Hessian reaches the maximum goes
+to the finish with no L-BFGS stage (`_ctsem_finish_first`). The stall watch's
+`stall_alone`, and with it these two, are set only on a stage resumed after a
+certification (see `CTSEMStallWatch`).
+`overshoot_probe` may be `:cleared` beside its own modes
+(`_ctsem_overshoot_mode`): the caller has probed `start`, so a run that ends
+within `newton_reuse` standard errors of it is not probed again, and one
+that ends farther is probed as `:magnitude`.
 `newton_final = :walked` has the finish return the matrix its last walk stepped
 on (`newton_walked`) instead of forming the exact Hessian where it ends, for a
 stage whose objective the caller is about to change again (`_ctsem_newton_finish`'s
-`final`); `:dear` does so only where the walk was on the Krylov model.
+`final`); `:dear` does so only where the walk was on the Krylov model. Such a
+stage's gap rule, L-BFGS's and its walk's, is held to `_CTSEM_RESOLUTION_CAP`
+rather than `gap_tol`: its point is no estimate, and the stage after it
+certifies.
 `hessian_callback(at, hessian)` is handed each exact Hessian of the maximised
 objective the finish forms, at the point it was formed at (`_ctsem_newton_finish`'s
 `on_hessian`): R's checkpoint keeps it, for a resume to pass back as
@@ -3138,7 +3173,19 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     pairs0 === nothing || _ctsem_lbfgs_check(pairs0, length(start_values))
     # Validated here rather than at the probe, which runs after the fit: a
     # misspelled mode should cost nothing, not a whole optimisation.
-    overshoot_probe = _ctsem_overshoot_mode(overshoot_probe)
+    #
+    # `:cleared` (`"cleared"` from R): the caller's probe found nothing to pull
+    # back at `start`, or at `newton_hessian_at` where the stage holds a
+    # Hessian -- a stage R resumes on a certification's verdict, whose
+    # predecessor probed where it ended, or a smoothing pass after the
+    # certified stage -- so the probe is not run again where this run ends
+    # within `newton_reuse` standard errors of both, and is `:magnitude` where
+    # it ends farther. The pullbacks are of a
+    # tenth of a coordinate's size and more, far coarser than that. On the
+    # affect pilot each such probe was one to two and a half hours, after
+    # every stage, and none found anything.
+    probe_cleared = Symbol(overshoot_probe) === :cleared
+    overshoot_probe = probe_cleared ? :magnitude : _ctsem_overshoot_mode(overshoot_probe)
     invalid_objective = floatmax(eltype(start_values)) / 1e8
     gradient_limit = sqrt(floatmax(eltype(start_values)))
     label = _ctsem_optimise_label(objective)
@@ -3257,6 +3304,46 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     hessian_cost = _ctsem_hessian_cost(objective, length(start_values))
     finishing = newton && gap_tol > 0 && route_curvature !== nothing &&
         (certify || cheap)
+    # What the hand-over prices that Hessian at: the route's figure, or less
+    # where its columns are differenced over the units that read them alone
+    # and the scores say few do (`_ctsem_readers_cost`), read once the run
+    # has scores. On the affect pilot's tied fit (819 parameters, study and
+    # form effects each read by one study's people) the Hessian took the time
+    # of about 450 gradients, and at `2 npar`, 1638, the stage was to creep
+    # that many iterations before L-BFGS could hand over.
+    stage_cost = Ref(hessian_cost)
+    stage_priced = Ref(false)
+    function handover_cost()
+        if !stage_priced[] && score_store !== nothing && score_store.valid
+            stage_cost[] = min(hessian_cost,
+                _ctsem_readers_cost(objective, score_store.S, hessian_cost))
+            stage_priced[] = true
+        end
+        return stage_cost[]
+    end
+    # An intermediate stage: its finish ends on its walk (`newton_final`),
+    # because its caller is about to change the objective and certifies once
+    # that settles -- a fit's first stage and smoothing passes
+    # (`.ctJuliaOptimiseFit()`). Its point is no estimate anyone reads, and
+    # the pass after it starts from the quadratic model's optimum there, so
+    # L-BFGS's gap rule and the walk's are held to `_CTSEM_RESOLUTION_CAP`, a
+    # tenth of a standard error, where the certified stage after it is held
+    # to a hundredth of the certification's own. At that hundredth the affect
+    # pilot's tied fit crept through its first stage for thirteen hours on
+    # 0.1 nats (2026-11-12, dev1), which its smoothing pass then moved by 188.
+    # `:dear` is one only where its walk will be on the Krylov model.
+    final_mode = Symbol(newton_final)
+    curvature_mode = Symbol(newton_curvature)
+    function intermediate()
+        gap_tol > 0 || return false
+        final_mode === :walked && return true
+        final_mode === :dear || return false
+        (curvature_mode === :auto ? route_curvature : curvature_mode) === :krylov ||
+            return false
+        curvature_mode === :auto || return true
+        return 2 * length(start_values) >= _CTSEM_KRYLOV_MIN_COST &&
+            handover_cost() >= _CTSEM_KRYLOV_MIN_COST
+    end
     # A Ref: the callback reads it and the resumed stage below lowers it.
     #
     # The early hand-over, on L-BFGS's predicted gain below `newton_switch`,
@@ -3432,8 +3519,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         end
         if handover[] > 0
             predicted = _ctsem_predicted_gain(directional)
-            if predicted < _ctsem_gap_floor(gap_tol, directional) ||
-                    (predicted < handover[] && latest.iteration >= hessian_cost)
+            bar = _ctsem_gap_floor(gap_tol, directional)
+            intermediate() && (bar = max(bar, _CTSEM_RESOLUTION_CAP))
+            if predicted < bar ||
+                    (predicted < handover[] && latest.iteration >= handover_cost())
                 stopped_by_gap[] = true
                 return true
             end
@@ -3527,6 +3616,25 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     sgd_iterations = sgd_result === nothing ? 0 : sgd_result.iterations
     # See optimiser.jl for why this is not Optim any more.
     inverse = _ctsem_lbfgs_inverse(lbfgs_inverse, length(start_values))
+    # A stage that holds an exact Hessian (`newton_hessian`) is first evaluated
+    # where it starts, with no L-BFGS step, and where that Hessian reaches the
+    # maximum from there (`_ctsem_finish_first`) the finish takes over at
+    # once: its Newton step on the Hessian is the best step there is, and the
+    # point it reaches is certified on the same matrix. L-BFGS first, as every
+    # such stage ran until 2026-11-15, takes that step too and then walks on
+    # under its own rule, a hundredth of the certification's tolerance on its
+    # own model's prediction, which an objective that is rough at that scale
+    # never meets: on the affect pilot's tied fit a stage resumed 0.017
+    # standard errors from its optimum walked fifty iterations at an unchanged
+    # value, and its finish then formed the Hessian again, eight hours.
+    held = finishing && maxiter > 0 && newton_hessian isa AbstractMatrix &&
+        newton_hessian_at isa AbstractVector && batcher === nothing && !sgd &&
+        saem_result === nothing
+    at_start = held ? CTSEMHeldStart(true, Matrix{Float64}(newton_hessian),
+        collect(Float64, newton_hessian_at), Float64(newton_reuse),
+        Float64(flat_rtol), Float64(invalid_objective), Ref(false)) :
+        CTSEMHeldStart()
+    first_finish = at_start.taken
     result = _ctsem_lbfgs(fg!, lbfgs_start; memory=lbfgs_m, pairs=pairs0,
         diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
         metric=_ctsem_metric(precondition, length(start_values)),
@@ -3536,7 +3644,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
         directional=directional, batch=batcher, iteration0=sgd_iterations,
         coreset=coreseter, jump=watch_jump ? jump : nothing,
-        local_curvature=local_curvature)
+        local_curvature=local_curvature, at_start=at_start)
+    # As a stage L-BFGS stopped by its gap rule, which is what it is: nothing
+    # left for L-BFGS that the finish's step on the held Hessian does not take.
+    first_finish[] && (stopped_by_gap[] = true)
     if sgd_result !== nothing
         result = CTSEMLBFGSResult(result.minimizer, result.minimum,
             result.gradient, sgd_iterations + result.iterations,
@@ -3681,11 +3792,17 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     may_finish = finishing
     finished = false
     # Where the last search found nothing to go on with: the closing search
-    # below does not search there again.
-    searched_at = Float64[]
+    # below does not search there again. A stage that went to the finish from
+    # its start (`first_finish`) was searched there as the run opened
+    # (`_ctsem_anchor_start!`), so the search L-BFGS's stop would bring is
+    # that one.
+    searched_at = first_finish[] ? copy(minimizer) : Float64[]
+    search_due = !first_finish[]
     while true
         took = false
-        if mode_rounds < _CTSEM_MODE_ROUNDS
+        if !search_due
+            search_due = true
+        elseif mode_rounds < _CTSEM_MODE_ROUNDS
             if stop_reason == "jump"
                 took = _ctsem_take_jump_modes!(objective, minimizer, jumped_units[], found)
                 took && progress && _ctsem_mode_note(reporter, label, string(
@@ -3765,7 +3882,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # the finish checks with its first step (`handback`) where its Hessian
         # cost no more than the stage had spent.
         early = handover[] > gap_tol
-        affordable = hessian_cost <= result.iterations
+        affordable = handover_cost() <= result.iterations
         finish_curvature = Symbol(newton_curvature) === :auto ?
             route_curvature : Symbol(newton_curvature)
         # The Krylov model where the route chose it, only where the exact
@@ -3773,7 +3890,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         krylov_min_cost = Symbol(newton_curvature) === :auto ?
             Float64(_CTSEM_KRYLOV_MIN_COST) : 0.0
         finish = _ctsem_newton_finish(objective, minimizer, f0, G0, fg!;
-            tol=gap_tol, maxit=newton_maxit, callback=record,
+            tol=intermediate() ? max(Float64(gap_tol), _CTSEM_RESOLUTION_CAP) :
+                Float64(gap_tol),
+            maxit=newton_maxit, callback=record,
             iteration0=result.iterations + spent.steps[],
             curvature=finish_curvature, probe=certify, reuse_se=newton_reuse,
             flat_rtol=flat_rtol, handback=early && affordable,
@@ -3809,8 +3928,16 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # finish with no Hessian has none (`Inf`), and the proxy stays: put
         # there, it made the report read "stopped with Inf still available".
         isfinite(finish.gain) && (directional.dphi0 = -2 * finish.gain)
-        # Ended: a search at its point (above) before the run does.
-        if !(early && (finish.handback || finish.hessian === nothing))
+        # Ended: a search at its point (above) before the run does. A finish
+        # that ended on its walk as asked (`newton_final`) returns that
+        # matrix (`walked`) and no exact Hessian, and has ended too. Read as
+        # one with no usable Hessian, as it was until 2026-11-15, its walk
+        # was dropped, L-BFGS went on, and the run came back with neither:
+        # the caller then formed the exact Hessian the walk was to stand in
+        # for (the affect pilot's tied fit, for smoothing parameters its
+        # first pass moved) and the probe searched every coordinate.
+        if !(early && (finish.handback ||
+                (finish.hessian === nothing && finish.walked === nothing)))
             finished = true
             continue
         end
@@ -3971,6 +4098,23 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # place: see `_ctsem_optimise_verdict`. Against the bar the run's
     # resolution set (`_ctsem_tolerance`), as R's certification reads it.
     converge_floor = _ctsem_tolerance(converge_tol, directional)
+    # The caller's probe stands for this point (`:cleared`): the run ended
+    # within `newton_reuse` standard errors of its start and of where its
+    # held Hessian was taken, by the Hessian the finish returned or, with
+    # none, the one the stage was handed.
+    cleared_here = probe_cleared && let Hc = (finish !== nothing &&
+            finish.hessian !== nothing) ? finish.hessian : newton_hessian
+        if Hc isa AbstractMatrix && size(Hc) == (length(minimizer), length(minimizer)) &&
+                all(isfinite, Hc)
+            cs = _ctsem_information_split(-Matrix{Float64}(Hc); rtol=flat_rtol)
+            _ctsem_hessian_distance(cs, start_values, minimizer) <= newton_reuse &&
+                (newton_hessian_at === nothing ||
+                 length(newton_hessian_at) != length(minimizer) ||
+                 _ctsem_hessian_distance(cs, newton_hessian_at, minimizer) <= newton_reuse)
+        else
+            false
+        end
+    end
     verdict = _ctsem_optimise_verdict(objective, minimizer, start_values,
         final.value, gradient_norm, _ctsem_predicted_gain(directional),
         _ctsem_last_gain(trace), saturated_parameters, g_tol, converge_floor;
@@ -3987,7 +4131,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # coordinate: 22 sets, 1.5 hours, after the affect pilot's smoothing
         # pass.
         label=label, verbose=verbose && maxiter > 0,
-        overshoot_probe=(stop_reason in ("jump", "diverged") ||
+        overshoot_probe=(stop_reason in ("jump", "diverged") || cleared_here ||
             (finish !== nothing && finish.walked !== nothing)) ? :off : overshoot_probe,
         progress=_ctsem_probe_progress(reporter),
         # What the probe pulls back, read off the finish's Hessian where
@@ -3998,7 +4142,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             (finish === nothing || finish.hessian === nothing) ? nothing :
                 finish.hessian,
             flat_rtol, stall_ratio; capped=stop_reason == "cap"),
-        widen=stop_reason != "cap")
+        widen=stop_reason != "cap", held_start=first_finish[])
     saturated = verdict.saturated
     stalled = verdict.stalled
     # The modes the run ends with, for the fit (`_ctsem_fit_modes`): its
@@ -4266,7 +4410,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # `gap_floor` is the tolerance it last applied (`_ctsem_gap_floor`).
         predicted_gain=_ctsem_predicted_gain(directional),
         gap_tol=Float64(gap_tol),
-        gap_floor=_ctsem_gap_floor(gap_tol, directional),
+        gap_floor=intermediate() ? max(_ctsem_gap_floor(gap_tol, directional),
+            _CTSEM_RESOLUTION_CAP) : _ctsem_gap_floor(gap_tol, directional),
         linesearch=linesearch,
         # See `ctsem_laplace_optimize`: a disjunction of the L-BFGS's flags
         # includes the x and f criteria, which a line search that stops making

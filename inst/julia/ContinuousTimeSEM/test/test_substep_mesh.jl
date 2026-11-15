@@ -186,3 +186,26 @@ isdefined(@__MODULE__, :_LAPLACE_LINEAR_OBJECTIVE) ||
     @test_throws DimensionMismatch ContinuousTimeSEM.ctsem_auto_substeps(obj,
         persubject[1:(nsub - 1), :]; tol=tol)
 end
+
+@testset "a Laplace mesh or plan solves modes only where it is measured" begin
+    C = ContinuousTimeSEM
+    # A linear measurement has no plan, and a linear model's mesh is the floor
+    # wherever a subject is filtered, so neither solves a mode. Each used to
+    # search every unit's mode first, one unit after another, at every fit's
+    # start.
+    laplace, θ = _fresh_linear()
+    before = deepcopy(laplace.modes)
+    @test C.ctsem_relin_plan(laplace, θ) === nothing
+    @test C.ctsem_relin_plan(laplace, θ; cores=2) === nothing
+    out = C.ctsem_auto_substeps(laplace, θ; tol=1e-4)
+    @test out.finite && out.refined == 0
+    @test isequal(laplace.modes, before)
+    # Where the mesh is measured the modes are solved on the pool, under the
+    # caller's ceiling, which is put back.
+    nl, θn = _fresh_nonlinear()
+    ceiling = C.ctsem_max_chunks().max_chunks
+    @test C.ctsem_auto_substeps(nl, θn; tol=1e-4, cores=2).mesh ==
+        C.ctsem_auto_substeps(_fresh_nonlinear()[1], θn; tol=1e-4).mesh
+    @test C.ctsem_max_chunks().max_chunks == ceiling
+    @test !isequal(nl.modes, deepcopy(_fresh_nonlinear()[1].modes))
+end

@@ -78,3 +78,55 @@ test_that("the finish on the Krylov model reaches the chord's maximum for no mor
     expect_lte(out$krylov$hessians, out$chord$hessians + 1)
   }
 })
+
+test_that("a finish that is not certified forms no exact Hessian in the Krylov model's place", {
+  skip_without_julia()
+  fit <- .krylov_fit()
+  est <- as.numeric(fit$estimate$raw)
+  npar <- length(est)
+  hessian <- (fit$uncertainty$hessian + t(fit$uncertainty$hessian)) / 2
+  root <- chol(solve(-hessian))
+  ctsem:::.ctJuliaEval(paste(
+    "function _test_krylov_uncertified(o, x0, final, tol, seeded, hessian0, at0)",
+    "  fg! = ContinuousTimeSEM._ctsem_trial_closure(o, :adjoint)",
+    "  x = collect(Float64, x0)",
+    "  G = zeros(length(x)); f = fg!(0.0, G, x)",
+    "  out = ContinuousTimeSEM._ctsem_newton_finish(o, x, f, G, fg!;",
+    "    tol=Float64(tol), certify_tol=min(Float64(tol), 1e-6),",
+    "    curvature=:krylov, krylov_min_cost=0.0, probe=false,",
+    "    final=Symbol(final),",
+    "    hessian0=seeded ? Matrix{Float64}(hessian0) : nothing,",
+    "    hessian0_at=seeded ? collect(Float64, at0) : nothing)",
+    "  (x=out.x, hessians=out.full_hessians, models=out.krylov_models,",
+    "    walked=out.walked !== nothing, final=out.hessian !== nothing)",
+    "end", sep = "\n"))
+  obj <- ctsem:::.ctJuliaObjective(fit)
+  call <- function(x0, final, tol, at0 = NULL)
+    ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall("Main._test_krylov_uncertified",
+      obj, x0, final, tol, !is.null(at0), hessian,
+      if (is.null(at0)) x0 else at0))
+  # The first stage of a fit with smoothing parameters (`final = :dear`):
+  # however the model's walk ends, it is what the finish returns. Where the
+  # model could not be extended, having cost what the exact Hessian would,
+  # the exact one was formed and walked on.
+  for (seed in 4:7) {
+    set.seed(seed)
+    start <- est + 2 * as.numeric(t(root) %*% rnorm(npar))
+    out <- call(start, "dear", 1e-8)
+    expect_gt(out$models, 0)
+    expect_equal(out$hessians, 0)
+    expect_true(out$walked)
+    expect_false(out$final)
+  }
+  # A pass (`final = :walked`) handed a matrix from elsewhere that cannot make
+  # a step: at the maximum to what the value resolves, no step can gain, so
+  # the handed matrix's is refused. The model takes over, and its step is
+  # refused in turn, which ends the walk. The exact Hessian was formed there.
+  top <- call(est, "walked", 1e-13, est)$x
+  set.seed(8)
+  away <- top + 2 * as.numeric(t(root) %*% rnorm(npar))
+  out <- call(top, "walked", 0, away)
+  expect_gt(out$models, 0)
+  expect_equal(out$hessians, 0)
+  expect_true(out$walked)
+})

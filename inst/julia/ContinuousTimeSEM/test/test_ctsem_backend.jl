@@ -1852,6 +1852,136 @@ end
     @test s.converged && s.resolution == 0 && s.converge_floor == 1e-6
 end
 
+@testset "a walk within its Hessian's reach is judged on that Hessian" begin
+    C = ContinuousTimeSEM
+    # A stage resumed on its certification's Hessian (the chord, seeded at
+    # the point), on an objective whose gradient within 1e-3 of the maximum
+    # carries a bias no point there cancels. The first Newton step lands on
+    # the maximum, where the held Hessian reads 8e-6 left: within the
+    # certification's 5e-5, on the matrix the certification will read, so the
+    # point is converged there and the Hessian kept. Held to the walk's own
+    # tolerance, 5e-7, on its updated copy, the next step was one the
+    # objective refuses, and the Hessian was formed again for it.
+    q = p -> -0.5 * ((p[1] - 0.3)^2 + 4 * (p[2] + 0.2)^2)
+    near = p -> sqrt((p[1] - 0.3)^2 + (p[2] + 0.2)^2) < 1e-3
+    biased(b) = _endgame_mock(q;
+        g = p -> ForwardDiff.gradient(q, p) .+ (near(p) ? [b, 0.0] : [0.0, 0.0]))
+    x0 = [0.32, -0.2]                           # an exact gain of 2e-4
+    held = ForwardDiff.hessian(q, x0)
+    kw = (curvature=:chord, hessian0=held, hessian0_at=x0, tol=5e-7, certify_tol=5e-5)
+    m = biased(0.004)
+    ls = C.CTSEMDirectional()
+    out = _endgame_run(m, x0; resolution=ls, kw...)
+    @test out.steps == 1
+    @test m.hessians[] == 0 && out.full_hessians == 0
+    @test out.hessian == held && out.hessian_at == x0
+    @test 0 < out.distance <= C._CTSEM_HESSIAN_REUSE_SE
+    @test out.gain ≈ 0.004^2 / 2
+    @test ls.refused == 0
+    # A bias the certification's tolerance does not cover: the step it
+    # promises is asked of the walk's copy, then of the exact Hessian, which
+    # is this point's too, and what neither finds is what the objective does
+    # not resolve. No Hessian is formed for it.
+    m = biased(0.02)
+    ls = C.CTSEMDirectional()
+    out = _endgame_run(m, [0.35, -0.2]; resolution=ls, kw...,
+        hessian0_at=[0.35, -0.2])
+    @test out.steps == 1 && m.hessians[] == 0
+    @test ls.refused ≈ 0.02^2 / 2 && out.gain ≈ ls.refused
+    @test out.gain <= C._ctsem_tolerance(5e-5, ls)
+    @test out.hessian == held
+    # Farther than the Hessian reaches, the walk is judged as it was: on a
+    # quadratic it converges on the chord and the exact Hessian is formed
+    # where it ends.
+    far = _endgame_mock(q)
+    out = _endgame_run(far, [3.0, 1.0]; kw..., hessian0_at=[3.0, 1.0])
+    @test far.hessians[] == 1 && out.hessian_at == out.x
+end
+
+@testset "a stage that starts within its held Hessian's reach goes to the finish" begin
+    C = ContinuousTimeSEM
+    q = p -> -0.5 * ((p[1] - 3.0)^2 + 4 * (p[2] + 2.5)^2)
+    H = ForwardDiff.hessian(q, [3.0, -2.5])
+    g(p) = -ForwardDiff.gradient(q, p)          # of the minimised objective
+    # Within a tenth of a standard error of where the Hessian was taken, with
+    # no more than that left to gain by it.
+    @test C._ctsem_finish_first(H, [3.05, -2.5], [3.05, -2.5], g([3.05, -2.5]), 0.1, 1e-12)
+    @test C._ctsem_finish_first(H, [3.0, -2.5], [3.05, -2.5], g([3.05, -2.5]), 0.1, 1e-12)
+    @test !C._ctsem_finish_first(H, [3.3, -2.5], [3.3, -2.5], g([3.3, -2.5]), 0.1, 1e-12)
+    @test !C._ctsem_finish_first(H, [3.0, -2.5], [3.3, -2.5], g([3.3, -2.5]), 0.1, 1e-12)
+    @test !C._ctsem_finish_first(-H, [3.05, -2.5], [3.05, -2.5], g([3.05, -2.5]), 0.1, 1e-12)
+    @test !C._ctsem_finish_first(H[1:1, 1:1], [3.05], [3.05, -2.5], g([3.05, -2.5]), 0.1, 1e-12)
+    # Through the run: no L-BFGS step, the finish's step on the held Hessian,
+    # and that Hessian kept for the point; not a run that never left its
+    # start, though here it ends where the objective refuses the step.
+    x0 = [3.05, -2.5]
+    kw = (maxiter=200, gap_tol=5e-7, converge_tol=5e-5, newton=true, certify=true,
+        newton_curvature=:chord, progress=false, verbose=false)
+    m = _endgame_mock(q)
+    r = C.ctsem_optimize(m, x0; newton_hessian=H, newton_hessian_at=x0,
+        overshoot_probe=:off, kw...)
+    @test r.converged && r.stop_reason == "gap"
+    @test r.iterations == r.newton_steps == 1
+    @test r.newton_hessians == 0 && m.hessians[] == 0
+    @test r.hessian == H && r.hessian_evaluated_at == x0
+    @test r.minimizer ≈ [3.0, -2.5] atol = 1e-10
+    near = p -> sqrt((p[1] - 3.0)^2 + (p[2] + 2.5)^2) < 0.1
+    stuck = _endgame_mock(q; g = p -> ForwardDiff.gradient(q, p) .+ (near(p) ? [0.02, 0.0] : [0.0, 0.0]))
+    s = C.ctsem_optimize(stuck, [3.0, -2.5]; newton_hessian=H,
+        newton_hessian_at=[3.0, -2.5], overshoot_probe=:off, kw...)
+    @test s.iterations == 0 && s.minimizer == [3.0, -2.5]
+    @test s.converged && !s.stalled
+    @test s.resolution ≈ 0.02^2 / 2 && s.converge_floor == s.resolution
+    # Farther off the stage is L-BFGS's first, as any is.
+    f = C.ctsem_optimize(_endgame_mock(q), [4.0, -1.0]; newton_hessian=H,
+        newton_hessian_at=[4.0, -1.0], overshoot_probe=:off, kw...)
+    @test f.iterations > f.newton_steps
+    @test f.minimizer ≈ [3.0, -2.5] atol = 1e-6
+    # `:cleared`: the caller probed the start, so a run that ends beside it is
+    # not probed again, and one that ends farther is. A third coordinate the
+    # objective does not read is flat, which is what the probe pulls back.
+    q3 = p -> q(p[1:2])
+    H3 = ForwardDiff.hessian(q3, [3.0, -2.5, 5.0])
+    count(probe, start) = (mm = _endgame_mock(q3);
+        C.ctsem_optimize(mm, start; newton_hessian=H3, newton_hessian_at=start,
+            overshoot_probe=probe, kw...); mm.calls[])
+    beside = [3.05, -2.5, 5.0]
+    @test count(:cleared, beside) == count(:off, beside) < count(:magnitude, beside)
+    away = [4.0, -1.0, 5.0]
+    @test count(:cleared, away) == count(:magnitude, away) > count(:off, away)
+end
+
+@testset "a finish that ends on its walk is the run's finish" begin
+    C = ContinuousTimeSEM
+    # `newton_final = :walked`: the finish returns the matrix its walk
+    # stepped on and no exact Hessian for where it ended. Read as a finish
+    # with no usable Hessian, the walk was dropped and L-BFGS went on, so the
+    # run handed back neither, and its caller formed the exact Hessian the
+    # walk was to stand in for.
+    q = p -> -0.5 * ((p[1] - 0.3)^2 + 4 * (p[2] + 0.2)^2) - 0.05 * (p[1] - 0.3)^4
+    m = _endgame_mock(q)
+    r = C.ctsem_optimize(m, [1.5, 0.8]; maxiter=200, gap_tol=1e-2,
+        converge_tol=1e-8, newton=true, certify=true, newton_curvature=:chord,
+        newton_final=:walked, progress=false, verbose=false, overshoot_probe=:off)
+    @test r.newton_steps >= 1
+    @test size(r.newton_walked) == (2, 2)
+    @test r.newton_hessians == 1 && m.hessians[] == 1
+    # Such a stage is an intermediate one: its point is no estimate, so its
+    # gap rule is held to a tenth of a standard error, the most any bar rises
+    # to, where a stage that will be certified is held to `gap_tol`.
+    ill = p -> -0.5 * sum(collect(range(1.0, 1e3; length = 8)) .* (p .- 1) .^ 2)
+    kw = (maxiter=500, gap_tol=1e-10, converge_tol=1e-8, newton=true, certify=true,
+        newton_curvature=:chord, progress=false, verbose=false, overshoot_probe=:off)
+    tight = C.ctsem_optimize(_endgame_mock(ill), zeros(8); kw...)
+    loose = C.ctsem_optimize(_endgame_mock(ill), zeros(8); newton_final=:walked, kw...)
+    @test tight.gap_floor == 1e-10 && loose.gap_floor == C._CTSEM_RESOLUTION_CAP
+    @test loose.iterations - loose.newton_steps <= tight.iterations - tight.newton_steps
+    @test ill(ones(8)) - ill(loose.minimizer) < C._CTSEM_RESOLUTION_CAP
+    # `:dear` is one only where its walk would be on the Krylov model.
+    dear = C.ctsem_optimize(_endgame_mock(ill), zeros(8); newton_final=:dear, kw...)
+    @test dear.gap_floor == 1e-10
+end
+
 @testset "ctsem_optimize hands the endgame's numbers back" begin
     # From beside the saddle above: L-BFGS converges into it (the gradient in y
     # is exactly zero along y = 0) and hands over, and the finish escapes.
