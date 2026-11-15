@@ -3313,7 +3313,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # that many iterations before L-BFGS could hand over.
     stage_cost = Ref(hessian_cost)
     stage_priced = Ref(false)
-    function handover_cost()
+    function hessian_price()
         if !stage_priced[] && score_store !== nothing && score_store.valid
             stage_cost[] = min(hessian_cost,
                 _ctsem_readers_cost(objective, score_store.S, hessian_cost))
@@ -3321,6 +3321,18 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         end
         return stage_cost[]
     end
+    # A stage that holds its finish's matrix (`newton_hessian`: a smoothing
+    # pass's, a certification's for the stage it resumes, a finish's own after
+    # a search sent the run back to L-BFGS) has none to form, so an early
+    # hand-over costs it nothing but the finish's steps on that matrix, and the
+    # finish's first step says whether it was early (`handback`). Made to
+    # spend a Hessian's cost first, the affect pilot's first smoothing pass
+    # crept on L-BFGS for over two hours, 0.03 nats an iteration, holding the
+    # matrix throughout (2026-11-15, dev2). False once a finish has handed
+    # the point back and its matrix is let go.
+    finish_held = Ref(newton_hessian isa AbstractMatrix &&
+        newton_hessian_at isa AbstractVector)
+    handover_cost() = finish_held[] ? 0 : hessian_price()
     # An intermediate stage: its finish ends on its walk (`newton_final`),
     # because its caller is about to change the objective and certifies once
     # that settles -- a fit's first stage and smoothing passes
@@ -3342,7 +3354,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             return false
         curvature_mode === :auto || return true
         return 2 * length(start_values) >= _CTSEM_KRYLOV_MIN_COST &&
-            handover_cost() >= _CTSEM_KRYLOV_MIN_COST
+            hessian_price() >= _CTSEM_KRYLOV_MIN_COST
     end
     # A Ref: the callback reads it and the resumed stage below lowers it.
     #
@@ -3836,6 +3848,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
                 if finish.hessian !== nothing
                     held_hessian = finish.hessian
                     held_hessian_at = finish.hessian_at
+                    finish_held[] = true
                 end
                 finish = nothing
             end
@@ -3964,6 +3977,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         stopped_by_gap[] = false
         held_hessian = nothing
         held_hessian_at = nothing
+        finish_held[] = false
         # From the pairs the stage ended with: the objective is the same, the
         # point a step or so on, and a cold memory spent its first iterations
         # learning again what they hold.
