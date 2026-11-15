@@ -1966,6 +1966,20 @@ end
     @test r.newton_steps >= 1
     @test size(r.newton_walked) == (2, 2)
     @test r.newton_hessians == 1 && m.hessians[] == 1
+    # Such a stage is an intermediate one: its point is no estimate, so its
+    # gap rule is held to a tenth of a standard error, the most any bar rises
+    # to, where a stage that will be certified is held to `gap_tol`.
+    ill = p -> -0.5 * sum(collect(range(1.0, 1e3; length = 8)) .* (p .- 1) .^ 2)
+    kw = (maxiter=500, gap_tol=1e-10, converge_tol=1e-8, newton=true, certify=true,
+        newton_curvature=:chord, progress=false, verbose=false, overshoot_probe=:off)
+    tight = C.ctsem_optimize(_endgame_mock(ill), zeros(8); kw...)
+    loose = C.ctsem_optimize(_endgame_mock(ill), zeros(8); newton_final=:walked, kw...)
+    @test tight.gap_floor == 1e-10 && loose.gap_floor == C._CTSEM_RESOLUTION_CAP
+    @test loose.iterations - loose.newton_steps <= tight.iterations - tight.newton_steps
+    @test ill(ones(8)) - ill(loose.minimizer) < C._CTSEM_RESOLUTION_CAP
+    # `:dear` is one only where its walk would be on the Krylov model.
+    dear = C.ctsem_optimize(_endgame_mock(ill), zeros(8); newton_final=:dear, kw...)
+    @test dear.gap_floor == 1e-10
 end
 
 @testset "ctsem_optimize hands the endgame's numbers back" begin

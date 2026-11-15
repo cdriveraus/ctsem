@@ -3093,7 +3093,10 @@ that ends farther is probed as `:magnitude`.
 `newton_final = :walked` has the finish return the matrix its last walk stepped
 on (`newton_walked`) instead of forming the exact Hessian where it ends, for a
 stage whose objective the caller is about to change again (`_ctsem_newton_finish`'s
-`final`); `:dear` does so only where the walk was on the Krylov model.
+`final`); `:dear` does so only where the walk was on the Krylov model. Such a
+stage's gap rule, L-BFGS's and its walk's, is held to `_CTSEM_RESOLUTION_CAP`
+rather than `gap_tol`: its point is no estimate, and the stage after it
+certifies.
 `hessian_callback(at, hessian)` is handed each exact Hessian of the maximised
 objective the finish forms, at the point it was formed at (`_ctsem_newton_finish`'s
 `on_hessian`): R's checkpoint keeps it, for a resume to pass back as
@@ -3298,6 +3301,29 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         end
         return stage_cost[]
     end
+    # An intermediate stage: its finish ends on its walk (`newton_final`),
+    # because its caller is about to change the objective and certifies once
+    # that settles -- a fit's first stage and smoothing passes
+    # (`.ctJuliaOptimiseFit()`). Its point is no estimate anyone reads, and
+    # the pass after it starts from the quadratic model's optimum there, so
+    # L-BFGS's gap rule and the walk's are held to `_CTSEM_RESOLUTION_CAP`, a
+    # tenth of a standard error, where the certified stage after it is held
+    # to a hundredth of the certification's own. At that hundredth the affect
+    # pilot's tied fit crept through its first stage for thirteen hours on
+    # 0.1 nats (2026-11-12, dev1), which its smoothing pass then moved by 188.
+    # `:dear` is one only where its walk will be on the Krylov model.
+    final_mode = Symbol(newton_final)
+    curvature_mode = Symbol(newton_curvature)
+    function intermediate()
+        gap_tol > 0 || return false
+        final_mode === :walked && return true
+        final_mode === :dear || return false
+        (curvature_mode === :auto ? route_curvature : curvature_mode) === :krylov ||
+            return false
+        curvature_mode === :auto || return true
+        return 2 * length(start_values) >= _CTSEM_KRYLOV_MIN_COST &&
+            handover_cost() >= _CTSEM_KRYLOV_MIN_COST
+    end
     # A Ref: the callback reads it and the resumed stage below lowers it.
     #
     # The early hand-over, on L-BFGS's predicted gain below `newton_switch`,
@@ -3473,7 +3499,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         end
         if handover[] > 0
             predicted = _ctsem_predicted_gain(directional)
-            if predicted < _ctsem_gap_floor(gap_tol, directional) ||
+            bar = _ctsem_gap_floor(gap_tol, directional)
+            intermediate() && (bar = max(bar, _CTSEM_RESOLUTION_CAP))
+            if predicted < bar ||
                     (predicted < handover[] && latest.iteration >= handover_cost())
                 stopped_by_gap[] = true
                 return true
@@ -3842,7 +3870,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         krylov_min_cost = Symbol(newton_curvature) === :auto ?
             Float64(_CTSEM_KRYLOV_MIN_COST) : 0.0
         finish = _ctsem_newton_finish(objective, minimizer, f0, G0, fg!;
-            tol=gap_tol, maxit=newton_maxit, callback=record,
+            tol=intermediate() ? max(Float64(gap_tol), _CTSEM_RESOLUTION_CAP) :
+                Float64(gap_tol),
+            maxit=newton_maxit, callback=record,
             iteration0=result.iterations + spent.steps[],
             curvature=finish_curvature, probe=certify, reuse_se=newton_reuse,
             flat_rtol=flat_rtol, handback=early && affordable,
@@ -4360,7 +4390,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # `gap_floor` is the tolerance it last applied (`_ctsem_gap_floor`).
         predicted_gain=_ctsem_predicted_gain(directional),
         gap_tol=Float64(gap_tol),
-        gap_floor=_ctsem_gap_floor(gap_tol, directional),
+        gap_floor=intermediate() ? max(_ctsem_gap_floor(gap_tol, directional),
+            _CTSEM_RESOLUTION_CAP) : _ctsem_gap_floor(gap_tol, directional),
         linesearch=linesearch,
         # See `ctsem_laplace_optimize`: a disjunction of the L-BFGS's flags
         # includes the x and f criteria, which a line search that stops making
