@@ -365,6 +365,34 @@ test_that("the certification's own Hessian is formed at the fit's cores", {
   expect_identical(asked, 7L)
 })
 
+# A gap the run's finish found the objective refuses -- its exact Hessian's
+# step, promising that gain, found none of it at any radius -- is not resumed
+# for: what an exact Newton step cannot find, another stage does not.
+test_that("a gap the objective does not resolve is not resumed for", {
+  # A gap of one nat, which the finish's step on this Hessian was refused.
+  rough <- .fake_result(-diag(c(4, 25)), c(2, 5), value = -100, resolution = 1)
+  tried <- 0L
+  optimise <- function(from, endgame = NULL) {
+    tried <<- tried + 1L
+    rough
+  }
+  out <- ctsem:::.ctBackendCorrectResult(rough, spec = list(), npar = 2L,
+    tolerance = 1e-6, maxtries = 2L, optimise = optimise)
+  expect_equal(tried, 0L)
+  expect_equal(out$certification$status, "suboptimal")
+  expect_true(out$certification$unresolved)
+  expect_match(out$certification$reason, "not smooth")
+  expect_length(out$corrections, 0L)
+  # A refusal of another size earlier in the run is not this gap's.
+  other <- utils::modifyList(rough, list(resolution = 0.3))
+  ctsem:::.ctBackendCorrectResult(other, spec = list(), npar = 2L,
+    tolerance = 1e-6, maxtries = 1L, optimise = optimise)
+  expect_equal(tried, 1L)
+  expect_true(ctsem:::.ctBackendGapRefused(0.21905, 0.21905 * (1 + 1e-9)))
+  expect_false(ctsem:::.ctBackendGapRefused(0, 0.2))
+  expect_false(ctsem:::.ctBackendGapRefused(NULL, 0.2))
+})
+
 test_that("a fit short of its optimum is resumed under its own rules", {
   # A gap of one nat: the finish did not close it (a line search that ran out,
   # say), so the certification says suboptimal.

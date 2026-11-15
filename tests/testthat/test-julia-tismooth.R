@@ -280,6 +280,13 @@ test_that("a curve in age is recovered, with its smoothness estimated", {
 # certified after the first stage too, the affect pilot formed an 8-hour
 # Hessian for a smoothing parameter its first pass then moved. A random drift
 # keeps a Laplace coordinate, which the finish's Krylov model needs.
+#
+# One exact Hessian in the whole fit. Until 2026-11-15 there were three, and
+# the count this test read showed two: the run dropped every walk its finish
+# ended on, so the certification formed its own Hessian after the first stage
+# (which `newton_hessians` does not count) and a certified stage followed each
+# pass; and the pass after the certified stage's check walked and certified
+# again, where it now starts on that stage's Hessian and keeps it.
 test_that("a smooth fit on the Krylov finish forms no exact Hessian before its smoothing settles", {
   skip_without_julia()
   dat <- .tismooth_data()$data
@@ -289,6 +296,13 @@ test_that("a smooth fit on the Krylov finish forms no exact Hessian before its s
     T0MEANS = matrix("t0m||||"), T0VAR = matrix("t0v"),
     MANIFESTMEANS = matrix(0), TIpredNames = ~ s(age, k = 8), silent = TRUE)
   m$pars$indvarying <- m$pars$param %in% "drift"
+  # The certification's own Hessians, formed where a run hands back none.
+  own <- 0L
+  endgame <- ctsem:::.ctBackendEndgameAt
+  testthat::local_mocked_bindings(.ctBackendEndgameAt = function(...) {
+    own <<- own + 1L
+    endgame(...)
+  }, .package = "ctsem")
   set.seed(1)
   fit <- suppressWarnings(suppressMessages(ctFit(dat, m, backend = "julia",
     intoverpop = "laplace", cores = 1,
@@ -296,8 +310,9 @@ test_that("a smooth fit on the Krylov finish forms no exact Hessian before its s
   expect_true(fit$optim$converged)
   expect_gt(fit$optim$newton_krylov_models, 0L)
   penalty <- fit$model_spec$penalty
-  # Each exact Hessian is a certified stage's, and each follows a pass.
-  expect_lte(fit$optim$newton_hessians, max(1L, penalty$passes))
+  expect_gte(penalty$passes, 1L)
+  expect_equal(fit$optim$newton_hessians, 1L)
+  expect_equal(own, 0L)
   again <- ctsem:::.ctTIsmoothLambda(penalty, fit$uncertainty$hessian,
     as.numeric(fit$estimate$raw), as.numeric(fit$optim$gradient))
   expect_equal(again$lambda, penalty$lambda, tolerance = 0.02)

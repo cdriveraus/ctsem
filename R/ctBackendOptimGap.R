@@ -1250,6 +1250,23 @@
           isTRUE(is.finite(gap$gap) && gap$gap <= checked$bar)) {
         break
       }
+      # A gap the run's finish found the objective does not resolve: its exact
+      # Hessian's step, promising this gain, was refused at every radius
+      # (`resolution`, the engine's `_ctsem_refused!`), and past the most a bar
+      # rises to the point stays uncertified. A resume cannot find what an
+      # exact Newton step could not -- where the gradient is not the value's
+      # slope L-BFGS does no better -- and each one is a stage, with a Hessian
+      # where they are dear: on the affect pilot's slim model two resumes on
+      # gaps of 0.48 and 0.22 nats took eight hours and ended on a third.
+      if (identical(status, "suboptimal") &&
+          .ctBackendGapRefused(result[["resolution"]], gap$gap)) {
+        certification$unresolved <- TRUE
+        certification$reason <- paste0(certification$reason,
+          ", which no step finds: the objective's value is not smooth here to ",
+          "that much (a unit's term moving with its inner solve, or a rule's ",
+          "nodes), so the estimate is known no more closely")
+        break
+      }
       if (spent) break
       from <- as.numeric(result$minimizer)[seq_len(npar)]
       kind <- status
@@ -1314,6 +1331,19 @@
     corrections = history, totals = totals,
     hessians = as.integer(totals[["newton_hessians"]]) + formed,
     escapes = escapes)
+}
+
+# Whether the gap a certification measured is the one the run's finish found
+# the objective refuses: `resolution`, the largest gain an exact Hessian at
+# its own point promised and no step found at any radius, is that gap. The two
+# are read off the same Hessian and gradient, by the engine and by R, so they
+# agree to rounding; a larger refusal earlier in the run is not this gap's.
+#' @keywords internal
+.ctBackendGapRefused <- function(resolution, gap) {
+  resolution <- suppressWarnings(as.numeric(resolution)[1L])
+  gap <- suppressWarnings(as.numeric(gap)[1L])
+  isTRUE(is.finite(resolution) && is.finite(gap) && gap > 0 &&
+    abs(resolution - gap) <= 1e-4 * gap)
 }
 
 # The covariance a certification's Hessian implies, as the initial inverse
