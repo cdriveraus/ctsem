@@ -379,7 +379,8 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         diagonal::Bool=false, nonmonotone::Real=0.0, gll::Integer=0,
         inverse::Union{Nothing,Matrix{Float64}}=nothing,
         structured=nothing, coreset=nothing,
-        jump::Union{Nothing,CTSEMJump}=nothing, local_curvature=nothing)
+        jump::Union{Nothing,CTSEMJump}=nothing, local_curvature=nothing,
+        at_start=nothing)
     n = length(x0)
     x = collect(Float64, x0)
     dinv = metric === nothing ? ones(n) : begin
@@ -412,6 +413,10 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     # starting point is the last row its predecessor already recorded.
     stopped = callback !== nothing && iteration0 == 0 &&
         callback(CTSEMIterate(0, f, maximum(abs, G; init=0.0))) === true
+    # `at_start(x, f, G)`: the caller's word on the starting point, once it is
+    # evaluated; `true` ends the run there with no step (`ctsem_optimize`
+    # hands a stage that starts within its held Hessian's reach to the finish).
+    stopped || (stopped = at_start !== nothing && at_start(x, f, G) === true)
     # Length `initial_alpha` in the metric's norm: a short first step when
     # there is no curvature history, measured so that a unit means the same
     # amount of model in every coordinate.
@@ -2188,6 +2193,38 @@ function _ctsem_hessian_distance(split, from::AbstractVector, to::AbstractVector
 end
 
 """
+    _ctsem_finish_first(hessian, at, x, G, reuse_se, flat_rtol)
+
+Whether a stage that starts at `x`, with gradient `G` there, holding
+`hessian` -- the Hessian of the MAXIMISED objective at `at` -- goes to the
+finish without an L-BFGS stage (`ctsem_optimize`): `x` within `reuse_se`
+standard errors of `at`, no direction of negative curvature, and the gain the
+Hessian predicts over its trusted directions no more than `reuse_se^2 / 2`,
+the gap of a point `reuse_se` standard errors from its maximum. There the
+Hessian is the maximum's as well as the point's by the rule that keeps one
+(`_ctsem_newton_finish`), so the Newton step on it is the step to take and
+the matrix to certify where it lands. Farther off, or at a saddle, the stage
+is L-BFGS's first, as any is.
+"""
+function _ctsem_finish_first(hessian, at, x::AbstractVector, G::AbstractVector,
+        reuse_se::Real, flat_rtol::Real)
+    n = length(x)
+    (hessian isa AbstractMatrix && size(hessian) == (n, n) && length(at) == n &&
+        length(G) == n) || return false
+    (all(isfinite, hessian) && all(isfinite, at) && all(isfinite, G)) || return false
+    split = _ctsem_information_split(-Matrix{Float64}(hessian); rtol=flat_rtol)
+    split === nothing && return false
+    any(split.negative) && return false
+    _ctsem_hessian_distance(split, at, x) <= reuse_se || return false
+    c = transpose(split.vectors) * collect(Float64, G)
+    gain = 0.0
+    for k in eachindex(c)
+        split.trusted[k] && (gain += abs2(c[k]) / split.values[k])
+    end
+    return gain / 2 <= reuse_se^2 / 2
+end
+
+"""
     _ctsem_flat_residual(split, ascent)
 
 The part of the ascent gradient outside the trusted directions -- what R's
@@ -2630,6 +2667,20 @@ function _ctsem_krylov_cost(S::AbstractMatrix)
     end
     return 2 * reads / N
 end
+
+"""
+    _ctsem_readers_cost(objective, S, default)
+
+What the exact Hessian costs in gradients where the route differences each
+column over the units that read it alone (`ctsem_laplace_hessian`'s
+`localised`): `_ctsem_krylov_cost` of the units' scores `S`, at least one.
+`default` on a route whose Hessian is not formed so (the marginal route's
+sweeps, and a Laplace objective with no coordinate, which takes them).
+"""
+_ctsem_readers_cost(::Any, S::AbstractMatrix, default::Integer) = Int(default)
+_ctsem_readers_cost(laplace::CTSEMLaplaceObjective, S::AbstractMatrix,
+        default::Integer) = _laplace_filter_only(laplace) ? Int(default) :
+    max(1, ceil(Int, _ctsem_krylov_cost(S)))
 
 """
 The least an exact Hessian has to cost, in gradients, for the finish to step on
@@ -3524,6 +3575,20 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     end
     report(g, steps, f, G, x) = callback === nothing || callback(CTSEMIterate(iteration0 + steps,
         f, maximum(abs, G; init=0.0), g, x))
+    # Whether `to` is within `reuse_se` standard errors of `from` by the exact
+    # Hessian `Hm` taken at `from`: where it is, `Hm` is the Hessian the finish
+    # returns for `to` and the certification reads (the keep rule below), so
+    # the walk judges by it there as the certification will (`near`). The
+    # split is kept while the matrix is the same one.
+    nearsplit = Ref{Any}(nothing)
+    function within(Hm, from, to)
+        local c = nearsplit[]
+        if c === nothing || c[1] !== Hm
+            c = (Hm, _ctsem_information_split(Hm; rtol=flat_rtol, negative=negative))
+            nearsplit[] = c
+        end
+        return _ctsem_hessian_distance(c[2], from, to) <= reuse_se
+    end
     # A Hessian the caller holds, where Hessians are dear: `hessian0` (of the
     # MAXIMISED objective, as the finish returns it) at `hessian0_at`, walked
     # on rather than formed again. A stage resumed after a certification
@@ -3644,6 +3709,33 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             nt = newton(Hs, G, radius)
             nt === nothing && break
             gain = nt.gain
+            # `near`: the walk is on an exact Hessian taken within `reuse_se`
+            # standard errors of here, which is then the one the finish
+            # returns for this point (the keep rule below) and the
+            # certification reads. The gain read off it is the certification's
+            # number, as it is at the Hessian's own point (`at_x`, next), so
+            # within the certification's tolerance the point is certified as
+            # it stands. Held to `tol` on the walk's own copy instead, a
+            # hundredth of that tolerance, the walk stepped on below what a
+            # rough objective resolves: on the affect pilot's tied fit
+            # (2026-11-13, dev1) the first step on the certification's Hessian
+            # took the gradient from 2.9 to 0.2, the next fifty moved it
+            # between 0.03 and 75 at an unchanged value, and the Hessian was
+            # formed again, eight hours, for a gap that came out larger.
+            near = !at_x && exact && !krylov && curvature !== :exact &&
+                within(H, hat, x)
+            if near
+                exactgain = gain
+                if Hs !== H
+                    ntH = newton(H, G, Inf)
+                    exactgain = ntH === nothing ? Inf : ntH.gain
+                end
+                if exactgain < certify_now()
+                    gain = exactgain
+                    converged = true
+                    break
+                end
+            end
             # A gain read off the exact Hessian at the point (`at_x`) is the
             # number the certification computes, so within its tolerance the
             # point is certified as it stands; `tol`'s margin is for
@@ -3713,6 +3805,22 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                     break
                 end
             end
+            # The Krylov model's walk ends once its steps gain nothing the
+            # certification could see: over the last half of the walk, less
+            # than its tolerance a step, while the model still predicts more
+            # than `tol` is left (above). The exact Hessian here takes over
+            # (the rewalk below), or under `final = :dear` the walk is what
+            # the finish returns. A model's prediction of what is left is no
+            # measure of what its steps find: on the affect pilot's tied fit
+            # (2026-11-12, dev1) forty steps, two to four products and a
+            # gradient each, moved the gradient between 3.4 and 4.7 and the
+            # value by nothing, three hours.
+            if krylov && k >= 2
+                half = k ÷ 2
+                if (walk_values[half + 1] - f) / (k - half) < certify_now()
+                    break
+                end
+            end
             # The check `handback` asks for, once: in Newton's region the
             # objective takes the whole Newton step, and the step contracts the
             # predicted gain -- the hand-over Hessian's prediction at the point
@@ -3747,6 +3855,23 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                 # one here the steps are over, the gain it promised being
                 # what the objective does not resolve (`_ctsem_refused!`).
                 if at_x
+                    _ctsem_refused!(resolution, gain)
+                    converged = gain <= certify_now()
+                    break
+                end
+                # Within `reuse_se` of where the exact Hessian was taken
+                # (`near`) that matrix is this point's too, so it is not the
+                # stale one: a step the walk's updated copy could not make is
+                # asked of the exact one, and one that fails there is what
+                # the objective does not resolve, as at the Hessian's own
+                # point. Formed again here it would be the same matrix to
+                # what the certification can see, `2 npar` gradients on the
+                # Laplace route for a step the objective then refuses again.
+                if near && Hs !== H
+                    Hs = H
+                    prevgain = Inf; prevwhole = true; prevrho = 1.0; radius = Inf
+                    continue
+                elseif near
                     _ctsem_refused!(resolution, gain)
                     converged = gain <= certify_now()
                     break

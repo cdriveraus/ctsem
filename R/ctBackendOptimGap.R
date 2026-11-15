@@ -1053,10 +1053,16 @@
 
 # The same numbers at a point the optimiser left without a finish: the engine's
 # `ctsem_endgame`, which forms the exact Hessian there and runs the probe, and
-# takes no step. Through the chunk wrapper like every engine run, with the
-# ceiling left as it is, so an instrument that counts engine runs counts this.
+# takes no step. Through the chunk wrapper like every engine run, so an
+# instrument that counts engine runs counts this, and at the fit's `cores`:
+# the certification runs after the stage's own region has put the ceiling
+# back, and under the session's default (`mc.cores`, 2) this Hessian took the
+# affect pilot's tied fit 47 hours on a box where the same one inside the run
+# took 8 at its 14 threads. `NA` leaves the ceiling as it is, for a caller
+# that has set its own.
 #' @keywords internal
-.ctBackendEndgameAt <- function(spec, est, gradient = "adjoint", verbose = 0) {
+.ctBackendEndgameAt <- function(spec, est, gradient = "adjoint", verbose = 0,
+    cores = NA_integer_) {
   spec <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
   module <- .ctJuliaModule(spec$project)
   available <- isTRUE(tryCatch(is.function(module$ctsem_endgame),
@@ -1072,7 +1078,7 @@
   # verbosity, so it does not go quiet exactly where the finish's fix does not
   # reach: this path bypasses the finish entirely.
   reporting <- .ctBackendReporting(verbose)
-  out <- try(.ctBackendWithMaxChunks(NA_integer_, .ctJuliaGet(
+  out <- try(.ctBackendWithMaxChunks(cores, .ctJuliaGet(
     module$ctsem_endgame(.ctJuliaObjective(spec, hybrid = TRUE), .ctJuliaNumericVector(est),
       gradient_method = gradient, flat_rtol = .ctFlatDirectionRtol(),
       progress = reporting, progress_overwrite = .ctProgressOverwrite(verbose),
@@ -1160,7 +1166,7 @@
 #' @keywords internal
 .ctBackendCorrectResult <- function(result, spec, npar, tolerance = 0.01,
   maxtries = 2L, gradient = "adjoint", optimise = NULL, escape = NULL,
-  certify = TRUE, verbose = 0) {
+  certify = TRUE, verbose = 0, cores = NA_integer_) {
   spec <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
   history <- list()
   endgame <- NULL
@@ -1183,7 +1189,8 @@
       # On the objective the stage ended on: its modes held, as its run had
       # them (R/ctJuliaFitModes.R).
       .ctJuliaHoldModes(spec, .ctJuliaResultModes(r))
-      endgame <- .ctBackendEndgameAt(spec, est, gradient = gradient, verbose = verbose)
+      endgame <- .ctBackendEndgameAt(spec, est, gradient = gradient,
+        verbose = verbose, cores = cores)
       if (!is.null(endgame)) formed <<- formed + as.integer(endgame$hessians)
     }
     if (is.null(endgame)) return(NULL)
@@ -1247,6 +1254,12 @@
       from <- as.numeric(result$minimizer)[seq_len(npar)]
       kind <- status
       stage_endgame <- endgame
+      # The stage that ended here probed for an overshoot and found none, or
+      # the verdict would say so: the resumed stage need not probe again where
+      # it ends beside this point (the engine's `:cleared`). Not after the
+      # iteration cap, where the probe pulls back flat transforms only.
+      stage_endgame$cleared <- identical(status, "suboptimal") &&
+        !identical(as.character(.ctJuliaOr(result$stop_reason, ""))[1L], "cap")
     }
     attempt <- attempt + 1L
     value <- as.numeric(result$maximum_loglik)[1L]

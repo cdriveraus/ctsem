@@ -348,6 +348,23 @@ test_that("a stored Hessian is reused within the fit's hessianreuse standard err
     trace = list(objective = c(value - 5, value))), list(...))
 }
 
+# A run that ended without a finish has no Hessian to certify on, and the
+# certification forms it. At the fit's `cores`: the stage's own region has put
+# the ceiling back by then, and under the session's default this Hessian took
+# the affect pilot's tied fit 47 hours where the same one inside the run took 8.
+test_that("the certification's own Hessian is formed at the fit's cores", {
+  bare <- .fake_result(NULL, c(2, 5), value = -100)
+  asked <- NULL
+  testthat::local_mocked_bindings(.ctBackendEndgameAt = function(spec, est,
+      gradient = "adjoint", verbose = 0, cores = NA_integer_) {
+    asked <<- cores
+    NULL
+  }, .package = "ctsem")
+  ctsem:::.ctBackendCorrectResult(bare, spec = list(), npar = 2L,
+    tolerance = 1e-6, maxtries = 0L, cores = 7L)
+  expect_identical(asked, 7L)
+})
+
 test_that("a fit short of its optimum is resumed under its own rules", {
   # A gap of one nat: the finish did not close it (a line search that ran out,
   # say), so the certification says suboptimal.
@@ -368,6 +385,18 @@ test_that("a fit short of its optimum is resumed under its own rules", {
   # from: the Hessian and where it was taken.
   expect_identical(seen[[1L]]$endgame$hessian, short$hessian)
   expect_equal(seen[[1L]]$endgame$evaluated_at, c(0, 0))
+  # And told that the stage that ended there probed for an overshoot and found
+  # none, so the resumed stage need not probe again beside it. Not after the
+  # iteration cap, where the probe pulls back flat transforms only.
+  expect_true(seen[[1L]]$endgame$cleared)
+  capped <- list()
+  ctsem:::.ctBackendCorrectResult(utils::modifyList(short, list(stop_reason = "cap")),
+    spec = list(), npar = 2L, tolerance = 1e-6, maxtries = 2L,
+    optimise = function(from, endgame = NULL) {
+      capped[[length(capped) + 1L]] <<- endgame
+      done
+    })
+  expect_false(capped[[1L]]$cleared)
   expect_identical(out$result, done)
   expect_equal(out$certification$status, "certified")
   expect_length(out$corrections, 1L)

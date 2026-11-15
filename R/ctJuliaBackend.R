@@ -6229,6 +6229,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         args$newton_hessian <- hessian
         args$newton_hessian_at <- .ctJuliaVector(as.numeric(endgame$evaluated_at))
       }
+      # The verdict's stage probed for an overshoot where it ended, which is
+      # where this one starts (`.ctBackendCorrectResult()`).
+      if (isTRUE(endgame$cleared) && identical(args$overshoot_probe, "magnitude")) {
+        args$overshoot_probe <- "cleared"
+      }
     }
     held <- !is.null(pin) && length(pin$index)
     target <- objective
@@ -6436,7 +6441,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       escape = function(r) .ctBackendStallEscape(r, optimcontrol, model_spec,
         verbose, escapes = !state_explicit),
       certify = isTRUE(common$certify) && !isTRUE(walked) &&
-        is.null(.ctJuliaWalkedHessian(result)), verbose = verbose)
+        is.null(.ctJuliaWalkedHessian(result)), verbose = verbose,
+      cores = cores)
     result <- retried$result
     result$stall_escapes <- retried$escapes
     # The work of every stage the loop did not keep, added to the kept stage's
