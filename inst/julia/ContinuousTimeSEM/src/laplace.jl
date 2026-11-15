@@ -9780,16 +9780,24 @@ function ctsem_laplace_conditioning(laplace::CTSEMLaplaceObjective)
     mins = fill(Inf, nunits)
     theta = laplace.last_values
     if length(theta) != 0
-        _laplace_ensure_pool!(laplace)
         Ls = _laplace_popchols(theta, laplace.spec)
-        for U in 1:nunits
+        # On the pool, as an evaluation takes the units: each writes its own
+        # entry, from its slot's scratch. Every optimiser run ends with this
+        # (`_ctsem_optimise_result_extra`), a verbose one twice, and one unit
+        # after another it was two to eight minutes on one thread at the end
+        # of each stage of the affect pilot's tied fit, sixteen threads idle
+        # (2026-11-15, dev2).
+        _laplace_parallel(laplace, 1:nunits) do U
             u = laplace.modes[U]
-            isempty(u) && continue
+            isempty(u) && return true
             blocks = laplace.units.blocks[U]
             M = _laplace_unit_curvature(laplace, U, theta, Ls, u)
-            all(d -> all(isfinite, d), M.diag) || (mins[U] = NaN; continue)
-            _laplace_exceeds_identity(M, blocks) && continue
-            mins[U] = _laplace_min_eigenvalue(M, blocks, length(u))
+            if !all(d -> all(isfinite, d), M.diag)
+                mins[U] = NaN
+            elseif !_laplace_exceeds_identity(M, blocks)
+                mins[U] = _laplace_min_eigenvalue(M, blocks, length(u))
+            end
+            return true
         end
     end
     return (min_eigenvalue=mins,

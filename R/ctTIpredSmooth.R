@@ -322,8 +322,8 @@
 # quadratic model a fit's Hessian gives at its estimate. `hessian` is the log
 # posterior's at `theta`, with the penalties at `penalty$lambda`, and
 # `gradient` its gradient there. Returns the new lambdas, each term's
-# effective degrees of freedom, and where the quadratic model puts the optimum
-# at them.
+# effective degrees of freedom at them (`edf`) and at the lambdas it came
+# with (`edf0`), and where the quadratic model puts the optimum at them.
 .ctTIsmoothLambda <- function(penalty, hessian, theta, gradient = NULL,
   maxiter = 200L, tol = 1e-6) {
   npar <- length(theta)
@@ -338,7 +338,7 @@
   datagradient <- gradient
   datagradient[at] <- datagradient[at] + old * theta[at]
   lambda <- penalty$lambda
-  edf <- rep(NA_real_, length(lambda))
+  edf <- edf0 <- rep(NA_real_, length(lambda))
   for (iter in seq_len(maxiter)) {
     precision <- rep(lambda, lengths(index))
     information <- data
@@ -356,6 +356,7 @@
       size <- sum(point[j]^2)
       updated[g] <- if (size > 0) max(edf[g], 0) / size else Inf
     }
+    if (iter == 1L) edf0 <- edf
     updated <- pmin(pmax(updated, 1e-8), 1e10)
     change <- max(abs(log(updated) - log(lambda)))
     lambda <- updated
@@ -370,13 +371,97 @@
   # No direction with curvature at all: the smoothing parameters stay, and so
   # does the point.
   if (is.null(V)) return(list(lambda = penalty$lambda,
-    edf = rep(NA_real_, length(penalty$lambda)), point = theta,
+    edf = rep(NA_real_, length(penalty$lambda)),
+    edf0 = rep(NA_real_, length(penalty$lambda)), point = theta,
     hessian = -information, iterations = 0L))
   point <- theta + as.numeric(V %*% pengradient)
   edf <- vapply(seq_along(lambda), function(g)
     length(index[[g]]) - lambda[g] * sum(diag(V)[index[[g]]]), numeric(1))
-  list(lambda = lambda, edf = edf, point = point,
+  list(lambda = lambda, edf = edf, edf0 = edf0, point = point,
     hessian = -information, iterations = iter)
+}
+
+# How far a smoothing step moved the model: the largest change in any term's
+# effective degrees of freedom, which is what a smoothing parameter sets. Not
+# the change in the parameters themselves: a term at its linear limit, or with
+# no penalty left, takes any lambda beyond it at the same curve, and judged
+# by lambda its passes went on until the clamp (four of the affect pilot's six
+# terms end at 1e10) or the pass limit. Zero where the step had no curvature
+# to read.
+.ctTIsmoothMoved <- function(gfs) {
+  moved <- suppressWarnings(max(abs(gfs$edf - gfs$edf0)))
+  if (is.finite(moved)) moved else 0
+}
+
+# The parameters whose curvature a smoothing step rests on: the parameters the
+# smooths act on and every predictor coefficient on those (the terms'
+# penalised coefficients and lines, and the other predictors' coefficients
+# there, which share the curve's uncertainty), as positions in the free
+# parameter vector.
+.ctTIsmoothOwnParameters <- function(spec, npar) {
+  penalty <- spec$penalty
+  targets <- suppressWarnings(as.integer(penalty$parameter))
+  effects <- spec$ti_effects
+  shared <- if (!is.null(effects) && NROW(effects)) as.integer(
+    effects$coefficient[as.integer(effects$parameter) %in% targets])
+  cols <- suppressWarnings(as.integer(c(unlist(penalty$index), penalty$linear,
+    shared, targets)))
+  sort(unique(cols[!is.na(cols) & cols >= 1L & cols <= npar]))
+}
+
+# A curvature model with the smooths' own columns exact
+# (`.ctTIsmoothOwnParameters()`, `.ctBackendHessianColumns()`), for a smoothing
+# step taken where the exact Hessian is dear and the matrix in hand is the
+# finish's Krylov model. The step reads the coefficients' posterior variances
+# and where they move to, and a model built from the units' scores is no
+# Hessian there. On the affect pilot's tied fit (819 parameters, six terms),
+# from smoothing parameters of 10 the exact Hessian's step is 138, 9.3 and 2.4
+# with three terms at the linear limit; a Krylov model of ten products gave
+# 5390, 29 and 5.9 with none at the limit, one of 48 products started from the
+# exact step's values moved those three to the same, and the passes that followed moved one term from 20 to 25390 to 1e-8
+# to 158, each pass one to three hours.
+#
+# The exact columns go into the model as a block BFGS update: the result has
+# those columns exactly, keeps the model's covariance of the other parameters,
+# and is positive definite where the model and the exact block are. Writing
+# the columns over the model's keeps its conditional precision of the others
+# instead, and where that is too small the coefficients' variances come out
+# negative: on the tied fit's exact Hessian with every eigenvalue moved by a
+# factor of two or so (sd 0.25 in log10), the update gave 119, 9.1 and 2.1
+# with the same three terms at the limit, and overwriting gave 324, 16 and
+# 3.2 with none. The other coefficients on the smooths' targets and the
+# targets themselves are part of the block: with the penalised coefficients
+# alone the same test gave negative degrees of freedom.
+#
+# The columns are cheap beside a pass: a coefficient's is its target's score
+# differences weighted by the predictor (`_laplace_ti_derivable`), so two
+# gradients a target. `hessian` comes back unchanged where the columns cannot
+# be had or their own block is not a maximum's.
+.ctTIsmoothExactColumns <- function(spec, hessian, theta, cores = NA_integer_) {
+  cols <- .ctTIsmoothOwnParameters(spec, length(theta))
+  if (!length(cols)) return(hessian)
+  exact <- try(.ctBackendWithMaxChunks(cores,
+    .ctBackendHessianColumns(spec, theta, cols)), silent = TRUE)
+  if (inherits(exact, "try-error") || !is.matrix(exact) ||
+      !identical(dim(exact), c(length(theta), length(cols))) ||
+      !all(is.finite(exact))) return(hessian)
+  # As informations: the model's, and the exact columns with their own block
+  # symmetric.
+  model <- -(hessian + t(hessian)) / 2
+  own <- -exact
+  block <- (own[cols, , drop = FALSE] + t(own[cols, , drop = FALSE])) / 2
+  own[cols, ] <- block
+  blockroot <- tryCatch(chol(block), error = function(e) NULL)
+  if (is.null(blockroot)) return(hessian)
+  mine <- model[, cols, drop = FALSE]
+  # The model's own block inverted over the directions it has curvature in.
+  e <- eigen(model[cols, cols, drop = FALSE], symmetric = TRUE)
+  keep <- e$values > max(e$values, 0) * 1e-12
+  modelinverse <- e$vectors[, keep, drop = FALSE] %*%
+    (t(e$vectors[, keep, drop = FALSE]) / e$values[keep])
+  updated <- model - mine %*% modelinverse %*% t(mine) +
+    own %*% chol2inv(blockroot) %*% t(own)
+  -(updated + t(updated)) / 2
 }
 
 # The inverse of a penalised information over the directions the data give it

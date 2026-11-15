@@ -2154,15 +2154,74 @@ function _continuation_evaluate(o::CTSEMLaplaceContinuation, theta::Vector{Float
         subject_loglik=subject_loglik, converged=rest.converged && flagged.ok)
 end
 
-# A Laplace objective keeps the pairs its last run ended with where the run
-# asked to (`lbfgs_pairs = :objective`, `ctsem_optimize`), in a weak table, so
-# an objective that is let go takes them with it. The refined fit's placed
+# An objective keeps the pairs its last run ended with where the run asked to
+# (`lbfgs_pairs = :objective`, `ctsem_optimize`), in a weak table, so an
+# objective that is let go takes them with it. The refined fit's placed
 # objective starts from them where it holds none of its own
 # (`_ctsem_lbfgs_held(::CTSEMLaplacePlaced)`).
 const _CTSEM_LBFGS_HELD = WeakKeyDict{Any,CTSEMLBFGSMemory}()
-_ctsem_lbfgs_held(o::CTSEMLaplaceObjective) = get(_CTSEM_LBFGS_HELD, o, nothing)
-_ctsem_lbfgs_hold!(o::CTSEMLaplaceObjective, memory::CTSEMLBFGSMemory) =
-    (_CTSEM_LBFGS_HELD[o] = memory; nothing)
+_ctsem_lbfgs_held(o::Union{CTSEMLaplaceObjective,CTSEMObjective}) =
+    get(_CTSEM_LBFGS_HELD, o, nothing)
+_ctsem_lbfgs_hold!(o::Union{CTSEMLaplaceObjective,CTSEMObjective},
+    memory::CTSEMLBFGSMemory) = (_CTSEM_LBFGS_HELD[o] = memory; nothing)
+
+"""
+    ctsem_lbfgs_forget!(objective)
+
+Drops the curvature `objective` holds from an earlier run (`lbfgs_pairs =
+:objective`), so that the next run on it starts cold and leaves its own: a
+fit's first stage, on an objective R may have cached from another fit.
+"""
+ctsem_lbfgs_forget!(objective) = (delete!(_CTSEM_LBFGS_HELD, objective); nothing)
+
+"""
+    ctsem_lbfgs_carry!(to, from, index, delta)
+
+Hands `to` the curvature `from` holds from its last run (`lbfgs_pairs =
+:objective`), where `to` is `from` with `delta[k]` more precision on the raw
+coordinate `index[k]`: a smoothing pass's objective at its new smoothing
+parameters (`.ctJuliaOptimiseFit()`). The penalty is quadratic, so the change
+in every pair is known: `y`, a difference of gradients of the minimised
+objective over the step `s`, gains `delta .* s` on those coordinates, and the
+learned diagonal gains `delta`. So `to`'s first run starts from what `from`'s
+ended with, where a pass that started cold learnt it again: 271 iterations in
+the affect pilot's one pass (2026-11-03). A pair the change leaves without
+curvature is dropped, as any such pair is. Returns the pairs handed over; 0,
+and nothing held, where `from` holds none.
+"""
+function ctsem_lbfgs_carry!(to, from, index::AbstractVector{<:Integer},
+    delta::AbstractVector{<:Real})
+    length(index) == length(delta) || throw(DimensionMismatch(
+        "one change of precision for each coordinate is required"))
+    held = _ctsem_lbfgs_held(from)
+    held === nothing && return 0
+    # Checked here: an index past a pair's end would be written through.
+    n = isempty(held.S) ? (held.diagonal === nothing ? typemax(Int) :
+        length(held.diagonal)) : length(held.S[1])
+    all(i -> 1 <= i <= n, index) || throw(BoundsError(1:n, index))
+    carried = CTSEMLBFGSMemory(held.m)
+    for k in eachindex(held.S)
+        s = held.S[k]
+        y = copy(held.Y[k])
+        for j in eachindex(index)
+            y[index[j]] += delta[j] * s[index[j]]
+        end
+        _ctsem_lbfgs_push!(carried, s, y)
+    end
+    if held.diagonal !== nothing
+        B = copy(held.diagonal)
+        for j in eachindex(index)
+            B[index[j]] += delta[j]
+        end
+        lo = 1e-12 * maximum(B; init=0.0)
+        @inbounds for i in eachindex(B)
+            (isfinite(B[i]) && B[i] > lo) || (B[i] = lo > 0 ? lo : 1.0)
+        end
+        carried.diagonal = B
+    end
+    _ctsem_lbfgs_hold!(to, carried)
+    return length(carried.S)
+end
 
 """
     _continuation_error(o)

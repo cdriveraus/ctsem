@@ -296,12 +296,21 @@ test_that("a smooth fit on the Krylov finish forms no exact Hessian before its s
     T0MEANS = matrix("t0m||||"), T0VAR = matrix("t0v"),
     MANIFESTMEANS = matrix(0), TIpredNames = ~ s(age, k = 8), silent = TRUE)
   m$pars$indvarying <- m$pars$param %in% "drift"
-  # The certification's own Hessians, formed where a run hands back none.
+  # The certification's own Hessians, formed where a run hands back none; and
+  # the smoothing steps taken on the Krylov model, each with the smooth's own
+  # columns exact in it.
   own <- 0L
   endgame <- ctsem:::.ctBackendEndgameAt
+  exact <- ctsem:::.ctTIsmoothExactColumns
+  moved <- numeric()
   testthat::local_mocked_bindings(.ctBackendEndgameAt = function(...) {
     own <<- own + 1L
     endgame(...)
+  }, .ctTIsmoothExactColumns = function(spec, hessian, theta, cores) {
+    out <- exact(spec, hessian, theta, cores)
+    cols <- ctsem:::.ctTIsmoothOwnParameters(spec, length(theta))
+    moved <<- c(moved, max(abs(out - hessian)[, cols]))
+    out
   }, .package = "ctsem")
   set.seed(1)
   fit <- suppressWarnings(suppressMessages(ctFit(dat, m, backend = "julia",
@@ -313,6 +322,8 @@ test_that("a smooth fit on the Krylov finish forms no exact Hessian before its s
   expect_gte(penalty$passes, 1L)
   expect_equal(fit$optim$newton_hessians, 1L)
   expect_equal(own, 0L)
+  expect_gte(length(moved), 1L)
+  expect_true(all(moved > 0))
   again <- ctsem:::.ctTIsmoothLambda(penalty, fit$uncertainty$hessian,
     as.numeric(fit$estimate$raw), as.numeric(fit$optim$gradient))
   expect_equal(again$lambda, penalty$lambda, tolerance = 0.02)
@@ -400,4 +411,62 @@ test_that("the Laplace Hessian takes a smooth's columns from its target's", {
   slow <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_hessian(objective,
     ctsem:::.ctJuliaNumericVector(x), localised = FALSE))
   expect_equal(as.matrix(fast), as.matrix(slow), tolerance = 1e-5)
+})
+
+test_that("smoothing parameters are settled when the curve's degrees of freedom are", {
+  # A term at its linear limit: its coefficients at zero, each well
+  # determined. From anywhere beyond the limit its lambda runs to the clamp at
+  # no change in the curve, which the effective degrees of freedom say and a
+  # change in lambda does not. No fit.
+  penalty <- data.frame(lambda = 1e6)
+  penalty$index <- list(1:3)
+  info <- diag(c(100, 100, 100, 50))
+  theta <- c(0, 0, 0, 0.3)
+  gfs <- ctsem:::.ctTIsmoothLambda(penalty,
+    -(info + diag(c(rep(penalty$lambda, 3), 0))), theta)
+  expect_gt(abs(log(gfs$lambda / penalty$lambda)), 1)
+  expect_lt(ctsem:::.ctTIsmoothMoved(gfs), 0.01)
+  # The same term from a weak penalty has its three degrees of freedom to lose.
+  penalty$lambda <- 1
+  gfs <- ctsem:::.ctTIsmoothLambda(penalty,
+    -(info + diag(c(rep(penalty$lambda, 3), 0))), theta)
+  expect_gt(ctsem:::.ctTIsmoothMoved(gfs), 1)
+})
+
+test_that("a curvature model takes the smooths' own columns exactly", {
+  # No fit: the columns' source is mocked. One term on parameter 1: its
+  # penalised coefficients (2, 3), its line (4) and another predictor's
+  # coefficient on the same parameter (5) are its own, with the parameter;
+  # 6 and 7 are the rest, 7 with a coefficient of its own that is not.
+  penalty <- data.frame(lambda = 5, linear = 4L, parameter = 1L)
+  penalty$index <- list(2:3)
+  spec <- list(penalty = penalty, ti_effects = data.frame(
+    coefficient = c(2L, 3L, 4L, 5L, 7L), parameter = c(1L, 1L, 1L, 1L, 6L)))
+  own <- 1:5
+  rest <- 6:7
+  expect_identical(ctsem:::.ctTIsmoothOwnParameters(spec, 7L), own)
+  truth <- -(crossprod(matrix(sin(1:49), 7, 7)) + diag(7))
+  model <- -(crossprod(matrix(cos(1:49), 7, 7)) + diag(7))
+  asked <- NULL
+  testthat::local_mocked_bindings(.ctBackendHessianColumns = function(spec, est, columns) {
+    asked <<- columns
+    truth[, columns, drop = FALSE]
+  }, .ctBackendWithMaxChunks = function(chunks, expr) expr, .package = "ctsem")
+  out <- ctsem:::.ctTIsmoothExactColumns(spec, model, numeric(7))
+  expect_identical(asked, own)
+  # The own columns are the exact ones, the matrix symmetric and a maximum's,
+  # and the rest keeps the covariance the model gave it.
+  expect_equal(out[, own], truth[, own])
+  expect_equal(out, t(out))
+  expect_true(all(eigen(-out, symmetric = TRUE, only.values = TRUE)$values > 0))
+  expect_equal(solve(-out)[rest, rest], solve(-model)[rest, rest])
+  expect_gt(max(abs(out[rest, rest] - model[rest, rest])), 0.01)
+  # Columns that did not solve, or an own block that is no maximum's, leave
+  # the model as it came.
+  testthat::local_mocked_bindings(.ctBackendHessianColumns = function(spec, est, columns)
+    matrix(NaN, 7, length(columns)), .package = "ctsem")
+  expect_identical(ctsem:::.ctTIsmoothExactColumns(spec, model, numeric(7)), model)
+  testthat::local_mocked_bindings(.ctBackendHessianColumns = function(spec, est, columns)
+    -truth[, columns, drop = FALSE], .package = "ctsem")
+  expect_identical(ctsem:::.ctTIsmoothExactColumns(spec, model, numeric(7)), model)
 })
