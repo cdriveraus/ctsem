@@ -73,9 +73,11 @@ same session, so about six minutes of each first fit was compiling.
 
 **Laplace approximation by default.** In 3.x every random effect was carried
 as an extra state of the Kalman filter (`intoverpop = 'augmented'`). That is
-exact when an effect shifts a mean and every indicator is Gaussian. For effects
-on the dynamics it relies on a linearisation, which shrinks their estimated
-variance. Version 4 integrates random effects out with a Laplace approximation
+exact when an effect shifts a mean in a linear model with Gaussian indicators.
+For effects on the dynamics it relies on a linearisation, which shrinks their
+estimated variance, and where the dynamics depend on the state even a random
+initial or manifest mean is linearised over its whole population spread.
+Version 4 integrates random effects out with a Laplace approximation
 instead (`intoverpop = 'laplace'`, chosen automatically when optimising). In a
 simulation with a random auto-effect, the augmented filter recovered about two
 thirds of the true standard deviation and the Laplace approximation recovered
