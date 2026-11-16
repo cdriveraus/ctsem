@@ -101,6 +101,7 @@
 "test-optimcontrol-names.R","spec","core"
 "test-base-generics.R","spec","core"
 "test-context-dependence.R","spec","core"
+"test-intoverpop-nonlinear-warning.R","spec","core"
 "test-covmattransform.R","spec","core"
 "test-ctFit-alias.R","spec","core"
 "test-ctFitCheckCov.R","spec","core"
