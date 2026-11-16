@@ -76,6 +76,46 @@ test_that("Stan and Julia agree for a linear likelihood", {
   expect_equal(as.numeric(julia_value$gradient), as.numeric(attributes(stan_value)$gradient), tolerance = 1e-7)
 })
 
+test_that("Stan refreshes the discrete diffusion when only DIFFUSION differs between subjects", {
+  skip_without_julia()
+  skip_if_not_installed("rstan")
+
+  # A shared DRIFT and a DIFFUSION with a TI effect, at equal intervals: a
+  # subject's first interval equals the previous subject's last, so only the
+  # DIFFUSION triggers say the discrete covariance is stale. Gated on the
+  # drift's alone, stan kept the previous subject's, and its value moved with
+  # the order of the subjects. With one predictor both backends lay the TI
+  # effects out by parameter, so one raw vector serves both.
+  model <- ctModel(type = "ct", n.latent = 2, n.manifest = 2, LAMBDA = diag(2),
+    n.TIpred = 1, TIpredNames = "grp", tipredDefault = FALSE,
+    DRIFT = matrix(c("d11", "d21", "d12", "d22"), 2, 2),
+    DIFFUSION = matrix(c("q11||||grp", "q21", 0, "q22||||grp"), 2, 2),
+    MANIFESTVAR = diag(.3, 2), MANIFESTMEANS = matrix(0, 2, 1),
+    T0MEANS = matrix(0, 2, 1), T0VAR = diag(2), CINT = matrix(0, 2, 1))
+  data <- data.frame(id = rep(1:4, each = 4), time = rep(0:3, 4),
+    Y1 = sin(1:16), Y2 = cos(.7 * (1:16)), grp = rep(c(0, 1, 0, 1), each = 4))
+  reversed <- data
+  reversed$id <- 5 - reversed$id
+  reversed <- reversed[order(reversed$id, reversed$time), ]
+  raw <- c(-.5, .1, -.1, -.7, -.2, .1, .3, .6, -.5)
+
+  stan_value <- function(d) {
+    spec <- suppressMessages(ctFit(d, model, backend = "stan", fit = FALSE, priors = FALSE))
+    rstan::log_prob(.compiled_stan_fit(spec), upars = raw, adjust_transform = FALSE,
+      gradient = TRUE)
+  }
+  forward <- stan_value(data)
+  backward <- stan_value(reversed)
+  julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+    priors = FALSE))
+  julia_value <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE)
+
+  expect_equal(as.numeric(backward), as.numeric(forward), tolerance = 1e-10)
+  expect_equal(as.numeric(julia_value$value), as.numeric(forward), tolerance = 1e-8)
+  expect_equal(as.numeric(julia_value$gradient), as.numeric(attributes(forward)$gradient),
+    tolerance = 1e-7)
+})
+
 test_that("Stan and Julia agree for a linear augmented random effect", {
   skip_without_julia()
   skip_if_not_installed("rstan")
