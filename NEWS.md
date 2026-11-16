@@ -45,6 +45,7 @@ A major release: ctsem gains a second estimation engine, written in Julia, which
 - Fixed: computing quantities over several posterior draws with `cores > 1` could stop with a Stan exception, or return draws out of order, in `ctGenerateFromPriors()`, `ctKalman()`, `ctPredict()` and `plot()`.
 - Fixed: `backend='stan'` with `optimcontrol$estonly=TRUE` failed for models with time independent predictors, which also stopped `ctLOO()`.
 - Fixed: a time independent predictor effect fixed to a value, such as `age=0.5`, was ignored by `backend='stan'`; it is now refused there, and fitted by `backend='julia'`.
+- Fixed: with `backend='stan'`, a continuous time model whose DIFFUSION differed between subjects while DRIFT did not used the previous subject's diffusion for a subject whose first time interval equalled the previous subject's last.
 - Fixed: `ctACF()` and `ctACFresiduals()` dropped lag 0 from cross correlations.
 - Fixed: `ctACF()` and `ctACFresiduals()` counted pairs of observations at the wrong time lags unless every time fell on the time step's grid, which could show large spurious correlations; `ctDiscretiseData()` left such times off its grid, and shifted every time by an offset.
 - Fixed: `ctDiscretePars()` given subjects out of ascending order labelled each subject's results with another's id.
