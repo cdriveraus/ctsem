@@ -1,9 +1,11 @@
 # The Julia backend for ctsem
 
 This file is the maintainer reference for the julia backend and is kept up to
-date with the code. The vignettes are the user documentation. The report at
-`../juliaBackendReport/julia-backend-changes.qmd` is frozen as a dated record
-as of 2026-09-02 and is not updated; read this file or the vignettes instead.
+date with the code. The vignettes are the user documentation, and
+`NEW-IN-4.md` at the package root the summary for users of 3.x. The report at
+`../../juliaBackendReport/julia-backend-changes.qmd`, beside the package
+checkout, is frozen as a dated record as of 2026-09-02 and is not updated;
+read this file or the vignettes instead.
 
 `ctFit(..., backend='julia')` fits with a Julia extended-Kalman-filter engine
 instead of Stan's generated C++, using a hand-written reverse-mode adjoint for
