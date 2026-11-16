@@ -52,6 +52,17 @@ List containing summary items, with a \code{print} method for readable console a
   parameter tables and \code{parmatrices} carry a \code{mode} column beside
   the draws' mean, sd and quantiles: the fit's estimate on the same scale,
   the point a likelihood ratio or an information criterion refers to.
+
+  \code{popmeans} reports each free parameter. A \code{T0VAR},
+  \code{DIFFUSION} or \code{MANIFESTVAR} parameter is a standard deviation
+  on the diagonal; off it, a coordinate the model's \code{covmattransform}
+  turns into correlations, not a correlation: under the default \code{'z'}
+  it is an entry of the correlation matrix's logarithm, which for two
+  variables is the correlation's Fisher z (\code{tanh()} of it is the
+  correlation) and for more is no function of any one correlation. The
+  correlations are in \code{parmatrices}, as \code{T0cor},
+  \code{DIFFUSIONcor}, \code{MANIFESTcor} and \code{asymDIFFUSIONcor} beside
+  the covariances, each summarised over the draws' own correlations.
 }
 \description{
 Summarise a fit from \code{\link{ctFit}}, on either backend: population

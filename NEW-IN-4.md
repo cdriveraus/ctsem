@@ -202,7 +202,10 @@ variance into between person, process and measurement parts.
   `'cint, indvarying=TRUE, sdscale=0.5, tipreds=c(age)'`. `ctPar()` writes
   either form, and `ctCov()` writes a covariance matrix as cells.
 - Covariance matrices are parameterised by a matrix logarithm, so every
-  positive definite matrix can be reached.
+  positive definite matrix can be reached. An off-diagonal parameter is not a
+  correlation (for two variables it is the correlation's Fisher z); the
+  correlations, with intervals, are `DIFFUSIONcor`, `T0cor` and `MANIFESTcor`
+  in `summary(fit)$parmatrices` and `ctSummaryMatrices()`.
 - `ctModel(driftScaled = c('DIFFUSION', 'CINT'))` expresses the diffusion and
   intercept as what accumulates over one time unit, which makes uncertainty
   and sampling better behaved when the drift is weakly determined.

@@ -169,29 +169,29 @@ for easier estimation and more sensible default priors.
 ``` r
 summary(fit)$popmeans
 #>                   mean    sd   2.5%    50%  97.5%   mode
-#> T0m_yield       -0.936 0.144 -1.220 -0.937 -0.661 -0.943
-#> T0m_fat          0.144 0.203 -0.253  0.141  0.559  0.150
-#> drift_yield     -0.041 0.004 -0.050 -0.040 -0.033 -0.041
+#> T0m_yield       -0.952 0.144 -1.238 -0.950 -0.658 -0.943
+#> T0m_fat          0.159 0.198 -0.236  0.152  0.567  0.150
+#> drift_yield     -0.041 0.004 -0.050 -0.041 -0.033 -0.041
 #> drift_yield_fat -0.020 0.004 -0.028 -0.020 -0.013 -0.020
 #> drift_fat_yield -0.006 0.004 -0.013 -0.006  0.001 -0.006
-#> drift_fat       -0.015 0.004 -0.025 -0.015 -0.009 -0.015
+#> drift_fat       -0.015 0.004 -0.025 -0.015 -0.008 -0.015
 #> diff_yield       0.136 0.004  0.128  0.136  0.143  0.136
-#> diff_fat_yield  -0.592 0.061 -0.709 -0.592 -0.464 -0.592
-#> diff_fat         0.116 0.005  0.107  0.116  0.125  0.116
-#> mvaryield        0.329 0.003  0.323  0.328  0.334  0.328
+#> diff_fat_yield  -0.592 0.061 -0.713 -0.590 -0.475 -0.592
+#> diff_fat         0.116 0.005  0.105  0.116  0.126  0.116
+#> mvaryield        0.328 0.003  0.322  0.328  0.335  0.328
 #> mvarfat          0.582 0.005  0.573  0.582  0.591  0.582
-#> mm_yield        -0.058 0.123 -0.281 -0.064  0.190 -0.054
-#> mm_fat           0.146 0.113 -0.063  0.146  0.362  0.142
+#> mm_yield        -0.050 0.124 -0.290 -0.047  0.209 -0.054
+#> mm_fat           0.140 0.110 -0.077  0.141  0.360  0.142
 ```
 
 Drift names read as `drift_<affected>_<predictor>`, so `drift_yield` is
 yield’s own auto effect and `drift_yield_fat` is the effect of fat on
 yield. A negative auto effect pulls a process back toward its
 equilibrium and its size sets how fast. `diff_yield` and `diff_fat` are
-the system noise standard deviations, and `diff_fat_yield` sets the
-correlation between them: with two processes it is the correlation’s
-Fisher z, so the estimate here is a correlation of -0.53. `mvar*` are
-the measurement error standard deviations, and `T0m_*` the mean initial
+the system noise standard deviations, and `diff_fat_yield` is the
+parameter behind their correlation; the correlation itself, -0.53, is
+the `DIFFUSIONcor` row of `summary(fit)$parmatrices`. `mvar*` are the
+measurement error standard deviations, and `T0m_*` the mean initial
 states.
 
 The two cross effects are not symmetric: a high fat percentage predicts
@@ -201,10 +201,10 @@ excludes zero, while the interval for the reverse effect does not.
 ``` r
 summary(fit)$popsd
 #>            mean    sd  2.5%   50% 97.5%  mode
-#> T0m_yield 0.901 0.121 0.681 0.896 1.172 0.892
-#> T0m_fat   1.154 0.152 0.878 1.141 1.470 1.149
-#> mm_yield  0.748 0.108 0.563 0.740 0.979 0.742
-#> mm_fat    0.433 0.268 0.111 0.366 1.185 0.366
+#> T0m_yield 0.900 0.115 0.687 0.896 1.140 0.892
+#> T0m_fat   1.158 0.162 0.881 1.145 1.516 1.149
+#> mm_yield  0.750 0.102 0.570 0.741 0.983 0.742
+#> mm_fat    0.428 0.263 0.125 0.357 1.195 0.366
 ```
 
 Those are the population standard deviations of the parameters that vary
@@ -304,9 +304,9 @@ Two pieces of syntax recur everywhere and are worth unpacking:
 ``` r
 summary(f)$tipreds
 #>                  mean    sd   2.5%   50% 97.5%  mode     z
-#> tip_Diet_2_cint 0.021 0.013 -0.003 0.021 0.046 0.021 1.621
-#> tip_Diet_3_cint 0.050 0.013  0.024 0.050 0.074 0.051 3.908
-#> tip_Diet_4_cint 0.028 0.013  0.002 0.028 0.053 0.028 2.171
+#> tip_Diet_2_cint 0.021 0.013 -0.005 0.021 0.046 0.021 1.585
+#> tip_Diet_3_cint 0.051 0.013  0.024 0.051 0.076 0.051 3.782
+#> tip_Diet_4_cint 0.028 0.013  0.002 0.028 0.053 0.028 2.209
 ```
 
 Diets 3 and 4 raise the continuous intercept clearly; diet 2 is not
