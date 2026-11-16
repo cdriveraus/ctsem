@@ -52,7 +52,7 @@ jobs:
           build=true
           if [ "$FORCE" = true ]; then
             say "Building: asked to."
-          elif ! git fetch -q --depth=1 origin gh-pages 2> /dev/null; then
+          elif ! git fetch -q origin gh-pages 2> /dev/null; then
             say "Building: there is no gh-pages branch yet."
           else
             built=$(git log -1 --format=%s FETCH_HEAD | grep -oE "[0-9a-f]{40}" | tail -n 1 || true)
