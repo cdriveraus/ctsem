@@ -98,10 +98,12 @@ a mean in a linear Gaussian model -- a manifest mean, an initial mean, a
 continuous intercept -- exactly, inside each subject's filter, and every
 other effect by a Laplace approximation at its mode, which \code{summary()}
 reports. \code{'augmented'} makes each random effect a state of the filter:
-exact for effects that shift a mean with Gaussian indicators, a
-linearisation elsewhere that shrinks random effects on the dynamics, and
-variation on a DIFFUSION or MANIFESTVAR parameter is then only partly
-identified, which ctFit warns of.
+exact for effects that shift a mean in a linear Gaussian model, and a
+linearisation elsewhere. That shrinks random effects on the dynamics; where
+the dynamics depend on the state, even a random initial or manifest mean is
+linearised over its whole population spread, which can overstate the
+likelihood and move the maximum; and variation on a DIFFUSION or
+MANIFESTVAR parameter is only partly identified, which ctFit warns of.
 
 \code{'quadrature'} (\code{backend='julia'}, optimizing) fits by
 \code{'laplace'} and then refines the fit with the units the random-effects check
