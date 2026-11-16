@@ -2,7 +2,10 @@
 <!-- README.md is generated from README.rmd -- edit README.rmd, then re-knit with
      rmarkdown::render('README.rmd'). The example chunks are EVALUATED against the
      installed ctsem, so install the package before knitting. Write plain markdown
-     here: LaTeX (\url{}) and roxygen (#') markup do not survive the conversion. -->
+     here: LaTeX (\url{}) and roxygen (#') markup do not survive the conversion.
+     The timings quoted near the top, and in NEW-IN-4.md, were measured
+     separately, not by knitting; when they are measured again, say where and
+     when, as they do now. -->
 
 # ctsem
 
@@ -14,49 +17,86 @@ status](https://www.r-pkg.org/badges/version/ctsem)](https://cran.r-project.org/
 [![Downloads](https://cranlogs.r-pkg.org/badges/grand-total/ctsem)](https://cran.r-project.org/package=ctsem)
 <!-- badges: end -->
 
-**Hierarchical continuous (and discrete) time dynamic modelling in R.**
+ctsem fits continuous and discrete time state space models to
+longitudinal data. A system of stochastic differential equations (or
+difference equations, in discrete time) describes how a set of latent
+processes change and affect each other, and a measurement model links
+those processes to the observed variables. Panel data with a few waves,
+intensive longitudinal data with hundreds of observations per person,
+and single long time series all use the same interface, and observation
+times can be irregular and different for every person.
 
-ctsem fits state space models – a stochastic differential or difference
-equation for the process, plus a measurement model for the observations
-– to longitudinal data. Panel data with a handful of waves, intensive
-longitudinal data with hundreds of observations, or a single long time
-series all use the same interface. Unequal and individually varying
-measurement intervals are handled directly, rather than being rounded
-into waves.
+Version 4 fits with a new engine written in Julia by default. For what
+changed since 3.x, see [New in 4.x](NEW-IN-4.md).
 
-You can specify multiple interacting processes, multiple indicators per
-process (dynamic factor analysis), higher order dynamics such as damped
-oscillation, time varying (within subject) and time invariant (between
-subject) covariates, interventions and other exogenous inputs, and state
-dependent parameters (nonlinearity). Any parameter may vary over
-individuals, with its population mean, variance, and covariate effects
-estimated jointly. Classic longitudinal models such as latent growth
-curves, latent change scores and the cross-lagged panel model are
-special cases.
+## What it covers
 
-Estimation defaults to maximum likelihood, or maximum a posteriori when
-priors are used; Hamiltonian Monte Carlo sampling is available.
-
-If your data are in long format with a subject id column and a time
-column, you are ready to start.
+- **Dynamics.** Several interacting processes, higher order dynamics
+  such as damped oscillation, time dependent inputs and interventions,
+  and parameters that depend on the latent state (nonlinear dynamics).
+  Latent growth curves, latent change scores and the cross-lagged panel
+  model are special cases.
+- **Measurement.** Several indicators per process, as in dynamic factor
+  analysis. Indicators can be continuous, binary, ordinal, counts or
+  censored, mixed within one model, and loadings, intercepts and error
+  variances can depend on the latent state.
+- **Individual differences.** Any parameter can vary between people, or
+  at several nested levels such as people within couples, and depend on
+  time independent covariates, linearly or as a smooth function. Random
+  effects are integrated out by a Laplace approximation, exactly
+  wherever they shift a mean in a linear Gaussian model, and each fit
+  checks the approximation’s error for every person and warns where it
+  would change the estimates.
+- **Estimation and uncertainty.** Maximum likelihood, or maximum a
+  posteriori with priors, using exact gradients; standard errors from
+  the Hessian along with a check of the normal approximation; or
+  sampling of the full posterior, random effects included.
+- **Speed.** On one core, the first example below fits in 18 seconds
+  with the Julia engine and 56 with Stan, and a simulated panel of 400
+  people with 40 observations each in 18 against 47, each pair reaching
+  the same maximum ([timings](NEW-IN-4.md#timings): one AMD EPYC 9654
+  server, November 2026).
+- **Threads.** The likelihood, its gradient and the Hessian are computed
+  in parallel over subjects within one process, so `cores` speeds up a
+  single fit. With random auto-effects added to that panel, a fit took
+  637 seconds on one core, 173 on four and 60 on sixteen.
+- **No compiling per model.** The engine is compiled once, the first
+  time it is used after installing. A nonlinear version of the first
+  example then fitted in 64 seconds in a new R session, while Stan spent
+  about six minutes compiling the same model, in every new session,
+  before a 76 second fit.
+- **Checking and building models.** Score tests for what a model leaves
+  out, tests of its one-step-ahead prediction errors, cross validation,
+  identification checks before fitting, and a step-by-step model search.
+  `ctReport()` runs the reporting and checking functions over a fit and
+  writes the results to a folder.
 
 ## Install
 
-From CRAN:
-
 ``` r
-install.packages('ctsem')
-```
+install.packages('ctsem')    # the released version, from CRAN
 
-Or the development version:
-
-``` r
+# or the development version, which is what this page describes
 remotes::install_github('cdriveraus/ctsem',
   INSTALL_opts = "--no-multiarch", dependencies = c("Depends", "Imports"))
 ```
 
-Most models run without compiling anything. Some of the more complex
-ones compile a Stan model, which needs a working C++ toolchain.
+Then, once:
+
+``` r
+library(ctsem)
+ctJuliaInstall()
+```
+
+`ctJuliaInstall()` installs whatever is missing: Julia itself, the
+JuliaConnectoR package that links it to R, and the engine’s Julia
+packages. It asks before each download. The first fit after installing
+or updating ctsem builds a compiled image of the engine, which takes
+several minutes; after that each R session starts the engine in a few
+seconds. `ctJuliaStatus()` reports what was found.
+
+Without Julia, `ctFit(..., backend = 'stan')` fits with Stan as ctsem
+3.x did, but most of what is new in version 4 needs the Julia engine.
 
 <details>
 
@@ -65,8 +105,11 @@ ones compile a Stan model, which needs a working C++ toolchain.
 <b>Compile problems on Windows (rstan / Rtools)</b>
 </summary>
 
-Ensure a recent R and a matching Rtools are installed, and check that
-`rstan` itself works before suspecting ctsem.
+Installing from GitHub compiles ctsem’s Stan models, and with
+`backend = 'stan'` a nonlinear model is compiled before it is fitted.
+Both need a working C++ toolchain. Ensure a recent R and a matching
+Rtools are installed, and check that `rstan` itself works before
+suspecting ctsem.
 
 Put this single line in `~/.R/Makevars.win`, deleting any other lines:
 
@@ -125,28 +168,31 @@ for easier estimation and more sensible default priors.
 
 ``` r
 summary(fit)$popmeans
-#>                   mean    sd   2.5%    50%  97.5%
-#> T0m_yield       -0.946 0.148 -1.231 -0.946 -0.658
-#> T0m_fat          0.151 0.201 -0.251  0.158  0.511
-#> drift_yield     -0.041 0.004 -0.049 -0.041 -0.033
-#> drift_yield_fat -0.020 0.004 -0.028 -0.020 -0.012
-#> drift_fat_yield -0.006 0.004 -0.013 -0.006  0.001
-#> drift_fat       -0.016 0.005 -0.026 -0.015 -0.008
-#> diff_yield       0.136 0.004  0.129  0.136  0.144
-#> diff_fat_yield  -0.299 0.030 -0.356 -0.300 -0.238
-#> diff_fat         0.116 0.005  0.107  0.116  0.126
-#> mvaryield        0.328 0.003  0.322  0.328  0.335
-#> mvarfat          0.582 0.005  0.573  0.582  0.591
-#> mm_yield        -0.058 0.128 -0.305 -0.059  0.192
-#> mm_fat           0.141 0.111 -0.074  0.143  0.360
+#>                   mean    sd   2.5%    50%  97.5%   mode
+#> T0m_yield       -0.936 0.144 -1.220 -0.937 -0.661 -0.943
+#> T0m_fat          0.144 0.203 -0.253  0.141  0.559  0.150
+#> drift_yield     -0.041 0.004 -0.050 -0.040 -0.033 -0.041
+#> drift_yield_fat -0.020 0.004 -0.028 -0.020 -0.013 -0.020
+#> drift_fat_yield -0.006 0.004 -0.013 -0.006  0.001 -0.006
+#> drift_fat       -0.015 0.004 -0.025 -0.015 -0.009 -0.015
+#> diff_yield       0.136 0.004  0.128  0.136  0.143  0.136
+#> diff_fat_yield  -0.592 0.061 -0.709 -0.592 -0.464 -0.592
+#> diff_fat         0.116 0.005  0.107  0.116  0.125  0.116
+#> mvaryield        0.329 0.003  0.323  0.328  0.334  0.328
+#> mvarfat          0.582 0.005  0.573  0.582  0.591  0.582
+#> mm_yield        -0.058 0.123 -0.281 -0.064  0.190 -0.054
+#> mm_fat           0.146 0.113 -0.063  0.146  0.362  0.142
 ```
 
 Drift names read as `drift_<affected>_<predictor>`, so `drift_yield` is
 yield’s own auto effect and `drift_yield_fat` is the effect of fat on
 yield. A negative auto effect pulls a process back toward its
-equilibrium and its size sets how fast. `diff_*` are the system noise
-standard deviations and their correlation, `mvar*` the measurement error
-standard deviations, and `T0m_*` the mean initial states.
+equilibrium and its size sets how fast. `diff_yield` and `diff_fat` are
+the system noise standard deviations, and `diff_fat_yield` sets the
+correlation between them: with two processes it is the correlation’s
+Fisher z, so the estimate here is a correlation of -0.53. `mvar*` are
+the measurement error standard deviations, and `T0m_*` the mean initial
+states.
 
 The two cross effects are not symmetric: a high fat percentage predicts
 a subsequent fall in yield, and the interval for `drift_yield_fat`
@@ -154,11 +200,11 @@ excludes zero, while the interval for the reverse effect does not.
 
 ``` r
 summary(fit)$popsd
-#>            mean    sd  2.5%   50% 97.5%
-#> T0m_yield 0.902 0.121 0.695 0.891 1.164
-#> T0m_fat   1.153 0.151 0.883 1.148 1.487
-#> mm_yield  0.752 0.106 0.567 0.741 0.969
-#> mm_fat    0.434 0.253 0.126 0.379 1.111
+#>            mean    sd  2.5%   50% 97.5%  mode
+#> T0m_yield 0.901 0.121 0.681 0.896 1.172 0.892
+#> T0m_fat   1.154 0.152 0.878 1.141 1.470 1.149
+#> mm_yield  0.748 0.108 0.563 0.740 0.979 0.742
+#> mm_fat    0.433 0.268 0.111 0.366 1.185 0.366
 ```
 
 Those are the population standard deviations of the parameters that vary
@@ -257,10 +303,10 @@ Two pieces of syntax recur everywhere and are worth unpacking:
 
 ``` r
 summary(f)$tipreds
-#>                  mean    sd   2.5%   50% 97.5%     z
-#> tip_Diet_2_cint 0.022 0.013 -0.004 0.022 0.046 1.709
-#> tip_Diet_3_cint 0.050 0.013  0.026 0.050 0.076 3.964
-#> tip_Diet_4_cint 0.029 0.013  0.004 0.029 0.054 2.195
+#>                  mean    sd   2.5%   50% 97.5%  mode     z
+#> tip_Diet_2_cint 0.021 0.013 -0.003 0.021 0.046 0.021 1.621
+#> tip_Diet_3_cint 0.050 0.013  0.024 0.050 0.074 0.051 3.908
+#> tip_Diet_4_cint 0.028 0.013  0.002 0.028 0.053 0.028 2.171
 ```
 
 Diets 3 and 4 raise the continuous intercept clearly; diet 2 is not
@@ -286,40 +332,23 @@ coefficient rises above one as the interval grows: an increase in weight
 promotes further increase, which is what growth looks like in this
 parameterisation.
 
-## The Julia backend
-
-`ctFit()` fits with a Julia backend by default. It is under active
-development, is generally faster than the Stan based fitting it replaces
-as the default, and supports non-Gaussian indicators – binary, ordinal,
-count and censored – which the Stan path does not. `backend = 'stan'`
-fits as before and needs no external toolchain.
-
-``` r
-ctJuliaInstall()
-fit <- ctFit(data, model)
-```
-
-`ctJuliaInstall()` installs whatever is missing – Julia itself, the
-JuliaConnectoR bridge, and the engine’s own dependencies – and asks
-before downloading anything. `ctJuliaStatus()` reports what is present.
-[JULIA-BACKEND.md](JULIA-BACKEND.md) covers what the backend supports,
-where it improves on Stan rather than reproducing it, and how it is
-verified against the Stan path.
-
 ## Where to go next
 
 | If you want to | Read |
 |----|----|
+| Know what changed since ctsem 3.x | [New in 4.x](NEW-IN-4.md) |
 | Understand what a dynamic system is, and why it is worth the trouble | [Dynamic systems modeling in psychology](https://cdriver.netlify.app/post/introtodynamics/) |
 | Work an applied example end to end, from theory through simulation to fitting and checking | the [tutorial preprint](https://osf.io/preprints/psyarxiv/4q9ex_v3), with code and materials in the [OSF project](https://osf.io/xh6ue/) |
 | A second, shorter worked start | [ctsem quick start: sunspots and a damped linear oscillator](https://cdriver.netlify.app/post/ctsem-quick-start/) |
 | Get everything ctsem can say about a fit, in one folder | `ctReport(fit)` |
 | The full reference: the model, the priors, every argument | the [hierarchical manual (pdf)](https://CRAN.R-project.org/package=ctsem/vignettes/hierarchicalmanual.pdf), or `ctDocs()` in R |
-| Understand and control the uncertainty ctsem reports | [uncertainty vignette](https://github.com/cdriveraus/ctsem/blob/juliaFit/vignettes/uncertainty.qmd) |
-| Build a measurement model: multiple indicators, non-Gaussian items | [measurement models vignette](https://github.com/cdriveraus/ctsem/blob/juliaFit/vignettes/measurement-models.qmd) |
-| Put random effects on parameters by Laplace approximation | [multilevel Laplace vignette](https://github.com/cdriveraus/ctsem/blob/juliaFit/vignettes/laplace-multilevel.qmd) |
-| Model test items as indicators: item response models over time | [IRT items vignette](https://github.com/cdriveraus/ctsem/blob/juliaFit/vignettes/irt-items.qmd) |
-| Decide whether to treat a rating scale as ordinal or continuous | [ordinal or continuous vignette](https://github.com/cdriveraus/ctsem/blob/juliaFit/vignettes/ordinal-or-continuous.qmd) |
+| Understand and control the uncertainty ctsem reports | [uncertainty vignette](https://github.com/cdriveraus/ctsem/blob/master/vignettes/uncertainty.qmd) |
+| Build a measurement model: multiple indicators, binary, ordinal, count or censored items | [measurement models vignette](https://github.com/cdriveraus/ctsem/blob/master/vignettes/measurement-models.qmd) |
+| Put random effects on parameters, at one or several levels | [multilevel Laplace vignette](https://github.com/cdriveraus/ctsem/blob/master/vignettes/laplace-multilevel.qmd) |
+| Model test items as indicators: item response models over time | [IRT items vignette](https://github.com/cdriveraus/ctsem/blob/master/vignettes/irt-items.qmd) |
+| Decide whether to treat a rating scale as ordinal or continuous | [ordinal or continuous vignette](https://github.com/cdriveraus/ctsem/blob/master/vignettes/ordinal-or-continuous.qmd) |
+| Find out what a fitted model is missing | [score tests vignette](https://github.com/cdriveraus/ctsem/blob/master/vignettes/score-tests.qmd) |
+| Weight subjects to represent a population | [sampling weights vignette](https://github.com/cdriveraus/ctsem/blob/master/vignettes/sampling-weights.qmd) |
 | Fit each subject separately, with the population estimate as a prior | [empirical Bayes vignette](https://CRAN.R-project.org/package=ctsem/vignettes/empirical-bayes-fitting.html) |
 | Fit discrete time models, and know when the choice matters | [Discrete time models using ctsem?](https://cdriver.netlify.app/post/dtbivariate/) and [Representations of dynamic systems](https://cdriver.netlify.app/post/discretetime/) |
 | Handle an accelerated longitudinal or multiple group design | [Accelerated longitudinal and multiple group designs](https://cdriver.netlify.app/post/accelerated/) |
@@ -328,7 +357,6 @@ verified against the Stan path.
 | Model an intervention or another external input | [Understanding the time course of interventions](https://www.researchgate.net/publication/328221807_Understanding_the_Time_Course_of_Interventions_with_Continuous_Time_Dynamic_Models) |
 | Fit a growth curve with state dependent error | [Latent growth curves, state dependent error](https://cdriver.netlify.app/post/lgc/) |
 | Work with binary observations | [Binary data in state space models](https://cdriver.netlify.app/post/binarydata/) |
-| Fit binary, ordinal, count or censored indicators, or want more speed | the [Julia backend](JULIA-BACKEND.md) |
 | Point and click instead of writing code | [ctsemGUI](https://github.com/cdriveraus/ctsemgui), a Shiny front end |
 | Use the original OpenMx based ctsem (version 1 style) | [ctsemOMX](https://github.com/cdriveraus/ctsemOMX) and its [vignette](https://cran.r-project.org/package=ctsemOMX/vignettes/ctsemOMX.pdf) |
 
@@ -344,10 +372,11 @@ any of them.
 | `ctModel` | specify a continuous (`type = 'ct'`) or discrete (`'dt'`) time model |
 | `ctModelLatex` | render the model as equations, to pdf or png |
 | `model$matrices` | view and edit the specification in matrix form, e.g. `model$matrices$DRIFT[1, 2] <- 'cross'` |
-| `ctModelHigherOrder` | raise the order of a model, for instance to allow oscillation |
-| `ctModelConvertOMX` | convert an old OpenMx style (`type = 'omx'`) model object |
 | `ctPar` | write a cell specification from named arguments |
 | `ctCov` | write a covariance matrix as the cells a model reads |
+| `ctModelHigherOrder` | raise the order of a model, for instance to allow oscillation |
+| `ctModelSlowComponent`, `ctModelPeriodicComponent`, `ctModelUniqueProcess`, `ctModelLatentLevel` | add a slow process, a cycle, an indicator specific process, or carry levels in the latent processes |
+| `ctModelConvertOMX` | convert an old OpenMx style (`type = 'omx'`) model object |
 | `ctIdentify` | check which parameters a dataset can inform, before fitting |
 
 **Prepare data**
@@ -363,15 +392,15 @@ any of them.
 |  |  |
 |----|----|
 | `ctFit` | fit a model: maximum likelihood, maximum a posteriori, or sampling |
-| `ctFitUpdate` | refit with changed data or arguments, without recompiling |
-| `ctFitUncertainty` | compute a fit's uncertainty: Hessian, bootstrap or importance sampling, or (`uncertainty = 'sample'`) the exact posterior of a Julia backend fit, sampled |
+| `ctFitUpdate` | refit with changed data or arguments |
+| `ctFitUncertainty` | recompute a fit’s uncertainty (Hessian, checked, importance sampling, sandwich, bootstrap), refine its random effects by quadrature, or sample its posterior with `ctFitUncertainty(fit, 'sample')` |
 | `ctEmpiricalBayesFit` | subject-wise fits with the population estimate as a prior |
 
 **Inspect a fit**
 
 |  |  |
 |----|----|
-| `summary` | estimates, random effect sds, covariate effects, residual covariance |
+| `summary`, `coef`, `vcov`, `logLik` | estimates, random effect sds, covariate effects, residual covariance |
 | `ctSummaryMatrices` | the dynamic system parameters in matrix form |
 | `ctSubjectPars` | subject specific parameters |
 | `ctExtract` | the raw draws, as named arrays |
@@ -381,8 +410,8 @@ any of them.
 | `ctNetwork`, `ctNetworkPlot` | temporal and contemporaneous networks of the fitted system |
 | `ctPhasePortrait` | phase portrait of the fitted dynamics |
 | `ctStateDependencePlot` | how model matrix cells vary with a latent state, for nonlinear models |
-| `ctTracePlot` | the optimisation trace of a fit |
-| `ctVarianceDecomposition` | split each indicator's variance into between person, process and measurement parts |
+| `ctVarianceDecomposition` | split each indicator’s variance into between person, process and measurement parts |
+| `ctTracePlot` | the optimisation path, or the sampling chains, of a fit |
 
 **Predict**
 
@@ -392,36 +421,39 @@ any of them.
 | `ctKalman`, `ctKalmanArray` | filtered and smoothed state estimates |
 | `ctResiduals` | standardised residuals |
 
-**Check and compare**
+**Check, compare and improve**
 
 |  |  |
 |----|----|
 | `ctReport` | run the reporting and fit-checking functions over a fit and write a folder, with an index saying how to read each file |
+| `ctScoreTest` | test, without refitting, whether random effects, covariate effects or state dependence are missing |
+| `ctFitAdequacy` | tests of the one-step-ahead prediction errors, grouped by what they detect |
+| `ctModelImprove`, `ctModelProposals` | step-by-step model search guided by those tests |
 | `ctPostPredPlots` | posterior predictive comparison of implied and observed data |
 | `ctFitCheckCov` | lagged covariance diagnostics |
-| `ctCoverageCheck` | generate from a model, refit repeatedly, and check parameter recovery |
-| `ctParticleLik` | measure the filter’s approximation error against a particle filter; `ctFitUncertainty(fit, 'is', control = list(likelihood = 'particle'))` corrects the draws for it |
 | `ctACF`, `ctACFresiduals` | continuous time autocorrelation, of the data and of the residuals |
-| `ctChisqTest` | compare two nested fits |
+| `anova`, `ctChisqTest` | compare nested fits |
 | `ctLOO` | cross validation: k fold by refitting, or PSIS for Laplace fits |
 | `ctFitProfile` | profile likelihood of chosen parameters, for identification and intervals |
-| `ctLaplaceCheck` | measure the Laplace approximation error for random effects; `likelihood = 'quadrature'` corrects the draws for it |
+| `ctLaplaceCheck` | measure the Laplace approximation error for random effects; `ctFitUncertainty(fit, intoverpop = 'quadrature')` corrects it |
+| `ctParticleLik` | measure the filter’s approximation error against a particle filter; `ctFitUncertainty(fit, 'is', filter = 'particle')` corrects the draws for it |
+| `ctCoverageCheck` | generate from a model, refit repeatedly, and check parameter recovery |
 
 **Generate data**
 
 |  |  |
 |----|----|
-| `ctGenerate` | from a model, at its fixed parameter values, or (`fromPriors = TRUE`) drawing them from the priors |
+| `ctGenerate` | from a model, at given parameter values or (`fromPriors = TRUE`) drawing them from the priors |
 | `ctGenerateFromFit` | from a fitted model |
 
-**Julia backend**
+**Julia engine**
 
 |  |  |
 |----|----|
 | `ctJuliaInstall` | install Julia, the bridge package, and the engine’s dependencies |
-| `ctJuliaStatus` | report whether the Julia backend is available |
+| `ctJuliaStatus` | report whether the Julia engine is available |
 | `ctJuliaSetup` | configure the Julia session: its thread count, or a particular Julia installation |
-| `ctJuliaProcesses`, `ctJuliaKill` | list, and stop, the Julia processes ctsem has started, and release the sampling worker pool |
+| `ctJuliaProcesses`, `ctJuliaKill` | list, and stop, the Julia processes ctsem has started |
 
 ## Getting help
 
@@ -448,22 +480,22 @@ deprecated but still accepted. `ctModelConvertOMX()` replaces
 `ctStanModel()` for converting old OpenMx style model objects.
 Otherwise:
 
-| old                        | new                      |
-|----------------------------|--------------------------|
-| `ctStanGenerate()`         | `ctGenerate(fromPriors = TRUE)` |
-| `ctStanGenerateFromFit()`  | `ctGenerateFromFit()`    |
-| `ctStanKalman()`           | `ctKalmanArray()`        |
-| `ctStanPlotPost()`         | `ctPlotPosterior()`      |
-| `ctStanPostPredict()`      | `ctPostPredPlots()`      |
-| `ctStanSubjectPars()`      | `ctSubjectPars()`        |
-| `ctStanTIpredeffects()`    | `ctTIpredEffects()`      |
-| `ctStanFitUpdate()`        | `ctFitUpdate()`          |
-| `ctStanDiscretePars()`     | `ctDiscretePars()`       |
-| `ctStanDiscreteParsPlot()` | `ctDiscreteParsPlot()`   |
-| `ctStanContinuousPars()`   | `ctSummaryMatrices()`    |
-| `ctStanParnames()`         | `ctRawParnames()`        |
-| `ctOptimUncertainty()` (3.11.1) | `ctFitUncertainty()` |
-| `ctFitCovCheck()` (3.11.1) | `ctFitCheckCov()`     |
+| old                             | new                             |
+|---------------------------------|---------------------------------|
+| `ctStanGenerate()`              | `ctGenerate(fromPriors = TRUE)` |
+| `ctStanGenerateFromFit()`       | `ctGenerateFromFit()`           |
+| `ctStanKalman()`                | `ctKalmanArray()`               |
+| `ctStanPlotPost()`              | `ctPlotPosterior()`             |
+| `ctStanPostPredict()`           | `ctPostPredPlots()`             |
+| `ctStanSubjectPars()`           | `ctSubjectPars()`               |
+| `ctStanTIpredeffects()`         | `ctTIpredEffects()`             |
+| `ctStanFitUpdate()`             | `ctFitUpdate()`                 |
+| `ctStanDiscretePars()`          | `ctDiscretePars()`              |
+| `ctStanDiscreteParsPlot()`      | `ctDiscreteParsPlot()`          |
+| `ctStanContinuousPars()`        | `ctSummaryMatrices()`           |
+| `ctStanParnames()`              | `ctRawParnames()`               |
+| `ctOptimUncertainty()` (3.11.1) | `ctFitUncertainty()`            |
+| `ctFitCovCheck()` (3.11.1)      | `ctFitCheckCov()`               |
 
 </details>
 
@@ -484,12 +516,14 @@ in a JSS publication (Driver, Voelkle & Oud, 2017) and its
 Version 2 introduced the hierarchical specification and a Kalman filter
 coded in Stan, letting every parameter of the dynamic model vary across
 individuals with an estimated population mean and variance. Version 3
-added state dependent (time varying) parameters. For most purposes the
-current formulation is faster, more robust and more flexible than the
-OpenMx one; with many subjects, few time points and no individual
+added state dependent (time varying) parameters. Version 4 added the
+Julia engine, and with it Laplace integration of random effects, nested
+levels, and ordinal, count and censored indicators. For most purposes
+the current formulation is faster, more robust and more flexible than
+the OpenMx one; with many subjects, few time points and no individual
 differences in timing, ctsemOMX can still be quicker.
 
-Recent changes are in
-[NEWS.md](https://github.com/cdriveraus/ctsem/blob/master/NEWS.md).
+Changes, version by version, are in [NEWS.md](NEWS.md); [New in
+4.x](NEW-IN-4.md) describes version 4 for users of 3.x.
 
 </details>

@@ -106,14 +106,18 @@ accessor (`.ctFitModelObject`, `.ctFitLongData`, `.ctFitIdMap`,
   TI predictors, TD predictors, state-dependent (nonlinear) model matrices,
   binary, ordinal, count and censored indicators, `priors`.
 - **Sampling**: `ctFit(optimize=FALSE)`, or `ctFitUncertainty(fit, 'sample')`
-  after an optimised fit -- the exact posterior, by SAEM's kernel on the joint
-  posterior of parameters and random effects and by NUTS on a marginal one.
+  after an optimised fit -- the exact posterior, by NUTS through a learnt map
+  on the joint posterior of parameters and random effects, and by NUTS or
+  tempered SMC on a marginal one.
 - **Threading**: the subject loop splits into contiguous chunks over
   `Threads.@spawn`, each owning its adjoint workspace — never indexed by
   `threadid()`, because a task can migrate between threads at any yield point.
-  2.0–4.3x on six threads. `ctJuliaSetup(threads=n)` must run *before* the Julia
-  session exists; `ctFit(cores=n)` caps it per fit.
-- **Uncertainty**: `hessian`, `surrogate`, `is`, `opg`, `sandwich`,
+  A whole fit with random auto-effects ran 3.7x faster on 4 cores and 10.7x
+  on 16 (dev1, 2026-11-16; the timings in `NEW-IN-4.md`). The session starts
+  at the `cores` of the call that starts it, at least
+  `getOption('mc.cores', 2)`, unless `ctJuliaSetup(threads=n)` set it first;
+  each call's `cores` caps what it uses.
+- **Uncertainty**: `hessian`, `checked`, `is`, `opg`, `sandwich`,
   `bootstrap` — **run as part of fitting**, as `stanoptimis()` runs them for an
   optimized Stan fit, and controlled by the same `optimcontrol` names
   (`uncertainty`, `uncertaintyDraws`, `finishsamples`, `uncertaintyControl`,
