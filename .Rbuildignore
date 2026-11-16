@@ -28,7 +28,6 @@
 ^\.positai$
 ^\.claude$
 .*\.bak
-^JULIA-BACKEND\.md$
 ^NEW-IN-4\.md$
 ^tools$
 ^dev$
