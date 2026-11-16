@@ -51,16 +51,25 @@ for (i in seq_len(nrow(keys))) {
     keys$data[i], nrow(D$data), D$md5, proc.time()[["elapsed"]] - t0))
 }
 
+# The Julia the cells start (harness.R): the build's own pin. An image is a
+# Julia version's, so one built here under another is no use to them: this
+# looked for 1.12 after the pin moved to 1.13, and the first cells of every
+# grid then built the engine again, side by side, 12-15 minutes on dev1.
 jbin <- Sys.getenv("BENCH_JULIA_BIN")
 if (!nzchar(jbin)) {
-  cand <- Sys.glob(file.path(Sys.getenv("HOME"), ".julia", "juliaup", "julia-1.12*", "bin"))
+  pin <- paste0("julia-", get0(".ct_julia_version", envir = asNamespace("ctsem"),
+    ifnotfound = "1.12"), "*")
+  cand <- c(Sys.glob(file.path(Sys.getenv("HOME"), ".julia", "juliaup", pin, "bin")),
+    Sys.glob(file.path(Sys.getenv("USERPROFILE"), ".julia", "juliaup", pin, "bin")))
+  cand <- cand[file.exists(cand)]
   jbin <- if (length(cand)) sort(cand, decreasing = TRUE)[1L] else ""
 }
 t0 <- proc.time()[["elapsed"]]
 if (nzchar(jbin)) suppressMessages(ctJuliaSetup(julia_bin = jbin, threads = 1L)) else
   suppressMessages(ctJuliaSetup(threads = 1L))
 st <- ctJuliaStatus()
-cat(sprintf("engine ready in %.1fs: %s\n", proc.time()[["elapsed"]] - t0,
+cat(sprintf("engine ready in %.1fs: Julia %s, %s\n", proc.time()[["elapsed"]] - t0,
+  as.character(JuliaConnectoR::juliaEval("string(VERSION)")),
   paste(format(st$engine %||% st), collapse = " ")))
 # One small fit, so every path a cell will take has been through this build's
 # engine at least once and a broken build fails here rather than in 200 cells.
