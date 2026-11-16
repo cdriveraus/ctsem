@@ -41,3 +41,5 @@
 ^vignettes/.*_files$
 ^vignettes/\.quarto$
 ^lib$
+^_pkgdown\.yml$
+^pkgdown$
