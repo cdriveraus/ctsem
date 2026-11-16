@@ -69,8 +69,13 @@ ctRegenerateStan <- function(write = FALSE, clean_src = FALSE, pkgdir = ".") {
 
   gen <- list()
   for (nm in c("ctsm", "ctsmgen")) {
-    txt <- ctsem::ctFit(datalong, model, fit = FALSE,
+    # backend = 'stan' by name: the default has been julia since 2026-11-07,
+    # which writes no stan text and refuses gendata.
+    txt <- ctsem::ctFit(datalong, model, fit = FALSE, backend = "stan",
       gendata = identical(nm, "ctsmgen"), forcerecompile = TRUE)$stanmodeltext
+    if (!is.character(txt) || length(txt) != 1L || !nzchar(txt)) {
+      stop("ctFit returned no stan text for ", nm, call. = FALSE)
+    }
     # Runs of blank lines collapsed to one. Cosmetic, and the committed files
     # have always been written this way.
     gen[[nm]] <- gsub("\\n+", "\n", txt)
