@@ -5614,6 +5614,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # exact Hessian the run kept there, beside the checkpoint
   # (`.ctJuliaCheckpointHessian()`); version 1 records have neither.
   out$state <- saved$state
+  # Whether the stage that wrote it was the certified one, begun once the
+  # smoothing parameters had settled (`.ctJuliaOptimiseFit()`'s `checked`).
+  out$settled <- isTRUE(saved$settled)
   kept <- .ctJuliaCheckpointHessianRead(out$path, saved, npar)
   if (!is.null(kept)) {
     out$hessian <- kept$hessian
@@ -5675,8 +5678,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # Writes a checkpoint (`.ctJuliaCheckpoint()`): the raw point the engine's
 # callback reported, its log posterior and iteration, the anchored modes
 # (`mode_units`, NaN-padded `mode_values`; unit 0 where the route anchors
-# none), what the point was optimised on (`checkpoint$state`), and the id of
-# the exact Hessian kept beside it (`.ctJuliaCheckpointHessian()`), if any.
+# none), what the point was optimised on (`checkpoint$state`), the id of
+# the exact Hessian kept beside it (`.ctJuliaCheckpointHessian()`), if any,
+# and whether the stage is the certified one after the smoothing parameters
+# settled (`checkpoint$settled`).
 .ctJuliaCheckpointWrite <- function(checkpoint, iteration, objective, parameters,
   mode_units, mode_values, hessian_id = NULL) {
   raw <- as.numeric(parameters)
@@ -5686,7 +5691,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     npar = checkpoint$npar, names = checkpoint$names,
     iteration = as.integer(iteration), objective = as.numeric(objective), raw = raw,
     modes = list(units = as.integer(mode_units), values = as.matrix(mode_values)),
-    state = checkpoint$state, hessian_id = hessian_id, written = Sys.time())
+    state = checkpoint$state, hessian_id = hessian_id,
+    settled = isTRUE(checkpoint$settled), written = Sys.time())
   .ctJuliaSaveAtomic(record, checkpoint$path)
 }
 
@@ -6791,6 +6797,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       !identical(.ctJuliaCheckpointState(model_spec), checkpoint$state)) {
     checkpoint$hessian <- checkpoint$hessian_at <- checkpoint$hessian_id <- NULL
   }
+  # A resume that holds the Hessian of the certified stage a fit ends on:
+  # its first stage is that stage gone on, and the smoothing parameters'
+  # check on its Hessian is taken as the run that formed it would have
+  # taken it (`checked`, below).
+  resumedsettled <- isTRUE(checkpoint$settled) && !is.null(checkpoint$hessian)
+  if (!is.null(checkpoint) && !resumedsettled) checkpoint$settled <- NULL
   start <- .ctJuliaInitialValues(npar, inits,
     initsd = .ctJuliaOr(optimcontrol$initsd, .01), spec = model_spec)
   # Starting values read off the data, for the diagonals whose defaults are
@@ -7065,6 +7077,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (!is.null(checkpoint)) {
     checkpoint$resume <- NULL
     checkpoint$hessian <- checkpoint$hessian_at <- checkpoint$hessian_id <- NULL
+    checkpoint$settled <- NULL
   }
   moved <- FALSE
   if (!is.null(substeps) && isTRUE(substeps$finite)) {
@@ -7230,11 +7243,15 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # over to the finish, whose Hessian is either point's. (Where that finish
     # walks the Krylov model, as on that fit, the engine also holds the
     # stage's L-BFGS to the exact Hessian's reach: `ctsem_optimize`.)
+    # Its checkpoints say which stage it is (`settled`), for a resume.
+    settledcheckpoint <- if (is.null(checkpoint)) NULL else
+      utils::modifyList(checkpoint, list(settled = TRUE))
     certified_stage <- function(from, hessian = NULL, hessian_at = NULL) {
       stage <- keepknown(.ctJuliaOptimise(model_spec, from,
         optimcontrol = stagecontrol, gradient = gradient, cores = cores,
         verbose = verbose, callback = optimcontrol$callback,
-        hessian = hessian, hessian_at = hessian_at, checkpoint = checkpoint,
+        hessian = hessian, hessian_at = hessian_at,
+        checkpoint = settledcheckpoint,
         # A stage handed the last certified stage's Hessian starts beside
         # where that stage probed for an overshoot.
         probed = !is.null(hessian), pairs = TRUE, resumed = TRUE))
@@ -7243,8 +7260,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     curvature <- NULL
     certified <- TRUE
     # Whether the exact Hessian in hand is this loop's own, formed once the
-    # parameters had settled on walked curvature (below).
-    checked <- FALSE
+    # parameters had settled on walked curvature (below), or the one a
+    # resume brought from the certified stage of the run it resumes. Read
+    # as a first stage's, that Hessian's check, where it moved a term, sent
+    # the resume through a walked pass and a second exact Hessian, 8 hours
+    # on the affect pilot's tied fit, where the run that formed it takes a
+    # stage seeded with it.
+    checked <- resumedsettled
     if (certifying) {
       # The first stage's walk where it ended on one (`walkfirst`), else its
       # certification's Hessian.

@@ -346,6 +346,71 @@ test_that("a smooth fit on the Krylov finish forms no exact Hessian before its s
   expect_equal(again$lambda, penalty$lambda, tolerance = 0.02)
 })
 
+# A resume from a checkpoint that holds the certified stage's Hessian goes on
+# as the run that formed it would. Where that Hessian's check moves a
+# smoothing parameter, the pass is a certified stage seeded with it at the
+# new precisions. Read as a first stage's Hessian, as it was until
+# 2026-11-16, the check sent the resume through a walked pass and a second
+# exact Hessian: 8 hours on the affect pilot's tied fit. The checkpoint says
+# which stage wrote it (`settled`).
+test_that("a resumed smooth fit takes its kept Hessian's check as the run that formed it would", {
+  skip_without_julia()
+  path <- tempfile(fileext = ".rds")
+  side <- paste0(path, ".hessian")
+  on.exit(unlink(c(path, side)), add = TRUE)
+  dat <- .tismooth_data()$data
+  m <- ctModel(type = "ct", n.latent = 1, n.manifest = 1, LAMBDA = diag(1),
+    DRIFT = matrix("drift"), DIFFUSION = matrix("diff"),
+    MANIFESTVAR = matrix("mvar"), CINT = matrix("cint||||age"),
+    T0MEANS = matrix("t0m||||"), T0VAR = matrix("t0v"),
+    MANIFESTMEANS = matrix(0), TIpredNames = ~ s(age, k = 8), silent = TRUE)
+  m$pars$indvarying <- m$pars$param %in% "drift"
+  fitto <- function() {
+    set.seed(1)
+    suppressWarnings(suppressMessages(ctFit(dat, m, backend = "julia",
+      intoverpop = "laplace", cores = 1,
+      optimcontrol = list(checks = FALSE, newton = "krylov", checkpoint = path))))
+  }
+  first <- fitto()
+  expect_true(first$optim$converged)
+  saved <- readRDS(path)
+  kept <- readRDS(side)
+  expect_true(isTRUE(saved$settled))
+  expect_identical(kept$id, saved$hessian_id)
+  # The checkpoint as it would be had the stage ended at three times the
+  # smoothing parameter: the same point, and the same Hessian with the
+  # penalty's precision changed on the penalised coefficients, which is the
+  # exact one there. Its check moves the parameter back.
+  penalty <- first$model_spec$penalty
+  expect_equal(saved$state$lambda, penalty$lambda)
+  index <- as.integer(unlist(penalty$index))
+  more <- rep(2 * penalty$lambda, lengths(penalty$index))
+  saved$state$lambda <- 3 * saved$state$lambda
+  kept$state <- saved$state
+  kept$hessian[cbind(index, index)] <- kept$hessian[cbind(index, index)] - more
+  saveRDS(saved, path)
+  saveRDS(kept, side)
+  stages <- list()
+  optimise <- ctsem:::.ctJuliaOptimise
+  testthat::local_mocked_bindings(.ctJuliaOptimise = function(...) {
+    asked <- list(...)
+    stages[[length(stages) + 1L]] <<- list(
+      walked = !(identical(asked[["walked"]], FALSE) || is.null(asked[["walked"]])),
+      held = !is.null(asked[["hessian"]]))
+    optimise(...)
+  }, .package = "ctsem")
+  second <- fitto()
+  expect_true(second$optim$converged)
+  # The first stage on the kept Hessian, then the check's move as a stage
+  # seeded with it: none ends on a walk, and each holds a Hessian.
+  expect_gte(length(stages), 2L)
+  expect_false(any(vapply(stages, function(s) s$walked, NA)))
+  expect_true(all(vapply(stages, function(s) s$held, NA)))
+  expect_gte(second$model_spec$penalty$passes, 1L)
+  expect_equal(second$model_spec$penalty$lambda, penalty$lambda, tolerance = 0.05)
+  expect_equal(second$estimate$loglik, first$estimate$loglik, tolerance = 1e-3)
+})
+
 test_that("summary() and ctTIpredEffects() report a smooth whole", {
   skip_without_julia()
   fit <- .tismooth_fit()
