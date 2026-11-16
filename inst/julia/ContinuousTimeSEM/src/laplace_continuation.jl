@@ -2172,7 +2172,51 @@ Drops the curvature `objective` holds from an earlier run (`lbfgs_pairs =
 :objective`), so that the next run on it starts cold and leaves its own: a
 fit's first stage, on an objective R may have cached from another fit.
 """
-ctsem_lbfgs_forget!(objective) = (delete!(_CTSEM_LBFGS_HELD, objective); nothing)
+ctsem_lbfgs_forget!(objective) = (delete!(_CTSEM_LBFGS_HELD, objective);
+    delete!(_CTSEM_LOCAL_HELD, objective); nothing)
+
+# The local curvature an objective keeps with its pairs (`CTSEMLocalHeld`).
+const _CTSEM_LOCAL_HELD = WeakKeyDict{Any,CTSEMLocalHeld}()
+_ctsem_local_held(o::Union{CTSEMLaplaceObjective,CTSEMObjective}) =
+    get(_CTSEM_LOCAL_HELD, o, nothing)
+_ctsem_local_hold!(o::Union{CTSEMLaplaceObjective,CTSEMObjective},
+    held::CTSEMLocalHeld) = (_CTSEM_LOCAL_HELD[o] = held; nothing)
+
+"""
+    ctsem_local_carry!(to, from, index, delta)
+
+Hands `to` the local curvature `from` holds from its last run
+(`CTSEMLocalHeld`), where `to` is `from` with `delta[k]` more precision on
+the raw coordinate `index[k]`, as `ctsem_lbfgs_carry!` hands the pairs: the
+matrix gains `delta` on its diagonal there, the Hessian's own change, and is
+inverted again. Handed on however far the next run starts, where the pairs
+are handed on only within a standard error: a run keeps its local curvature
+between builds wherever it goes, the pairs correcting it, and a run on `to`
+is that run gone on. Whether one was handed over: not where `from` holds
+none, or the changed matrix is not positive definite, and `to` then holds
+none either.
+"""
+function ctsem_local_carry!(to, from, index::AbstractVector{<:Integer},
+    delta::AbstractVector{<:Real})
+    length(index) == length(delta) || throw(DimensionMismatch(
+        "one change of precision for each coordinate is required"))
+    held = _ctsem_local_held(from)
+    delete!(_CTSEM_LOCAL_HELD, to)
+    held === nothing && return false
+    n = size(held.P, 1)
+    all(i -> 1 <= i <= n, index) || throw(BoundsError(1:n, index))
+    P = copy(held.P)
+    for j in eachindex(index)
+        P[index[j], index[j]] += delta[j]
+    end
+    all(isfinite, P) || return false
+    F = cholesky(Symmetric(P); check=false)
+    issuccess(F) || return false
+    Pinv = inv(F)
+    _ctsem_local_hold!(to, CTSEMLocalHeld(P, (Pinv .+ transpose(Pinv)) ./ 2,
+        held.builds))
+    return true
+end
 
 """
     ctsem_lbfgs_carry!(to, from, index, delta)

@@ -6207,7 +6207,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (isTRUE(walked)) common$newton_final <- "walked"
   if (identical(walked, "dear")) common$newton_final <- "dear"
   # `pairs`: L-BFGS starts from the curvature the objective holds from its
-  # last run and leaves this run's there (the engine's `lbfgs_pairs =
+  # last run -- its pairs and its local curvature (`lbfgs_local`) -- and
+  # leaves this run's there (the engine's `lbfgs_pairs =
   # :objective`), for a fit whose stages are runs on one objective, or on
   # objectives that differ by a known quadratic term: the smoothing passes
   # (`.ctJuliaOptimiseFit()`, `ctsem_lbfgs_carry!`). Sent only when asked.
@@ -6353,7 +6354,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # solve can lose it, and the modes a repeated jump saw are further starts
   # like any other.
   rounds <- 0L
-  local_builds <- 0L
+  # The builds behind the local curvature the run started from, where its
+  # objective held one (`local_builds_base`).
+  local_builds <- as.integer(.ctJuliaOr(result[["local_builds_base"]], 0L))[1L]
   while (!state_explicit && !is.null(model_spec$laplace)) {
     known <- model_spec$laplace$known
     found <- .ctJuliaKnownAdd(known, result[["found_mode_units"]],
@@ -7277,19 +7280,31 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
           # then give one long step. On test-julia-tismooth.R's fixture that
           # step took a scale's raw value from -0.9 to -65, where the
           # objective is flat and 0.09 lower, and the fit stayed there.
+          #
+          # The local curvature (`lbfgs_local`) goes with the objective
+          # however far the pass starts, the precisions' change added to
+          # its diagonal (`ctsem_local_carry!`): a run keeps its own from
+          # one build to the next wherever it goes, and without it a pass
+          # that starts without pairs has nothing behind its steps. On the
+          # affect pilot's tied fit such a stage gave way to its finish
+          # after two iterations and the finish's walk made a seventh of
+          # what L-BFGS made an hour once it had built one, 41 minutes.
           before <- model_spec
           model_spec$penalty$lambda <- gfs$lambda
           step <- gfs$point - theta
+          carried <- function(what) .ctJuliaCall(
+            paste0("ContinuousTimeSEM.", what),
+            heldobjective(model_spec), heldobjective(before),
+            .ctJuliaVector(as.integer(unlist(model_spec$penalty$index))),
+            .ctJuliaVector(as.numeric(rep(model_spec$penalty$lambda -
+              before$penalty$lambda, lengths(model_spec$penalty$index)))))
           if (isTRUE(-sum(step * (gfs$hessian %*% step)) <= 1)) {
-            .ctJuliaCall("ContinuousTimeSEM.ctsem_lbfgs_carry!",
-              heldobjective(model_spec), heldobjective(before),
-              .ctJuliaVector(as.integer(unlist(model_spec$penalty$index))),
-              .ctJuliaVector(as.numeric(rep(model_spec$penalty$lambda -
-                before$penalty$lambda, lengths(model_spec$penalty$index)))))
+            carried("ctsem_lbfgs_carry!")
           } else {
             .ctJuliaCall("ContinuousTimeSEM.ctsem_lbfgs_forget!",
               heldobjective(model_spec))
           }
+          carried("ctsem_local_carry!")
           smoothpasses <- pass
           # The exact Hessian the settled parameters were checked on moved
           # them a little further. The penalty is quadratic, so that Hessian

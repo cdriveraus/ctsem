@@ -2829,6 +2829,9 @@ times in thirty iterations for nothing.
 Where no column is cheap -- every unit reads every parameter, or the route
 cannot difference a column over its units alone (`_ctsem_local_capable`) --
 it is never built, and L-BFGS runs as without it.
+A run that started with no curvature and is about to hand over to a walk
+on the Krylov model asks for its first build there, whatever it has spent
+(`_ctsem_local_want!`, `wanted`; `ctsem_optimize`'s gap rule has why).
 
 A unit reads a parameter where its score in it is nonzero at some point the
 run has seen (`_ctsem_local_read!`), and nothing is chosen or built before
@@ -2842,7 +2845,8 @@ for it; a run moves anyway).
 `P` and `inverse` are the last build's; `columns` the cheap parameters and
 `cost` a build's gradients (one over each column's units,
 `_ctsem_local_columns`); `spent` the gradients every build took, `since` the
-run's gradients since the last, `builds` how many; `readers` the units by
+run's gradients since the last, `builds` how many, `wanted` whether the
+first was asked for ahead of its cost; `readers` the units by
 parameters read so far, `at` the last point read and `seen` how many.
 """
 mutable struct CTSEMLocalCurvature{O}
@@ -2858,6 +2862,7 @@ mutable struct CTSEMLocalCurvature{O}
     since::Int
     builds::Int
     done::Bool
+    wanted::Bool
     readers::BitMatrix
     at::Vector{Float64}
     seen::Int
@@ -2865,7 +2870,7 @@ end
 CTSEMLocalCurvature(objective, store::CTSEMScoreStore, precision::AbstractVector;
         progress=nothing) =
     CTSEMLocalCurvature(objective, store, collect(Float64, precision), progress,
-        zeros(0, 0), zeros(0, 0), Int[], 0.0, 0.0, 0, 0, false,
+        zeros(0, 0), zeros(0, 0), Int[], 0.0, 0.0, 0, 0, false, false,
         falses(size(store.S)), Float64[], 0)
 
 """Whether a route can difference a Hessian column over only the units that
@@ -2874,6 +2879,50 @@ route with coordinates (`_laplace_hessian_columns`'s `localised`). Elsewhere a
 column costs what every unit costs, and there is no local curvature."""
 _ctsem_local_capable(o::CTSEMLaplaceObjective) = !_laplace_filter_only(o)
 _ctsem_local_capable(o) = false
+
+"""
+    CTSEMLocalHeld(P, inverse, builds)
+
+The local curvature a run ended with (`CTSEMLocalCurvature`'s last build and
+how many it has made), which its objective keeps for the next run on it as
+it keeps the pairs (`ctsem_optimize`'s `lbfgs_pairs = :objective`,
+`_ctsem_local_held`). A fit of several runs -- a first stage, a pass for
+each change of the smoothing parameters, the certified stage -- then builds
+it on one schedule, where each run built its own or, ending before it had
+spent a build's cost, none: on the affect pilot's tied fit a build is 41
+minutes, and a stage without one walked the Krylov model on the scores
+alone at a seventh of the gain an hour (2026-11-16).
+"""
+struct CTSEMLocalHeld
+    P::Matrix{Float64}
+    inverse::Matrix{Float64}
+    builds::Int
+end
+
+# What an objective holds, or `nothing` where it keeps none;
+# `_ctsem_local_hold!` leaves a run's there (laplace_continuation.jl).
+_ctsem_local_held(::Any) = nothing
+_ctsem_local_hold!(::Any, held) = nothing
+
+"""
+    _ctsem_local_start!(lc, objective, n)
+
+Starts `lc` from the local curvature `objective` holds from its last run
+(`CTSEMLocalHeld`): its matrix, for the Krylov model's base, its inverse and
+its count of builds, so that the next is due as that run's next would have
+been. Returns what was held, or `nothing` where there is none, or one for
+another number of parameters, or no local curvature to start.
+"""
+function _ctsem_local_start!(lc::CTSEMLocalCurvature, objective, n::Integer)
+    held = _ctsem_local_held(objective)
+    (held === nothing || size(held.P) != (n, n) ||
+        size(held.inverse) != (n, n)) && return nothing
+    lc.P = held.P
+    lc.inverse = held.inverse
+    lc.builds = held.builds
+    return held
+end
+_ctsem_local_start!(::Nothing, objective, n::Integer) = nothing
 
 """
     _ctsem_local_columns(o, x, cols, S; progress, step, readers)
@@ -3007,8 +3056,9 @@ end
 Whether to build the local curvature at `x`, where L-BFGS is: never where no
 column is cheap; only where the store's scores describe `x`, and once they
 have described two points (`CTSEMLocalCurvature`'s readers); first once the
-run has spent what a build costs, then once it has spent `2^builds` times that
-since the last.
+run has spent what a build costs, or at once where the run asked for it
+(`_ctsem_local_want!`), then once it has spent `2^builds` times that since
+the last.
 """
 function _ctsem_local_due(lc::CTSEMLocalCurvature, x::AbstractVector)
     lc.done && return false
@@ -3022,8 +3072,28 @@ function _ctsem_local_due(lc::CTSEMLocalCurvature, x::AbstractVector)
         lc.columns, lc.cost = _ctsem_local_select(lc.readers)
         isempty(lc.columns) && (lc.done = true; return false)
     end
-    return lc.since >= 2.0^lc.builds * lc.cost
+    return (lc.wanted && lc.builds == 0) || lc.since >= 2.0^lc.builds * lc.cost
 end
+
+"""
+    _ctsem_local_want!(lc, x)
+
+Asks for the local curvature's first build at `x`, where L-BFGS is, ahead of
+the run having spent what it costs (`_ctsem_local_due`), and says whether
+one can come: none built or carried, a column that may yet be cheap, and
+scores in the store that describe `x`, so that the run's next iteration
+builds it or finds that no column is cheap. Once a run: asked again it is
+`false`, so a run it cannot be built for goes on as one without it.
+`false` for a run without a local curvature.
+"""
+function _ctsem_local_want!(lc::CTSEMLocalCurvature, x::AbstractVector)
+    (lc.done || lc.wanted || lc.builds > 0) && return false
+    st = lc.store
+    (st.valid && st.x == x) || return false
+    lc.wanted = true
+    return true
+end
+_ctsem_local_want!(::Nothing, x::AbstractVector) = false
 
 """
     _ctsem_local_read!(lc, store)

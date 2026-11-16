@@ -571,9 +571,25 @@ end
     @test C.ctsem_lbfgs_carry!(other, laplace, collect(1:n), fill(-1e8, n)) == 0
     @test_throws BoundsError C.ctsem_lbfgs_carry!(other, laplace, [n + 1], [1.0])
     @test_throws DimensionMismatch C.ctsem_lbfgs_carry!(other, laplace, [1, 2], [1.0])
+    # The local curvature an objective holds goes the same way
+    # (`ctsem_local_carry!`): its matrix with the precision on its
+    # diagonal, inverted again, its count of builds kept.
+    @test !C.ctsem_local_carry!(other, laplace, index, delta)
+    P = Matrix(2.0I, n, n) .+ 0.1
+    C._ctsem_local_hold!(laplace, C.CTSEMLocalHeld(P, inv(P), 3))
+    @test C.ctsem_local_carry!(other, laplace, index, delta)
+    lgot = C._ctsem_local_held(other)
+    @test lgot.P ≈ P .+ Diagonal(shift) && lgot.builds == 3
+    @test lgot.inverse ≈ inv(P .+ Diagonal(shift))
+    @test C._ctsem_local_held(laplace).P == P
+    @test !C.ctsem_local_carry!(other, laplace, collect(1:n), fill(-1e8, n))
+    @test C._ctsem_local_held(other) === nothing
+    @test_throws BoundsError C.ctsem_local_carry!(other, laplace, [n + 1], [1.0])
+    @test_throws DimensionMismatch C.ctsem_local_carry!(other, laplace, [1, 2], [1.0])
     # Forgotten, the next run starts cold; a plain objective holds pairs too.
     C.ctsem_lbfgs_forget!(laplace)
     @test C._ctsem_lbfgs_held(laplace) === nothing
+    @test C._ctsem_local_held(laplace) === nothing
     plain = laplace.objective
     @test C._ctsem_lbfgs_held(plain) === nothing
     C._ctsem_lbfgs_hold!(plain, held)

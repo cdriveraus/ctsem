@@ -3106,7 +3106,9 @@ what the objective holds from its last run on this argument
 on one hybrid, each after a placement of its draws, so that a stage does not
 learn again the curvature its predecessor ended with. An objective that holds
 none starts cold. After a finish hands the point back, L-BFGS goes on from the
-pairs it had whatever this says.
+pairs it had whatever this says. Under `:objective` the local curvature
+(`lbfgs_local`) is held and started from the same way (`CTSEMLocalHeld`),
+unless `lbfgs_inverse` is given.
 `newton_hessian`, the Hessian of the maximised objective at
 `newton_hessian_at`, is one the caller already holds, for the finish to walk
 on rather than form again where Hessians are dear (`_ctsem_newton_finish`'s
@@ -3404,6 +3406,19 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # its schedule counts that run's builds: built again from scratch, it cost
     # the affect pilot 26-44 minutes at every resume.
     local_curvature === nothing || (local_curvature.builds = Int(local_builds_carried))
+    # Or from the one the objective holds from the fit's last run on it
+    # (`CTSEMLocalHeld`): L-BFGS's initial inverse and the Krylov model's
+    # base from the first step, its next build due as that run's would be.
+    local_held = (carry === :objective && lbfgs_inverse === nothing) ?
+        _ctsem_local_start!(local_curvature, objective, length(start_values)) :
+        nothing
+    local_base = local_held === nothing ? Int(local_builds_carried) :
+        local_held.builds
+    # Whether the run starts with no curvature of its own, neither pairs
+    # handed on nor an inverse: what its first steps predict then rests on
+    # the gradient's scale (the gap rule below).
+    cold = (pairs0 === nothing || isempty(pairs0.S)) && lbfgs_inverse === nothing &&
+        local_held === nothing
     # Explosive filter passes (`_CTSEM_EXPLOSIVE_GROWTH`) and forward-mode
     # subject gradients (`_CTSEM_ADJOINT_GROWTH`) this run takes, counted from
     # here so a stage reports its own.
@@ -3561,6 +3576,29 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             predicted = _ctsem_predicted_gain(directional)
             if predicted < lbfgs_bar() ||
                     (predicted < handover[] && latest.iteration >= handover_cost())
+                # Not yet, for a run that started with no curvature (`cold`),
+                # has built no local curvature where there is one to build,
+                # and whose finish walks the Krylov model. Its second step
+                # has one pair behind it, along the stiffest direction the
+                # gradient had; the learned diagonal then gives every
+                # coordinate that curvature, the step is short in all of
+                # them, and it predicts nothing to gain whatever is left. A
+                # finish that forms the exact Hessian shows that with its
+                # first step. A walk on the Krylov model climbs what is left
+                # itself, several gradients a step, on a model whose base is
+                # the scores alone because the local curvature was never
+                # built. On the affect pilot's tied fit a stage resumed from
+                # a checkpoint handed over after two iterations, and its
+                # walk had gained 1.4 nats 3 h 47 min in; L-BFGS alone from
+                # that point gained 0.02 nats in thirteen more iterations on
+                # its diagonal, built the local curvature (41 minutes) and
+                # gained those 1.4 nats in the 28 minutes after (2026-11-16,
+                # dev3 and dev4). So the run builds it now
+                # (`_ctsem_local_want!`) and the rule is read again on it.
+                if cold && finishing && modelled() &&
+                        _ctsem_local_want!(local_curvature, current_x)
+                    return false
+                end
                 stopped_by_gap[] = true
                 return true
             end
@@ -3653,7 +3691,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     end
     sgd_iterations = sgd_result === nothing ? 0 : sgd_result.iterations
     # See optimiser.jl for why this is not Optim any more.
-    inverse = _ctsem_lbfgs_inverse(lbfgs_inverse, length(start_values))
+    inverse = _ctsem_lbfgs_inverse(local_held === nothing ? lbfgs_inverse :
+        local_held.inverse, length(start_values))
     # A stage that holds an exact Hessian (`newton_hessian`) is first evaluated
     # where it starts, with no L-BFGS step, and where that Hessian reaches the
     # maximum from there (`_ctsem_finish_first`) the finish takes over at
@@ -4030,6 +4069,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         again || (may_finish = false)
     end
     carry === :objective && _ctsem_lbfgs_hold!(objective, result.memory)
+    (carry === :objective && local_curvature !== nothing &&
+        !isempty(local_curvature.P)) && _ctsem_local_hold!(objective,
+        CTSEMLocalHeld(local_curvature.P, local_curvature.inverse,
+            local_curvature.builds))
     # The finish's totals, a finish that handed back included.
     newton_steps = spent.steps[] + (finish === nothing ? 0 : finish.steps)
     newton_history = finish === nothing ? spent.history :
@@ -4291,7 +4334,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # The local curvature (`lbfgs_local`): how often it was built, the
         # gradients that cost, and how many parameters it took exactly.
         local_builds=local_curvature === nothing ? 0 :
-            local_curvature.builds - Int(local_builds_carried),
+            local_curvature.builds - local_base,
+        # The builds behind the one it started from: an earlier run's that
+        # the caller counted (`local_builds_carried`) or the objective held.
+        local_builds_base=local_curvature === nothing ? 0 : local_base,
         local_gradients=local_curvature === nothing ? 0.0 : local_curvature.spent,
         local_columns=local_curvature === nothing ? 0 :
             length(local_curvature.columns),
