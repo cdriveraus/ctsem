@@ -50,7 +50,10 @@ built from them (\code{DIFFUSIONcov}, \code{MANIFESTcov}, and \code{T0cov},
 the initial latent covariance over subjects: \code{T0VAR} plus the
 population covariance of any individually varying \code{T0MEANS}), the
 asymptotic \code{asymCINT} and \code{asymDIFFUSIONcov}, and
-\code{dtDRIFT} at \code{timeinterval}. On \code{backend='julia'}, also the
+\code{dtDRIFT} at \code{timeinterval}. Beside each covariance its
+correlations, \code{DIFFUSIONcor}, \code{MANIFESTcor}, \code{T0cor} and
+\code{asymDIFFUSIONcor}, taken draw by draw before \code{calcfunc}
+summarises them; a variable whose variance is zero has \code{NA} there. On \code{backend='julia'}, also the
 Jacobians of the drift and of the measurement at the evaluation point,
 \code{JAx} (latent by latent) and \code{Jy} (manifest by latent): the local
 effects of the model linearised at \code{state}. They equal \code{DRIFT} and
