@@ -141,12 +141,18 @@ stopifnot(file.copy(file.path(root, "vignettes", "hierarchicalmanual.pdf"),
 built <- file.path(docs, "articles", paste0(sub("\\.html\\.asis$", "", stubs), ".html"))
 if (!all(file.exists(built))) stop("Articles missing from docs/: ", paste(built[!file.exists(built)], collapse = ", "))
 # An article's "Source:" link names the .Rmd made above; the source is the .qmd.
+# And the contents menu is a heading's text, in which a formula's TeX
+# annotation follows the symbol ("remove uu"), so headings lose theirs.
 for (page in built) {
   name <- sub("\\.html$", "", basename(page))
-  html <- readLines(page, encoding = "UTF-8", warn = FALSE)
+  html <- paste(readLines(page, encoding = "UTF-8", warn = FALSE), collapse = "\n")
   rmd <- paste0("vignettes/", name, ".Rmd")
-  if (!any(grepl(rmd, html, fixed = TRUE))) stop(page, ": no source link to ", rmd, ".")
-  writeLines(enc2utf8(gsub(rmd, paste0("vignettes/", name, ".qmd"), html, fixed = TRUE)), page, useBytes = TRUE)
+  if (!grepl(rmd, html, fixed = TRUE)) stop(page, ": no source link to ", rmd, ".")
+  html <- gsub(rmd, paste0("vignettes/", name, ".qmd"), html, fixed = TRUE)
+  heads <- gregexpr("(?s)<h([1-6])[ >].*?</h\\1>", html, perl = TRUE)
+  regmatches(html, heads) <- lapply(regmatches(html, heads), function(h)
+    gsub("(?s)<annotation[^>]*>.*?</annotation>", "", h, perl = TRUE))
+  writeLines(enc2utf8(html), page, useBytes = TRUE)
 }
 cat("Built", docs, "with", length(built), "articles.\n")
 
