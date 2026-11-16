@@ -298,11 +298,17 @@ test_that("a smooth fit on the Krylov finish forms no exact Hessian before its s
   m$pars$indvarying <- m$pars$param %in% "drift"
   # The certification's own Hessians, formed where a run hands back none; and
   # the smoothing steps taken on the Krylov model, each with the smooth's own
-  # columns exact in it.
+  # columns exact in it. And the stages on the smoothing objective (those that
+  # keep its curvature pairs): the certified one goes on from stages that
+  # stopped by their own rule, so it is run as a resumed stage, whose L-BFGS
+  # gives way to the finish once it stops gaining. Run as a first stage, the
+  # affect pilot's crept for hours towards a hand-over 360 iterations away.
   own <- 0L
   endgame <- ctsem:::.ctBackendEndgameAt
   exact <- ctsem:::.ctTIsmoothExactColumns
+  optimise <- ctsem:::.ctJuliaOptimise
   moved <- numeric()
+  stages <- list()
   testthat::local_mocked_bindings(.ctBackendEndgameAt = function(...) {
     own <<- own + 1L
     endgame(...)
@@ -311,6 +317,12 @@ test_that("a smooth fit on the Krylov finish forms no exact Hessian before its s
     cols <- ctsem:::.ctTIsmoothOwnParameters(spec, length(theta))
     moved <<- c(moved, max(abs(out - hessian)[, cols]))
     out
+  }, .ctJuliaOptimise = function(...) {
+    asked <- list(...)
+    if (isTRUE(asked[["pairs"]])) stages[[length(stages) + 1L]] <<- list(
+      certified = identical(asked[["walked"]], FALSE) || is.null(asked[["walked"]]),
+      resumed = isTRUE(asked[["resumed"]]))
+    optimise(...)
   }, .package = "ctsem")
   set.seed(1)
   fit <- suppressWarnings(suppressMessages(ctFit(dat, m, backend = "julia",
@@ -324,6 +336,11 @@ test_that("a smooth fit on the Krylov finish forms no exact Hessian before its s
   expect_equal(own, 0L)
   expect_gte(length(moved), 1L)
   expect_true(all(moved > 0))
+  certified <- vapply(stages, function(s) s$certified, NA)
+  resumed <- vapply(stages, function(s) s$resumed, NA)
+  expect_false(certified[1L])
+  expect_gte(sum(certified), 1L)
+  expect_identical(resumed, certified)
   again <- ctsem:::.ctTIsmoothLambda(penalty, fit$uncertainty$hessian,
     as.numeric(fit$estimate$raw), as.numeric(fit$optim$gradient))
   expect_equal(again$lambda, penalty$lambda, tolerance = 0.02)
