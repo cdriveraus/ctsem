@@ -1238,7 +1238,14 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
       direction <- c(1, -1)[side]
       worst <- 0
       usable <- TRUE
-      for(len in lengths){
+      # The longest rung first. A side is flat only if every rung is inside
+      # the bar, each judged on its own, so the order changes no verdict; and
+      # a side that is not flat is refused by its longest rung if by any, so
+      # it now costs that rung and its corrections where it cost the shorter
+      # rungs first. On the affect pilot's slim model no direction of twenty
+      # was settled by its first side, 13.6 evaluations a direction at 39 s
+      # each (2 h 49 min).
+      for(len in sort(lengths, decreasing=TRUE)){
         trialpoint <- est + direction * len * v
         trial <- evaluate(trialpoint)
         evaluations <- evaluations + 1L
@@ -1257,11 +1264,11 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
           better(value, followed$point, k)
         }
         worst <- max(worst, abs(value - base))
-        # Past the bar this side is refused, and no further displacement can
-        # un-refuse it. Worth the early exit rather than completing the
-        # ladder: on the laplace route every one of these is an inner mode
-        # solve per subject, and the candidates that are *not* flat are exactly
-        # the ones a longer walk would spend the most on.
+        # Past the bar this side is refused, and no other rung can un-refuse
+        # it. Worth the early exit rather than completing the ladder: on the
+        # laplace route every one of these is an inner mode solve per subject,
+        # and the candidates that are *not* flat are exactly the ones a whole
+        # ladder would spend the most on.
         if(worst >= bar) break
       }
       if(!usable) next
