@@ -66,16 +66,68 @@ test_that("the finish on the Krylov model reaches the chord's maximum for no mor
   # either sometimes a third: from sixteen starts, at two fits of it, the
   # chord took 34 and the model 33 (dev3, 2026-11-01), and which one a single
   # start gives turned on where the fit, at two cores, had stopped.
+  #
+  # Each ends at a maximum no lower than the fit's, not at the other's value:
+  # the objective has a second maximum 0.22 nats above the fit's, and from
+  # one of these starts the chord's walk ended there where the model's ended
+  # at the fit's (dev4, 2026-11-16; the start moves with the fit's last
+  # digits).
+  top <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall("Main._test_krylov_finish",
+    obj, est, "chord"))$value
   for (seed in 4:7) {
     set.seed(seed)
     start <- est + 2 * as.numeric(t(root) %*% rnorm(npar))
     out <- lapply(c(chord = "chord", krylov = "krylov"), function(curvature)
       ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall("Main._test_krylov_finish", obj,
         start, curvature)))
-    expect_equal(out$krylov$value, out$chord$value, tolerance = 1e-6,
-      scale = 1)
+    expect_gt(out$krylov$value, top - 1e-6)
+    expect_gt(out$chord$value, top - 1e-6)
     expect_gt(out$krylov$products, 0)
     expect_lte(out$krylov$hessians, out$chord$hessians + 1)
+  }
+})
+
+test_that("the Krylov model's walk gives way to the exact Hessian within that Hessian's reach", {
+  skip_without_julia()
+  fit <- .krylov_fit()
+  est <- as.numeric(fit$estimate$raw)
+  npar <- length(est)
+  hessian <- (fit$uncertainty$hessian + t(fit$uncertainty$hessian)) / 2
+  root <- chol(solve(-hessian))
+  ctsem:::.ctJuliaEval(paste(
+    "function _test_krylov_reach(o, x0)",
+    "  fg! = ContinuousTimeSEM._ctsem_trial_closure(o, :adjoint)",
+    "  x = collect(Float64, x0)",
+    "  G = zeros(length(x)); f = fg!(0.0, G, x)",
+    "  out = ContinuousTimeSEM._ctsem_newton_finish(o, x, f, G, fg!;",
+    "    tol=1e-8, certify_tol=1e-6, curvature=:krylov, krylov_min_cost=0.0,",
+    "    probe=false)",
+    "  (start=-f, value=-out.f, hessians=out.full_hessians,",
+    "    models=out.krylov_models, steps=out.steps, at=out.hessian_at,",
+    "    x=out.x, distance=out.distance)",
+    "end", sep = "\n"))
+  obj <- ctsem:::.ctJuliaObjective(fit)
+  call <- function(x0) ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall(
+    "Main._test_krylov_reach", obj, x0))
+  top <- call(est)$value
+  # A start with about 0.001 nats to gain: under the reach of the exact
+  # Hessian, a tenth of a standard error or 0.005 nats, and far over the
+  # certification's tolerance. The model says the point is that near, so the
+  # exact Hessian is formed where the walk starts and its steps close the
+  # rest. Held to `tol`, the model's steps closed it first and the Hessian was
+  # formed where they ended.
+  for (seed in 4:6) {
+    set.seed(seed)
+    z <- rnorm(npar)
+    start <- est + sqrt(2 * 0.001) * as.numeric(t(root) %*% (z / sqrt(sum(z^2))))
+    out <- call(start)
+    expect_gt(out$models, 0)
+    expect_equal(out$hessians, 1)
+    expect_equal(as.numeric(out$at), start)
+    expect_gte(out$steps, 1)
+    expect_gt(out$value - out$start, 5e-4)
+    expect_lt(top - out$value, 1e-5)
+    expect_lte(out$distance, 0.1)
   }
 })
 

@@ -7224,7 +7224,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # certification's tolerance, L-BFGS on the affect pilot's tied fit gained
     # 0.10 nats in the stage's first hour and under 0.01 in the next, two
     # minutes an iteration, with 360 iterations to go before it could hand
-    # over to the finish, whose Hessian is either point's.
+    # over to the finish, whose Hessian is either point's. (Where that finish
+    # walks the Krylov model, as on that fit, the engine also holds the
+    # stage's L-BFGS to the exact Hessian's reach: `ctsem_optimize`.)
     certified_stage <- function(from, hessian = NULL, hessian_at = NULL) {
       stage <- keepknown(.ctJuliaOptimise(model_spec, from,
         optimcontrol = stagecontrol, gradient = gradient, cores = cores,

@@ -10312,8 +10312,13 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
     escalated = Int[]
     worst = 0.0
     units = 0
-    done = 0
-    total = 2 * length(differenced)
+    # Progress, in gradients' worth of unit evaluations: two a column
+    # differenced over every unit, and two a colour over its units' share of
+    # them. Counted as two a column whatever it was differenced over, the
+    # affect pilot's tied fit reported 1256 gradients for a Hessian that took
+    # the time of about 420, its first 22 columns an hour and the rest seven.
+    done = 0.0
+    total = 2.0 * length(differenced)
     try
         # The units each column is differenced over. All units, or none (only
         # the prior reads the parameter), or no reader map, mean the full
@@ -10333,6 +10338,13 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
                 push!(reads, r)
             end
         end
+        # Each colour, as positions in `partial`; one that fails is pushed
+        # back as its columns alone.
+        pending = reverse(_ctsem_local_colours(reads, NU))
+        total = 2.0 * length(full)
+        for group in pending
+            total += 2.0 * sum(length, view(reads, group); init=0) / NU
+        end
         # The units' scores at a colour's two points, rewritten at each.
         splus = isempty(partial) && isempty(targets) ? nothing : zeros(Float64, NU, n)
         sminus = splus === nothing ? nothing : zeros(Float64, NU, n)
@@ -10347,8 +10359,9 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
             # function gives up on (NaN, below) still cost the same two inner
             # solves, so it counts here too or the reported total falls
             # behind the real one.
-            done += 1
-            progress !== nothing && progress(2done, total)
+            done += 2.0
+            progress !== nothing &&
+                progress(round(Int, done), max(1, round(Int, total)))
             if !p.solved
                 # The same predicate `fg!` applies to a trial point, applied
                 # to the two points this column is differenced from. A
@@ -10366,9 +10379,6 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
             target && (targetscores[j] = (splus .- sminus) ./ (2h))
             c <= k && (H[:, c] = (p.plus.out.gradient .- p.minus.out.gradient) ./ (2h))
         end
-        # Each colour, as positions in `partial`; one that fails is pushed
-        # back as its columns alone.
-        pending = reverse(_ctsem_local_colours(reads, NU))
         while !isempty(pending)
             group = pop!(pending)
             cs = partial[group]
@@ -10380,12 +10390,17 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
             p = _laplace_column_points(laplace, x, js, hs, budget, retries, base,
                 core, splus, sminus)
             (p.plus.tries + p.minus.tries) > 0 && append!(escalated, js)
+            spent = 2.0 * length(members) / NU
             if !p.solved && length(group) > 1
+                # Its two points are spent, and its columns cost them again.
+                done += spent
+                total += spent
                 append!(pending, [[g] for g in group])
                 continue
             end
-            done += length(group)
-            progress !== nothing && progress(2done, total)
+            done += spent
+            progress !== nothing &&
+                progress(round(Int, done), max(1, round(Int, total)))
             if !p.solved
                 push!(unconverged, js[1])
                 worst = max(worst, p.plus.worst, p.minus.worst)
