@@ -207,11 +207,11 @@ A major release: ctsem gains a second estimation engine, written in Julia, which
 ### 3.2.0
 - Change to defaults of ctStanFit -- optimization without priors is new default.
 - Optimization with binary variables much improved -- specify using: 
-  mymodel$manifesttype <- c(1,0,1) 
+  `mymodel$manifesttype <- c(1,0,1)`
   for 3 manifest variables, 1st and last binary and second continuous.
 - Improved latex output for models and fits using ctModelLatex.
 - Hessian estimation in higher dimensions fixed, again.
-- Experimental automatic covariate (tipred) detection -- set{ mymodel$TIpredAuto <- 1L } to try it.
+- Experimental automatic covariate (tipred) detection -- set `mymodel$TIpredAuto <- 1L` to try it.
 - Minor plotting / other fixes
 
 ## 10/2/2020

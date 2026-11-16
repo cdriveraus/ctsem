@@ -108,7 +108,9 @@ julia vignettes ship pre-rendered (`vignettes/<name>.html` beside a
 a changed default or output since then reaches no user. Render them all from
 an install of the release tree (`dev/render-vignettes-parallel.R`, see
 CLAUDE.md), then dispatch `check-standard.yaml` with "Build vignettes" checked,
-which routine runs skip.
+which routine runs skip. The website's articles are those same pages, so once
+the release commit is on master, publish the site from it too
+(`Rscript dev/build-site.R --publish`).
 
 ## Numbers and claims
 

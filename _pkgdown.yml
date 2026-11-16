@@ -1,0 +1,198 @@
+# ctsem's website. Build it with dev/build-site.R, never pkgdown::build_site()
+# on this tree: the vignettes fit models with the Julia engine, so they ship
+# pre-rendered (vignettes/<name>.html), and the script turns those pages into
+# articles without running anything. pkgdown on the tree would render the .qmd
+# sources, Julia fits and all.
+url: https://cdriveraus.github.io/ctsem/
+
+template:
+  bootstrap: 5
+
+development:
+  mode: release
+
+home:
+  links:
+  - text: Questions and discussion
+    href: https://github.com/cdriveraus/ctsem/discussions
+  - text: Tutorial preprint
+    href: https://osf.io/preprints/psyarxiv/4q9ex_v3
+  - text: Blog posts on ctsem
+    href: https://cdriver.netlify.app/
+
+navbar:
+  structure:
+    left: [reference, articles, manual, new, news]
+    right: [search, github]
+  components:
+    manual:
+      text: Manual (pdf)
+      href: articles/hierarchicalmanual.pdf
+    new:
+      text: New in 4.x
+      href: NEW-IN-4.html
+
+# README.md and NEW-IN-4.md link NEWS.md, which pkgdown turns into NEWS.html.
+redirects:
+- ["NEWS.html", "news/index.html"]
+
+articles:
+- title: Specifying models
+  navbar: Specifying models
+  contents:
+  - measurement-models
+  - laplace-multilevel
+  - irt-items
+  - ordinal-or-continuous
+- title: Fitting and uncertainty
+  navbar: Fitting and uncertainty
+  contents:
+  - uncertainty
+  - sampling-weights
+  - empirical-bayes-fitting
+- title: Checking a model
+  navbar: Checking a model
+  contents:
+  - score-tests
+
+reference:
+- title: Specify a model
+  contents:
+  - ctModel
+  - ctModelLatex
+  - ctModelMatrices
+  - ctPar
+  - ctCov
+  - ctModelHigherOrder
+  - ctModelSlowComponent
+  - ctModelPeriodicComponent
+  - ctPeriodicPhases
+  - ctModelUniqueProcess
+  - ctModelLatentLevel
+  - ctModelConvertOMX
+  - ctModelIsNonlinear
+  - ctIdentify
+  - print.ctStanModel
+  - plot.ctStanModel
+- title: Prepare data
+  contents:
+  - ctWideToLong
+  - ctLongToWide
+  - ctWideNames
+  - ctIntervalise
+  - ctDeintervalise
+  - ctDiscretiseData
+- title: Fit
+  contents:
+  - ctFit
+  - ctOptimControl
+  - ctFitUpdate
+  - ctFitUncertainty
+  - ctEmpiricalBayesFit
+  - summary.ctEmpiricalBayesFit
+  - ctsem-options
+- title: Inspect a fit
+  contents:
+  - summary.ctJuliaFit
+  - print.summary.ctStanFit
+  - plot.ctJuliaFit
+  - plot.ctStanFit
+  - ctSummaryMatrices
+  - ctSubjectPars
+  - ctExtract
+  - ctRawParnames
+  - ctPlotPosterior
+  - ctTIpredEffects
+  - ctPredictTIP
+  - ctDiscretePars
+  - ctDiscreteParsPlot
+  - summary.ctDiscretePars
+  - ctNetwork
+  - ctNetworkPlot
+  - ctPhasePortrait
+  - ctStateDependencePlot
+  - ctContextDependence
+  - ctVarianceDecomposition
+  - ctTracePlot
+- title: Predict
+  contents:
+  - ctPredict
+  - plot.ctKalmanDF
+  - ctKalmanArray
+  - ctResiduals
+- title: Check, compare and improve
+  contents:
+  - ctReport
+  - ctScoreTest
+  - plot.ctScoreTest
+  - ctFitAdequacy
+  - plot.ctFitAdequacy
+  - ctModelImprove
+  - plot.ctModelImprove
+  - ctModelProposals
+  - ctPostPredPlots
+  - ctPostPredict
+  - ctPostPredData
+  - ctFitCheckCov
+  - ctFitCovCheckPlot
+  - ctACF
+  - plotctACF
+  - ctACFresiduals
+  - anova.ctJuliaFit
+  - ctChisqTest
+  - ctLOO
+  - ctFitProfile
+  - plot.ctFitProfile
+  - print.ctFitProfile
+  - ctLaplaceCheck
+  - ctParticleLik
+  - ctCoverageCheck
+- title: Generate data
+  contents:
+  - ctGenerate
+  - ctGenerateFromFit
+- title: Julia engine
+  contents:
+  - ctJuliaInstall
+  - ctJuliaStatus
+  - ctJuliaSetup
+  - ctJuliaProcesses
+  - ctJuliaKill
+  - ctJuliaEvaluate
+- title: Datasets
+  contents:
+  - ctExample1
+  - ctExample1TIpred
+  - ctExample2
+  - ctExample2level
+  - ctExample3
+  - ctExample4
+  - longexample
+  - Oscillating
+  - AnomAuth
+  - datastructure
+  - ctstantestdat
+  - ctstantestfit
+- title: Utilities
+  contents:
+  - ctsem-package
+  - ctDocs
+  - ctCollapse
+  - ctPlotArray
+  - ctPoly
+  - inv_logit
+  - log1p_exp
+  - sdpcor2cov
+  - test_isclose
+- title: Stan internals
+  desc: Lower level functions of the Stan backend.
+  contents:
+  - stanoptimis
+  - stan_reinitsf
+  - stan_unconstrainsamples
+  - standatact_specificsubjects
+  - stanWplot
+- title: Deprecated
+  contents:
+  - ctFitAddSamples
+  - ctGenerateFromPriors
