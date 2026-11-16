@@ -520,6 +520,23 @@ _ctsem_probe_progress(reporter) = (reporter === nothing || !reporter.enabled) ?
     end
 
 """
+    _ctsem_ladder_progress(reporter)
+
+The `(length) -> nothing` callback the finish's flat ladder reports each rung
+through (`_ctsem_flat_ladder`), the rung's signed length in raw units, or
+`nothing` when there is nothing to report through. A rung is up to seven
+gradients and a ladder up to fourteen rungs: on the affect pilot's tied fit
+one ran for over an hour after the exact Hessian with nothing in the log
+(2026-11-16).
+"""
+_ctsem_ladder_progress(reporter) = (reporter === nothing || !reporter.enabled) ?
+    nothing : function (len::Real)
+        _due(reporter) && _progress_fraction(reporter,
+            @sprintf("flat direction walked to %+g raw units", len))
+        nothing
+    end
+
+"""
     _progress_break(p)
 
 End the current in-place line so something else can print on its own.

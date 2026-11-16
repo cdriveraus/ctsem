@@ -1418,6 +1418,15 @@ _ridge(p) = -50 * (p[2] - _ridge_c(p[1]))^2 + 15 * exp(-(p[1] - 2)^2 / 2)
     @test ContinuousTimeSEM._ctsem_flat_ladder(fg!, x, f, G, split;
         corrections=0).best === nothing
     @test ContinuousTimeSEM._ctsem_flat_probe(_ridge, x, -f, u).gain == 0
+    # Each rung is reported before it is walked, both sides, with its
+    # signed length; the result is the same.
+    walked = Float64[]
+    told = ContinuousTimeSEM._ctsem_flat_ladder(fg!, x, f, G, split;
+        progress=len -> push!(walked, len))
+    @test told.best.point == out.best.point && told.gcalls == out.gcalls
+    @test walked[1:3] == [0.25, 1.0, 4.0]
+    @test any(<(0), walked) && all(len -> abs(len) <=
+        ContinuousTimeSEM._CTSEM_FLAT_LADDER_REACH, walked)
 end
 
 @testset "the finish leaves a plateau on a curved ridge where the route allows it" begin

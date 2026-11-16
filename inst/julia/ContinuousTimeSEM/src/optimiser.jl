@@ -2372,7 +2372,7 @@ function _ctsem_saddle_ladder(value_at, x::AbstractVector, value::Real, split,
 end
 
 """
-    _ctsem_flat_ladder(fg!, x, f, G, split; lengths, corrections)
+    _ctsem_flat_ladder(fg!, x, f, G, split; lengths, corrections, progress)
 
 At a point with no negative curvature, the best point along the directions the
 curvature calls flat, followed as a ridge: a step of each of `lengths` raw units
@@ -2410,10 +2410,13 @@ reached the best maximum, 41 higher (2026-11-08).
 With no gradient at all outside the trusted directions, the flattest direction.
 `fg!` is the optimiser's trial path: an unusable point comes back as the
 sentinel value, which no correction improves and no comparison accepts.
+`progress`, when given, is called with each rung's signed length before the
+rung is walked (`_ctsem_ladder_progress`).
 """
 function _ctsem_flat_ladder(fg!, x::AbstractVector, f::Real, G::AbstractVector,
         split; lengths=_CTSEM_FLAT_PROBE_LENGTHS, corrections::Integer=3,
-        reach::Real=_CTSEM_FLAT_LADDER_REACH, bar::Real=_CTSEM_FLAT_LADDER_BAR)
+        reach::Real=_CTSEM_FLAT_LADDER_REACH, bar::Real=_CTSEM_FLAT_LADDER_BAR,
+        progress=nothing)
     flat = findall(.!split.trusted)
     isempty(flat) && return (best=nothing, fcalls=0, gcalls=0)
     r = _ctsem_flat_residual(split, -G)
@@ -2430,6 +2433,7 @@ function _ctsem_flat_ladder(fg!, x::AbstractVector, f::Real, G::AbstractVector,
         while k < length(rungs)
             k += 1
             len = rungs[k]
+            progress === nothing || progress(side * len)
             y = x .+ (side * len) .* u
             g = similar(G)
             fy = fg!(0.0, g, y); fcalls += 1; gcalls += 1
@@ -3415,6 +3419,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     # `_ctsem_hessian_progress`), which costs nothing: each method calls back
     # only when it is not `nothing`.
     hessian_progress = _ctsem_hessian_progress(reporter)
+    ladder_progress = _ctsem_ladder_progress(reporter)
     hessof(o, y) = try
         local Hy = Matrix{Float64}(ctsem_hessian(o, y; progress=hessian_progress))
         all(isfinite, Hy) ? Hy : nothing
@@ -4317,7 +4322,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             _CTSEM_FLAT_CANDIDATE_RTOL), negative=negative)
         ladder_split === nothing && break
         walked = _ctsem_flat_ladder(fg!, x, f, G, ladder_split;
-            lengths=probe_lengths)
+            lengths=probe_lengths, progress=ladder_progress)
         fcalls[] += walked.fcalls; gcalls += walked.gcalls
         (walked.best !== nothing && f - walked.best.f > certify_now() &&
             flat_allowed(x, walked.best.point)) || break
