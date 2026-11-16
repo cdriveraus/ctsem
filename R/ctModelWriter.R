@@ -1240,29 +1240,32 @@ if(verbose > 1) print ("below t0 row ", rowi);
     state = basestate;
     }
     
-    if(si==0 ||statedep[4] || whenmat[4,2] || ( T0check ==1 && whenmat[4,5])){
+    {
+    // Each discrete quantity is refreshed when what it is built from changes:
+    // eJAx from JAx and the step, asymDIFFUSIONcov from JAx and DIFFUSIONcov,
+    // discreteDIFFUSION from both. A change of DIFFUSION alone must reach the
+    // last two: gated on the JAx triggers, a DIFFUSION varying over subjects
+    // with a shared DRIFT kept the previous subject discrete covariance
+    // wherever the first interval equalled the previous one.
+    int JAxchange = si==0 || statedep[3] || statedep[7] || statedep[52] ||
+      whenmat[3,2] || whenmat[7,2] || whenmat[52,2] || //if first sub or changing every state
+      (T0check == 1 && (whenmat[3,5] || whenmat[7,5] || whenmat[52,5])); //or first time step of new sub with ind difs
+    int DIFFUSIONchange = si==0 || statedep[4] || whenmat[4,2] || (T0check == 1 && whenmat[4,5]);
+
+    if(DIFFUSIONchange){
       DIFFUSIONcov[derrind,derrind] = sdcovsqrt2cov(DIFFUSION[derrind,derrind],choleskymats);
       if(!continuoustime) discreteDIFFUSION=DIFFUSIONcov;
     }
-    
-    if(continuoustime && (si==0 || dtchange==1 || statedep[3] || statedep[7] || statedep[52] ||
-      whenmat[3,2] || whenmat[7,2] || whenmat[52,2] || //if first sub or changing every state
-      (T0check == 1 && (whenmat[3,5] || whenmat[7,5] || whenmat[52,5])))){ //or first time step of new sub with ind difs
-      
-      
-      eJAx = expmSubsets(JAx * dtsmall,JAxsubsets);
 
-                             
-      if(si==0 || statedep[3] || statedep[4]||statedep[52]||  //if first pass or state dependent
-        whenmat[4,2] || whenmat[3,2] ||
-        (T0check == 1 && (whenmat[3,5]  || whenmat[4,5]))){ //or first time step of new sub with ind difs
-        asymDIFFUSIONcov[derrind,derrind] = ksolve(JAx[derrind,derrind], DIFFUSIONcov[derrind,derrind],verbose);
-      }
-      
-      discreteDIFFUSION[derrind,derrind] =  asymDIFFUSIONcov[derrind,derrind] - 
+    if(continuoustime){
+      if(JAxchange || dtchange==1) eJAx = expmSubsets(JAx * dtsmall,JAxsubsets);
+      if(JAxchange || DIFFUSIONchange) asymDIFFUSIONcov[derrind,derrind] =
+        ksolve(JAx[derrind,derrind], DIFFUSIONcov[derrind,derrind],verbose);
+      if(JAxchange || DIFFUSIONchange || dtchange==1) discreteDIFFUSION[derrind,derrind] =
+        asymDIFFUSIONcov[derrind,derrind] -
         quad_form_sym( asymDIFFUSIONcov[derrind,derrind], eJAx[derrind,derrind]\' );
-        
     } //end discrete drift / diffusion coef calcs based on ct
+    }
           
           
     if(continuoustime){
