@@ -795,6 +795,53 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # and Julia backends collapse identical inputs with identical code. Anything
 # that changes about how ctsem summarises system matrices changes here, once.
 
+# The correlation matrix the summaries report beside each covariance.
+.ctCovCorrelations <- c(T0cov = "T0cor", DIFFUSIONcov = "DIFFUSIONcor",
+  MANIFESTcov = "MANIFESTcor", asymDIFFUSIONcov = "asymDIFFUSIONcor")
+
+# summary()'s table of the matrices, as both backends build it: the
+# covariance matrices' own cells are left out (their covariances are there),
+# and a correlation matrix's diagonal, one by definition, and upper triangle,
+# which repeats the lower.
+.ctSummaryParmatricesRows <- function(d) {
+  correlation <- d$matrix %in% .ctCovCorrelations & d$row <= d$col
+  d[!d$matrix %in% c("DIFFUSION", "T0VAR") & !correlation, , drop = FALSE]
+}
+
+# The sentence summary() puts under popmeans where T0VAR, DIFFUSION or
+# MANIFESTVAR has a free off-diagonal parameter (`names`, each in `matrices`):
+# such a parameter is a coordinate of the covariance's construction -- under
+# covmattransform 'z' an entry of a matrix logarithm, the correlation's Fisher
+# z only for two variables -- and reads as a correlation without being one.
+# NULL where there is none.
+.ctCovParameterNote <- function(names, matrices) {
+  if (!length(names)) return(NULL)
+  cors <- c(T0VAR = "T0cor", DIFFUSION = "DIFFUSIONcor",
+    MANIFESTVAR = "MANIFESTcor")
+  cors <- cors[names(cors) %in% matrices]
+  paste0(" Off-diagonal covariance parameters (", paste(names, collapse = ", "),
+    ") are not correlations; ", paste(cors, collapse = ", "), " under System ",
+    "Matrices, or ctSummaryMatrices(), ", if (length(cors) > 1L) "give" else
+    "gives", " the correlations.")
+}
+
+# Each draw's correlations from its covariance, draws x k x k: NA where a
+# variance is zero or not finite, so a process without noise reads as having
+# no correlation rather than as NaN.
+.ctDrawCorrelations <- function(covariance) {
+  n <- dim(covariance)[1L]
+  k <- dim(covariance)[2L]
+  sd <- matrix(sqrt(pmax(vapply(seq_len(k), function(i) covariance[, i, i],
+    numeric(n)), 0)), n, k)
+  out <- covariance
+  for (i in seq_len(k)) for (j in seq_len(k)) {
+    scale <- sd[, i] * sd[, j]
+    out[, i, j] <- ifelse(is.finite(scale) & scale > 0,
+      covariance[, i, j] / scale, NA_real_)
+  }
+  out
+}
+
 # `jacobians` adds the drift's and the measurement's Jacobians at the
 # evaluation point, `JAx` and `Jy`, where the draws carry them (julia):
 # ctSummaryMatrices() reports them, summary()'s table does not, since for a
@@ -817,6 +864,18 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     e$pop_dtDRIFT <- array(dd, dim = dim(dd)[-2:-3])
     mats <- c(mats, "dtDRIFT")
   }
+  # Each covariance's correlations, draw by draw and then collapsed, so their
+  # intervals are the correlation's own: cov2cor of a collapsed covariance is
+  # no draw's correlation (-0.53 on the README's first example, against a
+  # mean over draws of -0.528). The off-diagonal parameters of T0VAR,
+  # DIFFUSION and MANIFESTVAR are coordinates of the construction, not these.
+  for (name in names(.ctCovCorrelations)) {
+    covariance <- e[[paste0("pop_", name)]]
+    if (length(dim(covariance)) != 3L) next
+    e[[paste0("pop_", .ctCovCorrelations[[name]])]] <-
+      .ctDrawCorrelations(covariance)
+    mats <- c(mats, .ctCovCorrelations[[name]])
+  }
 
   out <- list()
   for (matname in mats) {
@@ -836,6 +895,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     out$DRIFT <- out$DRIFT[1:nlatent, 1:nlatent, drop = FALSE]
     out$T0VAR <- out$T0VAR[1:nlatent, 1:nlatent, drop = FALSE]
     out$T0cov <- out$T0cov[1:nlatent, 1:nlatent, drop = FALSE]
+    if (!is.null(out$T0cor)) out$T0cor <- out$T0cor[1:nlatent, 1:nlatent, drop = FALSE]
     # The carriers' rows of the transition are constant states and their
     # columns the effects they carry, so the processes' own block is the
     # transition of DRIFT's block, as DRIFT's block is the processes' drift.
@@ -867,6 +927,12 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   if (!is.null(e$pop_MANIFESTVAR)) {
     dimnames(out$MANIFESTVAR) <- list(mn, mn)
     dimnames(out$MANIFESTcov) <- list(mn, mn)
+  }
+  for (name in intersect(c("T0cor", "DIFFUSIONcor", "asymDIFFUSIONcor",
+      "MANIFESTcor"), names(out))) {
+    labels <- if (name == "MANIFESTcor") mn else ln
+    if (identical(dim(out[[name]]), rep(length(labels), 2L)))
+      dimnames(out[[name]]) <- list(labels, labels)
   }
   if (!is.null(e$pop_TDPREDEFFECT)) dimnames(out$TDPREDEFFECT) <- list(ln, tdn)
   if (!is.null(out$ASYMPTOTES) && length(binaryNames) == nrow(out$ASYMPTOTES))
@@ -2357,7 +2423,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     }
     d$param <- NULL
     d$Mean <- round(d$Mean, digits)
-    d <- d[!d$matrix %in% c("DIFFUSION", "T0VAR"), ]
+    d <- .ctSummaryParmatricesRows(d)
     # A model with no PARS still carries a 1x1 PARS matrix, which printed as a
     # row of zeros among the estimates -- a matrix the user never mentioned,
     # reported as though it were a result. Dropped when it says nothing.
@@ -2453,9 +2519,10 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # both of those are population means.
   out$popmeans <- .ctBackendMarkNoWidth(out$popmeans,
     .ctBackendNoWidthRows(nowidth, rownames(out$popmeans)))
-  out$popNote <- paste0("Population values on the transformed scale. ",
-    "Covariance parameters appear in sd / unconstrained correlation form; ",
-    "see System Matrices (or ctSummaryMatrices()) for cor/cov.",
+  offdiagonal <- fixed[fixed$matrix %in% .ctCovSystemMatrices &
+    fixed$row != fixed$col, , drop = FALSE]
+  out$popNote <- paste0("Population values on the transformed scale.",
+    .ctCovParameterNote(.ctBackendParameterNames(offdiagonal), offdiagonal$matrix),
     if (!is.null(atmode)) paste0(" mode is the fit's estimate, the other ",
       "columns its posterior draws."))
   anchors <- .ctBackendSpec(object)$anchors

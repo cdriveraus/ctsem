@@ -98,4 +98,46 @@ skip_on_cran()
     expect_equal(popsd[1], sd(drifttf(rawmeans[['drift']] + rawsd[['drift']] * z)),
       tolerance = .2)
   })
+
+  test_that("a stan fit's summary gives the diffusion correlation over the draws", {
+    skip_on_cran()
+    skip_if_not_installed("rstan")
+    # Two processes with correlated system noise, by hand, one time unit a step.
+    set.seed(7)
+    noise <- t(chol(.25 * matrix(c(1, .5, .5, 1), 2)))
+    rows <- list()
+    for (i in 1:30) {
+      x <- rnorm(2)
+      for (t in 1:6) {
+        if (t > 1) x <- .6 * x + c(noise %*% rnorm(2))
+        y <- x + rnorm(2, 0, .3)
+        rows[[length(rows) + 1L]] <- data.frame(id = i, time = t - 1,
+          Y1 = y[1], Y2 = y[2])
+      }
+    }
+    model <- suppressWarnings(ctModel(type = 'ct', n.latent = 2, LAMBDA = diag(2),
+      DRIFT = matrix(c('a1', 0, 0, 'a2'), 2, 2),
+      DIFFUSION = matrix(c('d11', 'd21', 0, 'd22'), 2, 2),
+      MANIFESTVAR = diag(.3, 2), MANIFESTMEANS = matrix(0, 2, 1),
+      T0MEANS = matrix(0, 2, 1), CINT = matrix(0, 2, 1), T0VAR = diag(2)))
+    fit <- suppressWarnings(suppressMessages(ctFit(do.call(rbind, rows), model,
+      backend = 'stan', optimize = TRUE, verbose = 0, cores = 1, savescores = FALSE,
+      optimcontrol = list(carefulfit = FALSE, stochastic = FALSE))))
+    s <- summary(fit, digits = 12, residualcov = FALSE, priorcheck = FALSE)
+    e <- ctExtract(fit)
+    expect_gt(dim(e$pop_DIFFUSIONcov)[1L], 50L)
+    # Each draw's correlation, by two routes: from stan's covariance, and for
+    # two processes under 'z' as tanh of the parameter, which popmeans keeps.
+    cov <- e$pop_DIFFUSIONcov
+    r <- cov[, 2, 1] / sqrt(cov[, 1, 1] * cov[, 2, 2])
+    expect_equal(r, tanh(e$pop_DIFFUSION[, 2, 1]), tolerance = 1e-8)
+    row <- s$parmatrices[s$parmatrices$matrix %in% 'DIFFUSIONcor', ]
+    expect_equal(nrow(row), 1L)
+    expect_equal(row$Mean, mean(r), tolerance = 1e-8)
+    expect_equal(row[['97.5%']], unname(quantile(r, .975)), tolerance = 1e-8)
+    expect_equal(s$popmeans['d21', 'mean'], mean(e$pop_DIFFUSION[, 2, 1]),
+      tolerance = 1e-8)
+    expect_match(s$popNote, 'parameters (d21) are not correlations; DIFFUSIONcor',
+      fixed = TRUE)
+  })
 }

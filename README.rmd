@@ -176,10 +176,10 @@ Drift names read as `drift_<affected>_<predictor>`, so `drift_yield` is yield's 
 auto effect and `drift_yield_fat` is the effect of fat on yield. A negative auto
 effect pulls a process back toward its equilibrium and its size sets how fast.
 `diff_yield` and `diff_fat` are the system noise standard deviations, and
-`diff_fat_yield` sets the correlation between them: with two processes it is the
-correlation's Fisher z, so the estimate here is a correlation of
-`r round(tanh(summary(fit)$popmeans['diff_fat_yield', 'mean']), 2)`. `mvar*` are
-the measurement error standard deviations, and `T0m_*` the mean initial states.
+`diff_fat_yield` is the parameter behind their correlation; the correlation itself,
+`r with(summary(fit)$parmatrices, round(Mean[matrix == 'DIFFUSIONcor'], 2))`, is the
+`DIFFUSIONcor` row of `summary(fit)$parmatrices`. `mvar*` are the measurement error
+standard deviations, and `T0m_*` the mean initial states.
 
 The two cross effects are not symmetric: a high fat percentage predicts a
 subsequent fall in yield, and the interval for `drift_yield_fat` excludes zero,
