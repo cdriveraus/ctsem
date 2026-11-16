@@ -2102,6 +2102,22 @@ standard error already carries, whatever the model. R's
 const _CTSEM_HESSIAN_REUSE_SE = 0.1
 
 """
+    _ctsem_hessian_reach(reuse_se)
+
+A Hessian's reach, in nats: the gap to the maximum under which every parameter
+is within `reuse_se` of its standard errors of the maximum, `reuse_se^2 / 2`.
+A gap `g` on curvature `H` is a displacement `d` with `d' H d / 2 = g`, and by
+Cauchy-Schwarz no coordinate of it exceeds `sqrt(2 g)` of that coordinate's
+standard error, which is how `_ctsem_hessian_distance` measures a move. So a
+Hessian formed where less than this is left is the maximum's by the reuse
+rule, and what is left is closed by steps on it, a gradient each. Before a
+Hessian that is dear, nothing has to be held tighter: L-BFGS (`ctsem_optimize`)
+and the walk on the Krylov model (`_ctsem_newton_finish`) give way to it here.
+At the default `reuse_se` it is 0.005, `_CTSEM_RESOLUTION_CAP`.
+"""
+_ctsem_hessian_reach(reuse_se::Real) = abs2(Float64(reuse_se)) / 2
+
+"""
 The relative curvature at or below which a direction is flat: excluded from the
 certification's gap and probed instead. R's `.ctFlatDirectionRtol()`, which the
 fit passes in, so the certification, the intervals and the probe share one rule.
@@ -2632,11 +2648,16 @@ already there (twice, for the rounding), with its product `H q` from
 `_ctsem_hvp!` (of the maximised objective, so negated). Stops once a column
 adds less than `rtol` of the model's predicted gain twice running, once the
 start or a next column has nothing left outside the space, or at a product
-that did not converge. `progress(i)`, when given, is called after the `i`th
-product. Returns the columns added.
+that did not converge. `bar` is what the caller reads that gain against:
+below it the gain is settled once a column adds less than `rtol` of the bar,
+since what the products are for there is to say the gain is under it. Read
+against the gain alone, a point with 1e-4 nats to gain took every product the
+cap allowed, each adding more than a hundredth of that (the affect pilot's
+tied fit, 71 products, 84 minutes; 2026-11-16, dev3). `progress(i)`, when
+given, is called after the `i`th product. Returns the columns added.
 """
 function _ctsem_krylov_extend!(k::CTSEMKrylov, context, G::AbstractVector;
-        maxadd::Integer, rtol::Real=0.01, progress=nothing)
+        maxadd::Integer, rtol::Real=0.01, bar::Real=0.0, progress=nothing)
     added = 0
     u = k.factor \ collect(Float64, G)
     scale = sqrt(max(dot(u, k.M * u), 0.0))
@@ -2664,8 +2685,8 @@ function _ctsem_krylov_extend!(k::CTSEMKrylov, context, G::AbstractVector;
         k.Q = hcat(k.Q, q); k.MQ = hcat(k.MQ, Mu ./ nb); k.W = hcat(k.W, w)
         added += 1
         after = _ctsem_krylov_gain(k, G)
-        quiet = (isfinite(after) && isfinite(before) && after - before < rtol * after) ?
-            quiet + 1 : 0
+        quiet = (isfinite(after) && isfinite(before) &&
+                after - before < rtol * max(after, bar)) ? quiet + 1 : 0
         before = after
         quiet >= 2 && break
         size(k.Q, 2) >= size(k.M, 1) && break
@@ -3158,7 +3179,8 @@ What the steps are taken against is `curvature`:
   keeping the products before, where the objective has such products
   (`_ctsem_hvp_setup`) and its exact Hessian costs at least `krylov_min_cost`
   gradients (`_ctsem_krylov_cost`); the chord otherwise. Its walk ends where the
-  model's predicted gain falls below `tol`, and the exact Hessian is formed
+  model's predicted gain falls below the exact Hessian's reach (below), and
+  the exact Hessian is formed
   there, the chord's walk going on from it if it finds more; where the
   products have cost as much as that Hessian without the walk ending, or a
   step fails on a fresh model, the exact Hessian is formed where the walk
@@ -3285,6 +3307,16 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     # The two bars as the run's resolution has them now (`_ctsem_tolerance`).
     tol_now() = _ctsem_tolerance(tol, resolution)
     certify_now() = _ctsem_tolerance(certify_tol, resolution)
+    # The bar a walk on the Krylov model is held to: the exact Hessian's reach
+    # (`_ctsem_hessian_reach`), where that is above `tol`. What follows the
+    # model's walk is the exact Hessian, whose own steps close what is left at
+    # a gradient each and are what certifies, or under `final` a caller that
+    # changes the objective. Held to `tol` and the certification's tolerance,
+    # the affect pilot's tied fit (2026-11-16, dev3) took 71 products at a
+    # point with 1e-4 nats to gain, 84 minutes, and then stepped on, while the
+    # same stage held to the reach formed its Hessian after 18 (dev2).
+    reach_now() = _ctsem_tolerance(max(Float64(tol), _ctsem_hessian_reach(reuse_se)),
+        resolution)
     curvature in (:exact, :chord, :subset, :krylov) || throw(ArgumentError(
         "newton curvature must be exact, chord, subset or krylov, got $(curvature)"))
     valueof = value_at === nothing ? (y -> _ctsem_probe_value(objective, y)) :
@@ -3398,7 +3430,8 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         local tell = hessian_progress === nothing ? nothing :
             (a -> hessian_progress(min(spent0 + a, whole), whole,
                 "gradients, Krylov model"))
-        _ctsem_krylov_extend!(km, setup.context, Gy; maxadd=cap, progress=tell)
+        _ctsem_krylov_extend!(km, setup.context, Gy; maxadd=cap, progress=tell,
+            bar=reach_now())
         kspent[] += km.products - before
         kmodels[] += 1
         # Past what the exact Hessian would have cost, the model is not paying.
@@ -3788,7 +3821,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                 converged = true
                 break
             end
-            if gain < tol_now()
+            if gain < (krylov ? reach_now() : tol_now())
                 # On the exact variant a gap is closed when the Hessian here
                 # says so. One from an earlier point can call it closed on a
                 # plateau that is still rising, and the steps then stopped:
@@ -3843,25 +3876,23 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                     break
                 end
             end
-            # The Krylov model's walk ends once its steps gain nothing the
-            # certification could see: over the last half of the walk, less
-            # than its tolerance a step, while the model still predicts more
-            # than `tol` is left (above). The exact Hessian here takes over
-            # (the rewalk below), or under `final = :dear` the walk is what
-            # the finish returns. A model's prediction of what is left is no
-            # measure of what its steps find: on the affect pilot's tied fit
-            # (2026-11-12, dev1) forty steps, two to four products and a
-            # gradient each, moved the gradient between 3.4 and 4.7 and the
-            # value by nothing, three hours. A stage held to a looser `tol`
-            # than the certification's -- one that is not certified, whose
-            # caller changes the objective next -- ends on that: resumed from
-            # the tied fit's checkpoint (2026-11-15, dev2) such a stage's
-            # steps each gained about a thousandth of a nat, eight minutes
-            # apiece, and had up to 421 products to spend so.
+            # The Krylov model's walk ends once its steps gain nothing that
+            # matters before an exact Hessian: over the last half of the walk,
+            # less than that Hessian's reach a step (`reach_now`), while the
+            # model still predicts more than that is left (above). The exact
+            # Hessian here takes over (the rewalk below), or under `final =
+            # :dear` the walk is what the finish returns. A model's prediction
+            # of what is left is no measure of what its steps find: on the
+            # affect pilot's tied fit (2026-11-12, dev1) forty steps, two to
+            # four products and a gradient each, moved the gradient between
+            # 3.4 and 4.7 and the value by nothing, three hours; resumed from
+            # its checkpoint (2026-11-15, dev2) a stage's steps each gained
+            # about a thousandth of a nat, eight minutes apiece, and had up to
+            # 421 products to spend so.
             if krylov && k >= 2
                 half = k ÷ 2
                 if (walk_values[half + 1] - f) / (k - half) <
-                        max(certify_now(), tol_now())
+                        max(certify_now(), reach_now())
                     break
                 end
             end

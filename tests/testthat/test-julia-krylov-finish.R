@@ -79,6 +79,50 @@ test_that("the finish on the Krylov model reaches the chord's maximum for no mor
   }
 })
 
+test_that("the Krylov model's walk gives way to the exact Hessian within that Hessian's reach", {
+  skip_without_julia()
+  fit <- .krylov_fit()
+  est <- as.numeric(fit$estimate$raw)
+  npar <- length(est)
+  hessian <- (fit$uncertainty$hessian + t(fit$uncertainty$hessian)) / 2
+  root <- chol(solve(-hessian))
+  ctsem:::.ctJuliaEval(paste(
+    "function _test_krylov_reach(o, x0)",
+    "  fg! = ContinuousTimeSEM._ctsem_trial_closure(o, :adjoint)",
+    "  x = collect(Float64, x0)",
+    "  G = zeros(length(x)); f = fg!(0.0, G, x)",
+    "  out = ContinuousTimeSEM._ctsem_newton_finish(o, x, f, G, fg!;",
+    "    tol=1e-8, certify_tol=1e-6, curvature=:krylov, krylov_min_cost=0.0,",
+    "    probe=false)",
+    "  (start=-f, value=-out.f, hessians=out.full_hessians,",
+    "    models=out.krylov_models, steps=out.steps, at=out.hessian_at,",
+    "    x=out.x, distance=out.distance)",
+    "end", sep = "\n"))
+  obj <- ctsem:::.ctJuliaObjective(fit)
+  call <- function(x0) ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall(
+    "Main._test_krylov_reach", obj, x0))
+  top <- call(est)$value
+  # A start with about 0.001 nats to gain: under the reach of the exact
+  # Hessian, a tenth of a standard error or 0.005 nats, and far over the
+  # certification's tolerance. The model says the point is that near, so the
+  # exact Hessian is formed where the walk starts and its steps close the
+  # rest. Held to `tol`, the model's steps closed it first and the Hessian was
+  # formed where they ended.
+  for (seed in 4:6) {
+    set.seed(seed)
+    z <- rnorm(npar)
+    start <- est + sqrt(2 * 0.001) * as.numeric(t(root) %*% (z / sqrt(sum(z^2))))
+    out <- call(start)
+    expect_gt(out$models, 0)
+    expect_equal(out$hessians, 1)
+    expect_equal(as.numeric(out$at), start)
+    expect_gte(out$steps, 1)
+    expect_gt(out$value - out$start, 5e-4)
+    expect_lt(top - out$value, 1e-5)
+    expect_lte(out$distance, 0.1)
+  }
+})
+
 test_that("a finish that is not certified forms no exact Hessian in the Krylov model's place", {
   skip_without_julia()
   fit <- .krylov_fit()

@@ -1980,6 +1980,18 @@ end
     # `:dear` is one only where its walk would be on the Krylov model.
     dear = C.ctsem_optimize(_endgame_mock(ill), zeros(8); newton_final=:dear, kw...)
     @test dear.gap_floor == 1e-10
+    # A stage to be certified whose finish is the Krylov model's: L-BFGS gives
+    # way at the reach of the exact Hessian that follows, a tenth of a
+    # standard error, and that Hessian's steps are held to the certification's
+    # tolerance. (The mock has no products, so the finish goes straight to the
+    # exact Hessian.)
+    reach = C.ctsem_optimize(_endgame_mock(ill), zeros(8);
+        merge(kw, (newton_curvature=:krylov,))...)
+    @test C._ctsem_hessian_reach(C._CTSEM_HESSIAN_REUSE_SE) == C._CTSEM_RESOLUTION_CAP
+    @test reach.gap_floor == C._CTSEM_RESOLUTION_CAP
+    @test reach.iterations - reach.newton_steps <= tight.iterations - tight.newton_steps
+    @test reach.newton_steps >= 1
+    @test ill(ones(8)) - ill(reach.minimizer) < 1e-8
 end
 
 @testset "ctsem_optimize hands the endgame's numbers back" begin
