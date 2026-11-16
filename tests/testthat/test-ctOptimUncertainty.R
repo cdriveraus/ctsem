@@ -893,6 +893,18 @@ test_that("one flat side settles it; a side that cannot be evaluated says nothin
   steep <- function(p) -0.5 * p[1]^2 - 10 * p[2]^2
   expect_false(any(ctsem:::.ctOptimFlatDirectionScreen(info, steep,
     c(0, 0))$flat))
+  # A side inside the bar at a quarter and at one raw unit and past it at
+  # four is refused by its longest rung, which is walked first: the base
+  # point and one evaluation a side, where the short rungs first made seven.
+  slow <- function(p) -0.5 * p[1]^2 - 0.2 * p[2]^2
+  expect_lt(0.2, bar)
+  expect_gt(0.2 * 16, bar)
+  refused <- ctsem:::.ctOptimFlatDirectionScreen(info, slow, c(0, 0))
+  expect_false(any(refused$flat))
+  expect_equal(refused$evaluations, 3L)
+  # A flat side still takes every rung: the base point and its three, and one
+  # more where the steep side came first.
+  expect_true(found$evaluations %in% c(4L, 5L))
   # A side the model cannot evaluate is not evidence; the other side still is.
   onesided <- function(p) if (p[2] < -1e-8) NaN else -0.5 * p[1]^2
   found <- ctsem:::.ctOptimFlatDirectionScreen(info, onesided, c(0, 0))
