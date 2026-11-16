@@ -34,11 +34,13 @@ if (!file.exists(file.path(root, "_pkgdown.yml")) ||
     !identical(unname(read.dcf(file.path(root, "DESCRIPTION"), "Package")[1, 1]), "ctsem"))
   stop("Run this from the ctsem package root.")
 
+# A remote's url can carry a token (the pkgdown workflow's does): never print one.
+hide <- function(x) gsub("//[^/@[:space:]]+@", "//", x)
 git <- function(..., dir = root) {
   out <- suppressWarnings(system2("git", c("-C", shQuote(dir), ...), stdout = TRUE, stderr = TRUE))
   status <- attr(out, "status")
   if (!is.null(status) && status != 0)
-    stop("git ", paste(c(...), collapse = " "), " failed:\n", paste(out, collapse = "\n"))
+    stop(hide(paste0("git ", paste(c(...), collapse = " "), " failed:\n", paste(out, collapse = "\n"))))
   out
 }
 
@@ -163,5 +165,5 @@ if (publish) {
   git("add", "-A", dir = site)
   git(who, "commit", "-q", "-m", shQuote(paste0("Site built from ", branch, " ", head)), dir = site)
   git("push", "--force", shQuote(remote), "gh-pages", dir = site)
-  cat("Published ", substr(head, 1, 8), " (", branch, ") to gh-pages on ", remote, ".\n", sep = "")
+  cat("Published ", substr(head, 1, 8), " (", branch, ") to gh-pages on ", hide(remote), ".\n", sep = "")
 }
