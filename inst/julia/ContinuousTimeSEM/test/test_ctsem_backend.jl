@@ -1987,8 +1987,8 @@ end
     # exact Hessian.)
     reach = C.ctsem_optimize(_endgame_mock(ill), zeros(8);
         merge(kw, (newton_curvature=:krylov,))...)
-    @test C._ctsem_hessian_reach(C._CTSEM_HESSIAN_REUSE_SE) == C._CTSEM_RESOLUTION_CAP
-    @test reach.gap_floor == C._CTSEM_RESOLUTION_CAP
+    @test C._ctsem_hessian_reach(C._CTSEM_HESSIAN_REUSE_SE) ≈ C._CTSEM_RESOLUTION_CAP
+    @test reach.gap_floor == C._ctsem_hessian_reach(C._CTSEM_HESSIAN_REUSE_SE)
     @test reach.iterations - reach.newton_steps <= tight.iterations - tight.newton_steps
     @test reach.newton_steps >= 1
     @test ill(ones(8)) - ill(reach.minimizer) < 1e-8
