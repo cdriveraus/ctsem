@@ -6151,9 +6151,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     }
   }
   # A stage resumed after a certification found the point short of a maximum
-  # (`.ctBackendCorrectResult()`) may stop on progress alone, once a window
-  # gains nothing the certification could use. Every other rule is the first
-  # stage's. See `CTSEMStallWatch` in the engine.
+  # (`.ctBackendCorrectResult()`), or certified after a fit's uncertified
+  # stages (`.ctJuliaOptimiseFit()`'s smoothing passes), may stop on progress
+  # alone, once a window gains nothing the certification could use. Every
+  # other rule is the first stage's. See `CTSEMStallWatch` in the engine.
   if (isTRUE(resumed)) common$stall_alone <- TRUE
   # `cores` is the ceiling the subject loop runs at, and the fit records it.
   # Restored afterwards so the session does not carry this fit's ceiling into
@@ -7215,6 +7216,15 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     smoothpasses <- 0L
     stagecontrol <- utils::modifyList(optimcontrol, list(batch = FALSE,
       saem = FALSE, stochastic = FALSE))
+    # The certified stage goes on from a stage that stopped by its own rule,
+    # on that stage's objective or one a smoothing step moved a little, with
+    # its curvature pairs: a resumed stage (`resumed`), whose L-BFGS gives way
+    # to the finish once a window of it gains under a tenth of a standard
+    # error. Held to a step's predicted gain alone, a hundredth of the
+    # certification's tolerance, L-BFGS on the affect pilot's tied fit gained
+    # 0.10 nats in the stage's first hour and under 0.01 in the next, two
+    # minutes an iteration, with 360 iterations to go before it could hand
+    # over to the finish, whose Hessian is either point's.
     certified_stage <- function(from, hessian = NULL, hessian_at = NULL) {
       stage <- keepknown(.ctJuliaOptimise(model_spec, from,
         optimcontrol = stagecontrol, gradient = gradient, cores = cores,
@@ -7222,7 +7232,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         hessian = hessian, hessian_at = hessian_at, checkpoint = checkpoint,
         # A stage handed the last certified stage's Hessian starts beside
         # where that stage probed for an overshoot.
-        probed = !is.null(hessian), pairs = TRUE))
+        probed = !is.null(hessian), pairs = TRUE, resumed = TRUE))
       correct(.ctJuliaAddRunCounts(stage, result))
     }
     curvature <- NULL

@@ -2580,7 +2580,10 @@ can.
 ## A resumed stage may stop on progress alone
 
 `alone = true`, which `.ctBackendCorrectResult()` sets on a stage it resumes
-because the certification found the point short of a maximum. There "stuck
+because the certification found the point short of a maximum, and
+`.ctJuliaOptimiseFit()` on the certified stage that goes on from a fit's
+uncertified ones (its smoothing passes), each of which stopped by its own
+rule. There "stuck
 versus slow" is exactly the question left: a resumed stage whose window gains
 no more than `stop` nats, `_CTSEM_RESOLUTION_CAP`, the most any bar on a gain
 rises to (a tenth of a standard error), with nothing flat to pull back and
@@ -2588,7 +2591,12 @@ nothing diverging, is stuck, and it stops (`exhausted`). At that pace the
 iteration cap leaves it a few hundredths of a nat to find. This is the one
 no-progress rule for a resume; it replaced switching the predicted-gain stop
 off and quadrupling the cap, which is how a resume on AnomAuth came to run for
-hours.
+hours. A stage that stops so goes to its finish, whose Hessian is the point's
+within `newton_reuse` standard errors, so the creep it ends moves nothing the
+finish does not: the affect pilot's tied fit, certified after its smoothing
+pass without this, gained 0.10 nats in an hour of L-BFGS and under 0.01 in
+the next, with 360 two-minute iterations to go before the early hand-over's
+price was spent (2026-11-16, dev3).
 
 ## Walking off to a limit
 
@@ -3104,8 +3112,9 @@ pairs it had whatever this says.
 on rather than form again where Hessians are dear (`_ctsem_newton_finish`'s
 `hessian0`). A stage that starts where that Hessian reaches the maximum goes
 to the finish with no L-BFGS stage (`_ctsem_finish_first`). The stall watch's
-`stall_alone`, and with it these two, are set only on a stage resumed after a
-certification (see `CTSEMStallWatch`).
+`stall_alone` is set on a stage that goes on from one that stopped by its own
+rule: resumed after a certification, or certified after a fit's uncertified
+stages (see `CTSEMStallWatch`).
 `overshoot_probe` may be `:cleared` beside its own modes
 (`_ctsem_overshoot_mode`): the caller has probed `start`, so a run that ends
 within `newton_reuse` standard errors of it is not probed again, and one
