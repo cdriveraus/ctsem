@@ -282,9 +282,14 @@
 # TDPREDEFFECT cell in that state's row -- from which the drift carries it to
 # a state such a cell reads (or the column a state dependent DRIFT cell
 # multiplies). A measurement effect (MANIFESTMEANS, LAMBDA, MANIFESTVAR) moves
-# no state: it reaches the states through the update alone, as the data do,
-# no wider than their initial spread. A DIFFUSION effect moves no mean.
-# Effects on the measurement's state dependence are not looked at here.
+# no state: it reaches the states through the update alone, as the data do.
+# Beside a random initial mean it keeps the first observation from pinning
+# that mean down, and that combination is where the milk model's gap was:
+# with the initial means alone random their sds went to zero (filter and
+# particle filter 10.8 apart, 10.6 without random effects), and with the
+# manifest means alone the augmented maximum was 4 above Laplace's
+# (dev1, 2026-11-16). A DIFFUSION effect moves no mean. Effects on the
+# measurement's state dependence are not looked at here.
 .ctAugmentedNonlinearEffects <- function(model) {
   pars <- model$pars
   varying <- which(.ctVaryingRows(model, "indvarying") & !is.na(pars$param))

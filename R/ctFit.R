@@ -823,10 +823,12 @@ T0VARredundancies <- function(ctm) {
 #' reports. \code{'augmented'} makes each random effect a state of the filter:
 #' exact for effects that shift a mean in a linear Gaussian model, and a
 #' linearisation elsewhere. That shrinks random effects on the dynamics; where
-#' the dynamics depend on the state, even a random initial or manifest mean is
-#' linearised over its whole population spread, which can overstate the
-#' likelihood and move the maximum; and variation on a DIFFUSION or
-#' MANIFESTVAR parameter is only partly identified, which ctFit warns of.
+#' the dynamics depend on the state, an effect that reaches them -- a random
+#' initial mean too, the more so beside a random manifest mean that keeps the
+#' data from pinning it down -- is linearised over its population spread,
+#' which can overstate the likelihood and move the maximum; and variation on a
+#' DIFFUSION or MANIFESTVAR parameter is only partly identified. ctFit warns of
+#' both.
 #'
 #' \code{'quadrature'} (\code{backend='julia'}, optimizing) fits by
 #' \code{'laplace'} and then refines the fit with the units the random-effects check
