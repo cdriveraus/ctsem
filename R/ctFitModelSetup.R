@@ -448,6 +448,22 @@
     partialvar <- unique(ctm$pars$param[revarpars])
   }
 
+  # Random effects that reach dynamics depending on the state are linearised by
+  # the augmented route over their population spread, which can overstate the
+  # likelihood and move the maximum (`.ctAugmentedNonlinearEffects()` says
+  # which and why). Stan has no other route. Not under intoverstates = FALSE,
+  # which runs no filter: the states and effects are drawn or maximised.
+  if(checks && intoverpop && isTRUE(intoverstates)){
+    nleffects <- .ctAugmentedNonlinearEffects(ctm)
+    if(length(nleffects)) warning(
+      if(backend %in% 'julia') "intoverpop='augmented'" else "The stan backend",
+      " linearises the random effects on ", paste(nleffects, collapse=', '),
+      " over their population spread through dynamics that depend on the ",
+      "state, which can overstate the likelihood and move the estimate. ",
+      if(backend %in% 'julia') "The default intoverpop" else "backend='julia'",
+      " integrates them by Laplace.", call.=FALSE)
+  }
+
   # A fixed auto effect of exactly 0 (1 in discrete time) is a process with no
   # equilibrium: a trend, a trait, an integrator. Stan's filter divides by the
   # drift for the discrete intercept (`mdivide_left(JAx, ...)`) and solves a

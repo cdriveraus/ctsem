@@ -119,13 +119,20 @@
     # `param` too, which makes such a cell unsupported upstream rather than
     # merely undetected -- but reporting the model as linear would be the worse
     # of the two failures, so scan the transform column as well, through the
-    # same rewrite.
+    # same rewrite. The rewrite takes PARS names from the PARS rows' `param`,
+    # so the transform rows go in under no matrix and the PARS cells are added
+    # as written: with the transforms in the PARS rows, a PARS cell's
+    # transform `param` was read as a PARS name, and every transform came back
+    # referencing the first PARS cell.
     if (!is.null(pars$transform)) {
       shim <- pars
       shim$param <- replace(as.character(pars$transform), is.na(pars$transform), "")
-      shim <- ctModelStatesAndPARS(shim, statenames = fit$latentNames,
+      shim$matrix <- rep("", nrow(shim))
+      named <- fit$pars[as.character(fit$pars$matrix) %in% "PARS", , drop = FALSE]
+      named$matrix <- as.character(named$matrix)
+      shim <- ctModelStatesAndPARS(rbind(shim, named), statenames = fit$latentNames,
         tdprednames = fit$TDpredNames, tiprednames = fit$TIpredNames)
-      expression <- trimws(paste(expression, shim$param))
+      expression <- trimws(paste(expression, shim$param[seq_len(nrow(pars))]))
     }
     return(data.frame(matrix = as.character(pars$matrix), row = as.integer(pars$row),
       col = as.integer(pars$col), expression = expression, stringsAsFactors = FALSE))
@@ -255,6 +262,82 @@
   out <- unique(cells[key %in% both, c("matrix", "row", "col"), drop = FALSE])
   rownames(out) <- NULL
   out
+}
+
+# The random effects the augmented route linearises through dynamics that
+# depend on the state, by name; ctFit warns of them.
+#
+# The augmented route makes each random effect a state of the filter. Where a
+# DRIFT, CINT, DIFFUSION or TDPREDEFFECT cell reads a latent state, the
+# extended Kalman filter linearises that cell at the predicted mean, and an
+# effect whose spread reaches the states it reads is linearised with it, over
+# the effect's whole population spread until the data narrow it: a random
+# initial mean puts that spread on the states before the first observation.
+# On a milk-yield model whose yield drift read fat (ten cows,
+# scripts/nlgap-2026-11) the augmented route's maximum read -2843 by its filter
+# and about -3467 by a particle filter; the Laplace route's -2879.
+#
+# An effect is linearised so where such a cell reads it, directly or through
+# PARS, or where it moves the mean of a state -- a T0MEANS, DRIFT, CINT or
+# TDPREDEFFECT cell in that state's row -- from which the drift carries it to
+# a state such a cell reads (or the column a state dependent DRIFT cell
+# multiplies). A measurement effect (MANIFESTMEANS, LAMBDA, MANIFESTVAR) moves
+# no state: it reaches the states through the update alone, as the data do,
+# no wider than their initial spread. A DIFFUSION effect moves no mean.
+# Effects on the measurement's state dependence are not looked at here.
+.ctAugmentedNonlinearEffects <- function(model) {
+  pars <- model$pars
+  varying <- which(.ctVaryingRows(model, "indvarying") & !is.na(pars$param))
+  if (!length(varying)) return(character())
+  nlatent <- as.integer(model$n.latent)
+  cells <- .ctContextCellTable(model)
+  key <- paste(cells$matrix, cells$row, cells$col)
+  # The rows each cell reads through PARS, itself included, closed over PARS
+  # cells reading others; and the latent states those rows read.
+  refs <- lapply(cells$expression, function(e) {
+    r <- .ctExpressionParsRefs(e)
+    if (is.null(r)) integer() else
+      unique(stats::na.omit(match(paste("PARS", r$row, r$col), key)))
+  })
+  deps <- lapply(seq_len(nrow(cells)), function(i) {
+    out <- i
+    repeat {
+      more <- setdiff(unlist(refs[out]), out)
+      if (!length(more)) return(out)
+      out <- c(out, more)
+    }
+  })
+  reads <- lapply(deps, function(d) {
+    s <- unlist(lapply(cells$expression[d], .ctExpressionIndices, name = "state"))
+    unique(s[s >= 1L & s <= nlatent])
+  })
+  statedependent <- cells$matrix %in% c("DRIFT", "CINT", "DIFFUSION",
+    "TDPREDEFFECT") & lengths(reads) > 0L
+  if (!any(statedependent)) return(character())
+  # The states the linearisation is taken over, and every state the drift
+  # carries into them: state k is carried into by state j through a nonzero
+  # DRIFT[k, j] or a mean cell of row k reading state j.
+  feeds <- unique(c(unlist(reads[statedependent]),
+    cells$col[statedependent & cells$matrix %in% "DRIFT"]))
+  meancell <- cells$matrix %in% c("DRIFT", "CINT", "TDPREDEFFECT")
+  nonzero <- !is.na(pars$param) |
+    (!is.na(pars$value) & suppressWarnings(as.numeric(pars$value)) != 0)
+  upstream <- lapply(seq_len(nlatent), function(k) {
+    rows <- which(meancell & cells$row == k)
+    unique(c(cells$col[rows[cells$matrix[rows] %in% "DRIFT" & nonzero[rows]]],
+      unlist(reads[rows])))
+  })
+  repeat {
+    more <- setdiff(unlist(upstream[feeds]), feeds)
+    if (!length(more)) break
+    feeds <- c(feeds, more)
+  }
+  moves <- cells$matrix %in% c("T0MEANS", "DRIFT", "CINT", "TDPREDEFFECT")
+  reached <- vapply(varying, function(e) {
+    readers <- vapply(deps, function(d) e %in% d, logical(1))
+    any(readers & statedependent) || any(cells$row[readers & moves] %in% feeds)
+  }, logical(1))
+  unique(pars$param[varying[reached]])
 }
 
 #' The one sentence every context-dependence message uses
