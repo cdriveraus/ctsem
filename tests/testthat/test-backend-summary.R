@@ -1192,3 +1192,65 @@ test_that("an RI-CLPM reports the same T0cov on the Laplace and augmented routes
   expect_true(all(diag(t0cov$laplace$T0cov) > .1))
   expect_equal(t0cov$laplace$T0cov, t0cov$augmented$T0cov, tolerance = 1e-3)
 })
+
+# Two processes with correlated system noise and initial states, simulated by
+# hand (ctGenerate's draw stream moves), one time unit a step.
+.covcor_data <- function() {
+  set.seed(11)
+  noise <- t(chol(.25 * matrix(c(1, .5, .5, 1), 2)))
+  initial <- t(chol(matrix(c(1, .6, .6, 1), 2)))
+  rows <- list()
+  for (i in 1:40) {
+    x <- c(initial %*% stats::rnorm(2))
+    for (t in 1:8) {
+      if (t > 1) x <- .6 * x + c(noise %*% stats::rnorm(2))
+      y <- x + stats::rnorm(2, 0, .3)
+      rows[[length(rows) + 1L]] <- data.frame(id = i, time = t - 1,
+        Y1 = y[1], Y2 = y[2])
+    }
+  }
+  do.call(rbind, rows)
+}
+
+test_that("the summaries give each covariance's correlations over the draws", {
+  skip_without_julia()
+  model <- suppressWarnings(ctModel(type = "ct", n.latent = 2, LAMBDA = diag(2),
+    DRIFT = matrix(c("a1", 0, 0, "a2"), 2, 2),
+    DIFFUSION = matrix(c("d11", "d21", 0, "d22"), 2, 2),
+    T0VAR = matrix(c("t11", "t21", 0, "t22"), 2, 2),
+    MANIFESTVAR = diag(.3, 2), MANIFESTMEANS = matrix(0, 2, 1),
+    T0MEANS = matrix(0, 2, 1), CINT = matrix(0, 2, 1)))
+  fit <- suppressWarnings(suppressMessages(ctFit(.covcor_data(), model,
+    backend = "julia", verbose = 0, cores = 2)))
+  e <- ctExtract(fit)
+  expect_gt(dim(e$pop_DIFFUSIONcov)[1L], 50L)
+  correlation <- function(cov) cov[, 2, 1] / sqrt(cov[, 1, 1] * cov[, 2, 2])
+
+  # Each draw's correlation, then the mean: cov2cor of the mean covariance is
+  # no draw's correlation. For two processes under 'z' the off-diagonal
+  # parameter is the correlation's Fisher z, an answer by another route.
+  m <- suppressMessages(ctSummaryMatrices(fit, calcfunc = mean,
+    calcfuncargs = list()))
+  expect_equal(m$DIFFUSIONcor[2, 1], mean(correlation(e$pop_DIFFUSIONcov)),
+    tolerance = 1e-10)
+  expect_equal(m$DIFFUSIONcor[2, 1], mean(tanh(e$pop_DIFFUSION[, 2, 1])),
+    tolerance = 1e-8)
+  expect_equal(m$T0cor[2, 1], mean(tanh(e$pop_T0VAR[, 2, 1])), tolerance = 1e-8)
+  expect_equal(unname(diag(m$DIFFUSIONcor)), c(1, 1))
+  expect_identical(dimnames(m$DIFFUSIONcor), list(model$latentNames,
+    model$latentNames))
+  expect_equal(m$MANIFESTcor[2, 1], 0)
+  expect_true(!is.null(m$asymDIFFUSIONcor))
+
+  s <- summary(fit, digits = 12, residualcov = FALSE)
+  rows <- s$parmatrices[s$parmatrices$matrix %in% "DIFFUSIONcor", ]
+  expect_equal(nrow(rows), 1L)
+  expect_equal(c(rows$row, rows$col), c(2, 1))
+  expect_equal(rows[["2.5%"]], unname(stats::quantile(
+    correlation(e$pop_DIFFUSIONcov), .025)), tolerance = 1e-8)
+  # popmeans keeps the parameter, and the note says where its correlation is.
+  expect_equal(s$popmeans["d21", "mean"], mean(e$pop_DIFFUSION[, 2, 1]),
+    tolerance = 1e-8)
+  expect_match(s$popNote, "parameters (d21, t21) are not correlations", fixed = TRUE)
+  expect_match(s$popNote, "T0cor, DIFFUSIONcor under System Matrices", fixed = TRUE)
+})

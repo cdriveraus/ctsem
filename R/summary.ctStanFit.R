@@ -112,7 +112,10 @@ ctStanRawSamples<-function(fit){
 #'the initial latent covariance over subjects: \code{T0VAR} plus the
 #'population covariance of any individually varying \code{T0MEANS}), the
 #'asymptotic \code{asymCINT} and \code{asymDIFFUSIONcov}, and
-#'\code{dtDRIFT} at \code{timeinterval}. On \code{backend='julia'}, also the
+#'\code{dtDRIFT} at \code{timeinterval}. Beside each covariance its
+#'correlations, \code{DIFFUSIONcor}, \code{MANIFESTcor}, \code{T0cor} and
+#'\code{asymDIFFUSIONcor}, taken draw by draw before \code{calcfunc}
+#'summarises them; a variable whose variance is zero has \code{NA} there. On \code{backend='julia'}, also the
 #'Jacobians of the drift and of the measurement at the evaluation point,
 #'\code{JAx} (latent by latent) and \code{Jy} (manifest by latent): the local
 #'effects of the model linearised at \code{state}. They equal \code{DRIFT} and
@@ -400,6 +403,17 @@ getparnames <- function(fit,reonly=FALSE, subjvariationonly=FALSE, popstatesonly
 #'   parameter tables and \code{parmatrices} carry a \code{mode} column beside
 #'   the draws' mean, sd and quantiles: the fit's estimate on the same scale,
 #'   the point a likelihood ratio or an information criterion refers to.
+#'
+#'   \code{popmeans} reports each free parameter. A \code{T0VAR},
+#'   \code{DIFFUSION} or \code{MANIFESTVAR} parameter is a standard deviation
+#'   on the diagonal; off it, a coordinate the model's \code{covmattransform}
+#'   turns into correlations, not a correlation: under the default \code{'z'}
+#'   it is an entry of the correlation matrix's logarithm, which for two
+#'   variables is the correlation's Fisher z (\code{tanh()} of it is the
+#'   correlation) and for more is no function of any one correlation. The
+#'   correlations are in \code{parmatrices}, as \code{T0cor},
+#'   \code{DIFFUSIONcor}, \code{MANIFESTcor} and \code{asymDIFFUSIONcor} beside
+#'   the covariances, each summarised over the draws' own correlations.
 #' @examples
 #' summary(ctstantestfit)
 #' @method summary ctStanFit
@@ -525,7 +539,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
     d$param <- NULL
     d$Mean <- round(d$Mean,digits)
     rm(sd)
-    d <- d[!d$matrix %in% c('DIFFUSION','T0VAR'),]
+    d <- .ctSummaryParmatricesRows(d)
 
     out$parmatrices=d
     out$parmatNote <- .ctContextNote(.ctFitConditionalCells(object),
@@ -570,7 +584,13 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   
   out$popmeans=round(popmeans,digits=digits)
   
-  out$popNote=paste0('covariance pars in sd / unconstrained cor form, see System Matrices (or ctSummaryMatrices function) for cor/cov.')
+  free <- ctMatsetupFreePars(as.data.frame(object$setup$matsetup), defining = TRUE)
+  allmats <- .ctMatricesList()$all
+  freematrix <- names(allmats)[match(free$matrix, allmats)]
+  offdiagonal <- freematrix %in% .ctCovSystemMatrices & free$row != free$col &
+    free$parname %in% parnames
+  out$popNote <- paste0('Population values on the transformed scale.',
+    .ctCovParameterNote(free$parname[offdiagonal], freematrix[offdiagonal]))
   
   out$logposterior=logposterior
   if(optimize) {

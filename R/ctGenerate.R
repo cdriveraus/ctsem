@@ -435,11 +435,11 @@ ctStanGenerate <- ctGenerateFromPriors
 #' model written for fitting can generate data at chosen values. A named
 #' numeric vector gives free parameters' values on their natural scale, e.g.
 #' \code{c(mm = 2, drift = -0.3)}. A list gives \code{summary()}'s sections:
-#' \code{values} (the same), \code{popsd} (random-effect sds on the natural
+#' \code{popmeans} (the same), \code{popsd} (random-effect sds on the natural
 #' scale, named by parameter), \code{rawpopcorr} (correlations of the random
 #' effects, named \code{'a__b'}) and \code{tipreds} (linearised TI predictor
 #' effects, named \code{'tip_<predictor>_<parameter>'}), as in
-#' \code{list(values = c(mm = 2), popsd = c(mm = 0.5), tipreds =
+#' \code{list(popmeans = c(mm = 2), popsd = c(mm = 0.5), tipreds =
 #' c(tip_TI1_mm = 1))}; with grouping levels, \code{popsd.<level>} and
 #' \code{rawpopcorr.<level>} name a level's. What is not given takes its
 #' prior's centre: raw zero for a mean, \code{sdscale} for a raw sd, zero for
