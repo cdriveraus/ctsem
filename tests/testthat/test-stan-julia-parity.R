@@ -116,7 +116,7 @@ test_that("Stan refreshes the discrete diffusion when only DIFFUSION differs bet
     tolerance = 1e-7)
 })
 
-test_that("Stan and Julia agree for a linear augmented random effect", {
+test_that("Stan and Julia agree for an augmented random effect on the drift", {
   skip_without_julia()
   skip_if_not_installed("rstan")
 
@@ -130,8 +130,11 @@ test_that("Stan and Julia agree for a linear augmented random effect", {
     Y1 = c(0, .1, .2, .1, 0, -.1), Y2 = c(0, -.1, .1, .2, .1, 0))
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
   stan_fit <- .compiled_stan_fit(stan_spec)
+  # Stan carries the effect as a state. Julia's default when optimising is
+  # the Laplace route, a different approximation where the effect is not
+  # affine in the means: 0.0011 off here. So the julia side names stan's.
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = FALSE))
+    priors = FALSE, intoverpop = "augmented"))
   raw <- c(-1, .1, -1, .2, -.4)
 
   stan_value <- rstan::log_prob(stan_fit, upars = raw, adjust_transform = FALSE, gradient = TRUE)
@@ -302,8 +305,9 @@ test_that("Stan and Julia agree for a row with partial (not total) missingness",
     Y1 = c(0, .1, .2, .1, 0, -.1), Y2 = c(0, -.1, .1, .2, NA, 0))
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
   stan_fit <- .compiled_stan_fit(stan_spec)
+  # On stan's route, as in the random-effect test above.
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = FALSE))
+    priors = FALSE, intoverpop = "augmented"))
   raw <- c(-1, .1, -1, .2, -.4)
 
   stan_value <- rstan::log_prob(stan_fit, upars = raw, adjust_transform = FALSE, gradient = TRUE)
@@ -339,8 +343,12 @@ test_that("Stan and Julia agree for nonlinear predictors and augmented states", 
     priors = FALSE, nlcontrol = list(maxtimestep = .25)))
   stan_fit <- .compiled_stan_fit(stan_spec)
 
+  # On stan's route and stan's filter: the effect is a state, and with it the
+  # drift's Jacobian reads `PARS[1,1] * eta1`, which is not affine in the
+  # state, so julia would otherwise predict by moments.
+  local_julia_ekf()
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = FALSE, nlcontrol = list(maxtimestep = .25)))
+    priors = FALSE, nlcontrol = list(maxtimestep = .25), intoverpop = "augmented"))
   raw <- c(-1, .1, -1, .1, .2, -.4, .05)
   expect_equal(rstan::get_num_upars(stan_fit), length(raw))
   expect_equal(max(c(julia_spec$parameter_table$parnumber,
@@ -353,7 +361,7 @@ test_that("Stan and Julia agree for nonlinear predictors and augmented states", 
     priors = FALSE, nlcontrol = list(maxtimestep = .25)))
   zero_stan_fit <- .compiled_stan_fit(zero_stan_spec)
   zero_julia_spec <- suppressMessages(ctFit(zero_predictors, model, backend = "julia", fit = FALSE,
-    priors = FALSE, nlcontrol = list(maxtimestep = .25)))
+    priors = FALSE, nlcontrol = list(maxtimestep = .25), intoverpop = "augmented"))
   zero_stan_value <- rstan::log_prob(zero_stan_fit, upars = raw,
     adjust_transform = FALSE, gradient = TRUE)
   zero_julia_value <- ctJuliaEvaluate(zero_julia_spec, raw, gradient = TRUE)
@@ -492,8 +500,10 @@ test_that("Stan and Julia agree for a state/TD-dependent measurement equation wi
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE,
     priors = FALSE, nlcontrol = list(maxtimestep = .25)))
   stan_fit <- .compiled_stan_fit(stan_spec)
+  # On stan's route: on julia's default, the Laplace route, this point is
+  # 116 nats away, a different integral rather than a different filter.
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = FALSE, nlcontrol = list(maxtimestep = .25)))
+    priors = FALSE, nlcontrol = list(maxtimestep = .25), intoverpop = "augmented"))
   raw <- c(-0.1773093, 0.007978311, -0.4549659, -0.408796, 0.3535467, -0.2802454)
   expect_equal(rstan::get_num_upars(stan_fit), length(raw))
 
