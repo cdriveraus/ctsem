@@ -75,10 +75,16 @@ jobs:
         with:
           use-public-rspm: true
 
-      # Only what the build script uses: not ctsem or its dependencies.
+      # Only what the build script uses: not ctsem or its dependencies. The
+      # cache is the site's own: under the shared cache-version the library was
+      # restored by key prefix from the R-CMD-check job's, with ctsem's
+      # Suggests but not their system libraries, and pkgdown, autolinking
+      # qgraph::qgraph() in ctNetwork.Rd, loaded qgraph, whose igraph needs
+      # libglpk (run 43923840404).
       - uses: r-lib/actions/setup-r-dependencies@v2
         if: steps.changed.outputs.build == 'true'
         with:
+          cache-version: site-1
           packages: |
             any::pkgdown
             any::rmarkdown
