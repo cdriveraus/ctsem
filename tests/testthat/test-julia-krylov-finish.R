@@ -66,14 +66,22 @@ test_that("the finish on the Krylov model reaches the chord's maximum for no mor
   # either sometimes a third: from sixteen starts, at two fits of it, the
   # chord took 34 and the model 33 (dev3, 2026-11-01), and which one a single
   # start gives turned on where the fit, at two cores, had stopped.
+  #
+  # Each ends at a maximum no lower than the fit's, not at the other's value:
+  # the objective has a second maximum 0.22 nats above the fit's, and from
+  # one of these starts the chord's walk ended there where the model's ended
+  # at the fit's (dev4, 2026-11-16; the start moves with the fit's last
+  # digits).
+  top <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall("Main._test_krylov_finish",
+    obj, est, "chord"))$value
   for (seed in 4:7) {
     set.seed(seed)
     start <- est + 2 * as.numeric(t(root) %*% rnorm(npar))
     out <- lapply(c(chord = "chord", krylov = "krylov"), function(curvature)
       ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall("Main._test_krylov_finish", obj,
         start, curvature)))
-    expect_equal(out$krylov$value, out$chord$value, tolerance = 1e-6,
-      scale = 1)
+    expect_gt(out$krylov$value, top - 1e-6)
+    expect_gt(out$chord$value, top - 1e-6)
     expect_gt(out$krylov$products, 0)
     expect_lte(out$krylov$hessians, out$chord$hessians + 1)
   }
