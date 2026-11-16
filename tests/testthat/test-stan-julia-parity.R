@@ -14,40 +14,27 @@
 # `ctFit` itself computes, instead of reimplementing (badly) a guess at when
 # reuse is safe, is what actually fixes that.
 #
-# When `recompile==1`, several tests/calls here happen to reuse the exact
-# same model definition (only `standata` differs -- e.g. test 4 builds two
-# specs from one `model` object, and tests 2/3 share a model entirely), so
-# the actual compile is additionally cached by generated-code hash to avoid
-# paying for it more than once per distinct model.
+# A compiled program is cached by its text, so data sets that share a model
+# share its compile.
 .parity_stan_cache <- new.env(parent = emptyenv())
 
-# Tiered, because the two tiers differ by three orders of magnitude in cost.
+# Tiered, because the tiers differ by orders of magnitude in cost. A model with
+# `recompile == 0` reuses the precompiled binary and costs seconds. One with
+# `recompile == 1` compiles C++ at test time: about five minutes on a Linux box,
+# 15 to 25 on Windows, per distinct program. So it runs under
+# `skip_unless_slow()` (`CTSEM_SLOW_TESTS=true`), which julia-tests' weekly
+# run sets, and by hand before a release or a change to the generated program.
+# A gate of this file's own, which nothing set, let that tier fail unseen.
 #
-# A model shape with `recompile == 0` reuses ctsem's own precompiled binary and
-# costs seconds. A shape with `recompile == 1` -- the nonlinear and
-# state-dependent ones -- calls rstan::stan_model() and compiles C++ at test
-# time: 15 to 25 minutes EACH on Windows, per distinct generated model. That is
-# not a slow machine, it is a test file that compiles compilers' worth of code,
-# and no amount of hardware fixes it.
-#
-# So the compiling ones skip by default and run on request:
-#
-#   CTSEM_PARITY_COMPILE=true Rscript -e '...test_file(...)'
-#
-# Run them before a release, and whenever anything touches the generated stan
-# program, since that is what they cover. The rest run in any ordinary suite,
-# which is the point: parity that never runs protects nothing, and that was
-# this file's previous state for a different reason (it skipped on an
-# environment variable nothing ever set).
+# Keep the compiled tier to what the precompiled binary cannot express -- a
+# PARS reference or an expression in a cell -- and to one program: a random
+# effect on any cell, or a partly missing row, runs in seconds on the binary.
 
 .compiled_stan_fit <- function(stan_spec) {
   if (identical(stan_spec$standata$recompile, 0L)) {
     return(ctsem:::stan_reinitsf(ctsem:::stanmodels$ctsm, stan_spec$standata))
   }
-  testthat::skip_if(
-    !identical(Sys.getenv("CTSEM_PARITY_COMPILE"), "true"),
-    paste("this model shape compiles a fresh stan program (minutes);",
-      "set CTSEM_PARITY_COMPILE=true to run it"))
+  skip_unless_slow("compiling a stan program for this model")
   key <- digest::digest(stan_spec$stanmodeltext)
   if (!exists(key, envir = .parity_stan_cache, inherits = FALSE)) {
     assign(key, rstan::stan_model(model_code = stan_spec$stanmodeltext), envir = .parity_stan_cache)
@@ -114,33 +101,6 @@ test_that("Stan refreshes the discrete diffusion when only DIFFUSION differs bet
   expect_equal(as.numeric(julia_value$value), as.numeric(forward), tolerance = 1e-8)
   expect_equal(as.numeric(julia_value$gradient), as.numeric(attributes(forward)$gradient),
     tolerance = 1e-7)
-})
-
-test_that("Stan and Julia agree for an augmented random effect on the drift", {
-  skip_without_julia()
-  skip_if_not_installed("rstan")
-
-  model <- suppressWarnings(ctModel(
-    type = "ct", n.latent = 2, LAMBDA = diag(2), PARS = matrix("cross||TRUE", 1, 1),
-    DRIFT = matrix(c("d11", "PARS[1,1]", "d21", "d22"), 2, 2, byrow = TRUE),
-    DIFFUSION = diag(c(.2, .15)), MANIFESTVAR = diag(c(.1, .1)),
-    MANIFESTMEANS = matrix(0, 2, 1), T0VAR = diag(2), T0MEANS = matrix(0, 2, 1)
-  ))
-  data <- data.frame(id = rep(1:2, each = 3), time = rep(c(0, .5, 1.5), 2),
-    Y1 = c(0, .1, .2, .1, 0, -.1), Y2 = c(0, -.1, .1, .2, .1, 0))
-  stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
-  stan_fit <- .compiled_stan_fit(stan_spec)
-  # Stan carries the effect as a state. Julia's default when optimising is
-  # the Laplace route, a different approximation where the effect is not
-  # affine in the means: 0.0011 off here. So the julia side names stan's.
-  julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = FALSE, intoverpop = "augmented"))
-  raw <- c(-1, .1, -1, .2, -.4)
-
-  stan_value <- rstan::log_prob(stan_fit, upars = raw, adjust_transform = FALSE, gradient = TRUE)
-  julia_value <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE)
-  expect_equal(as.numeric(julia_value$value), as.numeric(stan_value), tolerance = 1e-8)
-  expect_equal(as.numeric(julia_value$gradient), as.numeric(attributes(stan_value)$gradient), tolerance = 1e-7)
 })
 
 test_that("Stan and Julia agree for a discrete-time model with augmented random effects", {
@@ -294,21 +254,28 @@ test_that("Stan and Julia agree for a row with partial (not total) missingness",
   # previously double-applied S^{-1} in the Kalman gain state update
   # (`gain * (factor \ innovation)` instead of `gain * innovation`), which the
   # other parity tests here never reached because their rows are always fully
-  # observed or fully missing.
+  # observed or fully missing. The engine's gradient tests reach the branch,
+  # but a wrong value with a consistent gradient passes them. The random
+  # effect on the drift, carried as a state, makes the state wider than the
+  # observation; on a cell rather than through PARS it runs on the
+  # precompiled program, so this runs in every suite.
   model <- suppressWarnings(ctModel(
-    type = "ct", n.latent = 2, LAMBDA = diag(2), PARS = matrix("cross||TRUE", 1, 1),
-    DRIFT = matrix(c("d11", "PARS[1,1]", "d21", "d22"), 2, 2, byrow = TRUE),
+    type = "ct", n.latent = 2, LAMBDA = diag(2),
+    DRIFT = matrix(c("d11", "cross||TRUE", "d21", "d22"), 2, 2, byrow = TRUE),
     DIFFUSION = diag(c(.2, .15)), MANIFESTVAR = diag(c(.1, .1)),
     MANIFESTMEANS = matrix(0, 2, 1), T0VAR = diag(2), T0MEANS = matrix(0, 2, 1)
   ))
   data <- data.frame(id = rep(1:2, each = 3), time = rep(c(0, .5, 1.5), 2),
     Y1 = c(0, .1, .2, .1, 0, -.1), Y2 = c(0, -.1, .1, .2, NA, 0))
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
+  expect_identical(stan_spec$standata$recompile, 0L)
   stan_fit <- .compiled_stan_fit(stan_spec)
-  # On stan's route, as in the random-effect test above.
+  # Stan carries the effect as a state; julia's default when optimising is
+  # the Laplace route, a different integral for an effect on the drift.
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
     priors = FALSE, intoverpop = "augmented"))
   raw <- c(-1, .1, -1, .2, -.4)
+  expect_equal(rstan::get_num_upars(stan_fit), length(raw))
 
   stan_value <- rstan::log_prob(stan_fit, upars = raw, adjust_transform = FALSE, gradient = TRUE)
   julia_value <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE)
@@ -316,12 +283,21 @@ test_that("Stan and Julia agree for a row with partial (not total) missingness",
   expect_equal(as.numeric(julia_value$gradient), as.numeric(attributes(stan_value)$gradient), tolerance = 1e-7)
 })
 
-test_that("Stan and Julia agree for nonlinear predictors and augmented states", {
+test_that("Stan and Julia agree where cells read the state and predictors", {
   skip_without_julia()
   skip_if_not_installed("rstan")
 
+  # The one model here that needs a stan program of its own, so it carries
+  # everything that needs one: a random effect reached through PARS and
+  # carried as a state, a drift cell reading that state, eta1 and a TD
+  # predictor, a TI effect, and a loading reading eta1 and the predictor.
+  # The partly missing row exercises `_ekf_masked_update_step!`, which takes
+  # the innovation from LAMBDA and the covariance from its Jacobian. The two
+  # coincide for an item whose loading is fixed, so the row drops Y1 and keeps
+  # Y2, whose loading reads the state: dropping Y2 tested nothing of this.
   model <- suppressWarnings(ctModel(
-    type = "ct", n.latent = 2, LAMBDA = diag(2),
+    type = "ct", n.latent = 2,
+    LAMBDA = matrix(c("1", "0", "1 + .1 * eta1 + .05 * dose", "1"), 2, 2, byrow = TRUE),
     PARS = matrix("cross||TRUE", 1, 1),
     DRIFT = matrix(c(
       "d11", "PARS[1,1] * (1 + .05 * eta1 + .02 * dose)",
@@ -335,49 +311,38 @@ test_that("Stan and Julia agree for nonlinear predictors and augmented states", 
   model$pars$group_effect[model$pars$param == "d11"] <- TRUE
   data <- data.frame(
     id = rep(1:2, each = 3), time = rep(c(0, .5, 1.5), 2),
-    Y1 = c(0, .1, .2, .1, 0, -.1), Y2 = c(0, -.1, .1, .2, .1, 0),
+    Y1 = c(0, NA, .2, .1, 0, -.1), Y2 = c(0, -.1, .1, .2, .1, 0),
     dose = c(0, 1, 0, 1, 0, 1), group = rep(c(-.5, .75), each = 3)
   )
-
-  stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE,
-    priors = FALSE, nlcontrol = list(maxtimestep = .25)))
-  stan_fit <- .compiled_stan_fit(stan_spec)
-
-  # On stan's route and stan's filter: the effect is a state, and with it the
-  # drift's Jacobian reads `PARS[1,1] * eta1`, which is not affine in the
-  # state, so julia would otherwise predict by moments.
-  local_julia_ekf()
-  julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = FALSE, nlcontrol = list(maxtimestep = .25), intoverpop = "augmented"))
-  raw <- c(-1, .1, -1, .1, .2, -.4, .05)
-  expect_equal(rstan::get_num_upars(stan_fit), length(raw))
-  expect_equal(max(c(julia_spec$parameter_table$parnumber,
-    julia_spec$ti_effects$coefficient), na.rm = TRUE), length(raw))
-
+  # The predictors at zero drop their terms out, so a failure here and not
+  # below is in how a cell reads a predictor. Same program, no second compile.
   zero_predictors <- data
   zero_predictors$dose <- 0
   zero_predictors$group <- 0
-  zero_stan_spec <- suppressMessages(ctFit(zero_predictors, model, backend = "stan", fit = FALSE,
-    priors = FALSE, nlcontrol = list(maxtimestep = .25)))
-  zero_stan_fit <- .compiled_stan_fit(zero_stan_spec)
-  zero_julia_spec <- suppressMessages(ctFit(zero_predictors, model, backend = "julia", fit = FALSE,
-    priors = FALSE, nlcontrol = list(maxtimestep = .25), intoverpop = "augmented"))
-  zero_stan_value <- rstan::log_prob(zero_stan_fit, upars = raw,
-    adjust_transform = FALSE, gradient = TRUE)
-  zero_julia_value <- ctJuliaEvaluate(zero_julia_spec, raw, gradient = TRUE)
-  expect_equal(as.numeric(zero_julia_value$value), as.numeric(zero_stan_value), tolerance = 1e-8)
-  expect_equal(as.numeric(zero_julia_value$gradient),
-    as.numeric(attributes(zero_stan_value)$gradient), tolerance = 1e-7)
+  raw <- c(-1, .1, -1, .1, .2, -.4, .05)
 
-  stan_value <- rstan::log_prob(stan_fit, upars = raw,
-    adjust_transform = FALSE, gradient = TRUE)
-  julia_value <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE)
-
-  # Repeated nonlinear EKF linearisation accumulates a sub-micro likelihood
-  # difference across Stan and Julia's otherwise equivalent matrix kernels.
-  expect_equal(as.numeric(julia_value$value), as.numeric(stan_value), tolerance = 2e-6)
-  expect_equal(as.numeric(julia_value$gradient),
-    as.numeric(attributes(stan_value)$gradient), tolerance = 1e-7)
+  # Julia on stan's route and filter: the effect is a state rather than a
+  # Laplace coordinate, and the dynamics and measurement are linearised at
+  # the mean rather than predicted by moments and iterated to the mode.
+  local_julia_ekf()
+  compare <- function(d) {
+    stan_spec <- suppressMessages(ctFit(d, model, backend = "stan", fit = FALSE,
+      priors = FALSE, nlcontrol = list(maxtimestep = .25)))
+    stan_fit <- .compiled_stan_fit(stan_spec)
+    julia_spec <- suppressMessages(ctFit(d, model, backend = "julia", fit = FALSE,
+      priors = FALSE, nlcontrol = list(maxtimestep = .25), intoverpop = "augmented"))
+    expect_equal(rstan::get_num_upars(stan_fit), length(raw))
+    expect_equal(max(c(julia_spec$parameter_table$parnumber,
+      julia_spec$ti_effects$coefficient), na.rm = TRUE), length(raw))
+    stan_value <- rstan::log_prob(stan_fit, upars = raw, adjust_transform = FALSE,
+      gradient = TRUE)
+    julia_value <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE)
+    expect_equal(as.numeric(julia_value$value), as.numeric(stan_value), tolerance = 1e-8)
+    expect_equal(as.numeric(julia_value$gradient),
+      as.numeric(attributes(stan_value)$gradient), tolerance = 1e-7)
+  }
+  compare(zero_predictors)
+  compare(data)
 })
 
 test_that("Stan and Julia agree for a T0MEANS-indvarying population SD with non-unit meanscale", {
@@ -467,54 +432,6 @@ test_that("Stan and Julia agree for a moderate-dimensional model mixing both kin
   julia_value <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE)
   expect_equal(as.numeric(julia_value$value), as.numeric(stan_value), tolerance = 1e-6)
   expect_equal(as.numeric(julia_value$gradient), as.numeric(attributes(stan_value)$gradient), tolerance = 1e-6)
-})
-
-test_that("Stan and Julia agree for a state/TD-dependent measurement equation with partial missingness", {
-  skip_without_julia()
-  skip_if_not_installed("rstan")
-
-  # `_ekf_masked_update_step!`'s partial-observation branch must use LAMBDA
-  # for the innovation/mean but its Jacobian (pars.Jy) for covariance
-  # propagation -- these coincide for a fixed/linear LAMBDA (every other
-  # test here, and the model that motivated this fix, use one), so a bug
-  # specific to *nonlinear* LAMBDA combined with missingness would not have
-  # been caught anywhere else. This was flagged as an untested combination
-  # in HANDOFF.md rather than a known bug; this test confirms it's actually
-  # correct (Stan and Julia agree here) rather than leaving it unverified.
-  model <- suppressWarnings(ctModel(
-    type = "ct", n.latent = 2, LAMBDA = matrix(c(
-      "1", "0",
-      "1 + .1 * eta1 + .05 * dose", "1"
-    ), 2, 2, byrow = TRUE),
-    PARS = matrix("cross||TRUE", 1, 1),
-    DRIFT = matrix(c("d11", "PARS[1,1]", "d21", "d22"), 2, 2, byrow = TRUE),
-    DIFFUSION = diag(c(.2, .15)), MANIFESTVAR = diag(c(.1, .1)),
-    MANIFESTMEANS = matrix(0, 2, 1), T0VAR = diag(2), T0MEANS = matrix(0, 2, 1),
-    n.TDpred = 1, TDpredNames = "dose", TDPREDEFFECT = matrix(c("impulse", 0), 2, 1)
-  ))
-  data <- data.frame(
-    id = rep(1:2, each = 3), time = rep(c(0, .5, 1.5), 2),
-    Y1 = c(0, .1, .2, .1, 0, -.1), Y2 = c(0, -.1, .1, .2, NA, 0),
-    dose = c(0, 1, 0, 1, 0, 1)
-  )
-  stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE,
-    priors = FALSE, nlcontrol = list(maxtimestep = .25)))
-  stan_fit <- .compiled_stan_fit(stan_spec)
-  # On stan's route: on julia's default, the Laplace route, this point is
-  # 116 nats away, a different integral rather than a different filter.
-  julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = FALSE, nlcontrol = list(maxtimestep = .25), intoverpop = "augmented"))
-  raw <- c(-0.1773093, 0.007978311, -0.4549659, -0.408796, 0.3535467, -0.2802454)
-  expect_equal(rstan::get_num_upars(stan_fit), length(raw))
-
-  stan_value <- rstan::log_prob(stan_fit, upars = raw, adjust_transform = FALSE, gradient = TRUE)
-  # Stan's filter is the EKF's (`local_julia_ekf()`).
-  local_julia_ekf()
-  julia_value <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE)
-  # Same sub-micro nonlinear-EKF-linearisation tolerance as the other
-  # nonlinear-model test above.
-  expect_equal(as.numeric(julia_value$value), as.numeric(stan_value), tolerance = 2e-5)
-  expect_equal(as.numeric(julia_value$gradient), as.numeric(attributes(stan_value)$gradient), tolerance = 1e-5)
 })
 
 test_that("Stan and Julia agree for 3 original (not just augmented) latents", {
