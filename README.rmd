@@ -296,20 +296,21 @@ which is what growth looks like in this parameterisation.
 
 | If you want to | Read |
 |---|---|
+| Read the help pages, vignettes and changes in a browser | the [ctsem website](https://cdriveraus.github.io/ctsem/) |
 | Know what changed since ctsem 3.x | [New in 4.x](NEW-IN-4.md) |
 | Understand what a dynamic system is, and why it is worth the trouble | [Dynamic systems modeling in psychology](https://cdriver.netlify.app/post/introtodynamics/) |
 | Work an applied example end to end, from theory through simulation to fitting and checking | the [tutorial preprint](https://osf.io/preprints/psyarxiv/4q9ex_v3), with code and materials in the [OSF project](https://osf.io/xh6ue/) |
 | A second, shorter worked start | [ctsem quick start: sunspots and a damped linear oscillator](https://cdriver.netlify.app/post/ctsem-quick-start/) |
 | Get everything ctsem can say about a fit, in one folder | `ctReport(fit)` |
-| The full reference: the model, the priors, every argument | the [hierarchical manual (pdf)](https://CRAN.R-project.org/package=ctsem/vignettes/hierarchicalmanual.pdf), or `ctDocs()` in R |
-| Understand and control the uncertainty ctsem reports | [uncertainty vignette](https://github.com/cdriveraus/ctsem/blob/master/vignettes/uncertainty.qmd) |
-| Build a measurement model: multiple indicators, binary, ordinal, count or censored items | [measurement models vignette](https://github.com/cdriveraus/ctsem/blob/master/vignettes/measurement-models.qmd) |
-| Put random effects on parameters, at one or several levels | [multilevel Laplace vignette](https://github.com/cdriveraus/ctsem/blob/master/vignettes/laplace-multilevel.qmd) |
-| Model test items as indicators: item response models over time | [IRT items vignette](https://github.com/cdriveraus/ctsem/blob/master/vignettes/irt-items.qmd) |
-| Decide whether to treat a rating scale as ordinal or continuous | [ordinal or continuous vignette](https://github.com/cdriveraus/ctsem/blob/master/vignettes/ordinal-or-continuous.qmd) |
-| Find out what a fitted model is missing | [score tests vignette](https://github.com/cdriveraus/ctsem/blob/master/vignettes/score-tests.qmd) |
-| Weight subjects to represent a population | [sampling weights vignette](https://github.com/cdriveraus/ctsem/blob/master/vignettes/sampling-weights.qmd) |
-| Fit each subject separately, with the population estimate as a prior | [empirical Bayes vignette](https://CRAN.R-project.org/package=ctsem/vignettes/empirical-bayes-fitting.html) |
+| The full reference: the model, the priors, every argument | the [hierarchical manual (pdf)](https://cdriveraus.github.io/ctsem/articles/hierarchicalmanual.pdf), or `ctDocs()` in R |
+| Understand and control the uncertainty ctsem reports | [uncertainty vignette](https://cdriveraus.github.io/ctsem/articles/uncertainty.html) |
+| Build a measurement model: multiple indicators, binary, ordinal, count or censored items | [measurement models vignette](https://cdriveraus.github.io/ctsem/articles/measurement-models.html) |
+| Put random effects on parameters, at one or several levels | [multilevel Laplace vignette](https://cdriveraus.github.io/ctsem/articles/laplace-multilevel.html) |
+| Model test items as indicators: item response models over time | [IRT items vignette](https://cdriveraus.github.io/ctsem/articles/irt-items.html) |
+| Decide whether to treat a rating scale as ordinal or continuous | [ordinal or continuous vignette](https://cdriveraus.github.io/ctsem/articles/ordinal-or-continuous.html) |
+| Find out what a fitted model is missing | [score tests vignette](https://cdriveraus.github.io/ctsem/articles/score-tests.html) |
+| Weight subjects to represent a population | [sampling weights vignette](https://cdriveraus.github.io/ctsem/articles/sampling-weights.html) |
+| Fit each subject separately, with the population estimate as a prior | [empirical Bayes vignette](https://cdriveraus.github.io/ctsem/articles/empirical-bayes-fitting.html) |
 | Fit discrete time models, and know when the choice matters | [Discrete time models using ctsem?](https://cdriver.netlify.app/post/dtbivariate/) and [Representations of dynamic systems](https://cdriver.netlify.app/post/discretetime/) |
 | Handle an accelerated longitudinal or multiple group design | [Accelerated longitudinal and multiple group designs](https://cdriver.netlify.app/post/accelerated/) |
 | Understand missingness, and filtered against smoothed estimates | [Kalman filter vs smoother](https://cdriver.netlify.app/post/missingdata/) |

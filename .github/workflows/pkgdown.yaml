@@ -1,0 +1,95 @@
+# Publishes the website, https://cdriveraus.github.io/ctsem/, from master.
+#
+# promote-master dispatches it each time it moves master (a ref moved with
+# GITHUB_TOKEN starts no push workflow); it can also be run by hand from the
+# Actions tab, on whatever branch is chosen there.
+#
+# It builds only when something the site shows has changed since the commit
+# the live site was built from, which the gh-pages commit names
+# (dev/build-site.R --publish writes it, here or by hand). Most master moves
+# change code alone and stop at the first step.
+#
+# The build runs nothing of ctsem's: dev/build-site.R needs pkgdown, rmarkdown
+# and pandoc, not ctsem, Julia or Stan. The vignettes are the pages last
+# rendered and committed, the examples are shown as code. Publishing replaces
+# gh-pages with one commit, so the branch does not grow.
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Build even if nothing the site shows has changed
+        type: boolean
+        default: false
+
+name: pkgdown
+
+permissions:
+  contents: write
+
+# A newer run builds a newer master; the older one has nothing left to add.
+concurrency:
+  group: pkgdown
+  cancel-in-progress: true
+
+jobs:
+  site:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The commit the live site was built from has to be in the history.
+          fetch-depth: 0
+
+      - name: Has anything the site shows changed?
+        id: changed
+        env:
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          say() { echo "$1"; echo "$1" >> "$GITHUB_STEP_SUMMARY"; }
+          paths="man vignettes NEWS.md NEW-IN-4.md README.md _pkgdown.yml DESCRIPTION inst/CITATION pkgdown dev/build-site.R"
+          build=true
+          if [ "$FORCE" = true ]; then
+            say "Building: asked to."
+          elif ! git fetch -q origin gh-pages 2> /dev/null; then
+            say "Building: there is no gh-pages branch yet."
+          else
+            built=$(git log -1 --format=%s FETCH_HEAD | grep -oE "[0-9a-f]{40}" | tail -n 1 || true)
+            if [ -z "$built" ] || ! git cat-file -e "${built}^{commit}" 2> /dev/null; then
+              say "Building: the live site names no commit in this history."
+            elif git diff --quiet "$built" HEAD -- $paths; then
+              build=false
+              say "Not building: nothing the site shows changed since ${built:0:8}."
+            else
+              say "Building: $(git diff --name-only "$built" HEAD -- $paths | wc -l) files the site shows changed since ${built:0:8}."
+            fi
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+
+      - uses: r-lib/actions/setup-pandoc@v2
+        if: steps.changed.outputs.build == 'true'
+
+      - uses: r-lib/actions/setup-r@v2
+        if: steps.changed.outputs.build == 'true'
+        with:
+          use-public-rspm: true
+
+      # Only what the build script uses: not ctsem or its dependencies.
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        if: steps.changed.outputs.build == 'true'
+        with:
+          packages: |
+            any::pkgdown
+            any::rmarkdown
+
+      - name: Build and publish
+        if: steps.changed.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
+          Rscript dev/build-site.R --publish

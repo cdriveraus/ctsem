@@ -34,11 +34,13 @@ if (!file.exists(file.path(root, "_pkgdown.yml")) ||
     !identical(unname(read.dcf(file.path(root, "DESCRIPTION"), "Package")[1, 1]), "ctsem"))
   stop("Run this from the ctsem package root.")
 
+# A remote's url can carry a token (the pkgdown workflow's does): never print one.
+hide <- function(x) gsub("//[^/@[:space:]]+@", "//", x)
 git <- function(..., dir = root) {
   out <- suppressWarnings(system2("git", c("-C", shQuote(dir), ...), stdout = TRUE, stderr = TRUE))
   status <- attr(out, "status")
   if (!is.null(status) && status != 0)
-    stop("git ", paste(c(...), collapse = " "), " failed:\n", paste(out, collapse = "\n"))
+    stop(hide(paste0("git ", paste(c(...), collapse = " "), " failed:\n", paste(out, collapse = "\n"))))
   out
 }
 
@@ -139,12 +141,18 @@ stopifnot(file.copy(file.path(root, "vignettes", "hierarchicalmanual.pdf"),
 built <- file.path(docs, "articles", paste0(sub("\\.html\\.asis$", "", stubs), ".html"))
 if (!all(file.exists(built))) stop("Articles missing from docs/: ", paste(built[!file.exists(built)], collapse = ", "))
 # An article's "Source:" link names the .Rmd made above; the source is the .qmd.
+# And the contents menu is a heading's text, in which a formula's TeX
+# annotation follows the symbol ("remove uu"), so headings lose theirs.
 for (page in built) {
   name <- sub("\\.html$", "", basename(page))
-  html <- readLines(page, encoding = "UTF-8", warn = FALSE)
+  html <- paste(readLines(page, encoding = "UTF-8", warn = FALSE), collapse = "\n")
   rmd <- paste0("vignettes/", name, ".Rmd")
-  if (!any(grepl(rmd, html, fixed = TRUE))) stop(page, ": no source link to ", rmd, ".")
-  writeLines(enc2utf8(gsub(rmd, paste0("vignettes/", name, ".qmd"), html, fixed = TRUE)), page, useBytes = TRUE)
+  if (!grepl(rmd, html, fixed = TRUE)) stop(page, ": no source link to ", rmd, ".")
+  html <- gsub(rmd, paste0("vignettes/", name, ".qmd"), html, fixed = TRUE)
+  heads <- gregexpr("(?s)<h([1-6])[ >].*?</h\\1>", html, perl = TRUE)
+  regmatches(html, heads) <- lapply(regmatches(html, heads), function(h)
+    gsub("(?s)<annotation[^>]*>.*?</annotation>", "", h, perl = TRUE))
+  writeLines(enc2utf8(html), page, useBytes = TRUE)
 }
 cat("Built", docs, "with", length(built), "articles.\n")
 
@@ -163,5 +171,5 @@ if (publish) {
   git("add", "-A", dir = site)
   git(who, "commit", "-q", "-m", shQuote(paste0("Site built from ", branch, " ", head)), dir = site)
   git("push", "--force", shQuote(remote), "gh-pages", dir = site)
-  cat("Published ", substr(head, 1, 8), " (", branch, ") to gh-pages on ", remote, ".\n", sep = "")
+  cat("Published ", substr(head, 1, 8), " (", branch, ") to gh-pages on ", hide(remote), ".\n", sep = "")
 }

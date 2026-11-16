@@ -169,19 +169,19 @@ for easier estimation and more sensible default priors.
 ``` r
 summary(fit)$popmeans
 #>                   mean    sd   2.5%    50%  97.5%   mode
-#> T0m_yield       -0.952 0.144 -1.238 -0.950 -0.658 -0.943
-#> T0m_fat          0.159 0.198 -0.236  0.152  0.567  0.150
-#> drift_yield     -0.041 0.004 -0.050 -0.041 -0.033 -0.041
-#> drift_yield_fat -0.020 0.004 -0.028 -0.020 -0.013 -0.020
-#> drift_fat_yield -0.006 0.004 -0.013 -0.006  0.001 -0.006
-#> drift_fat       -0.015 0.004 -0.025 -0.015 -0.008 -0.015
-#> diff_yield       0.136 0.004  0.128  0.136  0.143  0.136
-#> diff_fat_yield  -0.592 0.061 -0.713 -0.590 -0.475 -0.592
-#> diff_fat         0.116 0.005  0.105  0.116  0.126  0.116
-#> mvaryield        0.328 0.003  0.322  0.328  0.335  0.328
-#> mvarfat          0.582 0.005  0.573  0.582  0.591  0.582
-#> mm_yield        -0.050 0.124 -0.290 -0.047  0.209 -0.054
-#> mm_fat           0.140 0.110 -0.077  0.141  0.360  0.142
+#> T0m_yield       -0.942 0.146 -1.232 -0.944 -0.646 -0.943
+#> T0m_fat          0.145 0.198 -0.241  0.139  0.527  0.150
+#> drift_yield     -0.041 0.004 -0.050 -0.040 -0.033 -0.041
+#> drift_yield_fat -0.020 0.004 -0.028 -0.020 -0.012 -0.020
+#> drift_fat_yield -0.006 0.003 -0.012 -0.006  0.001 -0.006
+#> drift_fat       -0.015 0.004 -0.025 -0.015 -0.009 -0.015
+#> diff_yield       0.136 0.004  0.129  0.136  0.143  0.136
+#> diff_fat_yield  -0.595 0.058 -0.703 -0.595 -0.480 -0.592
+#> diff_fat         0.116 0.005  0.106  0.115  0.125  0.116
+#> mvaryield        0.329 0.003  0.323  0.328  0.335  0.328
+#> mvarfat          0.582 0.005  0.574  0.582  0.591  0.582
+#> mm_yield        -0.059 0.124 -0.303 -0.062  0.178 -0.054
+#> mm_fat           0.148 0.112 -0.075  0.142  0.357  0.142
 ```
 
 Drift names read as `drift_<affected>_<predictor>`, so `drift_yield` is
@@ -201,10 +201,10 @@ excludes zero, while the interval for the reverse effect does not.
 ``` r
 summary(fit)$popsd
 #>            mean    sd  2.5%   50% 97.5%  mode
-#> T0m_yield 0.900 0.115 0.687 0.896 1.140 0.892
-#> T0m_fat   1.158 0.162 0.881 1.145 1.516 1.149
-#> mm_yield  0.750 0.102 0.570 0.741 0.983 0.742
-#> mm_fat    0.428 0.263 0.125 0.357 1.195 0.366
+#> T0m_yield 0.899 0.119 0.688 0.896 1.146 0.892
+#> T0m_fat   1.155 0.155 0.863 1.153 1.455 1.149
+#> mm_yield  0.750 0.107 0.559 0.742 0.980 0.742
+#> mm_fat    0.425 0.257 0.117 0.370 1.102 0.366
 ```
 
 Those are the population standard deviations of the parameters that vary
@@ -304,9 +304,9 @@ Two pieces of syntax recur everywhere and are worth unpacking:
 ``` r
 summary(f)$tipreds
 #>                  mean    sd   2.5%   50% 97.5%  mode     z
-#> tip_Diet_2_cint 0.021 0.013 -0.005 0.021 0.046 0.021 1.585
-#> tip_Diet_3_cint 0.051 0.013  0.024 0.051 0.076 0.051 3.782
-#> tip_Diet_4_cint 0.028 0.013  0.002 0.028 0.053 0.028 2.209
+#> tip_Diet_2_cint 0.021 0.013 -0.004 0.020 0.046 0.021 1.608
+#> tip_Diet_3_cint 0.050 0.013  0.025 0.050 0.077 0.051 3.840
+#> tip_Diet_4_cint 0.028 0.013  0.002 0.028 0.052 0.028 2.128
 ```
 
 Diets 3 and 4 raise the continuous intercept clearly; diet 2 is not
@@ -336,20 +336,21 @@ parameterisation.
 
 | If you want to | Read |
 |----|----|
+| Read the help pages, vignettes and changes in a browser | the [ctsem website](https://cdriveraus.github.io/ctsem/) |
 | Know what changed since ctsem 3.x | [New in 4.x](NEW-IN-4.md) |
 | Understand what a dynamic system is, and why it is worth the trouble | [Dynamic systems modeling in psychology](https://cdriver.netlify.app/post/introtodynamics/) |
 | Work an applied example end to end, from theory through simulation to fitting and checking | the [tutorial preprint](https://osf.io/preprints/psyarxiv/4q9ex_v3), with code and materials in the [OSF project](https://osf.io/xh6ue/) |
 | A second, shorter worked start | [ctsem quick start: sunspots and a damped linear oscillator](https://cdriver.netlify.app/post/ctsem-quick-start/) |
 | Get everything ctsem can say about a fit, in one folder | `ctReport(fit)` |
-| The full reference: the model, the priors, every argument | the [hierarchical manual (pdf)](https://CRAN.R-project.org/package=ctsem/vignettes/hierarchicalmanual.pdf), or `ctDocs()` in R |
-| Understand and control the uncertainty ctsem reports | [uncertainty vignette](https://github.com/cdriveraus/ctsem/blob/master/vignettes/uncertainty.qmd) |
-| Build a measurement model: multiple indicators, binary, ordinal, count or censored items | [measurement models vignette](https://github.com/cdriveraus/ctsem/blob/master/vignettes/measurement-models.qmd) |
-| Put random effects on parameters, at one or several levels | [multilevel Laplace vignette](https://github.com/cdriveraus/ctsem/blob/master/vignettes/laplace-multilevel.qmd) |
-| Model test items as indicators: item response models over time | [IRT items vignette](https://github.com/cdriveraus/ctsem/blob/master/vignettes/irt-items.qmd) |
-| Decide whether to treat a rating scale as ordinal or continuous | [ordinal or continuous vignette](https://github.com/cdriveraus/ctsem/blob/master/vignettes/ordinal-or-continuous.qmd) |
-| Find out what a fitted model is missing | [score tests vignette](https://github.com/cdriveraus/ctsem/blob/master/vignettes/score-tests.qmd) |
-| Weight subjects to represent a population | [sampling weights vignette](https://github.com/cdriveraus/ctsem/blob/master/vignettes/sampling-weights.qmd) |
-| Fit each subject separately, with the population estimate as a prior | [empirical Bayes vignette](https://CRAN.R-project.org/package=ctsem/vignettes/empirical-bayes-fitting.html) |
+| The full reference: the model, the priors, every argument | the [hierarchical manual (pdf)](https://cdriveraus.github.io/ctsem/articles/hierarchicalmanual.pdf), or `ctDocs()` in R |
+| Understand and control the uncertainty ctsem reports | [uncertainty vignette](https://cdriveraus.github.io/ctsem/articles/uncertainty.html) |
+| Build a measurement model: multiple indicators, binary, ordinal, count or censored items | [measurement models vignette](https://cdriveraus.github.io/ctsem/articles/measurement-models.html) |
+| Put random effects on parameters, at one or several levels | [multilevel Laplace vignette](https://cdriveraus.github.io/ctsem/articles/laplace-multilevel.html) |
+| Model test items as indicators: item response models over time | [IRT items vignette](https://cdriveraus.github.io/ctsem/articles/irt-items.html) |
+| Decide whether to treat a rating scale as ordinal or continuous | [ordinal or continuous vignette](https://cdriveraus.github.io/ctsem/articles/ordinal-or-continuous.html) |
+| Find out what a fitted model is missing | [score tests vignette](https://cdriveraus.github.io/ctsem/articles/score-tests.html) |
+| Weight subjects to represent a population | [sampling weights vignette](https://cdriveraus.github.io/ctsem/articles/sampling-weights.html) |
+| Fit each subject separately, with the population estimate as a prior | [empirical Bayes vignette](https://cdriveraus.github.io/ctsem/articles/empirical-bayes-fitting.html) |
 | Fit discrete time models, and know when the choice matters | [Discrete time models using ctsem?](https://cdriver.netlify.app/post/dtbivariate/) and [Representations of dynamic systems](https://cdriver.netlify.app/post/discretetime/) |
 | Handle an accelerated longitudinal or multiple group design | [Accelerated longitudinal and multiple group designs](https://cdriver.netlify.app/post/accelerated/) |
 | Understand missingness, and filtered against smoothed estimates | [Kalman filter vs smoother](https://cdriver.netlify.app/post/missingdata/) |

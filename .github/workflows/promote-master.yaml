@@ -19,8 +19,9 @@
 #     workflows permission, so the run fails and says so; push master by hand
 #     then: git push origin juliaFit:master
 #   - Start master's push workflows. A ref moved with GITHUB_TOKEN triggers
-#     none, so it dispatches R-CMD-check on master itself; the other suites
-#     ran on this commit already.
+#     none, so it dispatches R-CMD-check on master itself, and the website
+#     (pkgdown.yaml, which builds only when the documentation changed); the
+#     other suites ran on this commit already.
 #   - Run from juliaFit. GitHub runs a workflow_run trigger from the default
 #     branch's copy of this file only, so a change here takes effect once it
 #     is on master.
@@ -126,3 +127,5 @@ jobs:
           say "master moved from ${master:0:8} to ${tip:0:8}: fast-tests and julia-tests passed, julia-engine $engine."
           gh workflow run check-standard.yaml --repo "$REPO" --ref master
           say "R-CMD-check dispatched on master."
+          gh workflow run pkgdown.yaml --repo "$REPO" --ref master
+          say "Website dispatched on master; it publishes if the documentation changed."
