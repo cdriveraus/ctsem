@@ -1418,6 +1418,15 @@ _ridge(p) = -50 * (p[2] - _ridge_c(p[1]))^2 + 15 * exp(-(p[1] - 2)^2 / 2)
     @test ContinuousTimeSEM._ctsem_flat_ladder(fg!, x, f, G, split;
         corrections=0).best === nothing
     @test ContinuousTimeSEM._ctsem_flat_probe(_ridge, x, -f, u).gain == 0
+    # Each rung is reported before it is walked, both sides, with its
+    # signed length; the result is the same.
+    walked = Float64[]
+    told = ContinuousTimeSEM._ctsem_flat_ladder(fg!, x, f, G, split;
+        progress=len -> push!(walked, len))
+    @test told.best.point == out.best.point && told.gcalls == out.gcalls
+    @test walked[1:3] == [0.25, 1.0, 4.0]
+    @test any(<(0), walked) && all(len -> abs(len) <=
+        ContinuousTimeSEM._CTSEM_FLAT_LADDER_REACH, walked)
 end
 
 @testset "the finish leaves a plateau on a curved ridge where the route allows it" begin
@@ -2454,6 +2463,184 @@ ContinuousTimeSEM._ctsem_local_columns(o::_LocalQuadratic, x::AbstractVector,
     @test plain.g_converged ? norm(plain.minimizer .+ H \ g0) <= reach :
         (plain.linesearch_failed && dot(gp, H \ gp) / 2 < 1e-9)
     @test withlocal.iterations < plain.iterations
+end
+
+# A stand-in route with units, their scores and a local curvature: the
+# minimised objective is `sum_U (a_U'x - b_U)^2 / 2 + x' diag(precision) x / 2`,
+# a unit reading the parameters where its row of `A` is nonzero.
+mutable struct _LocalMock <: ContinuousTimeSEM.CTSEMOptimisable
+    A::Matrix{Float64}
+    b::Vector{Float64}
+    precision::Vector{Float64}
+end
+_local_mock_hessian(m::_LocalMock) = transpose(m.A) * m.A + Diagonal(m.precision)
+function ContinuousTimeSEM.ctsem_evaluate(m::_LocalMock, x::AbstractVector;
+        gradient::Bool=true, contributions::Bool=false, gradient_method=:adjoint)
+    y = collect(Float64, x)
+    r = m.A * y .- m.b
+    return (value = -sum(abs2, r) / 2 - sum(m.precision .* abs2.(y)) / 2,
+        gradient = gradient ? -(transpose(m.A) * r) .- m.precision .* y : nothing,
+        row_loglik = Float64[], subject_loglik = Float64[])
+end
+ContinuousTimeSEM.ctsem_hessian(m::_LocalMock, x::AbstractVector;
+    chunk::Integer=0, progress=nothing) = -Matrix(_local_mock_hessian(m))
+ContinuousTimeSEM._ctsem_params(::_LocalMock) = nothing
+ContinuousTimeSEM._ctsem_saturated_for(::_LocalMock, minimizer) = Int[]
+ContinuousTimeSEM._ctsem_finish_curvature(::_LocalMock) = :exact
+ContinuousTimeSEM._ctsem_cheap_hessian(::_LocalMock) = true
+ContinuousTimeSEM._ctsem_scores_supported(::_LocalMock) = true
+ContinuousTimeSEM._ctsem_nunits(m::_LocalMock) = size(m.A, 1)
+ContinuousTimeSEM._ctsem_local_capable(::_LocalMock) = true
+ContinuousTimeSEM._ctsem_prior_objective(m::_LocalMock) = m
+ContinuousTimeSEM._ctsem_prior_precision(m::_LocalMock, npar::Integer) = copy(m.precision)
+ContinuousTimeSEM._ctsem_local_columns(m::_LocalMock, x::AbstractVector,
+    cols::AbstractVector{Int}, S::AbstractMatrix; kw...) = _local_mock_hessian(m)[:, cols]
+# It keeps a run's local curvature, as the engine's objectives do.
+ContinuousTimeSEM._ctsem_local_held(m::_LocalMock) =
+    get(ContinuousTimeSEM._CTSEM_LOCAL_HELD, m, nothing)
+ContinuousTimeSEM._ctsem_local_hold!(m::_LocalMock,
+    held::ContinuousTimeSEM.CTSEMLocalHeld) =
+    (ContinuousTimeSEM._CTSEM_LOCAL_HELD[m] = held; nothing)
+function ContinuousTimeSEM._ctsem_optimise_trial_scores(m::_LocalMock, x,
+        gradient_method, limit::Real, log, store::ContinuousTimeSEM.CTSEMScoreStore)
+    y = collect(Float64, x)
+    e = ContinuousTimeSEM.ctsem_evaluate(m, y)
+    # The units' scores of the maximised objective, the prior's gradient out.
+    copyto!(store.S, -((m.A * y .- m.b) .* m.A))
+    copyto!(store.x, y)
+    store.valid = true
+    return (evaluated=(value=e.value, gradient=e.gradient), valid=true)
+end
+
+@testset "a cold run builds the local curvature before a walk on the Krylov model" begin
+    C = ContinuousTimeSEM
+    # Asked for once a run, where none is built or carried and the scores
+    # describe the point; the next reading of that point then builds it
+    # whatever the run has spent.
+    rng = Random.MersenneTwister(7)
+    n = 8; N = 40
+    S = randn(rng, N, n)
+    S[4:N, 1:3] .= 0
+    precision = fill(0.5, n)
+    H = C._ctsem_score_information!(zeros(n, n), S, precision)
+    store = C.CTSEMScoreStore(N, n)
+    at!(st, y, Sy) = (copyto!(st.S, Sy); copyto!(st.x, y); st.valid = true)
+    x0 = fill(0.1, n); x = zeros(n)
+    lc = C.CTSEMLocalCurvature(_LocalQuadratic(H), store, precision)
+    @test !C._ctsem_local_want!(nothing, x)
+    @test !C._ctsem_local_want!(lc, x)          # no scores yet
+    at!(store, x0, S)
+    @test !C._ctsem_local_due(lc, x0)           # one point read
+    at!(store, x, S)
+    @test !C._ctsem_local_want!(lc, x0)         # the scores are another point's
+    lc.cost = 100.0
+    @test !C._ctsem_local_due(lc, x)            # two read, the cost not spent
+    lc.cost = 100.0
+    @test C._ctsem_local_want!(lc, x) && lc.wanted
+    @test C._ctsem_local_due(lc, x)
+    @test !C._ctsem_local_want!(lc, x)          # once a run
+    C._ctsem_local_build!(lc, x)
+    lc.cost = 100.0
+    @test lc.builds == 1 && !C._ctsem_local_due(lc, x)
+    carried = C.CTSEMLocalCurvature(_LocalQuadratic(H), store, precision)
+    carried.builds = 1
+    @test !C._ctsem_local_want!(carried, x)
+    none = C.CTSEMLocalCurvature(_LocalQuadratic(H), store, precision)
+    none.done = true
+    @test !C._ctsem_local_want!(none, x)
+
+    # In a run: ten groups of four units, each group with sixteen parameters
+    # of its own (cheap: a tenth of the units read each, a build sixteen
+    # gradients), and four every unit reads, one of them under a precision of
+    # 1e8 and off its optimum. A cold run's first step is along that
+    # coordinate, its one pair gives every coordinate that curvature, and its
+    # second step predicts under the Hessian's reach with a hundred times
+    # that to gain.
+    rng = Random.MersenneTwister(11)
+    groups = 10; per = 4; own = 16; common = 4
+    N = groups * per; n = groups * own + common
+    A = zeros(N, n)
+    for U in 1:N
+        g = (U - 1) ÷ per
+        A[U, g * own .+ (1:own)] .= randn(rng, own)
+        A[U, groups * own .+ (1:common)] .= randn(rng, common)
+    end
+    precision = fill(1.0, n)
+    precision[n] = 1e8
+    m = _LocalMock(A, 3 .* randn(rng, N), precision)
+    Hm = _local_mock_hessian(m)
+    best = Hm \ (transpose(A) * m.b)
+    start = zeros(n); start[n] = 1e-3
+    value(y) = C.ctsem_evaluate(m, y; gradient=false).value
+    @test value(best) - value(start) > 1
+    kw = (maxiter=500, gap_tol=1e-10, converge_tol=1e-8, newton=true, certify=true,
+        newton_curvature=:krylov, progress=false, verbose=false, overshoot_probe=:off)
+    lbfgs(r) = r.iterations - r.newton_steps
+    # Without a local curvature the run hands over at its second step, and
+    # the finish finds what is left.
+    plain = C.ctsem_optimize(m, start; kw...)
+    @test lbfgs(plain) == 2 && plain.local_builds == 0
+    @test plain.newton_history_gain[1] > 1
+    # With one, the hand-over waits for its first build, ahead of the
+    # sixteen gradients the schedule would wait for, and L-BFGS goes on with
+    # it to within the Hessian's reach.
+    with = C.ctsem_optimize(m, start; lbfgs_local=true, kw...)
+    @test with.local_builds == 1 && with.local_columns == groups * own
+    @test lbfgs(with) > 2
+    @test with.g_calls - with.newton_steps < 16
+    @test with.newton_history_gain[1] < C._ctsem_hessian_reach(C._CTSEM_HESSIAN_REUSE_SE)
+    # A run handed a curvature is not cold: it stops by its rule, unbuilt.
+    warm = C.ctsem_optimize(m, start; lbfgs_local=true, lbfgs_inverse=inv(Hm), kw...)
+    @test warm.local_builds == 0
+    # Nor does a run whose finish forms the exact Hessian wait: its first
+    # step shows what L-BFGS left.
+    exact = C.ctsem_optimize(m, start; lbfgs_local=true,
+        merge(kw, (newton_curvature=:auto, gap_tol=1e-2))...)
+    @test exact.local_builds == 0
+    for r in (plain, with, warm, exact)
+        @test r.minimizer ≈ best atol = 1e-6
+    end
+
+    # The objective keeps the local curvature a run ended with
+    # (`lbfgs_pairs = :objective`), and it goes to the objective a
+    # smoothing pass moves to, the precisions' change on its diagonal
+    # (`ctsem_local_carry!`). A run there starts on it: not cold, nothing
+    # built, and its L-BFGS ends within a millionth of a nat of the maximum
+    # (the finish has no step left to take), where without it the run
+    # handed over at its second step with over a nat left.
+    @test C._ctsem_local_held(m) === nothing
+    kept = C.ctsem_optimize(m, start; lbfgs_local=true, lbfgs_pairs=:objective, kw...)
+    held = C._ctsem_local_held(m)
+    @test kept.local_builds == 1 && kept.local_builds_base == 0
+    @test held isa C.CTSEMLocalHeld && held.builds == 1
+    @test held.inverse * held.P ≈ Matrix(I, n, n) rtol = 1e-6
+    index = [1, n - 1]; delta = [2.0, 5.0]
+    shift = zeros(n); shift[index] .= delta
+    moved = _LocalMock(A, m.b, precision .+ shift)
+    @test C.ctsem_local_carry!(moved, m, index, delta)
+    got = C._ctsem_local_held(moved)
+    @test got.P ≈ held.P .+ Diagonal(shift) && got.builds == 1
+    @test got.inverse * got.P ≈ Matrix(I, n, n) rtol = 1e-6
+    @test C._ctsem_local_held(m) === held
+    bestmoved = _local_mock_hessian(moved) \ (transpose(A) * m.b)
+    next = C.ctsem_optimize(moved, start; lbfgs_local=true, lbfgs_pairs=:objective, kw...)
+    @test next.local_builds == 0 && next.local_builds_base == 1
+    short(o, at, top) = C.ctsem_evaluate(o, top; gradient=false).value -
+        C.ctsem_evaluate(o, at; gradient=false).value
+    @test short(moved, start, bestmoved) > 1
+    @test short(moved, next.minimizer, bestmoved) < 1e-6
+    @test C._ctsem_local_held(moved).builds == 1
+    # An inverse the caller hands in is the run's, not the held one.
+    own = C.ctsem_optimize(moved, start; lbfgs_local=true, lbfgs_pairs=:objective,
+        lbfgs_inverse=inv(_local_mock_hessian(moved)), kw...)
+    @test own.local_builds_base == 0
+    # A change that leaves the matrix indefinite hands nothing on, and a
+    # forgotten objective holds none.
+    @test !C.ctsem_local_carry!(moved, m, collect(1:n), fill(-1e9, n))
+    @test C._ctsem_local_held(moved) === nothing
+    C.ctsem_lbfgs_forget!(m)
+    @test C._ctsem_local_held(m) === nothing
+    @test !C.ctsem_local_carry!(moved, m, index, delta)
 end
 
 @testset "a fit with the structured model ends where L-BFGS alone does" begin
