@@ -7220,11 +7220,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # on that stage's objective or one a smoothing step moved a little, with
     # its curvature pairs: a resumed stage (`resumed`), whose L-BFGS gives way
     # to the finish once a window of it gains under a tenth of a standard
-    # error. Held to the certification's bar on a step's predicted gain
-    # alone, L-BFGS on the affect pilot's tied fit gained 0.10 nats in the
-    # stage's first hour and under 0.01 in the next, two minutes an
-    # iteration, with 360 iterations to go before it could hand over to the
-    # finish, whose Hessian is either point's.
+    # error. Held to a step's predicted gain alone, a hundredth of the
+    # certification's tolerance, L-BFGS on the affect pilot's tied fit gained
+    # 0.10 nats in the stage's first hour and under 0.01 in the next, two
+    # minutes an iteration, with 360 iterations to go before it could hand
+    # over to the finish, whose Hessian is either point's.
     certified_stage <- function(from, hessian = NULL, hessian_at = NULL) {
       stage <- keepknown(.ctJuliaOptimise(model_spec, from,
         optimcontrol = stagecontrol, gradient = gradient, cores = cores,
