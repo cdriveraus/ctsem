@@ -86,7 +86,7 @@ and [ordinal or continuous data](https://cdriveraus.github.io/ctsem/articles/ord
 |---|---|
 | `ctReport(fit)` | run the main summaries, plots and checks, and save them to a folder |
 | `ctIdentify(data, model)` | see which parameters the data can inform, before fitting |
-| `ctScoreTest(fit)` | test whether the model is missing random effects, covariate effects or nonlinearity, without refitting ([vignette](https://cdriveraus.github.io/ctsem/articles/score-tests.html)) |
+| `ctScoreTest(fit)` | test whether the model is missing random effects, covariate effects or nonlinearity, without refitting; `intoverpop = 'quadrature'` integrates the random effects by quadrature for the tests that extend the model ([vignette](https://cdriveraus.github.io/ctsem/articles/score-tests.html)) |
 | `ctFitAdequacy(fit)` | test the model's one-step-ahead predictions |
 | `ctModelImprove(fit)` | search for a better model, step by step, guided by those tests |
 | `ctLOO(fit, method = 'psis')` | cross validate without refitting |
