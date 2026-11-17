@@ -2691,7 +2691,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # 'integrated': a refined fit, whose objective integrates the flagged units by
 # quadrature. 'none': no Laplace route. Takes a fit or a specification.
 .ctLaplaceTerm <- function(x) {
-  if (inherits(x, 'ctJuliaFit')) {
+  if (.ctFitIsJulia(x)) {
     if (identical(x$estimate$loglik_method, 'quadrature')) return('integrated')
     x <- x$model_spec
   }
@@ -2710,7 +2710,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 
 # A fit or specification whose objective takes the one-step term.
 .ctLaplaceOneStep <- function(x) {
-  if (inherits(x, 'ctJuliaFit')) x$model_spec$laplace$onestep <- TRUE else
+  if (.ctFitIsJulia(x)) x$model_spec$laplace$onestep <- TRUE else
     x$laplace$onestep <- TRUE
   x
 }

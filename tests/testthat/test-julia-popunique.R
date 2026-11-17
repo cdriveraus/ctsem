@@ -625,8 +625,9 @@ test_that("each spec says which Laplace term it takes, and which compare", {
   one <- .pu_spec(d, .pu_dyn_model(), poprank = 1, popunique = "MANIFESTMEANS",
     optimcontrol = list(laplace_onestep = TRUE))
   exact <- .pu_spec(d, .pu_model(), poprank = 1, popunique = "MANIFESTMEANS")
-  nl <- .pu_dyn_model()
-  nl$pars$param[nl$pars$matrix == "DRIFT"] <- "drift + 0.01 * state[1]"
+  # The score test's own state-dependence extension, which writes terms
+  # reading the state into CINT.
+  nl <- ctsem:::.ctScoreStateModel(.pu_dyn_model(), 2L)$model
   state <- .pu_spec(d, nl, poprank = 1, popunique = "MANIFESTMEANS")
   expect_identical(vapply(list(two, one, exact, state), ctsem:::.ctLaplaceTerm, ""),
     c("twostep", "onestep", "exact", "onestep"))
