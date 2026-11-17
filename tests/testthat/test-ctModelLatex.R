@@ -68,8 +68,12 @@ test_that("ctModelLatex substitutes a julia fit's estimates, as stan's", {
     T0MEANS = matrix(0, 2, 1), T0VAR = diag(1, 2)))
   model$pars$indvarying <- FALSE
 
+  # Held far inside the default gap (0.01 se): the equations are compared as
+  # text at two decimals, and a julia fit that stops at its tolerance printed
+  # -0.71 where stan's printed -0.72.
   fitjulia <- suppressWarnings(suppressMessages(ctFit(datalong, model,
-    backend = 'julia', cores = 1, optimcontrol = list(estonly = TRUE))))
+    backend = 'julia', cores = 1,
+    optimcontrol = list(estonly = TRUE, gaptol = 1e-8))))
   fitstan <- suppressWarnings(suppressMessages(ctFit(datalong, model,
     backend = 'stan', cores = 1, optimcontrol = list(estonly = TRUE))))
 
