@@ -2708,6 +2708,26 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   all(terms %in% c('twostep', 'onestep')) && terms[1] != terms[2]
 }
 
+# Whether two fits' or specifications' Laplace objectives hold a unit's
+# effects in different coordinates: one's filter integrates effects that the
+# other keeps as Laplace coordinates (`laplace$hybrid`). Their one-step terms
+# are one function only where every unit has a single maximum. With more,
+# which maxima a search finds, and the valleys the mode sum reads between them,
+# depend on the coordinates, since the hybrid profiles the integrated
+# deviations out: on short records with a random drift, one unit in a fit of
+# 100 often took a term up to a nat apart on the two
+# (`scripts/burstict-2026-11/repro_zero.R`). A comparison that needs one
+# function reads both on the layer (`hybrid = FALSE`), every effect a
+# coordinate. Where the side with the hybrid is quadratic, every unit has one
+# maximum and the two agree.
+.ctLaplaceCoordinatesDiffer <- function(a, b) {
+  sa <- if (.ctFitIsJulia(a)) a$model_spec else a
+  sb <- if (.ctFitIsJulia(b)) b$model_spec else b
+  if (is.null(sa$laplace) || is.null(sb$laplace)) return(FALSE)
+  ha <- !is.null(sa$laplace$hybrid); hb <- !is.null(sb$laplace$hybrid)
+  ha != hb && !isTRUE((if (ha) sa else sb)$laplace$quadratic)
+}
+
 # A fit or specification whose objective takes the one-step term.
 .ctLaplaceOneStep <- function(x) {
   if (.ctFitIsJulia(x)) x$model_spec$laplace$onestep <- TRUE else
@@ -5116,14 +5136,21 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 #' @export
 ctJuliaEvaluate <- function(object, pars = NULL, gradient = TRUE, contributions = FALSE,
   gradient_method = c("adjoint", "forward"), cores = getOption("mc.cores", 2L)) {
-  gradient_method <- match.arg(gradient_method)
+  .ctJuliaEvaluate(object, pars, gradient = gradient, contributions = contributions,
+    gradient_method = match.arg(gradient_method), cores = cores)
+}
+
+# ctJuliaEvaluate() on the fit's objective (`hybrid = TRUE`) or on the layer,
+# every random effect a Laplace coordinate (`.ctLaplaceCoordinatesDiffer()`).
+.ctJuliaEvaluate <- function(object, pars = NULL, gradient = TRUE, contributions = FALSE,
+  gradient_method = "adjoint", cores = getOption("mc.cores", 2L), hybrid = TRUE) {
   if (!inherits(object, c("ctJuliaModel", "ctJuliaFit"))) stop("object must be a ctJuliaModel or ctJuliaFit", call. = FALSE)
   if (is.null(pars)) {
     if (inherits(object, "ctJuliaFit")) pars <- object$estimate$raw else stop("pars must be supplied for a prepared ctJuliaModel", call. = FALSE)
   }
   module <- .ctJuliaModule(if (inherits(object, "ctJuliaFit")) object$model_spec$project else object$project)
   result <- .ctBackendWithMaxChunks(cores, module$ctsem_evaluate(
-    .ctJuliaObjective(object, hybrid = TRUE), .ctJuliaNumericVector(pars),
+    .ctJuliaObjective(object, hybrid = hybrid), .ctJuliaNumericVector(pars),
     gradient = isTRUE(gradient), contributions = isTRUE(contributions),
     gradient_method = gradient_method))
   .ctJuliaGet(result)

@@ -1298,26 +1298,28 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   # At zero coupling the extended model must reproduce the fit -- up to the
   # normal(0, 1) prior's constant for each new parameter, with priors on
   # every parameter.
-  # Taken one-step where the extension's Laplace term is not the fit's, the
-  # fit's curvature too (`.ctScoreExtendedSpec()`).
+  # Taken one-step where the extension's Laplace term is not the fit's, and on
+  # the layer where only one has effects its filter integrates, the fit's
+  # curvature too (`.ctScoreExtendedSpec()`).
   onestep <- .ctLaplaceTermsDiffer(current, sp$spec)
+  layer <- .ctLaplaceCoordinatesDiffer(current, sp$spec)
   if (onestep) {
     current <- .ctLaplaceOneStep(current)
     sp$spec <- .ctLaplaceOneStep(sp$spec)
   }
-  value1 <- ctJuliaEvaluate(current, est, gradient = FALSE, cores = cores)$value
+  value1 <- .ctJuliaEvaluate(current, est, gradient = FALSE, cores = cores, hybrid = !layer)$value
   offset <- if (isTRUE(current$args$resolved$priors)) length(new) * stats::dnorm(0, log = TRUE) else 0
-  ev <- ctJuliaEvaluate(sp$spec, x0, gradient = TRUE, cores = cores)
+  ev <- .ctJuliaEvaluate(sp$spec, x0, gradient = TRUE, cores = cores, hybrid = !layer)
   if (!isTRUE(abs(ev$value - value1 - offset) <= 1e-6 * max(1, abs(value1)))) return(NULL)
   module <- .ctJuliaModule(current$model_spec$project)
-  objective <- .ctJuliaObjective(sp$spec, hybrid = TRUE)
+  objective <- .ctJuliaObjective(sp$spec, hybrid = !layer)
   units <- as.matrix(.ctBackendWithMaxChunks(cores, .ctJuliaGet(module$ctsem_subject_gradients(
     objective, .ctJuliaVector(as.numeric(x0)))))$scores)
   theta <- match(nm1, nm2); delta <- match(test, nm2)
   Hc <- .ctBackendWithMaxChunks(cores, as.matrix(.ctBackendJuliaValue(
     module$ctsem_hessian_columns(objective, .ctJuliaNumericVector(as.numeric(x0)),
       .ctJuliaVector(as.integer(delta))))))
-  information <- if (onestep) .ctScoreExtendedInformation(list(module = module,
+  information <- if (onestep || layer) .ctScoreExtendedInformation(list(module = module,
     objective = objective, x2 = x0, theta = theta), cores) else
     -.ctBackendHessian(current, est)
   Iinv <- .ctScorePinv(information)$inv
@@ -1331,19 +1333,23 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
     onestep = onestep)
 }
 
-# A fit refitted on the one-step Laplace term (`optimcontrol$laplace_onestep`),
-# warm started from its own estimate, for a comparison with a model whose
-# filter cannot integrate what this one's does (`.ctImproveCompare()`); kept
-# for the session, since a search compares one current fit with many
-# candidates.
-.ct_improve_onestep <- new.env(parent = emptyenv())
-.ctImproveOneStep <- function(fit, cores) {
+# A fit refitted on the layer, every random effect a Laplace coordinate and
+# none integrated by the filter, so on the one-step term; warm started from
+# its own estimate, for a comparison with a model whose filter cannot
+# integrate what this one's does (`.ctImproveCompare()`). On the layer rather
+# than on the one-step term over the hybrid's coordinates, since the two are
+# one function only where every unit has a single maximum
+# (`.ctLaplaceCoordinatesDiffer()`). Kept for the session, since a search
+# compares one current fit with many candidates.
+.ct_improve_layer <- new.env(parent = emptyenv())
+.ctImproveOnLayer <- function(fit, cores) {
   key <- digest::digest(.ctImproveFingerprint(fit), algo = 'sha256')
-  kept <- .ct_improve_onestep[[key]]
+  kept <- .ct_improve_layer[[key]]
   if (!is.null(kept)) return(kept)
-  out <- try(.ctImproveRefit(fit, .ctFitBaseModel(fit), as.data.frame(.ctFitLongData(fit)),
-    cores, args = list(optimcontrol = list(laplace_onestep = TRUE))), silent = TRUE)
-  if (!inherits(out, 'try-error')) assign(key, out, envir = .ct_improve_onestep)
+  out <- try(withr::with_options(list(ctsem.laplace.hybrid = FALSE),
+    .ctImproveRefit(fit, .ctFitBaseModel(fit), as.data.frame(.ctFitLongData(fit)), cores)),
+    silent = TRUE)
+  if (!inherits(out, 'try-error')) assign(key, out, envir = .ct_improve_layer)
   out
 }
 
@@ -1799,15 +1805,18 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   # intercept-type effects exactly given the others, the other's cannot, as
   # where a new term reads the state -- are maxima of two approximations, and
   # beside random dynamics the one-step term credits the drift's spread more
-  # than the two-step one. So the two-step one is refitted one-step from its
-  # own estimate (`.ctImproveOneStep()`) and both compared there: a fast
-  # comparison. A search started from a refined fit (intoverpop =
-  # 'quadrature') refines every refit and compares their integrals.
-  onestep <- .ctLaplaceTermsDiffer(current, refit)
-  if (onestep) {
-    if (identical(.ctLaplaceTerm(current), 'twostep')) {
-      current <- .ctImproveOneStep(current, cores)
-    } else refit <- .ctImproveOneStep(refit, cores)
+  # than the two-step one. So the fit whose filter integrates them is
+  # refitted from its own estimate on the layer, every effect a Laplace
+  # coordinate as in the other (`.ctImproveOnLayer()`), and both compared
+  # there: a fast comparison of one-step terms over the same coordinates
+  # (`.ctLaplaceCoordinatesDiffer()`). A search started from a refined fit
+  # (intoverpop = 'quadrature') refines every refit and compares their
+  # integrals.
+  if (.ctLaplaceTermsDiffer(current, refit) || .ctLaplaceCoordinatesDiffer(current, refit)) {
+    hybrid <- function(f) !is.null(f$model_spec$laplace$hybrid)
+    if (hybrid(current)) current <- .ctImproveOnLayer(current, cores)
+    if (!inherits(current, 'try-error') && hybrid(refit))
+      refit <- .ctImproveOnLayer(refit, cores)
     if (inherits(current, 'try-error') || inherits(refit, 'try-error'))
       return(bad('the one-step refit to compare on failed'))
   }

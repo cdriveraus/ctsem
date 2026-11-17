@@ -681,3 +681,40 @@ test_that("a skewed statistic and a family's sum are read against references of 
   # within the null's spread, the sum of their squares is not.
   expect_gt(mean(sump(0.6 / sqrt(60)) < 0.05), 0.8)
 })
+
+test_that("a unit with two maxima does not stop the extended families", {
+  # Short records with a random drift (nullrate.R's hetA data set 51, in
+  # scripts/burstict-2026-11). At this fit one person has two maxima a shallow
+  # valley apart where every effect is a coordinate, and one where the
+  # filter's intercepts are profiled out, so the one-step term over the
+  # hybrid's coordinates is not the layer's, where the extension's terms put
+  # every effect: the extension at zero must still reproduce the fit, so both
+  # are read on the layer. Before, about one data set in twenty here refused.
+  set.seed(1e6 + 51)
+  d <- do.call(rbind, lapply(seq_len(100L), function(i) {
+    a <- -0.5 * exp(0.6 * stats::rnorm(1))
+    mm <- stats::rnorm(1)
+    times <- cumsum(c(0, stats::rexp(7L, 1)))
+    x <- numeric(8L)
+    x[1] <- stats::rnorm(1, 0, 0.8 / sqrt(-2 * a))
+    for (t in 2:8) {
+      e <- exp(a * (times[t] - times[t - 1]))
+      x[t] <- e * x[t - 1] + stats::rnorm(1, 0, sqrt(0.64 * (1 - e^2) / (-2 * a)))
+    }
+    data.frame(id = i, time = times, Y1 = x + mm + stats::rnorm(8L, 0, 0.5))
+  }))
+  m <- suppressMessages(ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
+    LAMBDA = matrix(1), silent = TRUE))
+  m$pars$indvarying[m$pars$matrix == 'DRIFT'] <- TRUE
+  fit <- suppressWarnings(suppressMessages(ctFit(d, m, backend = 'julia', cores = 1,
+    verbose = 0, optimcontrol = list(checks = FALSE, laplace_onestep = TRUE))))
+  est <- fit$estimate$raw
+  apart <- ctsem:::.ctJuliaEvaluate(fit, est, gradient = FALSE, cores = 1,
+    hybrid = FALSE)$value - ctJuliaEvaluate(fit, est, gradient = FALSE, cores = 1)$value
+  skip_if(abs(apart) < 1e-3, 'this fit stopped where no unit has two maxima')
+  st <- suppressMessages(ctScoreTest(fit, tests = 'statedependence', cores = 1,
+    nboot = 99L, verbose = FALSE))
+  expect_length(st$info$errors, 0)
+  j <- st$statedependence$joint
+  expect_true(is.finite(j$LM[j$equation == 'all']))
+})
