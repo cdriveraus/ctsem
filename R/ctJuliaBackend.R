@@ -6020,6 +6020,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     common$checkpoint_every <- as.numeric(checkpoint$every)
     checkpoint$state <- .ctJuliaCheckpointState(model_spec)
     hessian_id <- checkpoint$hessian_id
+    # A Hessian the caller hands this run that the checkpoint does not name
+    # (a stage seeded with the last stage's at new smoothing precisions) is
+    # kept now: the finish may keep it and form none of its own, and the
+    # checkpoint would then name no Hessian for the stage it ends on.
+    if (is.null(hessian_id) && !is.null(hessian) && !is.null(hessian_at)) {
+      hessian_id <- tryCatch(.ctJuliaCheckpointHessian(checkpoint, hessian,
+        hessian_at), error = function(e) NULL)
+    }
     if (!is.null(checkpoint$resume)) {
       values <- as.matrix(checkpoint$resume$values)
       storage.mode(values) <- "double"
@@ -7742,8 +7750,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # How far the reported estimate is from where that Hessian was evaluated,
     # in the standard errors it implies: 0 when it is exactly there, and at
     # most `.ctBackendHessianReuse()` when the finish kept the Hessian it took
-    # at the hand-over.
+    # at the hand-over -- or more, said here, where the optimiser's reading
+    # of what was left before the Hessian was wrong
+    # (the engine's `_CTSEM_KEEP_FACTOR`).
     out$optim$hessian_distance <- correction$distance
+    if (isTRUE(correction$distance > .ctBackendHessianReuse(optimcontrol) * (1 + 1e-8))) {
+      message(sprintf(paste0("The Hessian was taken %.2f standard errors from the ",
+        "estimate (hessianreuse is %.2f): standard errors may be off by about ",
+        "that share."),
+        correction$distance, .ctBackendHessianReuse(optimcontrol)))
+    }
     # The matrix goes where its consumers look, and `evaluated_at` is what makes
     # that safe. See `.ctBackendStoredHessian()`: every route says which point
     # its Hessian describes, rather than leaving a reader to assume
