@@ -291,7 +291,9 @@
 #'   where the fit has random dynamics beside such effects, those families are
 #'   then computed with the fit and its extension both on the one-step term, a
 #'   fast screen whose approximation error stays in the scores, and
-#'   \code{info$onestep} names them.
+#'   \code{info$onestep} names them. \code{intoverpop = 'quadrature'}
+#'   integrates every subject's random effects for these families instead,
+#'   leaving no Laplace error in them (\code{info$quadrature}).
 #'
 #' @param fit A fit from \code{\link{ctFit}} with \code{backend = 'julia'},
 #'   optimised.
