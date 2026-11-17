@@ -7332,6 +7332,19 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     }
     curvature <- NULL
     certified <- TRUE
+    # The exact Hessian a check has moved the parameters on, where it was
+    # taken and at which precisions (below), and that Hessian at the
+    # precisions in force now.
+    exact <- NULL
+    exactnow <- function() {
+      if (is.null(exact)) return(list(hessian = NULL, at = NULL))
+      index <- as.integer(unlist(model_spec$penalty$index))
+      moved <- rep(model_spec$penalty$lambda - exact$lambda,
+        lengths(model_spec$penalty$index))
+      hessian <- exact$hessian
+      hessian[cbind(index, index)] <- hessian[cbind(index, index)] - moved
+      list(hessian = hessian, at = exact$at)
+    }
     # Whether the exact Hessian in hand is this loop's own, formed once the
     # parameters had settled on walked curvature (below), or the one a
     # resume brought from the certified stage of the run it resumes. Read
@@ -7355,8 +7368,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     if (!is.null(curvature)) {
       for (pass in seq_len(10L)) {
         theta <- as.numeric(result$minimizer)
-        if (modelled && !certified) curvature <- .ctTIsmoothExactColumns(
-          model_spec, curvature, theta, cores)
+        if (modelled && !certified && is.null(exact)) curvature <-
+          .ctTIsmoothExactColumns(model_spec, curvature, theta, cores)
         gfs <- .ctTIsmoothLambda(model_spec$penalty, curvature, theta,
           gradient = as.numeric(result$gradient))
         model_spec$penalty$edf <- gfs$edf
@@ -7397,18 +7410,17 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
           # The exact Hessian the settled parameters were checked on moved
           # them a little further. The penalty is quadratic, so that Hessian
           # with the new precisions (`gfs$hessian`) is the new objective's
-          # exact one at the same point: the pass is a certified stage that
-          # starts on it, and keeps it where the estimate moves within its
-          # reach, rather than a walk and then another exact Hessian. On
-          # test-julia-tismooth.R's Krylov fixture that was the second of two.
-          if (certified && checked) {
-            correction <- certified_stage(gfs$point, hessian = gfs$hessian,
-              hessian_at = theta)
-            result <- correction$result
-            curvature <- correction$hessian
-            if (is.null(curvature)) break
-            next
-          }
+          # exact one at the same point. It is kept (`exact`), the passes
+          # below walk on it until the parameters settle again, as they did
+          # before it, and the certified stage that follows is handed it at
+          # the settled precisions and keeps it where the estimate ended
+          # within `hessianreuse` of where it was taken. A certified stage
+          # for each move of the parameters instead cost the affect pilot's
+          # tied fit a flat ladder and a pullback check each time, four
+          # hours, and its second check moved one term by 0.02 degrees of
+          # freedom (2026-11-17, dev3).
+          if (certified && checked) exact <- list(hessian = gfs$hessian,
+            at = theta, lambda = model_spec$penalty$lambda)
           # Checkpointed as every stage is: the record carries the smoothing
           # parameters (`.ctJuliaCheckpointState()`), so a resume goes on from
           # this pass rather than from the first stage's.
@@ -7426,8 +7438,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
           }
         }
         # Settled on a walked curvature, or a pass whose finish left no walk
-        # to read: certified here.
-        correction <- certified_stage(as.numeric(result$minimizer))
+        # to read: certified here, on the exact Hessian in hand where there
+        # is one, at the precisions the parameters settled on.
+        held <- exactnow()
+        correction <- certified_stage(as.numeric(result$minimizer),
+          hessian = held$hessian, hessian_at = held$at)
+        exact <- NULL
         result <- correction$result
         curvature <- correction$hessian
         certified <- TRUE
@@ -7435,7 +7451,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         if (is.null(curvature)) break
       }
       if (!certified) {
-        correction <- certified_stage(as.numeric(result$minimizer))
+        held <- exactnow()
+        correction <- certified_stage(as.numeric(result$minimizer),
+          hessian = held$hessian, hessian_at = held$at)
         result <- correction$result
       }
     } else message("Smoothing parameters held at their starting values: ",
