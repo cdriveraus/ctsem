@@ -566,6 +566,21 @@ test_that("an innovation sd that varies over people is still tested for volatili
   # filter cannot, and both are taken one-step, which the result says.
   expect_setequal(st$info$onestep, c('statedependence', 'volatility'))
   expect_output(print(st), 'On one-step Laplace')
+  # By quadrature every subject's effects are integrated on its rule, so no
+  # family is one-step; the units' scores on the placed objective sum to its
+  # gradient, the prior's shares included.
+  sq <- suppressMessages(ctScoreTest(fit, tests = 'volatility', cores = 1,
+    verbose = FALSE, nboot = 99L, intoverpop = 'quadrature'))
+  expect_null(sq$info$errors)
+  expect_identical(sq$info$quadrature, 'volatility')
+  expect_null(sq$info$onestep)
+  expect_true(all(is.finite(sq$volatility$joint$LM)))
+  expect_output(print(sq), 'By quadrature')
+  vol <- ctsem:::.ctScoreVolatilityModel(ctsem:::.ctFitBaseModel(fit))
+  ext <- ctsem:::.ctScoreExtendedSpec(fit, fit$estimate$raw, vol$model, vol$terms$name,
+    'volatility', 1L)
+  pl <- ctsem:::.ctScorePlaced(ext, 1L)
+  expect_equal(colSums(pl$units), unname(pl$gradient), tolerance = 1e-10)
 })
 
 test_that("where effects reach the dynamics, only the unit-level families are projected", {

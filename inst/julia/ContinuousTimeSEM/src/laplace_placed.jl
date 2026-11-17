@@ -1383,13 +1383,24 @@ function ctsem_laplace_placed_evaluate(P::CTSEMLaplacePlaced, values::AbstractVe
     return _laplace_free_result(result, n)
 end
 
-function _placed_evaluate(P::CTSEMLaplacePlaced, theta::Vector{Float64}, gradient::Bool)
+# With `scores` (`nunits x length(theta)`), every unit's score as the Laplace
+# route gives them (`ctsem_laplace_evaluate`): the rest's from it, a placed or
+# frozen unit's from its rule, each weighted as it enters the gradient.
+function _placed_evaluate(P::CTSEMLaplacePlaced, theta::Vector{Float64}, gradient::Bool;
+    scores::Union{Nothing,Matrix{Float64}}=nothing)
     started = time_ns()
     o = P.cont
     laplace = o.laplace
     spec = laplace.spec
     npar = length(theta)
-    rest = ctsem_laplace_evaluate(o.rest, theta; gradient=gradient)
+    rs = scores === nothing ? nothing : zeros(length(o.rest_units), npar)
+    rest = ctsem_laplace_evaluate(o.rest, theta; gradient=gradient, scores=rs)
+    if scores !== nothing
+        fill!(scores, 0.0)
+        for (position, U) in enumerate(o.rest_units)
+            scores[U, :] .= view(rs, position, :)
+        end
+    end
     Ls = _laplace_popchols(theta, spec)
     dL = gradient ? _laplace_level_chol_derivatives(theta, spec) : nothing
     positions = [_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
@@ -1447,6 +1458,7 @@ function _placed_evaluate(P::CTSEMLaplacePlaced, theta::Vector{Float64}, gradien
         unit_loglik[U] = pvalues[i]
         total += w * pvalues[i]
         gradient && (grad .+= w .* prows[i])
+        gradient && scores !== nothing && (scores[U, :] .= w .* prows[i])
     end
     for (i, f) in enumerate(P.frozen)
         U = o.rules[f].unit
@@ -1454,6 +1466,7 @@ function _placed_evaluate(P::CTSEMLaplacePlaced, theta::Vector{Float64}, gradien
         unit_loglik[U] = frozen.values[i]
         total += w * frozen.values[i]
         gradient && (grad .+= w .* frozen.rows[i])
+        gradient && scores !== nothing && (scores[U, :] .= w .* frozen.rows[i])
     end
     value = ok ? total : NaN
     gradient && !ok && (grad = fill(NaN, npar))
@@ -1608,6 +1621,29 @@ end
 """The flagged terms' units, placed then frozen, as `_placed_term!` numbers them."""
 _placed_term_units(P::CTSEMLaplacePlaced) =
     vcat(P.placed, Int[P.cont.rules[f].unit for f in P.frozen])
+
+"""
+    ctsem_subject_gradients(P::CTSEMLaplacePlaced, values; prior=true)
+
+Each unit's score on the placed objective (`nunits x npar`): a placed or frozen
+unit's from its rule, the rest's as the Laplace route gives them, each carrying
+its share of the prior unless `prior = false`, as for the Laplace objective
+(`ctsem_subject_gradients`). What a score test reads where every unit is
+integrated by its rule (R's `ctScoreTest(intoverpop = 'quadrature')`).
+"""
+function ctsem_subject_gradients(P::CTSEMLaplacePlaced, values::AbstractVector;
+    prior::Bool=true)
+    laplace = P.cont.laplace
+    n = length(values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
+    nunits = length(laplace.units.members)
+    S = zeros(Float64, nunits, length(theta))
+    r = _placed_evaluate(P, theta, true; scores=S)
+    isfinite(r.value) || return (value=r.value, scores=fill(NaN, nunits, n))
+    prior && _ctsem_prior_scores!(S, laplace.objective, theta,
+        _laplace_unit_of_subject(laplace))
+    return (value=r.value, scores=size(S, 2) == n ? S : S[:, 1:n])
+end
 
 """
     ctsem_laplace_placed_hessian(P, values; step=1e-4)

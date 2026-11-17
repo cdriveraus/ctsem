@@ -134,6 +134,13 @@ BENCH_VARIANTS <- list(
   # 'quadrature'`). Its climb is recorded in the lapcorr_* columns.
   refined = list(args = list(intoverpop = "quadrature"), objective = "quadrature"),
 
+  # The one-step Laplace term: one approximation over a unit's intercepts the
+  # filter integrates and its other effects together, the default before
+  # juliaFit e8d4fada (`optimcontrol$laplace_onestep`). A different
+  # approximation of the same integral, so its exact scores compare with the
+  # default's while its objective values do not.
+  onestep = list(optimcontrol = list(laplace_onestep = TRUE), objective = "onestep"),
+
   # The certification's bar stated in standard errors: the gap is half the
   # squared distance from the maximum in them, so 0.01 se is 5e-5 nats and
   # 0.02 se 2e-4, against the default 1e-6 (0.0014 se). L-BFGS's own rule

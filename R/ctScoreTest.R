@@ -291,7 +291,9 @@
 #'   where the fit has random dynamics beside such effects, those families are
 #'   then computed with the fit and its extension both on the one-step term, a
 #'   fast screen whose approximation error stays in the scores, and
-#'   \code{info$onestep} names them.
+#'   \code{info$onestep} names them. \code{intoverpop = 'quadrature'}
+#'   integrates every subject's random effects for these families instead,
+#'   leaving no Laplace error in them (\code{info$quadrature}).
 #'
 #' @param fit A fit from \code{\link{ctFit}} with \code{backend = 'julia'},
 #'   optimised.
@@ -327,6 +329,16 @@
 #'   without that correction, which is conservative, and the strongest
 #'   \code{exact} by that test are then corrected (\code{projected} in the
 #'   tables). \code{Inf} corrects every term.
+#' @param intoverpop How the extended families (\code{statedependence},
+#'   \code{volatility}, \code{fixed}, \code{level}) integrate the random
+#'   effects on the Laplace route. \code{'laplace'} (the default) takes the
+#'   Laplace term, a fast screen. \code{'quadrature'} integrates every
+#'   subject's random effects by quadrature rules placed at their mode and
+#'   curvature, as the refined fit does (\code{ctFit(intoverpop =
+#'   'quadrature')}), for the scores, their spread and the curvature: no
+#'   Laplace error left in them, at the cost of placing a rule for every
+#'   subject and the extended model's whole Hessian on it. The other families
+#'   read the fit's own objective either way.
 #' @param cores Engine cores for the evaluations.
 #' @param verbose Report progress.
 #' @return An object of class \code{ctScoreTest}: a list with
@@ -395,9 +407,10 @@ ctScoreTest <- function(fit, covariates = NULL,
     'level', 'instability'),
   form = c('auto', 'linear', 'spline', 'factor', 'threshold'), df = 3, parameters = NULL,
   order = 2L, variance = c('robust', 'model'), nboot = 1999L, exact = 5L,
-  cores = getOption('mc.cores', 2L),
+  intoverpop = c('laplace', 'quadrature'), cores = getOption('mc.cores', 2L),
   verbose = TRUE) {
   .ctWeightsRefuse(fit, 'ctScoreTest()')
+  intoverpop <- match.arg(intoverpop)
   if (!.ctFitIsJulia(fit)) stop("ctScoreTest() needs a fit from ",
     "ctFit(backend = 'julia'). Refit on that backend to use it.", call. = FALSE)
   if (!is.null(fit$sample)) stop("Score tests are made at an optimum, and this ",
@@ -534,20 +547,24 @@ ctScoreTest <- function(fit, covariates = NULL,
   if (length(extended)) attempt(paste(extended, collapse = ' and '), {
     say("Preparing the model extended at zero (", paste(extended, collapse = ', '), ")")
     ext <- .ctScoreExtended(fit, est, extended, information, order = order,
-      variance = variance, nboot = nboot, cores = cores, exact = exact)
+      variance = variance, nboot = nboot, cores = cores, exact = exact,
+      quadrature = intoverpop == 'quadrature')
     out$statedependence <- ext$statedependence
     out$volatility <- ext$volatility
     out$fixed <- ext$fixed
     if (isTRUE(ext$onestep)) out$info$onestep <- c(out$info$onestep, extended)
+    if (isTRUE(ext$quadrature)) out$info$quadrature <- c(out$info$quadrature, extended)
   })
   # A model of its own: its terms rewrite the cells the other families'
   # terms rewrite too.
   if ('level' %in% tests) attempt('level', {
     say("Preparing the model extended at zero (level)")
     lev <- .ctScoreExtended(fit, est, 'level', information, order = order,
-      variance = variance, nboot = nboot, cores = cores, exact = exact)
+      variance = variance, nboot = nboot, cores = cores, exact = exact,
+      quadrature = intoverpop == 'quadrature')
     out$level <- lev$level
     if (isTRUE(lev$onestep)) out$info$onestep <- c(out$info$onestep, 'level')
+    if (isTRUE(lev$quadrature)) out$info$quadrature <- c(out$info$quadrature, 'level')
   })
   if ('instability' %in% tests) attempt('instability', {
     say("Row scores for the stability tests")
@@ -1798,7 +1815,7 @@ ctScoreTest <- function(fit, covariates = NULL,
 # fitted parameters are the contributions. One model for both families, so
 # one compile of the extended shape.
 .ctScoreExtended <- function(fit, est, families, information = NULL, order = 2L,
-  variance = 'robust', nboot = 1999L, cores = 2L, exact = Inf) {
+  variance = 'robust', nboot = 1999L, cores = 2L, exact = Inf, quadrature = FALSE) {
   spec <- fit$model_spec
   base <- .ctFitBaseModel(fit)
   if (is.null(base)) stop("This fit does not carry the model it was built from, ",
@@ -1839,9 +1856,19 @@ ctScoreTest <- function(fit, covariates = NULL,
   # Taken one-step, the fit's own Hessian is of another objective.
   if (isTRUE(ext$onestep)) information <- .ctScoreExtendedInformation(ext, cores)
   robust <- variance == 'robust'
-  units <- if (robust) as.matrix(.ctBackendWithMaxChunks(cores, .ctJuliaGet(
-    module$ctsem_subject_gradients(objective, .ctJuliaVector(as.numeric(x2)))))$scores) else
-    NULL
+  # By quadrature (`intoverpop = 'quadrature'`), every piece is the placed
+  # objective's, every unit on its rule (`.ctScorePlaced()`): the gradient, the
+  # units' scores, and the curvature, the fit's block of it the information.
+  placed <- if (isTRUE(quadrature) && .ctBackendIntOverPop(fit$model_spec) == 'laplace')
+    .ctScorePlaced(ext, cores) else NULL
+  if (!is.null(placed)) {
+    grad <- placed$gradient
+    information <- -(placed$hessian[theta, theta, drop = FALSE] +
+      t(placed$hessian[theta, theta, drop = FALSE])) / 2
+  }
+  units <- if (!robust) NULL else if (!is.null(placed)) placed$units else
+    as.matrix(.ctBackendWithMaxChunks(cores, .ctJuliaGet(
+      module$ctsem_subject_gradients(objective, .ctJuliaVector(as.numeric(x2)))))$scores)
   # Which terms are projected exactly. The projection needs the Hessian's
   # column along each term, two evaluations of the extended model apiece, and
   # those are what these families cost: 84 state-dependence terms on a
@@ -1870,9 +1897,10 @@ ctScoreTest <- function(fit, covariates = NULL,
   vm <- rep(NA_real_, length(delta))
   Vmodel <- NULL
   if (length(chosen)) {
-    Hc <- .ctBackendWithMaxChunks(cores, as.matrix(.ctBackendJuliaValue(
-      module$ctsem_hessian_columns(objective, .ctJuliaNumericVector(as.numeric(x2)),
-        .ctJuliaVector(as.integer(delta[chosen]))))))
+    Hc <- if (!is.null(placed)) placed$hessian[, delta[chosen], drop = FALSE] else
+      .ctBackendWithMaxChunks(cores, as.matrix(.ctBackendJuliaValue(
+        module$ctsem_hessian_columns(objective, .ctJuliaNumericVector(as.numeric(x2)),
+          .ctJuliaVector(as.integer(delta[chosen]))))))
     if (priored) Hc[cbind(delta[chosen], seq_along(chosen))] <-
       Hc[cbind(delta[chosen], seq_along(chosen))] + 1
     Idt <- -t(Hc[theta, , drop = FALSE])
@@ -1969,8 +1997,34 @@ ctScoreTest <- function(fit, covariates = NULL,
     out$level <- list(terms = table[order(table$p, -table$LM), , drop = FALSE],
       joint = joint)
   }
-  out$onestep <- isTRUE(ext$onestep)
+  out$onestep <- isTRUE(ext$onestep) && is.null(placed)
+  out$quadrature <- !is.null(placed)
   out
+}
+
+# The extended model's pieces with every unit's random effects integrated by
+# a quadrature rule placed at its mode and curvature (the refined fit's placed
+# objective, `ctsem_laplace_placed`, every unit forced onto a rule): the
+# gradient at the fitted values with the new terms at zero, each unit's score
+# there, and the Hessian. At zero the extension is the fitted model, so these
+# carry no Laplace error; the fit's estimate is the Laplace one, which the
+# projection allows for to first order.
+.ctScorePlaced <- function(ext, cores) {
+  module <- ext$module
+  x <- .ctJuliaNumericVector(as.numeric(ext$x2))
+  nunits <- .ctJuliaUnits(ext$spec)
+  .ctBackendWithMaxChunks(cores, {
+    cont <- do.call(module$ctsem_laplace_continuation, c(list(ext$objective, x),
+      .ctLaplaceContinuationArgs(.ctLaplaceContinueDefaults, force = seq_len(nunits))))
+    placed <- module$ctsem_laplace_placed(cont)
+    ev <- .ctJuliaGet(module$ctsem_laplace_placed_evaluate(placed, x, gradient = TRUE))
+    sg <- .ctJuliaGet(module$ctsem_subject_gradients(placed, x))
+    npar <- length(ext$x2)
+    H <- matrix(as.numeric(.ctBackendJuliaValue(module$ctsem_laplace_placed_hessian(placed,
+      x))), npar, npar)
+    list(value = as.numeric(ev$value), gradient = setNames(as.numeric(ev$gradient),
+      names(ext$x2)), units = as.matrix(sg$scores), hessian = (H + t(H)) / 2)
+  })
 }
 
 # The fitted model with every parameter of the dynamics and of the error
@@ -2108,6 +2162,8 @@ print.ctScoreTest <- function(x, digits = 3, top = 10, ...) {
   cat("Score tests at the fitted model (", x$info$route, " route, ",
     x$info$nsubjects, " subjects)\n", sep = "")
   for (e in names(x$info$errors)) cat("Not tested, ", e, ": ", x$info$errors[[e]], "\n", sep = "")
+  if (length(x$info$quadrature)) cat("By quadrature, every subject's random effects ",
+    "integrated: ", paste(x$info$quadrature, collapse = ', '), "\n", sep = "")
   if (length(x$info$onestep)) cat("On one-step Laplace, a fast screen: ",
     paste(x$info$onestep, collapse = ', '), " (the extended model's filter cannot ",
     "integrate the fit's intercept effects)\n", sep = "")
