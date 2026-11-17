@@ -561,6 +561,11 @@ test_that("an innovation sd that varies over people is still tested for volatili
   expect_null(st$info$errors)
   expect_false(is.null(st$statedependence))
   expect_false(is.null(st$volatility))
+  # The fit's filter integrates its initial mean and item intercept beside the
+  # random drift and noise; the extension's terms read the state, so its
+  # filter cannot, and both are taken one-step, which the result says.
+  expect_setequal(st$info$onestep, c('statedependence', 'volatility'))
+  expect_output(print(st), 'On one-step Laplace')
 })
 
 test_that("where effects reach the dynamics, only the unit-level families are projected", {

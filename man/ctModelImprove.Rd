@@ -263,6 +263,17 @@ further choices the level does not count. The search is a way of
 developing a model, and its p-values describe the steps it took rather than
 testing the result. A refit that ends below the model it extends has not
 reached an optimum, and is recorded as such.
+
+On the Laplace route the filter integrates a fit's intercept-type random
+effects exactly where it can, and Laplace approximates only the others (the
+two-step term); a change that makes the dynamics read the state takes that
+away, and its refit is on the one-step term
+(\code{optimcontrol$laplace_onestep} in \code{\link{ctFit}}). Beside random
+dynamics the two approximate their integrals differently, so such a refit
+is compared with the current model refitted one-step from its own
+estimate: a fast comparison of two approximations. To compare integrals
+instead, start the search from a fit with \code{intoverpop =
+'quadrature'}: every refit is then refined the same way.
 }
 
 \seealso{

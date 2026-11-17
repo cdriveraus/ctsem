@@ -73,6 +73,9 @@
 # (`CTSEMHybridCross`), at each unit's mode: the largest differences in the
 # curvature, and in the cross terms, mode and `M`, relative to their largest
 # entries, the members with a cross term, and whether the hand route served.
+# The cross terms are the joint term's (`_HYBRID_PROFILE`); the curvature the
+# default term reads, of the deviations' exact integral (`_HYBRID_FULL`), is
+# compared too (`errF`).
 .th_curvature <- function(fit) {
   .th_oracles()
   f <- ctsem:::.ctJuliaEval(paste(
@@ -81,7 +84,7 @@
     "  xe = M._laplace_extend(lap, collect(Float64, x))",
     "  M.ctsem_laplace_evaluate(lap, xe; gradient = false)",
     "  Ls = M._laplace_popchols(xe, lap.spec)",
-    "  errM = 0.0; errH = 0.0; errJ = 0.0; ncross = 0; units = 0",
+    "  errM = 0.0; errF = 0.0; errH = 0.0; errJ = 0.0; ncross = 0; units = 0",
     "  for U in eachindex(lap.units.members)",
     "    u = lap.modes[U]",
     "    isempty(u) && continue",
@@ -89,12 +92,16 @@
     "    d, nm = length(u), length(lap.units.members[U])",
     "    c1 = M.CTSEMHybridCross{Float64}(d, nm)",
     "    A1 = M._laplace_block_dense(M._laplace_unit_curvature(lap, U, xe, Ls, u;",
-    "      hook = c1), lap.units.blocks[U], d)",
+    "      hook = c1, mode = M._HYBRID_PROFILE), lap.units.blocks[U], d)",
     "    c0 = M.CTSEMHybridCross{Float64}(d, nm)",
     "    A0 = _oracle_unit_curvature(lap, U, xe, Ls, u; hook = c0)",
     "    errM = max(errM, maximum(abs.(A1 .- A0)) / maximum(abs.(A0)))",
+    "    F1 = M._laplace_block_dense(M._laplace_unit_curvature(lap, U, xe, Ls, u;",
+    "      mode = M._HYBRID_FULL), lap.units.blocks[U], d)",
+    "    F0 = _oracle_unit_curvature(lap, U, xe, Ls, u; mode = M._HYBRID_FULL)",
+    "    errF = max(errF, maximum(abs.(F1 .- F0)) / maximum(abs.(F0)))",
     "    for m in 1:nm",
-    "      c1.q[m] == c0.q[m] || return (errM = Inf, errH = Inf, errJ = Inf, ncross = -1,",
+    "      c1.q[m] == c0.q[m] || return (errM = Inf, errF = Inf, errH = Inf, errJ = Inf, ncross = -1,",
     "        units = units, served = false)",
     "      q = c0.q[m]",
     "      q == 0 && continue",
@@ -113,7 +120,7 @@
     "  end",
     "  served = M._tan_laplace_context(lap, xe, M._HYBRID_PROFILE) !== nothing &&",
     "    M._tan_laplace_context(lap, xe, M._HYBRID_FIXED) !== nothing",
-    "  (errM = errM, errH = errH, errJ = errJ, ncross = ncross, units = units,",
+    "  (errM = errM, errF = errF, errH = errH, errJ = errJ, ncross = ncross, units = units,",
     "    served = served)",
     "end", sep = "\n"))
   f(ctsem:::.ctJuliaObjective(fit, hybrid = TRUE),
@@ -137,6 +144,7 @@ test_that("the hand-coded unit curvature is the dual's, cross terms included", {
     expect_gt(r$units, 0)
     expect_gt(r$ncross, 0)
     expect_lt(r$errM, 1e-10)
+    expect_lt(r$errF, 1e-10)
     expect_lt(r$errH, 1e-10)
     expect_lt(r$errJ, 1e-10)
   }

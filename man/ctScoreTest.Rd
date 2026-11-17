@@ -343,6 +343,16 @@ before interpreting their sizes.
   the other families' results stand. With \code{priors = TRUE} the new terms
   of the extended model would carry the normal(0, 1) prior every parameter
   has; they are tested on the likelihood, without it.
+
+  On the Laplace route the filter integrates a fit's intercept-type random
+  effects exactly where it can, and Laplace approximates only the others
+  (the two-step term; \code{optimcontrol$laplace_onestep} in
+  \code{\link{ctFit}}). The state dependence and volatility families extend
+  the model with terms that read the state, which that filter cannot take;
+  where the fit has random dynamics beside such effects, those families are
+  then computed with the fit and its extension both on the one-step term, a
+  fast screen whose approximation error stays in the scores, and
+  \code{info$onestep} names them.
 }
 
 \examples{

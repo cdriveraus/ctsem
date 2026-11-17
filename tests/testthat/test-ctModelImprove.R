@@ -446,7 +446,7 @@ test_that("pruning side by side makes the decisions pruning one at a time does",
       calls <<- calls + length(edits)
       structure(lapply(edits, function(e) list(labels = e$model)), seconds = 0)
     },
-    .ctImproveCompare = function(current, refit, criterion, alpha) {
+    .ctImproveCompare = function(current, refit, criterion, alpha, cores = 2L) {
       gone <- setdiff(refit$labels, current$labels)
       redundant <- gone == 'e' || (gone == 'b' && 'd' %in% current$labels) ||
         (gone == 'd' && 'b' %in% current$labels)
@@ -525,7 +525,7 @@ test_that("a rank change starts at the best low-rank covariance, applies last an
       tried <<- c(tried, vapply(edits, function(e) paste(e$model, collapse = '+'), ''))
       structure(lapply(edits, function(e) list(labels = e$model)), seconds = 0)
     },
-    .ctImproveCompare = function(current, refit, criterion, alpha)
+    .ctImproveCompare = function(current, refit, criterion, alpha, cores = 2L)
       list(accept = TRUE, dloglik = 10, dpar = 1L, value = 1e-4, score = 0, note = ''))
   out <- ctsem:::.ctImprovePrune(NULL, list(labels = c('a', rank$label, 'b')), changes,
     NULL, NULL, 'LR', 0.05, cores = 1L, ntry = 3L)

@@ -27,8 +27,11 @@ while the engine is compiled.
 - Random effects are integrated with a Laplace approximation. Version 3 carried
   them as extra states of the Kalman filter, which underestimates individual
   differences in the dynamics. Random intercepts in linear models are still
-  integrated exactly. `intoverpop = 'augmented'` gives the old method, and
-  `ctFit()` warns when that method meets nonlinear dynamics.
+  integrated exactly, also beside random dynamics, where Laplace then
+  approximates only the integral over the rest
+  (`optimcontrol$laplace_onestep = TRUE` approximates them all together).
+  `intoverpop = 'augmented'` gives the old method, and `ctFit()` warns when
+  that method meets nonlinear dynamics.
 - Each fit checks the approximation and warns if it affects the estimates.
   `intoverpop = 'quadrature'` then refines the fit, and
   `ctFitUncertainty(fit, 'sample')` samples the full posterior instead.
