@@ -3071,7 +3071,7 @@ function _ctsem_local_due(lc::CTSEMLocalCurvature, x::AbstractVector)
     grew = _ctsem_local_read!(lc, st)
     lc.seen >= 2 || return false
     # Chosen again whenever the readers grow; a run that carries an earlier
-    # run's builds (`local_builds_carried`) chooses them as any run does.
+    # run's builds (`_ctsem_local_start!`) chooses them as any run does.
     if grew || isempty(lc.columns)
         lc.columns, lc.cost = _ctsem_local_select(lc.readers)
         isempty(lc.columns) && (lc.done = true; return false)

@@ -572,20 +572,24 @@ end
     @test_throws BoundsError C.ctsem_lbfgs_carry!(other, laplace, [n + 1], [1.0])
     @test_throws DimensionMismatch C.ctsem_lbfgs_carry!(other, laplace, [1, 2], [1.0])
     # The local curvature an objective holds goes the same way
-    # (`ctsem_local_carry!`): its matrix with the precision on its
+    # (`ctsem_lbfgs_carry!` hands it with the pairs): its matrix with the precision on its
     # diagonal, inverted again, its count of builds kept.
-    @test !C.ctsem_local_carry!(other, laplace, index, delta)
+    @test !C._ctsem_local_carry!(other, laplace, index, delta)
     P = Matrix(2.0I, n, n) .+ 0.1
     C._ctsem_local_hold!(laplace, C.CTSEMLocalHeld(P, inv(P), 3))
-    @test C.ctsem_local_carry!(other, laplace, index, delta)
+    @test C._ctsem_local_carry!(other, laplace, index, delta)
     lgot = C._ctsem_local_held(other)
     @test lgot.P ≈ P .+ Diagonal(shift) && lgot.builds == 3
     @test lgot.inverse ≈ inv(P .+ Diagonal(shift))
     @test C._ctsem_local_held(laplace).P == P
-    @test !C.ctsem_local_carry!(other, laplace, collect(1:n), fill(-1e8, n))
+    @test !C._ctsem_local_carry!(other, laplace, collect(1:n), fill(-1e8, n))
     @test C._ctsem_local_held(other) === nothing
-    @test_throws BoundsError C.ctsem_local_carry!(other, laplace, [n + 1], [1.0])
-    @test_throws DimensionMismatch C.ctsem_local_carry!(other, laplace, [1, 2], [1.0])
+    @test_throws BoundsError C._ctsem_local_carry!(other, laplace, [n + 1], [1.0])
+    @test_throws DimensionMismatch C._ctsem_local_carry!(other, laplace, [1, 2], [1.0])
+    # The pairs' carry hands it too, and alone where the pairs stay.
+    @test C.ctsem_lbfgs_carry!(other, laplace, index, delta, false) == 0
+    @test C._ctsem_lbfgs_held(other) === nothing
+    @test C._ctsem_local_held(other).P ≈ P .+ Diagonal(shift)
     # Both go unchanged to the objective built again with further known
     # modes (`ctsem_curvature_move!`).
     again = first(_fresh_2d3_prior())
@@ -593,7 +597,7 @@ end
     @test C._ctsem_lbfgs_held(again) === held
     @test C._ctsem_local_held(again) === C._ctsem_local_held(laplace)
     C.ctsem_curvature_move!(again, other)
-    @test C._ctsem_lbfgs_held(again) === C._ctsem_lbfgs_held(other)
+    @test C._ctsem_local_held(again) === C._ctsem_local_held(other)
     @test C._ctsem_local_held(again) !== nothing
     # Forgotten, the next run starts cold; a plain objective holds pairs too.
     C.ctsem_lbfgs_forget!(laplace)

@@ -3106,9 +3106,10 @@ what the objective holds from its last run on this argument
 on one hybrid, each after a placement of its draws, so that a stage does not
 learn again the curvature its predecessor ended with. An objective that holds
 none starts cold. After a finish hands the point back, L-BFGS goes on from the
-pairs it had whatever this says. Under `:objective` the local curvature
-(`lbfgs_local`) is held and started from the same way (`CTSEMLocalHeld`),
-unless `lbfgs_inverse` is given.
+pairs it had whatever this says. The local curvature (`lbfgs_local`) is
+kept on the objective too, whatever this says, and a run starts from the
+one it finds there (`CTSEMLocalHeld`) unless `lbfgs_inverse` is given;
+`ctsem_lbfgs_forget!` drops both.
 `newton_hessian`, the Hessian of the maximised objective at
 `newton_hessian_at`, is one the caller already holds, for the finish to walk
 on rather than form again where Hessians are dear (`_ctsem_newton_finish`'s
@@ -3157,7 +3158,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     progress_budget::Bool=false, progress_every::Real=0.0,
     gap_tol::Real=0.0, converge_tol::Real=1e-6,
     precondition=nothing, lbfgs_inverse=nothing, lbfgs_scores::Bool=false,
-    lbfgs_local::Bool=false, local_builds_carried::Integer=0,
+    lbfgs_local::Bool=false,
     lbfgs_pairs=nothing, initial_alpha::Real=0.1,
     overshoot_probe=_CTSEM_OVERSHOOT_PROBE[],
     stall_window::Integer=80, stall_cooldown::Integer=30,
@@ -3401,19 +3402,15 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         CTSEMLocalCurvature(objective, score_store, _ctsem_prior_precision(
             _ctsem_prior_objective(objective), length(start_values));
             progress=_ctsem_local_progress(reporter)) : nothing
-    # A run that resumes another of the same fit -- a jump's, with its modes
-    # known -- starts from that run's local curvature as `lbfgs_inverse`, and
-    # its schedule counts that run's builds: built again from scratch, it cost
-    # the affect pilot 26-44 minutes at every resume.
-    local_curvature === nothing || (local_curvature.builds = Int(local_builds_carried))
-    # Or from the one the objective holds from the fit's last run on it
-    # (`CTSEMLocalHeld`): L-BFGS's initial inverse and the Krylov model's
-    # base from the first step, its next build due as that run's would be.
-    local_held = (carry === :objective && lbfgs_inverse === nothing) ?
+    # It starts from the one the objective holds from the fit's last run on
+    # it (`CTSEMLocalHeld`) -- a stage's, or a run's that a jump or new modes
+    # resumed: L-BFGS's initial inverse and the Krylov model's base from the
+    # first step, its next build due as that run's would be. Built again
+    # from scratch, it cost the affect pilot 26-44 minutes at every resume.
+    local_held = lbfgs_inverse === nothing ?
         _ctsem_local_start!(local_curvature, objective, length(start_values)) :
         nothing
-    local_base = local_held === nothing ? Int(local_builds_carried) :
-        local_held.builds
+    local_base = local_held === nothing ? 0 : local_held.builds
     # Whether the run starts with no curvature of its own, neither pairs
     # handed on nor an inverse: what its first steps predict then rests on
     # the gradient's scale (the gap rule below).
@@ -4069,8 +4066,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         again || (may_finish = false)
     end
     carry === :objective && _ctsem_lbfgs_hold!(objective, result.memory)
-    (carry === :objective && local_curvature !== nothing &&
-        !isempty(local_curvature.P)) && _ctsem_local_hold!(objective,
+    (local_curvature !== nothing && !isempty(local_curvature.P)) &&
+        _ctsem_local_hold!(objective,
         CTSEMLocalHeld(local_curvature.P, local_curvature.inverse,
             local_curvature.builds))
     # The finish's totals, a finish that handed back included.
@@ -4335,16 +4332,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # gradients that cost, and how many parameters it took exactly.
         local_builds=local_curvature === nothing ? 0 :
             local_curvature.builds - local_base,
-        # The builds behind the one it started from: an earlier run's that
-        # the caller counted (`local_builds_carried`) or the objective held.
-        local_builds_base=local_curvature === nothing ? 0 : local_base,
         local_gradients=local_curvature === nothing ? 0.0 : local_curvature.spent,
         local_columns=local_curvature === nothing ? 0 :
             length(local_curvature.columns),
-        # Its inverse, for a resume to start from (a 1x1 zero where none was
-        # built: an empty matrix would hang the bridge).
-        local_inverse=(local_curvature === nothing || isempty(local_curvature.inverse)) ?
-            zeros(1, 1) : local_curvature.inverse,
         # The coreset stages (`coreset`): each stage's units, share of a full
         # evaluation's work, iterations, and what the full objective gained
         # over what the coreset predicted; the iteration each run of stages

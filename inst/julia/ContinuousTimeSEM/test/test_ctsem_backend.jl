@@ -2410,7 +2410,7 @@ ContinuousTimeSEM._ctsem_local_columns(o::_LocalQuadratic, x::AbstractVector,
     @test !C3._ctsem_local_due(lc, x)
     lc.since = 4
     @test C3._ctsem_local_due(lc, x)
-    # A run resuming another (`local_builds_carried`) chooses its columns as a
+    # A run that starts on another's (`_ctsem_local_start!`) chooses its columns as a
     # first run does and waits as that run's next build would.
     carried = C3.CTSEMLocalCurvature(_LocalQuadratic(H), store, precision)
     carried.builds = 2
@@ -2592,6 +2592,7 @@ end
     # A run handed a curvature is not cold: it stops by its rule, unbuilt.
     warm = C.ctsem_optimize(m, start; lbfgs_local=true, lbfgs_inverse=inv(Hm), kw...)
     @test warm.local_builds == 0
+    C.ctsem_lbfgs_forget!(m)
     # Nor does a run whose finish forms the exact Hessian wait: its first
     # step shows what L-BFGS left.
     exact = C.ctsem_optimize(m, start; lbfgs_local=true,
@@ -2604,27 +2605,28 @@ end
     # The objective keeps the local curvature a run ended with
     # (`lbfgs_pairs = :objective`), and it goes to the objective a
     # smoothing pass moves to, the precisions' change on its diagonal
-    # (`ctsem_local_carry!`). A run there starts on it: not cold, nothing
+    # (`ctsem_lbfgs_carry!`). A run there starts on it: not cold, nothing
     # built, and its L-BFGS ends within a millionth of a nat of the maximum
     # (the finish has no step left to take), where without it the run
     # handed over at its second step with over a nat left.
+    C.ctsem_lbfgs_forget!(m)
     @test C._ctsem_local_held(m) === nothing
     kept = C.ctsem_optimize(m, start; lbfgs_local=true, lbfgs_pairs=:objective, kw...)
     held = C._ctsem_local_held(m)
-    @test kept.local_builds == 1 && kept.local_builds_base == 0
+    @test kept.local_builds == 1
     @test held isa C.CTSEMLocalHeld && held.builds == 1
     @test held.inverse * held.P ≈ Matrix(I, n, n) rtol = 1e-6
     index = [1, n - 1]; delta = [2.0, 5.0]
     shift = zeros(n); shift[index] .= delta
     moved = _LocalMock(A, m.b, precision .+ shift)
-    @test C.ctsem_local_carry!(moved, m, index, delta)
+    @test C._ctsem_local_carry!(moved, m, index, delta)
     got = C._ctsem_local_held(moved)
     @test got.P ≈ held.P .+ Diagonal(shift) && got.builds == 1
     @test got.inverse * got.P ≈ Matrix(I, n, n) rtol = 1e-6
     @test C._ctsem_local_held(m) === held
     bestmoved = _local_mock_hessian(moved) \ (transpose(A) * m.b)
     next = C.ctsem_optimize(moved, start; lbfgs_local=true, lbfgs_pairs=:objective, kw...)
-    @test next.local_builds == 0 && next.local_builds_base == 1
+    @test next.local_builds == 0
     short(o, at, top) = C.ctsem_evaluate(o, top; gradient=false).value -
         C.ctsem_evaluate(o, at; gradient=false).value
     @test short(moved, start, bestmoved) > 1
@@ -2633,14 +2635,14 @@ end
     # An inverse the caller hands in is the run's, not the held one.
     own = C.ctsem_optimize(moved, start; lbfgs_local=true, lbfgs_pairs=:objective,
         lbfgs_inverse=inv(_local_mock_hessian(moved)), kw...)
-    @test own.local_builds_base == 0
+    @test own.local_builds == 0 && C._ctsem_local_held(moved).builds == 1
     # A change that leaves the matrix indefinite hands nothing on, and a
     # forgotten objective holds none.
-    @test !C.ctsem_local_carry!(moved, m, collect(1:n), fill(-1e9, n))
+    @test !C._ctsem_local_carry!(moved, m, collect(1:n), fill(-1e9, n))
     @test C._ctsem_local_held(moved) === nothing
     C.ctsem_lbfgs_forget!(m)
     @test C._ctsem_local_held(m) === nothing
-    @test !C.ctsem_local_carry!(moved, m, index, delta)
+    @test !C._ctsem_local_carry!(moved, m, index, delta)
 end
 
 @testset "a fit with the structured model ends where L-BFGS alone does" begin
