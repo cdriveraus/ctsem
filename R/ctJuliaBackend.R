@@ -5641,19 +5641,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # stages and a resume goes on from, and the substep mesh and relinearisation
 # plan, which a fit learns at its start and again at its optimum. A Hessian the
 # checkpoint kept is the objective's at these, so a resume uses it only where
-# its own are the same. And, where the filter integrates effects beside a
-# coordinate that is not a mean effect, which Laplace term it is: the
-# deviations' exact integral since juliaFit's hybridfull merge, the joint term
-# before, which a checkpoint written then does not record and so does not
-# match (`ctsem_set_hybrid_full!` in laplace.jl).
+# its own are the same.
 .ctJuliaCheckpointState <- function(model_spec) {
-  state <- list(lambda = if (!is.null(model_spec$penalty))
+  list(lambda = if (!is.null(model_spec$penalty))
       as.numeric(model_spec$penalty$lambda),
     max_timestep = model_spec$max_timestep, relinsteps = model_spec$relinsteps)
-  if (!is.null(model_spec$laplace$hybrid) && !isTRUE(model_spec$laplace$quadratic)) {
-    state$deviations <- "integrated"
-  }
-  state
 }
 
 # The file a checkpoint keeps its exact Hessian in, beside it: written once a
