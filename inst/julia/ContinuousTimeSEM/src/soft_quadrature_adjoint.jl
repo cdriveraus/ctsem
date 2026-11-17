@@ -83,7 +83,7 @@ function _laplace_unit_theta_gradient(laplace::CTSEMLaplaceObjective, U::Integer
     end
     Gtheta = zeros(S, npar)
     Gz = zeros(S, D)
-    mode = layout === nothing ? _HYBRID_PROFILE : _HYBRID_FIXED
+    mode = layout === nothing ? _laplace_hmode(laplace) : _HYBRID_FIXED
     for m in eachindex(members)
         offsets = units.offsets[U][m]
         shifted = _laplace_member_values!(shift, theta, spec, Ls, u, offsets)
@@ -832,7 +832,7 @@ function _laplace_soft_quadrature_setup(laplace::CTSEMLaplaceObjective, U::Integ
     dL = _laplace_level_chol_derivatives(theta, spec)
     positions = [_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
     aws = _laplace_workspace!(laplace, Float64, npar)
-    if _hybrid_on(laplace.objective.params.hybrid)
+    if _laplace_joint_hybrid(laplace)
         modes = _HybridModeHook{Float64}(length(members))
         r = _laplace_unit_loglik_gradient(laplace, U, theta, Ls, uhat, aws,
             eachindex(members), nothing, _HYBRID_PROFILE, modes)

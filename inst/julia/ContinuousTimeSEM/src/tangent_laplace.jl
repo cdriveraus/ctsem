@@ -925,7 +925,7 @@ function _tan_laplace_theta_gradient!(Gt::Matrix{Float64}, Gz::Matrix{Float64},
     laplace::CTSEMLaplaceObjective, U::Integer, theta::Vector{Float64},
     Ls::Vector{Matrix{Float64}}, dL, positions, z::Vector{Float64},
     B::AbstractMatrix{Float64}, nl::Int, layout)
-    mode = layout === nothing ? _HYBRID_PROFILE : _HYBRID_FIXED
+    mode = layout === nothing ? _laplace_hmode(laplace) : _HYBRID_FIXED
     ctx = _tan_laplace_context(laplace, theta, mode)
     st = _tan_laplace_theta_gradient_!(Gt, Gz, ctx, laplace, Int(U), theta, Ls, dL,
         positions, z, B, nl, layout)::Int
@@ -1512,11 +1512,13 @@ function _tan_laplace_theta_jet!(Gts::Vector{Float64}, Gzs::Vector{Float64},
     Ls::Vector{Matrix{Float64}}, dL, positions, z::Vector{Float64},
     coords::Vector{Vector{Int}}, dirs::Vector{Matrix{Float64}}, nds::Vector{Int},
     layout, ::Type{J}) where {J}
-    mode = layout === nothing ? _HYBRID_PROFILE : _HYBRID_FIXED
+    mode = layout === nothing ? _laplace_hmode(laplace) : _HYBRID_FIXED
     ctx = _tan_jet_context(laplace, theta, J, mode)
-    # Integrated deviations take joint coordinates, and nothing else does.
-    (ctx.mod.nh > 0) == (layout !== nothing) || throw(ArgumentError(
-        "integrated deviations take joint coordinates, and nothing else does"))
+    # Integrated deviations take joint coordinates on the joint term, and
+    # nothing else does; on their exact integral they are the members' own.
+    (ctx.mod.nh > 0 && mode != _HYBRID_FULL) == (layout !== nothing) ||
+        throw(ArgumentError(
+            "integrated deviations take joint coordinates on the joint term alone"))
     st = _tan_laplace_theta_jet_!(Gts, Gzs, ctx, laplace, Int(U), theta, Ls, dL,
         positions, z, coords, dirs, nds, layout)::Int
     st == _TAN_REFUSED && throw(ArgumentError(_TAN_NOT_JACOBIAN))

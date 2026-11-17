@@ -2209,6 +2209,51 @@ heap for every member, 700 bytes a call on gC8.
     end
 end
 
+"""
+Whether the Laplace term takes the deviations the filter integrates
+(`CTSEMHybrid`) as their exact integral, `_HYBRID_FULL`: Laplace then runs over
+the unit's coordinates alone, of the members' likelihood with the deviations
+integrated -- its mode, curvature and gradient all of that integrand. Off
+(`ctsem_set_hybrid_full!(false)`), the term is the joint Laplace over the
+coordinates and the deviations, the layer's: the profile's mode and
+curvature, with the deviations' `logdet(M) / 2` added at that mode. The two
+are equal wherever the deviations' posterior precision does not depend on the
+coordinates (every coordinate a mean effect); elsewhere the joint term leaves
+out that dependence's curvature. On the Bursti-CT-VAR (a person's random drift
+beside burst intercepts the filter integrates) that left the term 12 nats
+above the integral over 500 persons, Laplace on the integral 0.6 below it, and
+the burst variance 40% low against the posterior mean
+(review/BURSTICT-ctsem-laplace-2026-11-16.md).
+"""
+const _LAPLACE_HYBRID_FULL = Ref(true)
+
+"""
+    ctsem_set_hybrid_full!(on)
+
+The Laplace term on the deviations' exact integral (`true`, the default) or
+the joint term, which equals the layer's (`false`, the oracle for the joint
+term). Returns the previous setting.
+"""
+function ctsem_set_hybrid_full!(on::Bool)
+    old = _LAPLACE_HYBRID_FULL[]
+    _LAPLACE_HYBRID_FULL[] = on
+    return old
+end
+export ctsem_set_hybrid_full!
+
+"""What the Laplace term's passes ask each member's filter for the deviations
+it integrates: their exact integral (`_HYBRID_FULL`) or their profile."""
+@inline _laplace_hmode(laplace::CTSEMLaplaceObjective) =
+    _LAPLACE_HYBRID_FULL[] && _hybrid_on(laplace.objective.params.hybrid) ?
+        _HYBRID_FULL : _HYBRID_PROFILE
+
+"""Whether the Laplace term is the joint one over coordinates and integrated
+deviations: the hybrid on and its term the profile's
+(`ctsem_set_hybrid_full!(false)`), which the soft-direction quadrature then
+decides and scores in joint coordinates (hybrid_joint.jl)."""
+@inline _laplace_joint_hybrid(laplace::CTSEMLaplaceObjective) =
+    !_LAPLACE_HYBRID_FULL[] && _hybrid_on(laplace.objective.params.hybrid)
+
 ################################################################################
 # Factorizing a unit's curvature without forming it
 ################################################################################
@@ -2735,9 +2780,10 @@ end
 
 `_laplace_unit_loglik_gradient`'s `value` and `hlogdet` over every member, by
 one forward pass a member, with `gradient` (empty) handed back as its
-gradient: for a unit with no coordinate, whose gradient in `u` has no entries.
-The reverse sweep that gradient took was a third of such a unit's term, and
-the mode solve's sweep another third.
+gradient: for a unit with no coordinate, whose gradient in `u` has no entries,
+and the probes' screen, which must read the integrand the mode was found on
+(`_laplace_hmode`). The reverse sweep that gradient took was a third of such a
+unit's term, and the mode solve's sweep another third.
 """
 function _laplace_unit_loglik_value(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
@@ -2747,14 +2793,22 @@ function _laplace_unit_loglik_value(laplace::CTSEMLaplaceObjective, U::Integer,
     shift = _laplace_scratch_vector!(laplace, T, length(values), :loglik_shift)
     total = zero(T)
     hsum = zero(T)
-    for (m, i) in enumerate(units.members[U])
-        so = laplace.objective.subject_objectives[i]
-        shifted = _laplace_member_values!(shift, values, spec, Ls, u, units.offsets[U][m])
-        loglik = _ekf_run(aws.ekf_ws, so, shifted,
-            _ctsem_tipred_fill!(aws.tipreds, so.tipreds, shifted), nothing)
-        isfinite(loglik) || return (value=loglik, gradient=gradient, hlogdet=zero(T))
-        total += loglik
-        hsum += aws.ekf_ws.hyb.half_logdet
+    mode = _laplace_hmode(laplace)
+    whl = mode == _HYBRID_FULL ? zero(T) : one(T)
+    hb = aws.ekf_ws.hyb
+    hb.mode = mode
+    try
+        for (m, i) in enumerate(units.members[U])
+            so = laplace.objective.subject_objectives[i]
+            shifted = _laplace_member_values!(shift, values, spec, Ls, u, units.offsets[U][m])
+            loglik = _ekf_run(aws.ekf_ws, so, shifted,
+                _ctsem_tipred_fill!(aws.tipreds, so.tipreds, shifted), nothing)
+            isfinite(loglik) || return (value=loglik, gradient=gradient, hlogdet=zero(T))
+            total += loglik
+            hsum += whl * hb.half_logdet
+        end
+    finally
+        hb.mode = _HYBRID_PROFILE
     end
     return (value=total, gradient=gradient, hlogdet=hsum)
 end
@@ -2776,10 +2830,13 @@ block is structurally zero rather than merely small.
 function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
     aws, positions, into::Union{Nothing,AbstractVector}=nothing,
-    mode::Int=_HYBRID_PROFILE, hook=nothing) where {T}
+    mode::Int=_laplace_hmode(laplace), hook=nothing) where {T}
     spec = laplace.spec
     units = laplace.units
     members = units.members[U]
+    # The deviations' `logdet(M) / 2` still to be taken off the value: none
+    # where the value is their integral.
+    whl = mode == _HYBRID_FULL ? zero(T) : one(T)
 
     # One member's contribution, into the accumulators the caller hands it.
     # Unlike the seeded assembly these are *reductions*, not per-member columns:
@@ -2828,7 +2885,7 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
             isfinite(loglik) ||
                 return (value=loglik, gradient=fill(_ctsem_nan(T), length(u)), hlogdet=zero(T))
             total += loglik
-            hsum += aws.ekf_ws.hyb.half_logdet
+            hsum += whl * aws.ekf_ws.hyb.half_logdet
         end
         return (value=total, gradient=inner, hlogdet=hsum)
     end
@@ -2883,7 +2940,7 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
                 return false
             end
             tot += loglik
-            htot += ws.ekf_ws.hyb.half_logdet
+            htot += whl * ws.ekf_ws.hyb.half_logdet
         end
         totals[slot] = tot
         hls[slot] = htot
@@ -3161,7 +3218,7 @@ derived; `ctsem_set_block_threshold!` moves it.
 """
 function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T};
-    hook=nothing, mode::Int=_HYBRID_PROFILE,
+    hook=nothing, mode::Int=_laplace_hmode(laplace),
     into::Union{Nothing,CTSEMBlockMatrix{T}}=nothing) where {T}
     # `into`: where a caller that uses the curvature once (a Newton step) wants
     # it, rather than a block matrix of its own. Only the small-unit route below
@@ -3261,7 +3318,7 @@ without inactive coordinates runs, and compiles, exactly what it did.
 """
 function _laplace_unit_curvature_pruned(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, base::AbstractVector{T},
-    act::Vector{Int}; hook=nothing, mode::Int=_HYBRID_PROFILE) where {T}
+    act::Vector{Int}; hook=nothing, mode::Int=_laplace_hmode(laplace)) where {T}
     blocks = laplace.units.blocks[U]
     d = length(base)
     if length(blocks) <= 1 || d < _LAPLACE_BLOCK_THRESHOLD[]
@@ -6347,7 +6404,7 @@ function _laplace_soft_quadrature_term(laplace::CTSEMLaplaceObjective, U::Intege
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
     aws; M=nothing, logdetM=nothing, inner=nothing, cross=nothing, objective=nothing,
     curvature=nothing, blocks=nothing, flagged::Bool=false) where {T}
-    objective === nothing && _hybrid_on(laplace.objective.params.hybrid) &&
+    objective === nothing && _laplace_joint_hybrid(laplace) &&
         return _hybrid_soft_quadrature_term(laplace, U, values, Ls, u, aws; M=M,
             logdetM=logdetM, inner=inner, cross=cross, flagged=flagged)
     objf = objective === nothing ?
@@ -7024,8 +7081,7 @@ function _laplace_unit_primal(laplace::CTSEMLaplaceObjective, U::Integer,
     blocks = laplace.units.blocks[U]
     soft_quadrature_on = _LAPLACE_PRIOR_FLOOR[] && laplace.soft_directions === :quadrature
     b0 = _laplace_mark()
-    cross = (soft_quadrature_on && !isempty(u) &&
-             _hybrid_on(laplace.objective.params.hybrid)) ?
+    cross = (soft_quadrature_on && !isempty(u) && _laplace_joint_hybrid(laplace)) ?
         _hybrid_cross!(laplace, T, length(u), length(laplace.units.members[U])) :
         nothing
     # Asserted, as in `_laplace_newton_unit_mode`.
@@ -7219,7 +7275,7 @@ _laplace_unit_seeded_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
 # integral (`_HYBRID_FULL`, `laplace_placed.jl`).
 function _laplace_unit_seeded_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
-    members, D::AbstractMatrix{Float64}, nd::Int; mode::Int=_HYBRID_PROFILE)
+    members, D::AbstractMatrix{Float64}, nd::Int; mode::Int=_laplace_hmode(laplace))
     # The switch folds to a constant, so with counting off this is a plain call
     # and the try/finally below is not compiled at all. It is a sweep: the
     # assembly runs thousands per gradient.
@@ -7236,7 +7292,7 @@ end
 
 function _laplace_unit_seeded_gradient_(laplace::CTSEMLaplaceObjective, U::Integer,
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
-    members, D::AbstractMatrix{Float64}, nd::Int, mode::Int=_HYBRID_PROFILE)
+    members, D::AbstractMatrix{Float64}, nd::Int, mode::Int=_laplace_hmode(laplace))
 
     # By the hand-coded second order (`_tan_laplace_seeded`).
     return _tan_laplace_seeded(laplace, U, values, Ls, u, members, D, nd; mode=mode)
@@ -7299,7 +7355,7 @@ directions of its second directional derivatives (`dS`), in one pass.
 """
 _laplace_unit_jet_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
-    members, D::Matrix{Float64}, ndirs::Int; mode::Int=_HYBRID_PROFILE) =
+    members, D::Matrix{Float64}, ndirs::Int; mode::Int=_laplace_hmode(laplace)) =
     _ctsem_jet_width(ndirs) == _CTSEM_JET_NARROW ?
         _laplace_unit_jet_gradient(laplace, U, values, Ls, u, members, D, ndirs,
             Val(_CTSEM_JET_NARROW), mode) :
@@ -7310,7 +7366,7 @@ _laplace_unit_jet_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
 function _laplace_unit_jet_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
     members, D::Matrix{Float64}, ndirs::Int, ::Val{W},
-    mode::Int=_HYBRID_PROFILE) where {W}
+    mode::Int=_laplace_hmode(laplace)) where {W}
     ndirs <= W || throw(ArgumentError("$(ndirs) directions for a jet of width $(W)"))
     # By the hand-coded sweeps with second parts (`_tan_laplace_jet`).
     return _tan_laplace_jet(laplace, U, values, Ls, u, members, D, ndirs,
@@ -7735,7 +7791,7 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     # is added below as `dpsi/dtheta` is, and its `u` part goes into `s`,
     # carrying the mode's own dependence. The gradient of `-logdet(M_m) / 2` is
     # the full pass's less the profile's (`llvm`).
-    if _hybrid_on(laplace.objective.params.hybrid)
+    if _laplace_joint_hybrid(laplace)
         full = _laplace_hybrid_full_gradients(laplace, U, values, Ls, uhat)
         full === nothing && return false
         @inbounds for m in 1:nmem, t in 1:npar
