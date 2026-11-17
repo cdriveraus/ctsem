@@ -586,6 +586,15 @@ end
     @test C._ctsem_local_held(other) === nothing
     @test_throws BoundsError C.ctsem_local_carry!(other, laplace, [n + 1], [1.0])
     @test_throws DimensionMismatch C.ctsem_local_carry!(other, laplace, [1, 2], [1.0])
+    # Both go unchanged to the objective built again with further known
+    # modes (`ctsem_curvature_move!`).
+    again = first(_fresh_2d3_prior())
+    C.ctsem_curvature_move!(again, laplace)
+    @test C._ctsem_lbfgs_held(again) === held
+    @test C._ctsem_local_held(again) === C._ctsem_local_held(laplace)
+    C.ctsem_curvature_move!(again, other)
+    @test C._ctsem_lbfgs_held(again) === C._ctsem_lbfgs_held(other)
+    @test C._ctsem_local_held(again) !== nothing
     # Forgotten, the next run starts cold; a plain objective holds pairs too.
     C.ctsem_lbfgs_forget!(laplace)
     @test C._ctsem_lbfgs_held(laplace) === nothing

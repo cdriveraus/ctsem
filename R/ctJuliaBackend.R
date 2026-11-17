@@ -6382,7 +6382,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     if (!identical(known, model_spec$laplace$known)) {
       model_spec$laplace$known <- known
       spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
+      ran <- objective
       objective <- .ctJuliaObjective(spec, hybrid = TRUE)
+      # The curvature the run left on the objective it ran on goes to the
+      # one built with its modes, which the fit's next stage starts from
+      # (`pairs`).
+      if (isTRUE(pairs)) .ctJuliaCall("ContinuousTimeSEM.ctsem_curvature_move!",
+        objective, ran)
     }
     if (!resume || rounds >= .ctJuliaKnownRounds) break
     if (!is.null(jumpknown)) {
