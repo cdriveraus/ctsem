@@ -5801,6 +5801,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # 1e-8, and stopped 387 nats short with neither rule having fired once.
   state_explicit <- !is.null(objective)
   if (is.null(objective)) objective <- .ctJuliaObjective(spec, hybrid = TRUE)
+  # The objective keeps the curvature its last run ended with -- the pairs
+  # where asked (`pairs`) and the local curvature (`lbfgs_local`) -- and the
+  # runs of this call go on from it: a resume on new modes, or on a jump.
+  # A call that is no stage of a fit already under way (`pairs`) starts
+  # without what an earlier fit left on an objective R had cached.
+  if (!isTRUE(pairs)) .ctJuliaCall("ContinuousTimeSEM.ctsem_lbfgs_forget!",
+    objective)
   # A run the engine anchors (`_ctsem_anchor_start!`) clears its anchors at
   # its end; one an interrupt ends leaves them on the objective R caches.
   on.exit(try(.ctJuliaCall("ContinuousTimeSEM.ctsem_laplace_clear_anchors!",
@@ -6225,20 +6232,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (isTRUE(probed) && identical(common$overshoot_probe, "magnitude")) {
     common$overshoot_probe <- "cleared"
   }
-  # The last run's local curvature (`lbfgs_local`): its inverse, kept here
-  # rather than on the result, where a fit would carry its n x n matrix, and
-  # its builds, for a resume to start from (`local`).
-  local_inverse <- NULL
   optimise_once <- function(from, pin = default_pin,
-      resumed = FALSE, endgame = NULL, local = NULL) {
+      resumed = FALSE, endgame = NULL) {
     args <- common
-    if (!is.null(local)) {
-      if (is.matrix(local$inverse) && nrow(local$inverse) == length(from) &&
-          is.null(args$lbfgs_inverse)) {
-        args$lbfgs_inverse <- local$inverse
-      }
-      args$local_builds_carried <- as.integer(local$builds)
-    }
     # A resumed stage (`.ctBackendCorrectResult()`): on the full data -- it
     # starts where the full objective already brought the fit, so a first
     # batch of a few units only walks it away again (on the SNSF pilot, 493
@@ -6308,12 +6304,6 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       values[keep[inside]] <- as.numeric(pin$value)[inside]
       out$minimizer <- values
     }
-    inverse <- out[["local_inverse"]]
-    out[["local_inverse"]] <- NULL
-    if (is.matrix(inverse) && nrow(inverse) == length(from)) {
-      storage.mode(inverse) <- "double"
-      local_inverse <<- inverse
-    }
     out
   }
   result <- optimise_once(start)
@@ -6360,9 +6350,6 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # solve can lose it, and the modes a repeated jump saw are further starts
   # like any other.
   rounds <- 0L
-  # The builds behind the local curvature the run started from, where its
-  # objective held one (`local_builds_base`).
-  local_builds <- as.integer(.ctJuliaOr(result[["local_builds_base"]], 0L))[1L]
   while (!state_explicit && !is.null(model_spec$laplace)) {
     known <- model_spec$laplace$known
     found <- .ctJuliaKnownAdd(known, result[["found_mode_units"]],
@@ -6385,10 +6372,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       ran <- objective
       objective <- .ctJuliaObjective(spec, hybrid = TRUE)
       # The curvature the run left on the objective it ran on goes to the
-      # one built with its modes, which the fit's next stage starts from
-      # (`pairs`).
-      if (isTRUE(pairs)) .ctJuliaCall("ContinuousTimeSEM.ctsem_curvature_move!",
-        objective, ran)
+      # one built with its modes, which a resume here and the fit's next
+      # stage start from.
+      .ctJuliaCall("ContinuousTimeSEM.ctsem_curvature_move!", objective, ran)
     }
     if (!resume || rounds >= .ctJuliaKnownRounds) break
     if (!is.null(jumpknown)) {
@@ -6404,12 +6390,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         "fit goes on."), n, if (n == 1L) "unit" else "units", gain))
     }
     rounds <- rounds + 1L
-    # From the run's local curvature, not built again (`local_builds_carried`):
-    # each run reports its own builds.
-    local_builds <- local_builds + as.integer(.ctJuliaOr(result$local_builds, 0L))[1L]
-    local <- list(inverse = local_inverse, builds = local_builds)
     result <- .ctJuliaAddRunCounts(optimise_once(as.numeric(result$minimizer),
-      resumed = TRUE, local = local), result)
+      resumed = TRUE), result)
   }
   # A run still ended on a jump stops there, at no maximum of anything
   # continuous, so it is not certified; the fit warns and leaves integrating
@@ -7311,7 +7293,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
           #
           # The local curvature (`lbfgs_local`) goes with the objective
           # however far the pass starts, the precisions' change added to
-          # its diagonal (`ctsem_local_carry!`): a run keeps its own from
+          # its diagonal (the same call): a run keeps its own from
           # one build to the next wherever it goes, and without it a pass
           # that starts without pairs has nothing behind its steps. On the
           # affect pilot's tied fit such a stage gave way to its finish
@@ -7320,19 +7302,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
           before <- model_spec
           model_spec$penalty$lambda <- gfs$lambda
           step <- gfs$point - theta
-          carried <- function(what) .ctJuliaCall(
-            paste0("ContinuousTimeSEM.", what),
+          .ctJuliaCall("ContinuousTimeSEM.ctsem_lbfgs_carry!",
             heldobjective(model_spec), heldobjective(before),
             .ctJuliaVector(as.integer(unlist(model_spec$penalty$index))),
             .ctJuliaVector(as.numeric(rep(model_spec$penalty$lambda -
-              before$penalty$lambda, lengths(model_spec$penalty$index)))))
-          if (isTRUE(-sum(step * (gfs$hessian %*% step)) <= 1)) {
-            carried("ctsem_lbfgs_carry!")
-          } else {
-            .ctJuliaCall("ContinuousTimeSEM.ctsem_lbfgs_forget!",
-              heldobjective(model_spec))
-          }
-          carried("ctsem_local_carry!")
+              before$penalty$lambda, lengths(model_spec$penalty$index)))),
+            isTRUE(-sum(step * (gfs$hessian %*% step)) <= 1))
           smoothpasses <- pass
           # The exact Hessian the settled parameters were checked on moved
           # them a little further. The penalty is quadratic, so that Hessian

@@ -2202,7 +2202,7 @@ function ctsem_curvature_move!(to, from)
 end
 
 """
-    ctsem_local_carry!(to, from, index, delta)
+    _ctsem_local_carry!(to, from, index, delta)
 
 Hands `to` the local curvature `from` holds from its last run
 (`CTSEMLocalHeld`), where `to` is `from` with `delta[k]` more precision on
@@ -2215,7 +2215,7 @@ is that run gone on. Whether one was handed over: not where `from` holds
 none, or the changed matrix is not positive definite, and `to` then holds
 none either.
 """
-function ctsem_local_carry!(to, from, index::AbstractVector{<:Integer},
+function _ctsem_local_carry!(to, from, index::AbstractVector{<:Integer},
     delta::AbstractVector{<:Real})
     length(index) == length(delta) || throw(DimensionMismatch(
         "one change of precision for each coordinate is required"))
@@ -2238,7 +2238,7 @@ function ctsem_local_carry!(to, from, index::AbstractVector{<:Integer},
 end
 
 """
-    ctsem_lbfgs_carry!(to, from, index, delta)
+    ctsem_lbfgs_carry!(to, from, index, delta, pairs=true)
 
 Hands `to` the curvature `from` holds from its last run (`lbfgs_pairs =
 :objective`), where `to` is `from` with `delta[k]` more precision on the raw
@@ -2253,11 +2253,14 @@ curvature is dropped, as any such pair is. Returns the pairs handed over; 0,
 and nothing held, where `from` holds none.
 """
 function ctsem_lbfgs_carry!(to, from, index::AbstractVector{<:Integer},
-    delta::AbstractVector{<:Real})
+    delta::AbstractVector{<:Real}, pairs::Bool=true)
     length(index) == length(delta) || throw(DimensionMismatch(
         "one change of precision for each coordinate is required"))
+    # The local curvature goes with them, and where the pairs do not
+    # (`pairs = false`: a pass that starts far from where they were learnt).
+    _ctsem_local_carry!(to, from, index, delta)
     held = _ctsem_lbfgs_held(from)
-    held === nothing && return 0
+    (held === nothing || !pairs) && (delete!(_CTSEM_LBFGS_HELD, to); return 0)
     # Checked here: an index past a pair's end would be written through.
     n = isempty(held.S) ? (held.diagonal === nothing ? typemax(Int) :
         length(held.diagonal)) : length(held.S[1])
