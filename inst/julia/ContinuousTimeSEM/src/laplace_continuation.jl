@@ -2183,6 +2183,25 @@ _ctsem_local_hold!(o::Union{CTSEMLaplaceObjective,CTSEMObjective},
     held::CTSEMLocalHeld) = (_CTSEM_LOCAL_HELD[o] = held; nothing)
 
 """
+    ctsem_curvature_move!(to, from)
+
+Hands `to` the pairs and the local curvature `from` holds from its last run,
+unchanged: `to` is `from` built again with further known modes
+(`_laplace_known_modes`), which R does after a run that found some. The
+objective is the run's own with those modes as starts, so what the run
+learnt is its curvature too. Left on `from`, the next stage of a fit
+started with neither: on the affect pilot's tied fit two stages in four
+built the local curvature again, 43 minutes each (2026-11-17).
+"""
+function ctsem_curvature_move!(to, from)
+    pairs = _ctsem_lbfgs_held(from)
+    pairs === nothing || _ctsem_lbfgs_hold!(to, pairs)
+    held = _ctsem_local_held(from)
+    held === nothing || _ctsem_local_hold!(to, held)
+    return nothing
+end
+
+"""
     ctsem_local_carry!(to, from, index, delta)
 
 Hands `to` the local curvature `from` holds from its last run
