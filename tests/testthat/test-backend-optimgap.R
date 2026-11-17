@@ -305,19 +305,19 @@ test_that("distance is measured in the standard errors the Hessian implies", {
   # A matrix that cannot be decomposed describes nothing.
   expect_equal(ctsem:::.ctBackendHessianDistance(matrix(NA_real_, 1, 1), 0, 1),
     Inf)
-  expect_equal(ctsem:::.ctBackendHessianReuse(), 0.1)
+  expect_equal(ctsem:::.ctBackendHessianReuse(), 0.3)
   expect_equal(ctsem:::.ctBackendHessianReuse(list(hessianreuse = 0)), 0)
   expect_error(ctsem:::.ctBackendHessianReuse(list(hessianreuse = -1)),
     "hessianreuse")
 })
 
 test_that("a stored Hessian is reused within the fit's hessianreuse standard errors, and no further", {
-  # A standard error of a half: a tenth of one is 0.05.
+  # A standard error of a half: 0.3 of one, the default, is 0.15.
   fit <- list(uncertainty = list(hessian = matrix(-4, 1, 1), evaluated_at = 1))
   stored <- fit$uncertainty$hessian
   expect_identical(ctsem:::.ctBackendStoredHessian(fit, 1), stored)
-  expect_identical(ctsem:::.ctBackendStoredHessian(fit, 1.04), stored)
-  expect_null(ctsem:::.ctBackendStoredHessian(fit, 1.06))
+  expect_identical(ctsem:::.ctBackendStoredHessian(fit, 1.14), stored)
+  expect_null(ctsem:::.ctBackendStoredHessian(fit, 1.16))
   # A posterior mean half a standard error from the Laplace point is somewhere
   # else, which is the case `evaluated_at` exists for.
   expect_null(ctsem:::.ctBackendStoredHessian(fit, 1.25))
@@ -720,12 +720,13 @@ test_that("lambda is a displacement in standard errors, which is what sets the s
 })
 
 test_that("the bar is a distance from the maximum in standard errors", {
-  # 0.01 se, a tenth of the distance over which a Hessian is taken as the
-  # estimate's (`hessianreuse`): the certified point has the maximum's
-  # Hessian with a tenfold margin.
+  # 0.01 se: the certified point has the maximum's Hessian, far inside the
+  # distance over which a Hessian is taken as the estimate's
+  # (`hessianreuse`).
   bar <- ctsem:::.ctBackendGapTolerance(list())
   expect_equal(bar, 5e-5)
-  expect_equal(sqrt(2 * bar), ctsem:::.ctBackendHessianReuse() / 10)
+  expect_equal(sqrt(2 * bar), 0.01)
+  expect_lt(sqrt(2 * bar), ctsem:::.ctBackendHessianReuse() / 10)
 })
 
 test_that("the bar is read from wherever the fit keeps its controls", {

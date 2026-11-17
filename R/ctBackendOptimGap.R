@@ -399,9 +399,9 @@
 # bar is stated there: 0.01 se (`.ctBackendGapSe`), a gap of 5e-5. What it is
 # for is that the point certified has the Hessian of the maximum, for its
 # standard errors and for the reports read off that curvature: a Hessian
-# formed within `hessianreuse` (0.1 se) of the estimate is taken as the
-# estimate's, so a point certified a tenth of that from the maximum has a
-# tenfold margin, and L-BFGS aims a tenth again closer before it hands over
+# formed within `hessianreuse` (0.3 se) of the estimate is taken as the
+# estimate's, so a point certified 0.01 se from the maximum is far inside
+# that, and L-BFGS aims a tenth again closer before it hands over
 # (`.ctBackendInnerGapTol()`).
 #
 # Until 2026-11-01 the bar was 1e-6 (0.0014 se), set by the curvature-based
@@ -960,22 +960,24 @@
 
 # How far, in standard errors, the estimate may be from where a Hessian was
 # formed for that Hessian still to give the standard errors
-# (`optimcontrol$hessianreuse`, default a tenth). A Wald standard error treats
+# (`optimcontrol$hessianreuse`, default 0.3). A Wald standard error treats
 # the curvature as constant over about a standard error either side of the
 # estimate, and carries an error of however much it is not: over one standard
 # error the curvature changed by 20 to 50 per cent on the bench's well
 # identified models and by 150 to 300 per cent on weakly identified Laplace ones
 # (review/bench/2026-10-17-reuse-probe.csv). A Hessian formed `d` standard
 # errors away differs from the one at the estimate by about `d` of that change,
-# so a tenth adds a tenth to the error the standard error already carries,
+# so this adds that share to the error the standard error already carries,
 # whatever the model, where forming a fresh one costs a gradient a parameter
-# (two on the Laplace route). The 0.01 this replaced was chosen, not measured.
+# (two on the Laplace route). Measured on fifteen bench models in
+# review/bench/2026-11-17-se-vs-distance.md. The optimiser aims to be within
+# a tenth of it before a Hessian is formed (`_CTSEM_REACH_MARGIN`).
 # The engine's finish keeps the Hessian it took at the hand-over when its steps
 # moved the estimate less than this, and everything that reuses a stored
 # Hessian asks the same question (`.ctBackendStoredHessian()`), so one number
 # serves both sides and the engine is passed this one.
 #' @keywords internal
-.ctBackendHessianReuse <- function(optimcontrol = list(), default = 0.1) {
+.ctBackendHessianReuse <- function(optimcontrol = list(), default = 0.3) {
   value <- if (is.null(optimcontrol)) NULL else optimcontrol$hessianreuse
   if (is.null(value)) return(default)
   value <- suppressWarnings(as.numeric(value)[1L])
@@ -1023,12 +1025,7 @@
   }
   if (isTRUE(all.equal(as.numeric(at), est, tolerance = 0))) return(stored)
   moved <- .ctBackendHessianDistance(stored, at, est)
-  # Or as far as the fit itself kept it: the engine's finish keeps an exact
-  # Hessian out to ten times `hessianreuse` and the fit records the distance
-  # (`_CTSEM_KEEP_FACTOR`, `$optim$hessian_distance`).
-  kept <- suppressWarnings(as.numeric(fit$optim$hessian_distance)[1L])
-  reuse <- max(.ctBackendHessianReuse(.ctBackendFitOptimcontrol(fit)),
-    if (length(kept) && is.finite(kept)) kept else 0)
+  reuse <- .ctBackendHessianReuse(.ctBackendFitOptimcontrol(fit))
   if (isTRUE(moved <= reuse * (1 + 1e-8))) stored else NULL
 }
 

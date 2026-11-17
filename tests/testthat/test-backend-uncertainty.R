@@ -52,7 +52,7 @@ test_that("Julia fits get Hessian uncertainty matching Stan's", {
   data <- .backend_uncertainty_data()
 
   # The Hessian at the estimate, as stan's is: by default a Hessian the finish
-  # formed within 0.1 se of it gives the standard errors (`hessianreuse`), and
+  # formed within 0.3 se of it gives the standard errors (`hessianreuse`), and
   # one 0.05 se away moved the diffusion's se by 2%, where at the estimate it
   # matches stan's to four figures.
   julia_fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,

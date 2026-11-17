@@ -7750,16 +7750,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # How far the reported estimate is from where that Hessian was evaluated,
     # in the standard errors it implies: 0 when it is exactly there, and at
     # most `.ctBackendHessianReuse()` when the finish kept the Hessian it took
-    # at the hand-over -- or more, said here, where the optimiser's reading
-    # of what was left before the Hessian was wrong
-    # (the engine's `_CTSEM_KEEP_FACTOR`).
+    # at the hand-over.
     out$optim$hessian_distance <- correction$distance
-    if (isTRUE(correction$distance > .ctBackendHessianReuse(optimcontrol) * (1 + 1e-8))) {
-      message(sprintf(paste0("The Hessian was taken %.2f standard errors from the ",
-        "estimate (hessianreuse is %.2f): standard errors may be off by about ",
-        "that share."),
-        correction$distance, .ctBackendHessianReuse(optimcontrol)))
-    }
     # The matrix goes where its consumers look, and `evaluated_at` is what makes
     # that safe. See `.ctBackendStoredHessian()`: every route says which point
     # its Hessian describes, rather than leaving a reader to assume

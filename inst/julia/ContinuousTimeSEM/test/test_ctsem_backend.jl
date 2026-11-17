@@ -1282,13 +1282,12 @@ end
     @test held.out.gain ≈ 1e-3 rtol = 1e-6
     @test held.out.hessian_at == x0
     # Asked for a Hessian within a thousandth of a standard error, the
-    # finish forms one to certify where its steps went: they moved 0.045,
-    # past the ten times that a Hessian is kept (`_CTSEM_KEEP_FACTOR`)...
+    # finish forms one to certify where its steps went: they moved 0.045...
     on = _chord_run(quad, x0; reuse_se = 0.001)
     @test on.out.steps >= 1
     @test on.out.full_hessians == 2
     @test on.out.gain < 1e-8
-    # ...and within the default tenth, the one it walked on still describes
+    # ...and within the default distance, the one it walked on still describes
     # the point, a few hundredths of a standard error away.
     kept = _chord_run(quad, x0)
     @test kept.out.steps >= 1
@@ -1492,12 +1491,11 @@ end
     @test near.gain < 1e-8
     @test maximum(abs, near.x .- c) < 1e-8
     # From a fifth of a standard error the hand-over Hessian stands too,
-    # and says how far off it was taken: within ten times the reuse
-    # distance (`_CTSEM_KEEP_FACTOR`) a second one would buy standard
-    # errors closer by that share at most.
+    # and says how far off it was taken: within the reuse distance a
+    # second one would buy standard errors closer by that share at most.
     mid = _endgame_run(_endgame_mock(f), c .+ 0.2; curvature = :chord)
     @test mid.full_hessians == 1
-    @test 0.1 < mid.distance < 1
+    @test 0.1 < mid.distance <= ContinuousTimeSEM._CTSEM_HESSIAN_REUSE_SE
     @test mid.gain < 1e-8
     # From two standard errors, the steps move it too far for the
     # hand-over Hessian to stand, and the final one is exact at the estimate.
@@ -1999,14 +1997,13 @@ end
     dear = C.ctsem_optimize(_endgame_mock(ill), zeros(8); newton_final=:dear, kw...)
     @test dear.gap_floor == 1e-10
     # A stage to be certified whose finish is the Krylov model's: L-BFGS gives
-    # way at a tenth of the reach of the exact Hessian that follows, a tenth of a
-    # standard error, and that Hessian's steps are held to the certification's
+    # way a tenth of the reuse distance from the exact Hessian that follows,
+    # and that Hessian's steps are held to the certification's
     # tolerance. (The mock has no products, so the finish goes straight to the
     # exact Hessian.)
     reach = C.ctsem_optimize(_endgame_mock(ill), zeros(8);
         merge(kw, (newton_curvature=:krylov,))...)
-    @test C._ctsem_hessian_reach(C._CTSEM_HESSIAN_REUSE_SE) ≈ C._CTSEM_RESOLUTION_CAP
-    @test reach.gap_floor == C._CTSEM_REACH_MARGIN * C._ctsem_hessian_reach(C._CTSEM_HESSIAN_REUSE_SE)
+    @test reach.gap_floor == C._ctsem_hessian_reach(C._CTSEM_REACH_MARGIN * C._CTSEM_HESSIAN_REUSE_SE)
     @test reach.iterations - reach.newton_steps <= tight.iterations - tight.newton_steps
     @test reach.newton_steps >= 1
     @test ill(ones(8)) - ill(reach.minimizer) < 1e-8
@@ -2241,7 +2238,7 @@ end
     @test near.hessian_at == along(1e-3)
     @test 0 < near.distance <= ContinuousTimeSEM._CTSEM_HESSIAN_REUSE_SE
     @test near.gain < 1e-8
-    # Past ten times the reuse distance the Hessian is formed again.
+    # Past the reuse distance the Hessian is formed again.
     far = finish_from(along(3.0))
     @test far.full_hessians >= 2
     @test far.hessian_at == far.x
