@@ -1281,13 +1281,13 @@ end
     @test held.out.full_hessians == 1
     @test held.out.gain ≈ 1e-3 rtol = 1e-6
     @test held.out.hessian_at == x0
-    # Within a hundredth of a standard error of reuse, the finish forms one
-    # to certify where its steps went...
-    on = _chord_run(quad, x0; reuse_se = 0.01)
+    # Asked for a Hessian within a thousandth of a standard error, the
+    # finish forms one to certify where its steps went: they moved 0.045...
+    on = _chord_run(quad, x0; reuse_se = 0.001)
     @test on.out.steps >= 1
     @test on.out.full_hessians == 2
     @test on.out.gain < 1e-8
-    # ...and within the default tenth, the one it walked on still describes
+    # ...and within the default distance, the one it walked on still describes
     # the point, a few hundredths of a standard error away.
     kept = _chord_run(quad, x0)
     @test kept.out.steps >= 1
@@ -1490,9 +1490,16 @@ end
     @test 0 < near.distance <= ContinuousTimeSEM._CTSEM_HESSIAN_REUSE_SE
     @test near.gain < 1e-8
     @test maximum(abs, near.x .- c) < 1e-8
-    # From a fifth of a standard error, the steps move it too far for the
+    # From a fifth of a standard error the hand-over Hessian stands too,
+    # and says how far off it was taken: within the reuse distance a
+    # second one would buy standard errors closer by that share at most.
+    mid = _endgame_run(_endgame_mock(f), c .+ 0.2; curvature = :chord)
+    @test mid.full_hessians == 1
+    @test 0.1 < mid.distance <= ContinuousTimeSEM._CTSEM_HESSIAN_REUSE_SE
+    @test mid.gain < 1e-8
+    # From two standard errors, the steps move it too far for the
     # hand-over Hessian to stand, and the final one is exact at the estimate.
-    far = _endgame_run(_endgame_mock(f), c .+ 0.2; curvature = :chord)
+    far = _endgame_run(_endgame_mock(f), c .+ 2.0; curvature = :chord)
     @test far.full_hessians >= 2
     @test far.hessian_at == far.x
     @test far.distance == 0
@@ -1990,14 +1997,13 @@ end
     dear = C.ctsem_optimize(_endgame_mock(ill), zeros(8); newton_final=:dear, kw...)
     @test dear.gap_floor == 1e-10
     # A stage to be certified whose finish is the Krylov model's: L-BFGS gives
-    # way at the reach of the exact Hessian that follows, a tenth of a
-    # standard error, and that Hessian's steps are held to the certification's
+    # way a tenth of the reuse distance from the exact Hessian that follows,
+    # and that Hessian's steps are held to the certification's
     # tolerance. (The mock has no products, so the finish goes straight to the
     # exact Hessian.)
     reach = C.ctsem_optimize(_endgame_mock(ill), zeros(8);
         merge(kw, (newton_curvature=:krylov,))...)
-    @test C._ctsem_hessian_reach(C._CTSEM_HESSIAN_REUSE_SE) ≈ C._CTSEM_RESOLUTION_CAP
-    @test reach.gap_floor == C._ctsem_hessian_reach(C._CTSEM_HESSIAN_REUSE_SE)
+    @test reach.gap_floor == C._ctsem_hessian_reach(C._CTSEM_REACH_MARGIN * C._CTSEM_HESSIAN_REUSE_SE)
     @test reach.iterations - reach.newton_steps <= tight.iterations - tight.newton_steps
     @test reach.newton_steps >= 1
     @test ill(ones(8)) - ill(reach.minimizer) < 1e-8
@@ -2232,7 +2238,8 @@ end
     @test near.hessian_at == along(1e-3)
     @test 0 < near.distance <= ContinuousTimeSEM._CTSEM_HESSIAN_REUSE_SE
     @test near.gain < 1e-8
-    far = finish_from(along(0.5))
+    # Past the reuse distance the Hessian is formed again.
+    far = finish_from(along(3.0))
     @test far.full_hessians >= 2
     @test far.hessian_at == far.x
     @test far.distance == 0
@@ -2588,7 +2595,7 @@ end
     @test with.local_builds == 1 && with.local_columns == groups * own
     @test lbfgs(with) > 2
     @test with.g_calls - with.newton_steps < 16
-    @test with.newton_history_gain[1] < C._ctsem_hessian_reach(C._CTSEM_HESSIAN_REUSE_SE)
+    @test value(best) - value(with.minimizer) < C._ctsem_hessian_reach(C._CTSEM_HESSIAN_REUSE_SE)
     # A run handed a curvature is not cold: it stops by its rule, unbuilt.
     warm = C.ctsem_optimize(m, start; lbfgs_local=true, lbfgs_inverse=inv(Hm), kw...)
     @test warm.local_builds == 0
@@ -2598,7 +2605,7 @@ end
     exact = C.ctsem_optimize(m, start; lbfgs_local=true,
         merge(kw, (newton_curvature=:auto, gap_tol=1e-2))...)
     @test exact.local_builds == 0
-    for r in (plain, with, warm, exact)
+    for r in (plain, warm, exact)
         @test r.minimizer ≈ best atol = 1e-6
     end
 

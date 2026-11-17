@@ -3412,10 +3412,13 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         nothing
     local_base = local_held === nothing ? 0 : local_held.builds
     # Whether the run starts with no curvature of its own, neither pairs
-    # handed on nor an inverse: what its first steps predict then rests on
-    # the gradient's scale (the gap rule below).
+    # handed on nor an inverse nor an exact Hessian for its finish: what
+    # its first steps predict then rests on the gradient's scale (the gap
+    # rule below). With a Hessian held the finish reads the point on it,
+    # and a build before it is 37 minutes for nothing on the affect
+    # pilot's tied fit (a resume beside its optimum, 2026-11-17).
     cold = (pairs0 === nothing || isempty(pairs0.S)) && lbfgs_inverse === nothing &&
-        local_held === nothing
+        local_held === nothing && newton_hessian === nothing
     # Explosive filter passes (`_CTSEM_EXPLOSIVE_GROWTH`) and forward-mode
     # subject gradients (`_CTSEM_ADJOINT_GROWTH`) this run takes, counted from
     # here so a stage reports its own.
@@ -3461,11 +3464,19 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # `gap_tol` had 2e-5 from it and three hours behind. Not after a finish
     # has handed the point back (`handover` at `gap_tol`): the hand-over was
     # early by the Hessian's own first step, and L-BFGS goes on to its rule.
+    #
+    # Where the finish forms its Hessian directly, L-BFGS stays held to
+    # `gap_tol`. This bar on every route was tried (2026-11-17,
+    # `review/bench/2026-11-17-reusedist.md`): 4 to 6 per cent fewer
+    # gradients on the bench's smooth cells, and on the three fixtures whose
+    # Laplace term jumps the finish was handed a point it then walked 40 to
+    # 130 steps from, forming up to nine Hessians where L-BFGS's last
+    # iterations had cost two.
     function lbfgs_bar()
         bar = _ctsem_gap_floor(gap_tol, directional)
         intermediate() && return max(bar, _CTSEM_RESOLUTION_CAP)
         (finishing && handover[] > gap_tol && modelled()) &&
-            return max(bar, _ctsem_hessian_reach(newton_reuse))
+            return max(bar, _ctsem_hessian_reach(_CTSEM_REACH_MARGIN * newton_reuse))
         return bar
     end
     # The iteration count is taken from what this callback saw, which is the

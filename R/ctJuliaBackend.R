@@ -6027,6 +6027,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     common$checkpoint_every <- as.numeric(checkpoint$every)
     checkpoint$state <- .ctJuliaCheckpointState(model_spec)
     hessian_id <- checkpoint$hessian_id
+    # A Hessian the caller hands this run that the checkpoint does not name
+    # (a stage seeded with the last stage's at new smoothing precisions) is
+    # kept now: the finish may keep it and form none of its own, and the
+    # checkpoint would then name no Hessian for the stage it ends on.
+    if (is.null(hessian_id) && !is.null(hessian) && !is.null(hessian_at)) {
+      hessian_id <- tryCatch(.ctJuliaCheckpointHessian(checkpoint, hessian,
+        hessian_at), error = function(e) NULL)
+    }
     if (!is.null(checkpoint$resume)) {
       values <- as.matrix(checkpoint$resume$values)
       storage.mode(values) <- "double"

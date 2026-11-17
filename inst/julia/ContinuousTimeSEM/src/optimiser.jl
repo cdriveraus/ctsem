@@ -2092,14 +2092,15 @@ How far the estimate may be from where a Hessian was evaluated, in the standard
 errors that Hessian implies, for that Hessian still to give the standard errors
 (R's `hessianreuse` control). A Wald standard error treats the curvature as
 constant over about a standard error around the estimate, and carries an error
-of however much it is not -- on the bench, 20 to 50 per cent over one standard
-error on well identified models and 150 to 300 on weakly identified Laplace
-ones (review/bench/2026-10-17-reuse-probe.csv). A Hessian `d` standard errors
-away is off by about `d` of that, so a tenth adds a tenth to the error the
-standard error already carries, whatever the model. R's
+of however much it is not. A Hessian `d` standard errors away is off by about
+`d` of that: measured on fifteen of the bench's models, the standard errors
+from a Hessian taken this far away differ from the estimate's own by the
+figures in `review/bench/2026-11-17-se-vs-distance.md`. The finish keeps an
+exact Hessian this far from where it was taken, whether or not its walk
+converged, and anything that reuses a stored one asks the same question. R's
 `.ctBackendHessianReuse()` is the same default and is what the fit passes in.
 """
-const _CTSEM_HESSIAN_REUSE_SE = 0.1
+const _CTSEM_HESSIAN_REUSE_SE = 0.3
 
 """
     _ctsem_hessian_reach(reuse_se)
@@ -2110,12 +2111,22 @@ A gap `g` on curvature `H` is a displacement `d` with `d' H d / 2 = g`, and by
 Cauchy-Schwarz no coordinate of it exceeds `sqrt(2 g)` of that coordinate's
 standard error, which is how `_ctsem_hessian_distance` measures a move. So a
 Hessian formed where less than this is left is the maximum's by the reuse
-rule, and what is left is closed by steps on it, a gradient each. Before a
-Hessian that is dear, nothing has to be held tighter: L-BFGS (`ctsem_optimize`)
-and the walk on the Krylov model (`_ctsem_newton_finish`) give way to it here.
-At the default `reuse_se` it is 0.005, `_CTSEM_RESOLUTION_CAP`.
+rule, and what is left is closed by steps on it, a gradient each.
 """
 _ctsem_hessian_reach(reuse_se::Real) = abs2(Float64(reuse_se)) / 2
+
+"""
+The share of `reuse_se` that L-BFGS (`ctsem_optimize`) and the walk on the
+Krylov model (`_ctsem_newton_finish`) aim to be within before an exact
+Hessian is formed: a tenth of the distance, a hundredth of the reach in
+nats. What they read as left is a prediction, and the optimiser has to be
+held tighter than the Hessian's own tolerance for the Hessian to land inside
+it (Charles, 2026-11-17): the affect pilot's tied fit read 0.0007 nats left
+with 0.03 to gain and formed its eight-hour Hessian a quarter of a standard
+error from where its steps ended
+(`scripts/flow-scenarios-2026-11/finish_grid.jl` maps the cases).
+"""
+const _CTSEM_REACH_MARGIN = 0.1
 
 """
 The relative curvature at or below which a direction is flat: excluded from the
@@ -3389,8 +3400,8 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     # the affect pilot's tied fit (2026-11-16, dev3) took 71 products at a
     # point with 1e-4 nats to gain, 84 minutes, and then stepped on, while the
     # same stage held to the reach formed its Hessian after 18 (dev2).
-    reach_now() = _ctsem_tolerance(max(Float64(tol), _ctsem_hessian_reach(reuse_se)),
-        resolution)
+    reach_now() = _ctsem_tolerance(max(Float64(tol),
+        _ctsem_hessian_reach(_CTSEM_REACH_MARGIN * reuse_se)), resolution)
     curvature in (:exact, :chord, :subset, :krylov) || throw(ArgumentError(
         "newton curvature must be exact, chord, subset or krylov, got $(curvature)"))
     valueof = value_at === nothing ? (y -> _ctsem_probe_value(objective, y)) :
@@ -4172,9 +4183,23 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         # stale chord predicted a sixtieth of the gap the certification then
         # found, and its steps each gained about that.
         if !at_x
-            keep = curvature !== :exact && exact && converged &&
+            # Kept whether or not its walk converged: what the walk left is
+            # returned as the gain, for the certification to judge and
+            # resume on this Hessian, where forming it again would be the
+            # same matrix to what a standard error can see.
+            keep = curvature !== :exact && exact &&
                 _ctsem_hessian_distance(_ctsem_information_split(H;
                     rtol=flat_rtol, negative=negative), hat, x) <= reuse_se
+            # Kept with its walk's steps used up: what it still reads as
+            # left is what the objective did not give in those steps, so it
+            # is recorded as unresolved, as a refused step's is, and the
+            # run's bars rise to it, up to their cap (`_ctsem_tolerance`).
+            # Past the cap the point stays uncertified and is resumed on
+            # this Hessian.
+            if keep && !converged
+                ntk = newton(H, G, Inf)
+                ntk === nothing || _ctsem_refused!(resolution, ntk.gain)
+            end
             if !keep && curvature !== :exact
                 # On `:krylov`, a walk on the exact Hessian that ended without
                 # converging goes back to the model, with its products
