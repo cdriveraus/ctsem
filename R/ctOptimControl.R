@@ -217,6 +217,17 @@
 #'  Raise the first when the fit reports modes that did not converge; the
 #'  tolerance bounds the inner gradient, floored at
 #'  \code{1e-10 * (1 + abs(value))}.}
+#'  \item{\code{laplace_onestep}}{\code{FALSE} (the default) or \code{TRUE}.
+#'  Where the filter can integrate a person's intercept-type effects (initial
+#'  means, intercepts, a predictor's effect) exactly, given their other random
+#'  effects, it does, and Laplace approximates only the integral over the
+#'  others: the two-step term. \code{TRUE} takes one Laplace approximation over
+#'  all of them together instead, as before version 4.0's change of default.
+#'  Beside random dynamics (a random drift or diffusion) the two-step term is
+#'  the more accurate; the one-step term is what a model whose filter cannot
+#'  integrate them (one whose dynamics read the state) takes in any case, and
+#'  \code{ctModelImprove()} and \code{ctScoreTest()} use it to compare such a
+#'  model with one that can.}
 #'  \item{\code{laplace_soft_directions}}{\code{'quadrature'} (the default) or
 #'  \code{'logdet_floor'}: how a unit is scored whose likelihood is convex in
 #'  some direction of its random effects, where plain Laplace would credit that

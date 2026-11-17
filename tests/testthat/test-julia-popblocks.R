@@ -108,12 +108,10 @@ test_that("one block is the triangle, and no block is a level of its own", {
   # filter integrates mm2 and mm3 exactly given the block's effects, the
   # second holds them as Laplace coordinates beside those; with the random
   # drift in the block the two are different approximations, so the routes
-  # are compared on the joint term (`ctsem_set_hybrid_full!(false)`).
-  ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_hybrid_full!", FALSE)
-  on.exit(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_hybrid_full!", TRUE),
-    add = TRUE)
+  # are compared on the one-step term (`optimcontrol$laplace_onestep`).
   pa <- .blocks_prep(.blocks_model(), data, popblocks = list(level = list(
-    rank = 1, effects = c("lev", "dr"))), popunique = c("mm2", "mm3"))
+    rank = 1, effects = c("lev", "dr"))), popunique = c("mm2", "mm3"),
+    optimcontrol = list(laplace_onestep = TRUE))
   pb <- .blocks_prep(.blocks_model(ids = c("id", "id2"), lev = "lev||id",
     dr = "dr||id", mm2 = "mm2||id2", mm3 = "mm3||id2"), data,
     poprank = c(id = 1, id2 = 0), popunique = c(id2 = TRUE))

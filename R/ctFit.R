@@ -274,6 +274,12 @@
   # intoverpop='laplace', and sampling with intoverpop=FALSE, whose sampler is
   # placed on the Laplace fit. Neither value describes a stan fit, which has no
   # Laplace term, so both are refused there.
+  # The one-step Laplace term, julia only (`.ctLaplaceTerm()`): stan has no
+  # Laplace term, so TRUE is refused there and FALSE says nothing.
+  laplace_onestep = list(only = 'julia',
+    inert = function(v) isFALSE(v),
+    msg = paste0("chooses julia's one-step Laplace term, and stan has no ",
+      "Laplace term -- it augments the latent state instead. Drop it")),
   laplace_soft_directions = list(only = 'julia',
     inert = function(v) FALSE,
     msg = paste0("chooses how julia's Laplace term treats a unit whose ",

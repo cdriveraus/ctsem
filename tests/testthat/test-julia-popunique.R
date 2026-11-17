@@ -33,8 +33,15 @@
   d
 }
 
-.pu_spec <- function(d, m, ...) suppressMessages(ctFit(d, m, backend = "julia",
-  intoverpop = "laplace", fit = FALSE, ...))
+.pu_spec <- function(d, m, ...) {
+  args <- list(d, m, backend = "julia", intoverpop = "laplace", fit = FALSE, ...)
+  # The one-step term for a test that asks (`.pu_onestep_term()`), through the
+  # option a user sets.
+  if (isTRUE(getOption("pu.onestep"))) args$optimcontrol <- utils::modifyList(
+    if (is.list(args$optimcontrol)) args$optimcontrol else list(),
+    list(laplace_onestep = TRUE))
+  suppressMessages(do.call(ctFit, args))
+}
 
 # Shared effects on DRIFT and DIFFUSION beside own intercepts, and data with one
 # item missing for a third of the subjects: the deviations' curvature depends
@@ -66,17 +73,15 @@
   structure(spec, class = c("ctJuliaModel", "ctFitModel")), x,
   gradient = TRUE, gradient_method = method, cores = 1L)
 
-# The joint Laplace term over coordinates and the deviations the filter
-# integrates, which is the layer's, for the rest of the calling test
-# (`ctsem_set_hybrid_full!(false)`). The default term is Laplace over the
-# coordinates of the deviations' exact integral. Where every coordinate is a
-# mean effect the two are equal; beside a random drift or diffusion they are
-# not, and a comparison of the filter's integration with the layer holding the
-# deviations as coordinates compares joint terms.
+# The one-step Laplace term over coordinates and the deviations the filter
+# integrates together, which is the layer's, for every hybrid spec the calling
+# test prepares (`optimcontrol$laplace_onestep`). The default, two-step term
+# integrates the deviations exactly given the coordinates. Where every
+# coordinate is a mean effect the two are equal; beside a random drift or
+# diffusion they are not, and a comparison of the filter's integration with
+# the layer holding the deviations as coordinates compares one-step terms.
 .pu_joint_term <- function(env = parent.frame()) {
-  ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_hybrid_full!", FALSE)
-  withr::defer(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_hybrid_full!", TRUE),
-    envir = env)
+  withr::local_options(pu.onestep = TRUE, .local_envir = env)
 }
 
 test_that("poprank 0 with own variances is the diagonal covariance", {
@@ -512,9 +517,7 @@ test_that("beside a random drift the term is Laplace over the deviations' exact 
       tolerance = 1e-6)
     seq <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_sequential(o, xx))
     expect_equal(sum(seq$llrow), adjoint$value, tolerance = 1e-8)
-    ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_hybrid_full!", FALSE)
-    joint <- .pu_eval(spec, x)
-    ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_hybrid_full!", TRUE)
+    joint <- .pu_eval(ctsem:::.ctLaplaceOneStep(spec), x)
     expect_gt(abs(joint$value - adjoint$value), 1e-4)
   }
   # With the deviations integrated the units' curvature is far stiffer than
@@ -604,10 +607,41 @@ test_that("a full-rank level's affine effects are integrated given the rest, exa
   sa <- .pu_spec(d, .pu_block_model(c("drift11", "mm1", "mm3")),
     optimcontrol = list(saem = 5))
   expect_null(sa$laplace$hybrid)
-  # One affine effect beside the level's others is cheaper as a coordinate
-  # (the cost rule in `.ctJuliaLaplaceHybrid()`); alone it is the filter's.
-  expect_null(.pu_spec(d, .pu_block_model(c("drift11", "mm1")))$laplace$hybrid)
+  # One affine effect beside the level's others is the filter's too: held as
+  # a coordinate it would be approximated with the random drift, a different
+  # objective, whatever it saves.
+  expect_true(isTRUE(.pu_spec(d, .pu_block_model(c("drift11", "mm1")))$laplace$hybrid$block))
   expect_true(isTRUE(.pu_spec(d, .pu_block_model("mm1"))$laplace$hybrid$block))
+})
+
+test_that("each spec says which Laplace term it takes, and which compare", {
+  skip_without_julia()
+  # Two-step where the filter integrates intercepts beside a random drift,
+  # one-step where asked for (and kept by a rebuild from `inner`), exact where
+  # every effect is a mean effect, and one-step where the dynamics read the
+  # state, so the filter cannot integrate them.
+  d <- .pu_dyn_data()
+  two <- .pu_spec(d, .pu_dyn_model(), poprank = 1, popunique = "MANIFESTMEANS")
+  one <- .pu_spec(d, .pu_dyn_model(), poprank = 1, popunique = "MANIFESTMEANS",
+    optimcontrol = list(laplace_onestep = TRUE))
+  exact <- .pu_spec(d, .pu_model(), poprank = 1, popunique = "MANIFESTMEANS")
+  nl <- .pu_dyn_model()
+  nl$pars$param[nl$pars$matrix == "DRIFT"] <- "drift + 0.01 * state[1]"
+  state <- .pu_spec(d, nl, poprank = 1, popunique = "MANIFESTMEANS")
+  expect_identical(vapply(list(two, one, exact, state), ctsem:::.ctLaplaceTerm, ""),
+    c("twostep", "onestep", "exact", "onestep"))
+  expect_true(isTRUE(one$laplace$inner$onestep))
+  expect_true(ctsem:::.ctLaplaceTermsDiffer(two, state))
+  expect_false(ctsem:::.ctLaplaceTermsDiffer(one, state))
+  expect_false(ctsem:::.ctLaplaceTermsDiffer(two, exact))
+  expect_identical(ctsem:::.ctLaplaceTerm(ctsem:::.ctLaplaceOneStep(two)), "onestep")
+  # The option reaches the engine: the one-step spec evaluates as the layer.
+  layer <- withr::with_options(list(ctsem.laplace.hybrid = FALSE),
+    .pu_spec(d, .pu_dyn_model(), poprank = 1, popunique = "MANIFESTMEANS"))
+  set.seed(3)
+  x <- rnorm(length(.pu_names(two)), 0, 0.3)
+  expect_equal(.pu_eval(one, x)$value, .pu_eval(layer, x)$value, tolerance = 1e-9)
+  expect_gt(abs(.pu_eval(two, x)$value - .pu_eval(layer, x)$value), 1e-4)
 })
 
 # The same in discrete time, and a time dependent predictor's effect: affine

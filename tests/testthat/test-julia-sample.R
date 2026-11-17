@@ -391,10 +391,9 @@ test_that("the map sampler maps the effects the filter cannot integrate", {
   skip_without_julia()
   # A random drift beside the manifest mean: the drift is not affine in the
   # filter, so it stays a coordinate, partially non-centred through the
-  # subjects' summaries -- and the manifest mean with it, one qualifying
-  # effect beside another costing more in the filter than as a coordinate
-  # (the hybrid's cost rule). No exact marginal here, so the parameters'
-  # means are read against SAEM's.
+  # subjects' summaries, while the filter integrates the manifest mean beside
+  # it. No exact marginal here, so the parameters' means are read against
+  # SAEM's.
   fit <- fit_cached("map fixture: random drift", {
     model <- laplace_fixture_model()
     model$pars$indvarying[model$pars$matrix == "DRIFT"] <- TRUE

@@ -691,6 +691,11 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     # has one maximum, Newton from the origin finds it, and the mode probes,
     # which look for another, are skipped (`_laplace_solve_unit_mode!`).
     quadratic::Bool
+    # The Laplace term where the filter integrates deviations: `:twostep`,
+    # their exact integral given the coordinates, or `:onestep`, Laplace over
+    # both together (`ctsem_set_hybrid_term!`). On the objective, so a one-step
+    # comparison does not change how any other objective evaluates.
+    hybrid_term::Symbol
     # Per level, which effects enter every unit's inner problem as that test's
     # mean effects (R's `.ctJuliaLaplaceAffine()`), where the test holds for
     # some effects and not all; empty otherwise. Given the other effects, a
@@ -737,11 +742,13 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
     soft_directions=:logdet_floor, soft_blend_lo::Real=0.2, soft_blend_hi::Real=0.7,
     inert::Union{Nothing,Vector{Vector{Vector{Int}}}}=nothing, quadratic::Bool=false,
-    affine::Vector{Vector{Bool}}=Vector{Bool}[],
+    hybrid_term=:twostep, affine::Vector{Vector{Bool}}=Vector{Bool}[],
     known::Vector{Vector{Vector{Float64}}}=Vector{Vector{Float64}}[])
     Symbol(soft_directions) in (:logdet_floor, :quadrature) ||
         throw(ArgumentError("soft_directions must be :quadrature or :logdet_floor"))
     0 < soft_blend_lo < soft_blend_hi || throw(ArgumentError("the gate needs 0 < lo < hi"))
+    Symbol(hybrid_term) in (:twostep, :onestep) ||
+        throw(ArgumentError("the hybrid term is :twostep or :onestep"))
     nsubjects = length(objective.subject_objectives)
     units = _laplace_build_units(spec, nsubjects; inert=inert)
     nunits = length(units.members)
@@ -750,7 +757,7 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
         Int(inner_maxiter), Float64(inner_tol), [Dict{Any,Any}()],
         zeros(Int, nunits), zeros(Float64, nunits), falses(nunits), falses(nunits),
         falses(nunits), falses(nunits), Float64[], Symbol(soft_directions), Float64(soft_blend_lo),
-        Float64(soft_blend_hi), 0, quadratic, affine,
+        Float64(soft_blend_hi), 0, quadratic, Symbol(hybrid_term), affine,
         inert === nothing ? Vector{Vector{Int}}[] : inert,
         isempty(known) ? [Vector{Float64}[] for _ in 1:nunits] : known,
         Vector{Float64}[], [Vector{Float64}[] for _ in 1:nunits],
@@ -830,7 +837,7 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     hybrid_pred=Int[], level_nload=Int[], load_row=Int[], load_col=Int[],
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
     soft_directions="logdet_floor", soft_blend_lo::Real=0.2, soft_blend_hi::Real=0.7, quadratic::Bool=false,
-    affine_level=Int[], affine_effect=Int[], known_unit=Int[],
+    hybrid_term="twostep", affine_level=Int[], affine_effect=Int[], known_unit=Int[],
     known_values=Matrix{Float64}(undef, 0, 0))
     nsubjects = length(objective.subject_objectives)
     counts = isempty(level_nre) ? [length(re_index)] : Vector{Int}(Int.(level_nre))
@@ -969,7 +976,7 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     laplace = CTSEMLaplaceObjective(objective, CTSEMLaplaceSpec(levels);
         inner_maxiter=inner_maxiter, inner_tol=inner_tol, soft_directions=Symbol(soft_directions),
         soft_blend_lo=soft_blend_lo, soft_blend_hi=soft_blend_hi, inert=inert, quadratic=quadratic,
-        affine=affine)
+        hybrid_term=Symbol(hybrid_term), affine=affine)
     # A one-entry matrix may cross the bridge as a number.
     isempty(known_unit) || _laplace_add_known!(laplace, Int.(collect(known_unit)),
         known_values isa Number ? fill(Float64(known_values), 1, 1) :
@@ -2210,49 +2217,48 @@ heap for every member, 700 bytes a call on gC8.
 end
 
 """
-Whether the Laplace term takes the deviations the filter integrates
-(`CTSEMHybrid`) as their exact integral, `_HYBRID_FULL`: Laplace then runs over
-the unit's coordinates alone, of the members' likelihood with the deviations
-integrated -- its mode, curvature and gradient all of that integrand. Off
-(`ctsem_set_hybrid_full!(false)`), the term is the joint Laplace over the
-coordinates and the deviations, the layer's: the profile's mode and
-curvature, with the deviations' `logdet(M) / 2` added at that mode. The two
-are equal wherever the deviations' posterior precision does not depend on the
-coordinates (every coordinate a mean effect); elsewhere the joint term leaves
-out that dependence's curvature. On the Bursti-CT-VAR (a person's random drift
-beside burst intercepts the filter integrates) that left the term 12 nats
-above the integral over 500 persons, Laplace on the integral 0.6 below it, and
-the burst variance 40% low against the posterior mean
-(review/BURSTICT-ctsem-laplace-2026-11-16.md).
-"""
-const _LAPLACE_HYBRID_FULL = Ref(true)
+    ctsem_set_hybrid_term!(laplace, term)
 
-"""
-    ctsem_set_hybrid_full!(on)
+Which Laplace term an objective takes where its filter integrates deviations
+(`CTSEMHybrid`), and returns the previous one (the objective's `hybrid_term`).
 
-The Laplace term on the deviations' exact integral (`true`, the default) or
-the joint term, which equals the layer's (`false`, the oracle for the joint
-term). Returns the previous setting.
+`:twostep`, the default: the deviations as their exact integral given the
+unit's coordinates (`_HYBRID_FULL`), Laplace then over the coordinates alone
+-- its mode, curvature and gradient all of that integrand. `:onestep`: Laplace
+over the coordinates and the deviations together, the layer's term: the
+profile's mode and curvature, with the deviations' `logdet(M) / 2` added at
+that mode. The two are equal wherever the deviations' posterior precision does
+not depend on the coordinates (every coordinate a mean effect); elsewhere the
+one-step term leaves out that dependence's curvature. On the Bursti-CT-VAR (a
+person's random drift beside burst intercepts the filter integrates) that left
+it 12 nats above the integral over 500 persons, two-step 0.6 below, and the
+burst variance 40% low against the posterior mean
+(review/LAPLACE-intercepts-beside-random-dynamics-2026-11-17.md). R asks for
+`:onestep` where a comparison crosses a model the filter cannot integrate
+(`.ctLaplaceTerm()`).
 """
-function ctsem_set_hybrid_full!(on::Bool)
-    old = _LAPLACE_HYBRID_FULL[]
-    _LAPLACE_HYBRID_FULL[] = on
+function ctsem_set_hybrid_term!(laplace::CTSEMLaplaceObjective, term)
+    t = Symbol(term)
+    t in (:twostep, :onestep) ||
+        throw(ArgumentError("the hybrid term is :twostep or :onestep"))
+    old = laplace.hybrid_term
+    laplace.hybrid_term = t
     return old
 end
-export ctsem_set_hybrid_full!
+export ctsem_set_hybrid_term!
 
 """What the Laplace term's passes ask each member's filter for the deviations
 it integrates: their exact integral (`_HYBRID_FULL`) or their profile."""
 @inline _laplace_hmode(laplace::CTSEMLaplaceObjective) =
-    _LAPLACE_HYBRID_FULL[] && _hybrid_on(laplace.objective.params.hybrid) ?
+    laplace.hybrid_term === :twostep && _hybrid_on(laplace.objective.params.hybrid) ?
         _HYBRID_FULL : _HYBRID_PROFILE
 
-"""Whether the Laplace term is the joint one over coordinates and integrated
-deviations: the hybrid on and its term the profile's
-(`ctsem_set_hybrid_full!(false)`), which the soft-direction quadrature then
-decides and scores in joint coordinates (hybrid_joint.jl)."""
+"""Whether the Laplace term is the one-step one over coordinates and
+integrated deviations together: the hybrid on and its term the profile's,
+which the soft-direction quadrature then decides and scores in joint
+coordinates (hybrid_joint.jl)."""
 @inline _laplace_joint_hybrid(laplace::CTSEMLaplaceObjective) =
-    !_LAPLACE_HYBRID_FULL[] && _hybrid_on(laplace.objective.params.hybrid)
+    laplace.hybrid_term === :onestep && _hybrid_on(laplace.objective.params.hybrid)
 
 ################################################################################
 # Factorizing a unit's curvature without forming it

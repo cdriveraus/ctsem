@@ -283,6 +283,16 @@
 #'   of the extended model would carry the normal(0, 1) prior every parameter
 #'   has; they are tested on the likelihood, without it.
 #'
+#'   On the Laplace route the filter integrates a fit's intercept-type random
+#'   effects exactly where it can, and Laplace approximates only the others
+#'   (the two-step term; \code{optimcontrol$laplace_onestep} in
+#'   \code{\link{ctFit}}). The state dependence and volatility families extend
+#'   the model with terms that read the state, which that filter cannot take;
+#'   where the fit has random dynamics beside such effects, those families are
+#'   then computed with the fit and its extension both on the one-step term, a
+#'   fast screen whose approximation error stays in the scores, and
+#'   \code{info$onestep} names them.
+#'
 #' @param fit A fit from \code{\link{ctFit}} with \code{backend = 'julia'},
 #'   optimised.
 #' @param covariates Optional data frame of subject-level covariates to test:
@@ -528,13 +538,16 @@ ctScoreTest <- function(fit, covariates = NULL,
     out$statedependence <- ext$statedependence
     out$volatility <- ext$volatility
     out$fixed <- ext$fixed
+    if (isTRUE(ext$onestep)) out$info$onestep <- c(out$info$onestep, extended)
   })
   # A model of its own: its terms rewrite the cells the other families'
   # terms rewrite too.
   if ('level' %in% tests) attempt('level', {
     say("Preparing the model extended at zero (level)")
-    out$level <- .ctScoreExtended(fit, est, 'level', information, order = order,
-      variance = variance, nboot = nboot, cores = cores, exact = exact)$level
+    lev <- .ctScoreExtended(fit, est, 'level', information, order = order,
+      variance = variance, nboot = nboot, cores = cores, exact = exact)
+    out$level <- lev$level
+    if (isTRUE(lev$onestep)) out$info$onestep <- c(out$info$onestep, 'level')
   })
   if ('instability' %in% tests) attempt('instability', {
     say("Row scores for the stability tests")
@@ -1731,6 +1744,20 @@ ctScoreTest <- function(fit, covariates = NULL,
       collapse = ', '), call. = FALSE)
   x2 <- setNames(numeric(length(nm2)), nm2)
   x2[nm1] <- est
+  # Where the extension's Laplace term is not the fit's -- the fit's filter
+  # integrates its intercept-type effects exactly given the others, and the
+  # extension's terms read the state, so its filter cannot -- both are taken
+  # one-step (`.ctLaplaceTerm()`): the fit's value and curvature as well as
+  # the extension's, so that it reproduces the fit at zero and the projection
+  # reads one objective. The fit's estimate is then not that objective's
+  # maximum, which the projection allows for to first order, and the
+  # one-step term's error in the new terms' slope stays in their scores: a
+  # fast screen, its result marked (`onestep`).
+  onestep <- .ctLaplaceTermsDiffer(spec, spec2)
+  if (onestep) {
+    fit <- .ctLaplaceOneStep(fit)
+    spec2 <- .ctLaplaceOneStep(spec2)
+  }
   value1 <- ctJuliaEvaluate(fit, est, gradient = FALSE, cores = cores)$value
   ev <- ctJuliaEvaluate(spec2, x2, gradient = TRUE, cores = cores)
   # With priors = TRUE every raw parameter has a normal(0, 1) prior, the new
@@ -1747,7 +1774,20 @@ ctScoreTest <- function(fit, covariates = NULL,
     "not the fit's and ", label, " cannot be tested for this model.", call. = FALSE)
   list(spec = spec2, x2 = x2, gradient = setNames(as.numeric(ev$gradient), nm2),
     theta = match(nm1, nm2), delta = match(names_new, nm2), priored = priored,
-    module = .ctJuliaModule(spec$project), objective = .ctJuliaObjective(spec2, hybrid = TRUE))
+    module = .ctJuliaModule(spec$project), objective = .ctJuliaObjective(spec2, hybrid = TRUE),
+    onestep = onestep)
+}
+
+# The fit's curvature on the extended model's objective, at the fitted values
+# and the new terms at zero: its Hessian columns along the fit's own
+# parameters, the information the projection reads where the extension is
+# taken one-step (`.ctScoreExtendedSpec()`) and the fit's Hessian, of its own
+# term, is not that objective's.
+.ctScoreExtendedInformation <- function(ext, cores) {
+  H <- .ctBackendWithMaxChunks(cores, as.matrix(.ctBackendJuliaValue(
+    ext$module$ctsem_hessian_columns(ext$objective, .ctJuliaNumericVector(as.numeric(ext$x2)),
+      .ctJuliaVector(as.integer(ext$theta))))))[ext$theta, , drop = FALSE]
+  -(H + t(H)) / 2
 }
 
 # The fitted model extended at zero by every term of the families asked for --
@@ -1796,6 +1836,8 @@ ctScoreTest <- function(fit, covariates = NULL,
   priored <- ext$priored
   module <- ext$module
   objective <- ext$objective
+  # Taken one-step, the fit's own Hessian is of another objective.
+  if (isTRUE(ext$onestep)) information <- .ctScoreExtendedInformation(ext, cores)
   robust <- variance == 'robust'
   units <- if (robust) as.matrix(.ctBackendWithMaxChunks(cores, .ctJuliaGet(
     module$ctsem_subject_gradients(objective, .ctJuliaVector(as.numeric(x2)))))$scores) else
@@ -1927,6 +1969,7 @@ ctScoreTest <- function(fit, covariates = NULL,
     out$level <- list(terms = table[order(table$p, -table$LM), , drop = FALSE],
       joint = joint)
   }
+  out$onestep <- isTRUE(ext$onestep)
   out
 }
 
@@ -2065,6 +2108,9 @@ print.ctScoreTest <- function(x, digits = 3, top = 10, ...) {
   cat("Score tests at the fitted model (", x$info$route, " route, ",
     x$info$nsubjects, " subjects)\n", sep = "")
   for (e in names(x$info$errors)) cat("Not tested, ", e, ": ", x$info$errors[[e]], "\n", sep = "")
+  if (length(x$info$onestep)) cat("On one-step Laplace, a fast screen: ",
+    paste(x$info$onestep, collapse = ', '), " (the extended model's filter cannot ",
+    "integrate the fit's intercept effects)\n", sep = "")
   withclass <- function(d, cols) if (any(!is.na(d$class))) c(cols, 'class') else cols
   if (!is.null(x$heterogeneity)) {
     h <- x$heterogeneity

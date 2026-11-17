@@ -154,6 +154,17 @@
 #' testing the result. A refit that ends below the model it extends has not
 #' reached an optimum, and is recorded as such.
 #'
+#' On the Laplace route the filter integrates a fit's intercept-type random
+#' effects exactly where it can, and Laplace approximates only the others (the
+#' two-step term); a change that makes the dynamics read the state takes that
+#' away, and its refit is on the one-step term
+#' (\code{optimcontrol$laplace_onestep} in \code{\link{ctFit}}). Beside random
+#' dynamics the two approximate their integrals differently, so such a refit
+#' is compared with the current model refitted one-step from its own
+#' estimate: a fast comparison of two approximations. To compare integrals
+#' instead, start the search from a fit with \code{intoverpop =
+#' 'quadrature'}: every refit is then refined the same way.
+#'
 #' @param fit A fit from \code{\link{ctFit}} with \code{backend = 'julia'}.
 #' @param covariates Optional subject-level covariates the model may add, as
 #'   for \code{\link{ctScoreTest}}.
@@ -391,7 +402,7 @@ ctModelImprove <- function(fit, covariates = NULL,
         prop <- batch[[b]]
         edited <- edits[[b]]
         refit <- refits[[b]]
-        verdict <- .ctImproveCompare(current, refit, criterion, level)
+        verdict <- .ctImproveCompare(current, refit, criterion, level, cores)
         tried[[length(tried) + 1L]] <- list(prop = prop, refit = refit, edited = edited,
           verdict = verdict)
         history[[length(history) + 1L]] <- data.frame(round = step, family = prop$family,
@@ -475,7 +486,7 @@ ctModelImprove <- function(fit, covariates = NULL,
       verdict <- if (inherits(fullfit, 'try-error') || inherits(w, 'try-error'))
         list(dloglik = NA_real_, dpar = NA_integer_, value = NA_real_, accept = NA,
           note = 'refit failed') else
-        .ctImproveCompare(w, fullfit, 'LR', alpha)
+        .ctImproveCompare(w, fullfit, 'LR', alpha, cores)
       data.frame(change = kept[[k]]$label, dloglik = verdict$dloglik, dpar = verdict$dpar,
         p = verdict$value, confirmed = isTRUE(verdict$accept), note = verdict$note,
         stringsAsFactors = FALSE)
@@ -712,7 +723,7 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
       verdict <- if (inherits(refits[[i]], 'try-error')) list(accept = TRUE,
         dloglik = NA_real_, dpar = NA_integer_, value = NA_real_,
         note = 'refit without it failed; kept') else
-        .ctImproveCompare(refits[[i]], current, criterion, alpha)
+        .ctImproveCompare(refits[[i]], current, criterion, alpha, cores)
       drop <- !isTRUE(verdict$accept)
       history[[length(history) + 1L]] <- data.frame(round = NA_integer_,
         family = 'prune', change = paste0('drop ', kept[[j]]$label), screen_p = NA_real_,
@@ -862,7 +873,7 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
       rebuilt$model, rebuilt$data, cores, start, rebuilt$args), silent = TRUE)
     verdict <- if (inherits(refit, 'try-error')) list(accept = TRUE, dloglik = NA_real_,
       dpar = NA_integer_, value = NA_real_, note = 'refit at the lower rank failed') else
-      .ctImproveCompare(refit, current, criterion, alpha)
+      .ctImproveCompare(refit, current, criterion, alpha, cores)
     lower <- !isTRUE(verdict$accept)
     history[[length(history) + 1L]] <- data.frame(round = round, family = 'rank',
       change = change$label, screen_p = NA_real_,
@@ -1287,6 +1298,13 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   # At zero coupling the extended model must reproduce the fit -- up to the
   # normal(0, 1) prior's constant for each new parameter, with priors on
   # every parameter.
+  # Taken one-step where the extension's Laplace term is not the fit's, the
+  # fit's curvature too (`.ctScoreExtendedSpec()`).
+  onestep <- .ctLaplaceTermsDiffer(current, sp$spec)
+  if (onestep) {
+    current <- .ctLaplaceOneStep(current)
+    sp$spec <- .ctLaplaceOneStep(sp$spec)
+  }
   value1 <- ctJuliaEvaluate(current, est, gradient = FALSE, cores = cores)$value
   offset <- if (isTRUE(current$args$resolved$priors)) length(new) * stats::dnorm(0, log = TRUE) else 0
   ev <- ctJuliaEvaluate(sp$spec, x0, gradient = TRUE, cores = cores)
@@ -1299,14 +1317,34 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   Hc <- .ctBackendWithMaxChunks(cores, as.matrix(.ctBackendJuliaValue(
     module$ctsem_hessian_columns(objective, .ctJuliaNumericVector(as.numeric(x0)),
       .ctJuliaVector(as.integer(delta))))))
-  Iinv <- .ctScorePinv(-.ctBackendHessian(current, est))$inv
+  information <- if (onestep) .ctScoreExtendedInformation(list(module = module,
+    objective = objective, x2 = x0, theta = theta), cores) else
+    -.ctBackendHessian(current, est)
+  Iinv <- .ctScorePinv(information)$inv
   A <- -t(Hc[theta, , drop = FALSE]) %*% Iinv
   grad <- as.numeric(ev$gradient)
   U <- grad[delta] - as.numeric(A %*% grad[theta])
   C <- units[, delta, drop = FALSE] - units[, theta, drop = FALSE] %*% t(A)
   j <- .ctScorePinv(.ctScoreSpread(C))
   if (!j$rank) return(NULL)
-  list(statistic = as.numeric(t(U) %*% j$inv %*% U), df = j$rank, p = .ctScoreBoot(C, 999L))
+  list(statistic = as.numeric(t(U) %*% j$inv %*% U), df = j$rank, p = .ctScoreBoot(C, 999L),
+    onestep = onestep)
+}
+
+# A fit refitted on the one-step Laplace term (`optimcontrol$laplace_onestep`),
+# warm started from its own estimate, for a comparison with a model whose
+# filter cannot integrate what this one's does (`.ctImproveCompare()`); kept
+# for the session, since a search compares one current fit with many
+# candidates.
+.ct_improve_onestep <- new.env(parent = emptyenv())
+.ctImproveOneStep <- function(fit, cores) {
+  key <- digest::digest(.ctImproveFingerprint(fit), algo = 'sha256')
+  kept <- .ct_improve_onestep[[key]]
+  if (!is.null(kept)) return(kept)
+  out <- try(.ctImproveRefit(fit, .ctFitBaseModel(fit), as.data.frame(.ctFitLongData(fit)),
+    cores, args = list(optimcontrol = list(laplace_onestep = TRUE))), silent = TRUE)
+  if (!inherits(out, 'try-error')) assign(key, out, envir = .ct_improve_onestep)
+  out
 }
 
 # The adequacy check's evidence for a slow process in latent `name`: the
@@ -1752,11 +1790,27 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   setNames((log(expm1(s)) + 1) / 2, paste0('popsd_', par))
 }
 
-.ctImproveCompare <- function(current, refit, criterion, alpha) {
+.ctImproveCompare <- function(current, refit, criterion, alpha, cores = 2L) {
   bad <- function(note) list(accept = FALSE, dloglik = NA_real_, dpar = NA_integer_,
     value = NA_real_, score = -Inf, note = note)
   if (inherits(refit, 'try-error')) return(bad(paste('failed:',
     trimws(conditionMessage(attr(refit, 'condition'))))))
+  # Two fits whose Laplace terms differ -- one's filter integrates its
+  # intercept-type effects exactly given the others, the other's cannot, as
+  # where a new term reads the state -- are maxima of two approximations, and
+  # beside random dynamics the one-step term credits the drift's spread more
+  # than the two-step one. So the two-step one is refitted one-step from its
+  # own estimate (`.ctImproveOneStep()`) and both compared there: a fast
+  # comparison. A search started from a refined fit (intoverpop =
+  # 'quadrature') refines every refit and compares their integrals.
+  onestep <- .ctLaplaceTermsDiffer(current, refit)
+  if (onestep) {
+    if (identical(.ctLaplaceTerm(current), 'twostep')) {
+      current <- .ctImproveOneStep(current, cores)
+    } else refit <- .ctImproveOneStep(refit, cores)
+    if (inherits(current, 'try-error') || inherits(refit, 'try-error'))
+      return(bad('the one-step refit to compare on failed'))
+  }
   # The maximised values: a model that contains another cannot end below it on
   # those, which the check's integrals, each a draw from its own error, need
   # not keep (`.ctFitOptimisedLoglik()`).

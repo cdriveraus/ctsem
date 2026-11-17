@@ -2668,19 +2668,51 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     pred <- c(pred, if (k == 4L) as.integer(setup$col[rows[1]]) else 0L)
   }
   if (!length(effect)) return(NULL)
-  # The cost rule, from dev1's measurements (review/FITTING-filter-effects-
-  # 2026-10-24.md): beside the level's other effects a single effect costs
-  # more in the filter than as a coordinate, 8-27 per cent an evaluation --
-  # the filter's work for one coordinate fewer -- where three cost a quarter
-  # to a third less, and with no coordinate left the filter is three to four
-  # times cheaper. Where every coordinate is a mean effect the objective is the
-  # same either way. Beside one that moves a covariance or the dynamics (a
-  # random drift) it is not: the filter's effects are integrated exactly given
-  # the coordinates (`ctsem_set_hybrid_full!`), a coordinate's jointly with
-  # them.
-  if (block && length(effect) == 1L && length(lv$re_index) > 1L) return(NULL)
+  # Every qualifying effect, a single one beside the level's others too: in
+  # the filter it is integrated exactly given the other effects (the two-step
+  # term, `ctsem_set_hybrid_term!`), as a coordinate approximated together
+  # with them, which beside an effect moving a covariance or the dynamics is
+  # a different objective. A single effect cost 8-27 per cent an evaluation
+  # more in the filter (review/FITTING-filter-effects-2026-10-24.md, on the
+  # one-step term), which once kept it a coordinate; what a model's objective
+  # is does not follow from what is cheaper.
   list(effect = effect, kind = kind, target = target, slope = slope, pred = pred,
     block = block)
+}
+
+# Which integral a Laplace fit's objective approximates how, for comparing two
+# of them. 'twostep': the intercept-type effects the filter integrates
+# (`.ctJuliaLaplaceHybrid()`) integrated exactly given each unit's other
+# effects, Laplace over those. 'onestep': Laplace over all of a unit's effects
+# together -- the filter cannot integrate them (dynamics or noise that read
+# the state, a non-Gaussian item), or a comparison asked for it
+# (`laplace$onestep`, `.ctLaplaceOneStep()`). 'exact': every unit's integrand
+# Gaussian in its effects (`laplace$quadratic`), where both are the integral.
+# 'integrated': a refined fit, whose objective integrates the flagged units by
+# quadrature. 'none': no Laplace route. Takes a fit or a specification.
+.ctLaplaceTerm <- function(x) {
+  if (inherits(x, 'ctJuliaFit')) {
+    if (identical(x$estimate$loglik_method, 'quadrature')) return('integrated')
+    x <- x$model_spec
+  }
+  if (is.null(x$laplace)) return('none')
+  if (isTRUE(x$laplace$quadratic)) return('exact')
+  if (!is.null(x$laplace$hybrid) && !isTRUE(x$laplace$onestep)) 'twostep' else 'onestep'
+}
+
+# Whether two fits' or specifications' objectives approximate their integrals
+# differently, so that their values do not compare: one two-step and the
+# other one-step. An exact one compares with either.
+.ctLaplaceTermsDiffer <- function(a, b) {
+  terms <- c(.ctLaplaceTerm(a), .ctLaplaceTerm(b))
+  all(terms %in% c('twostep', 'onestep')) && terms[1] != terms[2]
+}
+
+# A fit or specification whose objective takes the one-step term.
+.ctLaplaceOneStep <- function(x) {
+  if (inherits(x, 'ctJuliaFit')) x$model_spec$laplace$onestep <- TRUE else
+    x$laplace$onestep <- TRUE
+  x
 }
 
 # Whether the model's calculations leave the filter linear and Gaussian with
@@ -4063,6 +4095,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     }
     out$inner_tol <- tol
   }
+  # The one-step term (`optimcontrol$laplace_onestep`), recorded so that every
+  # route rebuilding the objective from `inner` keeps it.
+  if (isTRUE(laplacecontrol$onestep)) out$onestep <- TRUE
   # How soft directions are scored, recorded whenever it is given, default
   # included. An absent rule is the historical meaning, 'logdet_floor': a
   # specification written before the default became the quadrature carries
@@ -4236,6 +4271,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     # SAEM samples every effect of a full-rank level to step its covariance,
     # so a fit that runs it keeps a block's effects in the layer.
     if (isTRUE(laplace$hybrid$block) && isTRUE(laplacecontrol$saem)) laplace$hybrid <- NULL
+    # The one-step term, where asked for (`optimcontrol$laplace_onestep`) and
+    # the filter integrates something it could change.
+    if (isTRUE(laplacecontrol$onestep) && !is.null(laplace$hybrid)) laplace$onestep <- TRUE
     # On the specification rather than passed at optimise time, because the
     # inner tolerance changes the *value* the objective returns: two fits
     # differing only in it are not the same function, and `.ctJuliaObjectiveKey`
@@ -4867,6 +4905,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     # Sent only when every unit's inner problem is a concave quadratic
     # (`.ctJuliaLaplaceQuadratic`), so every other model crosses as before.
     if (isTRUE(spec$laplace$quadratic)) laplace_args$quadratic <- TRUE
+    # The one-step term, where a comparison asks for it (`.ctLaplaceTerm()`);
+    # sent only then, so the objective key of every other spec is unchanged.
+    if (isTRUE(spec$laplace$onestep)) laplace_args$hybrid_term <- "onestep"
     # Which effects are mean effects where some are and some not
     # (`.ctJuliaLaplaceAffine`), as (level, effect) pairs.
     affine <- spec$laplace$affine
@@ -4937,10 +4978,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # the reports that read them back (`.ctBackendHybridReports`). Every other
   # reader gets the objective with each such effect a coordinate: where every
   # coordinate is a mean effect the same function, slower. Beside an effect
-  # that moves a covariance or the dynamics it is the joint Laplace over the
-  # coordinates and those effects, where the hybrid's term integrates them
-  # exactly given the coordinates (`ctsem_set_hybrid_full!` in laplace.jl),
-  # so a reader of the fit's objective asks for the hybrid.
+  # that moves a covariance or the dynamics it is the one-step Laplace term
+  # over the coordinates and those effects together, where the hybrid's
+  # default integrates them exactly given the coordinates (`.ctLaplaceTerm()`,
+  # `ctsem_set_hybrid_term!` in laplace.jl), so a reader of the fit's
+  # objective asks for the hybrid.
   if (!isTRUE(hybrid) && !is.null(spec$laplace$hybrid)) spec$laplace$hybrid <- NULL
   inputs <- .ctJuliaObjectiveInputs(spec)
   key <- .ctJuliaObjectiveKey(spec, inputs)
@@ -6665,6 +6707,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     tipredMissingIncludeOutcome = .ctJuliaOr(optimcontrol$tipredMissingIncludeOutcome, TRUE),
     laplacecontrol = list(inner_maxiter = optimcontrol$laplace_inner_maxiter,
       inner_tol = optimcontrol$laplace_inner_tol,
+      onestep = isTRUE(optimcontrol$laplace_onestep),
       saem = .ctJuliaSaemIterations(optimcontrol) > 0L,
       # The default is resolved here, at the one place a *new* fit is
       # specified, and only for the routes that have a Laplace term: every
