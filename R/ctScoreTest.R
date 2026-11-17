@@ -1769,14 +1769,19 @@ ctScoreTest <- function(fit, covariates = NULL,
   # reads one objective. The fit's estimate is then not that objective's
   # maximum, which the projection allows for to first order, and the
   # one-step term's error in the new terms' slope stays in their scores: a
-  # fast screen, its result marked (`onestep`).
+  # fast screen, its result marked (`onestep`). Where only one of the two has
+  # effects its filter integrates, both are read on the layer, every effect a
+  # Laplace coordinate (`layer`, `.ctLaplaceCoordinatesDiffer()`): on the
+  # hybrid the one-step term is the layer's only where every unit has one
+  # maximum, and a unit with two refused about one data set in twenty here.
   onestep <- .ctLaplaceTermsDiffer(spec, spec2)
+  layer <- .ctLaplaceCoordinatesDiffer(spec, spec2)
   if (onestep) {
     fit <- .ctLaplaceOneStep(fit)
     spec2 <- .ctLaplaceOneStep(spec2)
   }
-  value1 <- ctJuliaEvaluate(fit, est, gradient = FALSE, cores = cores)$value
-  ev <- ctJuliaEvaluate(spec2, x2, gradient = TRUE, cores = cores)
+  value1 <- .ctJuliaEvaluate(fit, est, gradient = FALSE, cores = cores, hybrid = !layer)$value
+  ev <- .ctJuliaEvaluate(spec2, x2, gradient = TRUE, cores = cores, hybrid = !layer)
   # With priors = TRUE every raw parameter has a normal(0, 1) prior, the new
   # terms too: at zero each adds log dnorm(0) to the objective, nothing to its
   # gradient and -1 to its own curvature. The terms are tested on the
@@ -1791,8 +1796,8 @@ ctScoreTest <- function(fit, covariates = NULL,
     "not the fit's and ", label, " cannot be tested for this model.", call. = FALSE)
   list(spec = spec2, x2 = x2, gradient = setNames(as.numeric(ev$gradient), nm2),
     theta = match(nm1, nm2), delta = match(names_new, nm2), priored = priored,
-    module = .ctJuliaModule(spec$project), objective = .ctJuliaObjective(spec2, hybrid = TRUE),
-    onestep = onestep)
+    module = .ctJuliaModule(spec$project), objective = .ctJuliaObjective(spec2, hybrid = !layer),
+    onestep = onestep, layer = layer)
 }
 
 # The fit's curvature on the extended model's objective, at the fitted values
@@ -1853,8 +1858,10 @@ ctScoreTest <- function(fit, covariates = NULL,
   priored <- ext$priored
   module <- ext$module
   objective <- ext$objective
-  # Taken one-step, the fit's own Hessian is of another objective.
-  if (isTRUE(ext$onestep)) information <- .ctScoreExtendedInformation(ext, cores)
+  # Taken one-step, or on the layer, the fit's own Hessian is of another
+  # objective.
+  if (isTRUE(ext$onestep) || isTRUE(ext$layer))
+    information <- .ctScoreExtendedInformation(ext, cores)
   robust <- variance == 'robust'
   # By quadrature (`intoverpop = 'quadrature'`), every piece is the placed
   # objective's, every unit on its rule (`.ctScorePlaced()`): the gradient, the

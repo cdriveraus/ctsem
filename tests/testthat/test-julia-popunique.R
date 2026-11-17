@@ -635,6 +635,12 @@ test_that("each spec says which Laplace term it takes, and which compare", {
   expect_true(ctsem:::.ctLaplaceTermsDiffer(two, state))
   expect_false(ctsem:::.ctLaplaceTermsDiffer(one, state))
   expect_false(ctsem:::.ctLaplaceTermsDiffer(two, exact))
+  # Whose coordinates differ: a hybrid beside no hybrid, unless the hybrid's
+  # side is quadratic, where every unit has one maximum.
+  expect_true(ctsem:::.ctLaplaceCoordinatesDiffer(two, state))
+  expect_true(ctsem:::.ctLaplaceCoordinatesDiffer(one, state))
+  expect_false(ctsem:::.ctLaplaceCoordinatesDiffer(two, one))
+  expect_false(ctsem:::.ctLaplaceCoordinatesDiffer(exact, state))
   expect_identical(ctsem:::.ctLaplaceTerm(ctsem:::.ctLaplaceOneStep(two)), "onestep")
   # The option reaches the engine: the one-step spec evaluates as the layer.
   layer <- withr::with_options(list(ctsem.laplace.hybrid = FALSE),
