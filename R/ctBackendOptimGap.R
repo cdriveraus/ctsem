@@ -1023,8 +1023,13 @@
   }
   if (isTRUE(all.equal(as.numeric(at), est, tolerance = 0))) return(stored)
   moved <- .ctBackendHessianDistance(stored, at, est)
-  reuse <- .ctBackendHessianReuse(.ctBackendFitOptimcontrol(fit))
-  if (isTRUE(moved <= reuse)) stored else NULL
+  # Or as far as the fit itself kept it: the engine's finish keeps an exact
+  # Hessian out to ten times `hessianreuse` and the fit records the distance
+  # (`_CTSEM_KEEP_FACTOR`, `$optim$hessian_distance`).
+  kept <- suppressWarnings(as.numeric(fit$optim$hessian_distance)[1L])
+  reuse <- max(.ctBackendHessianReuse(.ctBackendFitOptimcontrol(fit)),
+    if (length(kept) && is.finite(kept)) kept else 0)
+  if (isTRUE(moved <= reuse * (1 + 1e-8))) stored else NULL
 }
 
 # The curvature's numbers from an optimiser result: the Hessian the engine's

@@ -110,8 +110,9 @@ test_that("the Krylov model's walk gives way to the exact Hessian within that He
   call <- function(x0) ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall(
     "Main._test_krylov_reach", obj, x0))
   top <- call(est)$value
-  # A start with about 0.001 nats to gain: under the reach of the exact
-  # Hessian, a tenth of a standard error or 0.005 nats, and far over the
+  # A start with about 0.0002 nats to gain: under a tenth of the exact
+  # Hessian's reach (0.005 nats at a tenth of a standard error; the walk is
+  # held to a tenth of it, `_CTSEM_REACH_MARGIN`), and far over the
   # certification's tolerance. The model says the point is that near, so the
   # exact Hessian is formed where the walk starts and its steps close the
   # rest. Held to `tol`, the model's steps closed it first and the Hessian was
@@ -119,13 +120,13 @@ test_that("the Krylov model's walk gives way to the exact Hessian within that He
   for (seed in 4:6) {
     set.seed(seed)
     z <- rnorm(npar)
-    start <- est + sqrt(2 * 0.001) * as.numeric(t(root) %*% (z / sqrt(sum(z^2))))
+    start <- est + sqrt(2 * 0.0002) * as.numeric(t(root) %*% (z / sqrt(sum(z^2))))
     out <- call(start)
     expect_gt(out$models, 0)
     expect_equal(out$hessians, 1)
     expect_equal(as.numeric(out$at), start)
     expect_gte(out$steps, 1)
-    expect_gt(out$value - out$start, 5e-4)
+    expect_gt(out$value - out$start, 1e-4)
     expect_lt(top - out$value, 1e-5)
     expect_lte(out$distance, 0.1)
   }

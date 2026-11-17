@@ -3412,10 +3412,13 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         nothing
     local_base = local_held === nothing ? 0 : local_held.builds
     # Whether the run starts with no curvature of its own, neither pairs
-    # handed on nor an inverse: what its first steps predict then rests on
-    # the gradient's scale (the gap rule below).
+    # handed on nor an inverse nor an exact Hessian for its finish: what
+    # its first steps predict then rests on the gradient's scale (the gap
+    # rule below). With a Hessian held the finish reads the point on it,
+    # and a build before it is 37 minutes for nothing on the affect
+    # pilot's tied fit (a resume beside its optimum, 2026-11-17).
     cold = (pairs0 === nothing || isempty(pairs0.S)) && lbfgs_inverse === nothing &&
-        local_held === nothing
+        local_held === nothing && newton_hessian === nothing
     # Explosive filter passes (`_CTSEM_EXPLOSIVE_GROWTH`) and forward-mode
     # subject gradients (`_CTSEM_ADJOINT_GROWTH`) this run takes, counted from
     # here so a stage reports its own.
@@ -3465,7 +3468,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         bar = _ctsem_gap_floor(gap_tol, directional)
         intermediate() && return max(bar, _CTSEM_RESOLUTION_CAP)
         (finishing && handover[] > gap_tol && modelled()) &&
-            return max(bar, _ctsem_hessian_reach(newton_reuse))
+            return max(bar, _CTSEM_REACH_MARGIN * _ctsem_hessian_reach(newton_reuse))
         return bar
     end
     # The iteration count is taken from what this callback saw, which is the
