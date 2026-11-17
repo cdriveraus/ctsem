@@ -2173,7 +2173,8 @@ print.ctScoreTest <- function(x, digits = 3, top = 10, ...) {
     "integrated: ", paste(x$info$quadrature, collapse = ', '), "\n", sep = "")
   if (length(x$info$onestep)) cat("On one-step Laplace, a fast screen: ",
     paste(x$info$onestep, collapse = ', '), " (the extended model's filter cannot ",
-    "integrate the fit's intercept effects)\n", sep = "")
+    "integrate the fit's intercept effects); check a small p with ",
+    "intoverpop = 'quadrature'\n", sep = "")
   withclass <- function(d, cols) if (any(!is.na(d$class))) c(cols, 'class') else cols
   if (!is.null(x$heterogeneity)) {
     h <- x$heterogeneity
