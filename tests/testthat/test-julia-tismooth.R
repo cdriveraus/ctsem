@@ -348,8 +348,8 @@ test_that("a smooth fit on the Krylov finish forms no exact Hessian before its s
 
 # A resume from a checkpoint that holds the certified stage's Hessian goes on
 # as the run that formed it would. Where that Hessian's check moves a
-# smoothing parameter, the pass is a certified stage seeded with it at the
-# new precisions. Read as a first stage's Hessian, as it was until
+# smoothing parameter, the passes walk on it at the new precisions and a
+# certified stage seeded with it follows. Read as a first stage's Hessian, as it was until
 # 2026-11-16, the check sent the resume through a walked pass and a second
 # exact Hessian: 8 hours on the affect pilot's tied fit. The checkpoint says
 # which stage wrote it (`settled`).
@@ -401,10 +401,15 @@ test_that("a resumed smooth fit takes its kept Hessian's check as the run that f
   }, .package = "ctsem")
   second <- fitto()
   expect_true(second$optim$converged)
-  # The first stage on the kept Hessian, then the check's move as a stage
-  # seeded with it: none ends on a walk, and each holds a Hessian.
-  expect_gte(length(stages), 2L)
-  expect_false(any(vapply(stages, function(s) s$walked, NA)))
+  # The first stage on the kept Hessian; then the check's move as passes
+  # that walk on it until the parameters settle, and one certified stage
+  # handed it at the settled precisions. Each holds a Hessian, and the
+  # first and last do not end on a walk.
+  expect_gte(length(stages), 3L)
+  walked <- vapply(stages, function(s) s$walked, NA)
+  expect_false(walked[1L])
+  expect_false(walked[length(walked)])
+  expect_true(any(walked))
   expect_true(all(vapply(stages, function(s) s$held, NA)))
   expect_gte(second$model_spec$penalty$passes, 1L)
   expect_equal(second$model_spec$penalty$lambda, penalty$lambda, tolerance = 0.05)
