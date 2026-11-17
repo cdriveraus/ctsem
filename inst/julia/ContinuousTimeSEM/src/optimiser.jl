@@ -2092,14 +2092,15 @@ How far the estimate may be from where a Hessian was evaluated, in the standard
 errors that Hessian implies, for that Hessian still to give the standard errors
 (R's `hessianreuse` control). A Wald standard error treats the curvature as
 constant over about a standard error around the estimate, and carries an error
-of however much it is not -- on the bench, 20 to 50 per cent over one standard
-error on well identified models and 150 to 300 on weakly identified Laplace
-ones (review/bench/2026-10-17-reuse-probe.csv). A Hessian `d` standard errors
-away is off by about `d` of that, so a tenth adds a tenth to the error the
-standard error already carries, whatever the model. R's
+of however much it is not. A Hessian `d` standard errors away is off by about
+`d` of that: measured on fifteen of the bench's models, the standard errors
+from a Hessian taken this far away differ from the estimate's own by the
+figures in `review/bench/2026-11-17-se-vs-distance.md`. The finish keeps an
+exact Hessian this far from where it was taken, whether or not its walk
+converged, and anything that reuses a stored one asks the same question. R's
 `.ctBackendHessianReuse()` is the same default and is what the fit passes in.
 """
-const _CTSEM_HESSIAN_REUSE_SE = 0.1
+const _CTSEM_HESSIAN_REUSE_SE = 0.3
 
 """
     _ctsem_hessian_reach(reuse_se)
@@ -2111,41 +2112,21 @@ Cauchy-Schwarz no coordinate of it exceeds `sqrt(2 g)` of that coordinate's
 standard error, which is how `_ctsem_hessian_distance` measures a move. So a
 Hessian formed where less than this is left is the maximum's by the reuse
 rule, and what is left is closed by steps on it, a gradient each.
-At the default `reuse_se` it is 0.005, `_CTSEM_RESOLUTION_CAP`.
 """
 _ctsem_hessian_reach(reuse_se::Real) = abs2(Float64(reuse_se)) / 2
 
 """
-The share of a dear exact Hessian's reach (`_ctsem_hessian_reach`) that
-L-BFGS (`ctsem_optimize`) and the walk on the Krylov model
-(`_ctsem_newton_finish`) are held to before it is formed. What they read
-as left is a prediction, and the optimiser has to be held tighter than the
-Hessian's own tolerance for the Hessian to land inside it (Charles,
-2026-11-17): held to the reach itself, the affect pilot's tied fit read
-0.0007 nats left with 0.03 to gain, six times the reach, and formed its
-eight-hour Hessian a quarter of a standard error from where its steps
-ended. On a mock objective a stage that starts 0.003 below its maximum
-keeps its Hessian in 26 cases of 27 and one that starts 0.03 below in
-none (`scripts/flow-scenarios-2026-11/finish_grid.jl`).
+The share of `reuse_se` that L-BFGS (`ctsem_optimize`) and the walk on the
+Krylov model (`_ctsem_newton_finish`) aim to be within before an exact
+Hessian is formed: a tenth of the distance, a hundredth of the reach in
+nats. What they read as left is a prediction, and the optimiser has to be
+held tighter than the Hessian's own tolerance for the Hessian to land inside
+it (Charles, 2026-11-17): the affect pilot's tied fit read 0.0007 nats left
+with 0.03 to gain and formed its eight-hour Hessian a quarter of a standard
+error from where its steps ended
+(`scripts/flow-scenarios-2026-11/finish_grid.jl` maps the cases).
 """
 const _CTSEM_REACH_MARGIN = 0.1
-
-"""
-How many times `reuse_se` an exact Hessian is kept from where it was taken:
-at the default, out to a standard error, the distance over which a Wald
-standard error takes the curvature as constant anyway. `reuse_se` is what
-the optimiser aims to land within before the Hessian is formed; where its
-reading of what was left was wrong, or that bar out of reach, the distance
-the steps on the Hessian then cover is the measure of it, and a second
-Hessian would buy the difference between standard errors off by that
-distance at most and exact ones. At every size: a Hessian is a multiple of a
-gradient and so is the fit, so a second one is the same share of a small
-fit as of a large one (Charles, 2026-11-17). A multiple of `reuse_se`, so
-that a caller who sets it to zero has the Hessian at the estimate. The
-finish returns the distance and the fit says so
-(`fit\$optim\$hessian_distance`).
-"""
-const _CTSEM_KEEP_FACTOR = 10.0
 
 """
 The relative curvature at or below which a direction is flat: excluded from the
@@ -3420,10 +3401,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     # point with 1e-4 nats to gain, 84 minutes, and then stepped on, while the
     # same stage held to the reach formed its Hessian after 18 (dev2).
     reach_now() = _ctsem_tolerance(max(Float64(tol),
-        _CTSEM_REACH_MARGIN * _ctsem_hessian_reach(reuse_se)), resolution)
-    # How far an exact Hessian is kept from where it was taken
-    # (`_CTSEM_KEEP_FACTOR`).
-    keep_se = _CTSEM_KEEP_FACTOR * Float64(reuse_se)
+        _ctsem_hessian_reach(_CTSEM_REACH_MARGIN * reuse_se)), resolution)
     curvature in (:exact, :chord, :subset, :krylov) || throw(ArgumentError(
         "newton curvature must be exact, chord, subset or krylov, got $(curvature)"))
     valueof = value_at === nothing ? (y -> _ctsem_probe_value(objective, y)) :
@@ -3765,7 +3743,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             c = (Hm, _ctsem_information_split(Hm; rtol=flat_rtol, negative=negative))
             nearsplit[] = c
         end
-        return _ctsem_hessian_distance(c[2], from, to) <= keep_se
+        return _ctsem_hessian_distance(c[2], from, to) <= reuse_se
     end
     # A Hessian the caller holds, where Hessians are dear: `hessian0` (of the
     # MAXIMISED objective, as the finish returns it) at `hessian0_at`, walked
@@ -4211,7 +4189,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             # same matrix to what a standard error can see.
             keep = curvature !== :exact && exact &&
                 _ctsem_hessian_distance(_ctsem_information_split(H;
-                    rtol=flat_rtol, negative=negative), hat, x) <= keep_se
+                    rtol=flat_rtol, negative=negative), hat, x) <= reuse_se
             # Kept with its walk's steps used up: what it still reads as
             # left is what the objective did not give in those steps, so it
             # is recorded as unresolved, as a refused step's is, and the
