@@ -1467,11 +1467,15 @@ test_that("a fit under the soft-direction quadrature carries its rule to post-fi
 
   # The two floors really are different objectives. At the starting point one
   # subject is near-singular, and the quadrature's objective scores it by its rule;
-  # the fit then moves, and at its estimate the two may agree.
+  # the fit then moves, and at its estimate the two may agree. Each is the fit's
+  # own objective, the hybrid: its filter integrates the intercept beside the
+  # random drift, which the layer would hold as a coordinate. Which floor is
+  # higher there depends on the term (the joint one's was the total floor's).
   module <- .ctJuliaModule(quad$model_spec$project)
   under <- function(fit, at) .ctBackendJuliaValue(module$ctsem_laplace_evaluate(
-    .ctJuliaObjective(fit), .ctJuliaVector(as.numeric(at)), gradient = FALSE)$value)
-  expect_gt(under(after, inits) - under(quad, inits), 1)
+    .ctJuliaObjective(fit, hybrid = TRUE), .ctJuliaVector(as.numeric(at)),
+    gradient = FALSE)$value)
+  expect_gt(abs(under(after, inits) - under(quad, inits)), 1)
   expect_gte(as.integer(JuliaConnectoR::juliaCall("getfield",
     .ctJuliaObjective(quad), as.symbol("soft_quadrature_units"))), 1L)
 
