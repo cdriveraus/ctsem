@@ -2673,7 +2673,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # more in the filter than as a coordinate, 8-27 per cent an evaluation --
   # the filter's work for one coordinate fewer -- where three cost a quarter
   # to a third less, and with no coordinate left the filter is three to four
-  # times cheaper. Either way the objective is the same.
+  # times cheaper. Where every coordinate is a mean effect the objective is the
+  # same either way. Beside one that moves a covariance or the dynamics (a
+  # random drift) it is not: the filter's effects are integrated exactly given
+  # the coordinates (`ctsem_set_hybrid_full!`), a coordinate's jointly with
+  # them.
   if (block && length(effect) == 1L && length(lv$re_index) > 1L) return(NULL)
   list(effect = effect, kind = kind, target = target, slope = slope, pred = pred,
     block = block)
@@ -4931,9 +4935,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # Hessian and scores, the marginal sampler, the quadrature check and
   # corrections (which integrate the deviations exactly at every node) -- and
   # the reports that read them back (`.ctBackendHybridReports`). Every other
-  # reader gets the objective with each such effect a coordinate: for a
-  # linear model the same function, so a path that does not ask is slower,
-  # never wrong.
+  # reader gets the objective with each such effect a coordinate: where every
+  # coordinate is a mean effect the same function, slower. Beside an effect
+  # that moves a covariance or the dynamics it is the joint Laplace over the
+  # coordinates and those effects, where the hybrid's term integrates them
+  # exactly given the coordinates (`ctsem_set_hybrid_full!` in laplace.jl),
+  # so a reader of the fit's objective asks for the hybrid.
   if (!isTRUE(hybrid) && !is.null(spec$laplace$hybrid)) spec$laplace$hybrid <- NULL
   inputs <- .ctJuliaObjectiveInputs(spec)
   key <- .ctJuliaObjectiveKey(spec, inputs)

@@ -66,6 +66,19 @@
   structure(spec, class = c("ctJuliaModel", "ctFitModel")), x,
   gradient = TRUE, gradient_method = method, cores = 1L)
 
+# The joint Laplace term over coordinates and the deviations the filter
+# integrates, which is the layer's, for the rest of the calling test
+# (`ctsem_set_hybrid_full!(false)`). The default term is Laplace over the
+# coordinates of the deviations' exact integral. Where every coordinate is a
+# mean effect the two are equal; beside a random drift or diffusion they are
+# not, and a comparison of the filter's integration with the layer holding the
+# deviations as coordinates compares joint terms.
+.pu_joint_term <- function(env = parent.frame()) {
+  ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_hybrid_full!", FALSE)
+  withr::defer(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_hybrid_full!", TRUE),
+    envir = env)
+}
+
 test_that("poprank 0 with own variances is the diagonal covariance", {
   skip_without_julia()
   d <- .pu_data()
@@ -431,13 +444,16 @@ test_that("own variances on an initial mean and a continuous intercept are integ
 
 test_that("integrated own intercepts beside shared effects on the dynamics are still Laplace exactly", {
   skip_without_julia()
+  .pu_joint_term()
   # The shared effect loads on DRIFT and DIFFUSION, so the deviations'
   # curvature depends on it and the Laplace layer over everything is an
   # approximation. The filter's profile of the deviations, with their logdet
   # added at the mode, is that same approximation: the joint mode, the Schur
-  # complement for the curvature, and the joint logdet. So the value and
-  # gradient must match the layer holding them as coordinates, and the adjoint
-  # must match forward mode through the logdet's dependence on the mode.
+  # complement for the curvature, and the joint logdet. So the joint term's
+  # value and gradient must match the layer holding them as coordinates, and
+  # the adjoint must match forward mode through the logdet's dependence on the
+  # mode. The default term, on the deviations' exact integral, is the next
+  # test's.
   m <- .pu_dyn_model()
   d <- .pu_dyn_data()
   old <- options(ctsem.laplace.hybrid = TRUE)
@@ -458,6 +474,71 @@ test_that("integrated own intercepts beside shared effects on the dynamics are s
     expect_equal(adjoint$value, forward$value, tolerance = 1e-10)
     expect_equal(as.numeric(adjoint$gradient), as.numeric(forward$gradient),
       tolerance = 1e-6)
+  }
+})
+
+test_that("beside a random drift the term is Laplace over the deviations' exact integral", {
+  skip_without_julia()
+  # The deviations' posterior precision depends on the drift and diffusion
+  # effects, so Laplace over the coordinates of their exact integral is not the
+  # joint term. The O(1/n) expansion computes the same term by a Newton of its
+  # own (`ctsem_laplace_expansion`'s `term`), unit for unit; the reverse pass's
+  # gradient is checked against forward mode, the sequential rows sum to the
+  # objective, and the soft-direction quadrature's reverse pass, with units
+  # flagged, against its forward one.
+  m <- .pu_dyn_model()
+  d <- .pu_dyn_data()
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  handle <- function(s) structure(s, class = c("ctJuliaModel", "ctFitModel"))
+  spec <- .pu_spec(d, m, poprank = 1, popunique = "MANIFESTMEANS", priors = FALSE)
+  expect_equal(length(spec$laplace$hybrid$effect), 3L)
+  module <- ctsem:::.ctJuliaModule(spec$project)
+  o <- ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE)
+  set.seed(13)
+  for (draw in 1:2) {
+    x <- rnorm(length(.pu_names(spec)), 0, 0.3)
+    xx <- ctsem:::.ctJuliaNumericVector(x)
+    adjoint <- .pu_eval(spec, x, "adjoint")
+    units <- as.numeric(ctsem:::.ctBackendJuliaValue(
+      module$ctsem_laplace_evaluate(o, xx))$unit_loglik)
+    term <- as.numeric(ctsem:::.ctBackendJuliaValue(
+      module$ctsem_laplace_expansion(o, xx, gate = 1e300))$term)
+    expect_equal(units, term, tolerance = 1e-7)
+    expect_equal(adjoint$value, sum(units), tolerance = 1e-9)
+    forward <- .pu_eval(spec, x, "forward")
+    expect_equal(adjoint$value, forward$value, tolerance = 1e-10)
+    expect_equal(as.numeric(adjoint$gradient), as.numeric(forward$gradient),
+      tolerance = 1e-6)
+    seq <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_sequential(o, xx))
+    expect_equal(sum(seq$llrow), adjoint$value, tolerance = 1e-8)
+    ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_hybrid_full!", FALSE)
+    joint <- .pu_eval(spec, x)
+    ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_hybrid_full!", TRUE)
+    expect_gt(abs(joint$value - adjoint$value), 1e-4)
+  }
+  sq <- .pu_spec(d, m, poprank = 1, popunique = "MANIFESTMEANS",
+    optimcontrol = list(laplace_soft_directions = "quadrature"))
+  so <- ctsem:::.ctJuliaObjective(handle(sq), hybrid = TRUE)
+  on.exit(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_soft_quadrature_adjoint!", TRUE),
+    add = TRUE)
+  prev <- ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_soft_directions!", so,
+    "quadrature", hi = 0.95)
+  on.exit(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_soft_directions!", so,
+    "quadrature", hi = prev$hi), add = TRUE)
+  scored <- function(o) as.integer(ctsem:::.ctJuliaCall("getfield", o,
+    ctsem:::.ctJuliaEval(":soft_quadrature_units")))
+  for (seed in c(2, 4)) {
+    set.seed(seed)
+    x <- rnorm(length(.pu_names(sq)), 0, 1)
+    reverse <- .pu_eval(sq, x)
+    expect_gt(scored(so), 0L)
+    ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_soft_quadrature_adjoint!", FALSE)
+    forward <- .pu_eval(sq, x)
+    ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_soft_quadrature_adjoint!", TRUE)
+    expect_equal(reverse$value, forward$value, tolerance = 1e-12)
+    expect_equal(as.numeric(reverse$gradient), as.numeric(forward$gradient),
+      tolerance = 1e-7)
   }
 })
 
@@ -483,6 +564,7 @@ test_that("integrated own intercepts beside shared effects on the dynamics are s
 
 test_that("a full-rank level's affine effects are integrated given the rest, exactly", {
   skip_without_julia()
+  .pu_joint_term()
   d <- .pu_means_data()
   d$Y2[d$id == 3] <- NA
   old <- options(ctsem.laplace.hybrid = TRUE)
@@ -694,6 +776,7 @@ test_that("an objective with every effect in the filter sums its units as the ma
 
 test_that("a measurement error written in a time dependent predictor keeps the deviations integrated, exactly", {
   skip_without_julia()
+  .pu_joint_term()
   # A study's known response rounding as a per-row variance q added to each
   # item's error, MANIFESTVAR = sqrt(q + sd^2): a calculation, but in a
   # predictor and parameters only, so each row's covariances and gains are fixed
@@ -806,6 +889,7 @@ test_that("a measurement error written in a time dependent predictor keeps the d
 
 test_that("the soft-direction quadrature on integrated deviations is the layer's, unit for unit", {
   skip_without_julia()
+  .pu_joint_term()
   # The gate reads the joint curvature's smallest eigenvalue, which the
   # profile's can exceed, and a unit it flags is scored in joint coordinates
   # with the filter at fixed deviations. The band is widened (hi 0.95) so that
@@ -950,6 +1034,7 @@ test_that("quadrature integrates the filter's deviations at every node, and span
 
 test_that("leave-one-out and linearised draws through the hybrid are the layer's", {
   skip_without_julia()
+  .pu_joint_term()
   # The deviations each filter integrates are drawn with the shared effect from
   # their joint Laplace posterior, in the layer's coordinates and order -- an
   # item a subject never answers from its prior -- so with one seed the draws,
@@ -992,6 +1077,7 @@ test_that("leave-one-out and linearised draws through the hybrid are the layer's
 
 test_that("reporting through the hybrid is the layer's: population, subjects, modes, Kalman", {
   skip_without_julia()
+  .pu_joint_term()
   # Each subject's parameters carry its filter-integrated deviations at their
   # conditional modes, the population sds their own variances, the modes
   # report their joint posterior sd, and the Kalman output is a plug-in filter
@@ -1046,6 +1132,7 @@ test_that("reporting through the hybrid is the layer's: population, subjects, mo
 
 test_that("sequential predictions are the fitted model's own, row by row", {
   skip_without_julia()
+  .pu_joint_term()
   # Each row's prediction from the subject's earlier rows alone, the effects at
   # their Laplace posterior given those rows. Checked: the rows' log predictive
   # densities sum to the objective (no priors, so it is the subjects' terms
@@ -1106,6 +1193,7 @@ test_that("sequential predictions are the fitted model's own, row by row", {
 
 test_that("a subject with nothing observed is predicted and reported as the layer does", {
   skip_without_julia()
+  .pu_joint_term()
   # A new patient with no data, as ctPredict(newdata =) is asked for: its
   # effects reach no observed item, so its coordinate is inactive and its
   # curvature takes no Jacobian (`_laplace_unit_curvature_pruned`), while the
