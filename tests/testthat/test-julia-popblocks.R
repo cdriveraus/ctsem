@@ -104,7 +104,14 @@ test_that("one block is the triangle, and no block is a level of its own", {
   expect_equal(e1$gradient, e0$gradient, tolerance = 1e-10)
 
   # Effects in no block with own variances, against the same effects on a
-  # second id level identical to the subject, at rank 0.
+  # second id level identical to the subject, at rank 0. The first route's
+  # filter integrates mm2 and mm3 exactly given the block's effects, the
+  # second holds them as Laplace coordinates beside those; with the random
+  # drift in the block the two are different approximations, so the routes
+  # are compared on the joint term (`ctsem_set_hybrid_full!(false)`).
+  ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_hybrid_full!", FALSE)
+  on.exit(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_hybrid_full!", TRUE),
+    add = TRUE)
   pa <- .blocks_prep(.blocks_model(), data, popblocks = list(level = list(
     rank = 1, effects = c("lev", "dr"))), popunique = c("mm2", "mm3"))
   pb <- .blocks_prep(.blocks_model(ids = c("id", "id2"), lev = "lev||id",
