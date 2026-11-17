@@ -4986,15 +4986,23 @@ The shares in which a unit's maxima make its term (`_laplace_mode_sum`), from
 their fades `f` and the values that rank them, `rank` (the best first): each
 takes its fade of what the ones above it left,
 
-    w_(1) = f_(1),   w_(i) = f_(i) prod_{j < i} (1 - f_(j)),   pi = w / W,
+    w_(1) = f_(1),   w_(i) = f_(i) prod_{j < i} (1 - f_(j)),
 
-`W = sum_i w_(i) = 1 - prod_i (1 - f_(i))`. A best maximum at full weight
+and what none of them claims, `prod_i (1 - f_(i))`, stays with the best, as a
+lone maximum takes the whole term whatever its fade. So one below the best
+holds at most its own fade. Shared out in proportion to `w` instead (to
+2026-11-17), two maxima on a nearly flat top, each faded to under a
+thousandth, held 0.59 and 0.41, a ratio of two numbers near zero, and the
+second existed only close to where the run stopped: a pit 0.138 deep there,
+which the run climbed out of and the next search found again, eight times
+in one fit of the bench's gB8 (169 iterations; 42 with this). A best
+maximum at full weight
 takes the whole term, and one that fades hands what it loses to the next. The
 combination `sum_k pi_k a_k` is continuous where two ranks swap only if their
 `a` are equal there, so the values combined are the values ranked: the
 Laplace terms in the mode sum, the placed rules' integrals in the refined fit
-(`_placed_mode_sum!`). Returns `pi`, the ranking `order` and `W`; `pi` is all
-zeros where every fade is.
+(`_placed_mode_sum!`). Returns `pi`, the ranking `order` and `rest`, the
+best.
 """
 function _laplace_mode_shares(f::Vector{Float64}, rank::Vector{Float64})
     order = sortperm(rank; rev=true)
@@ -5004,9 +5012,9 @@ function _laplace_mode_shares(f::Vector{Float64}, rank::Vector{Float64})
         w[k] = f[k] * left
         left *= 1 - f[k]
     end
-    W = 1 - left
-    W > 0 && (w ./= W)
-    return (pi=w, order=order, W=W)
+    rest = order[1]
+    w[rest] += left
+    return (pi=w, order=order, rest=rest)
 end
 
 """
@@ -5016,9 +5024,10 @@ end
 gives: what `_laplace_mode_seeds` weights each mode's `d log f_k` by. With
 `P_i = prod_{j < i} (1 - f_(j))`, what the maxima ranked above `i` leave, and
 the rest's own combination about `A` from the bottom up,
-`R_i = f_(i) (a_(i) - A) + (1 - f_(i)) R_(i+1)`,
+`R_i = f_(i) (a_(i) - A) + (1 - f_(i)) R_(i+1)`, ending on what the best
+takes of the rest, `R_(K+1) = a_(1) - A`,
 
-    dA/df_(i) = P_i ((a_(i) - A) - R_(i+1)) / W.
+    dA/df_(i) = P_i ((a_(i) - A) - R_(i+1)).
 
 Every `a` must be finite: a mode carrying no share may take any value, `A`
 say, since its coefficient, and every one its value reaches, is zero there or
@@ -5028,9 +5037,9 @@ function _laplace_mode_fade_coefficients(shares, f::Vector{Float64},
     a::Vector{Float64}, A::Float64)
     K = length(f)
     c = zeros(Float64, K)
-    shares.W > 0 || return c
     order = shares.order
     R = zeros(Float64, K + 1)
+    R[K + 1] = a[shares.rest] - A
     for i in K:-1:1
         k = order[i]
         R[i] = f[k] * (a[k] - A) + (1 - f[k]) * R[i + 1]
@@ -5038,7 +5047,7 @@ function _laplace_mode_fade_coefficients(shares, f::Vector{Float64},
     P = 1.0
     for i in 1:K
         k = order[i]
-        c[k] = f[k] * P * ((a[k] - A) - R[i + 1]) / shares.W
+        c[k] = f[k] * P * ((a[k] - A) - R[i + 1])
         P *= 1 - f[k]
     end
     return c

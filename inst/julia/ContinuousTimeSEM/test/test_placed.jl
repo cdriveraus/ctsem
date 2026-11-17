@@ -311,6 +311,12 @@ _fresh_placed_sign() = ctsem_laplace_objective(_PLACED_SIGN_OBJECTIVE, [1], [2],
     # The best at full weight takes the whole term, whatever lies below it.
     s = C._laplace_mode_shares([1.0, 1.0, 0.4], [0.0, -1.17, -3.0])
     @test s.pi == [1.0, 0.0, 0.0]
+    # What no fade claims stays with the best, so one below it holds at most
+    # its own fade: two maxima both all but faded out are the best one's term,
+    # not a ratio of two numbers near zero.
+    s = C._laplace_mode_shares([4e-4, 3e-4], [-10.825, -11.158])
+    @test s.pi[2] <= 3e-4 && sum(s.pi) ≈ 1
+    @test C._laplace_mode_shares([0.3], [0.0]).pi == [1.0]
     # A faded one hands the rest down the ranking, and where the values ranked
     # are the values combined, a tie in the ranking moves nothing.
     combine(f, t, a) = sum(C._laplace_mode_shares(f, t).pi .* a)
