@@ -16,6 +16,7 @@ ctScoreTest(
   variance = c("robust", "model"),
   nboot = 1999L,
   exact = 5L,
+  intoverpop = c("laplace", "quadrature"),
   cores = getOption("mc.cores", 2L),
   verbose = TRUE
 )
@@ -64,6 +65,17 @@ the extended model per term. Every term is first tested on its scores
 without that correction, which is conservative, and the strongest
 \code{exact} by that test are then corrected (\code{projected} in the
 tables). \code{Inf} corrects every term.}
+
+\item{intoverpop}{How the extended families (\code{statedependence},
+\code{volatility}, \code{fixed}, \code{level}) integrate the random
+effects on the Laplace route. \code{'laplace'} (the default) takes the
+Laplace term, a fast screen. \code{'quadrature'} integrates every
+subject's random effects by quadrature rules placed at their mode and
+curvature, as the refined fit does (\code{ctFit(intoverpop =
+'quadrature')}), for the scores, their spread and the curvature: no
+Laplace error left in them, at the cost of placing a rule for every
+subject and the extended model's whole Hessian on it. The other families
+read the fit's own objective either way.}
 
 \item{cores}{Engine cores for the evaluations.}
 
