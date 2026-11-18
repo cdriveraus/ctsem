@@ -295,13 +295,30 @@ test_that("distance is measured in the standard errors the Hessian implies", {
   d <- c(0.01, -0.02)
   expect_equal(ctsem:::.ctBackendHessianDistance(-info, c(0, 0), d),
     max(abs(d) / se))
-  # A coordinate the trusted curvature says nothing about has no standard
-  # error there, so moving it at all is infinitely far -- and not moving it
-  # costs nothing.
+  # A direction the curvature does not trust has no standard error, so a move
+  # along it is measured in raw units, the raw prior's scale -- and not moving
+  # it costs nothing.
   flat <- -diag(c(4, 0))
-  expect_equal(ctsem:::.ctBackendHessianDistance(flat, c(0, 0), c(0, 1e-9)), Inf)
+  expect_equal(ctsem:::.ctBackendHessianDistance(flat, c(0, 0), c(0, 1e-9)), 1e-9)
+  expect_equal(ctsem:::.ctBackendHessianDistance(flat, c(0, 0), c(0, 0.5)), 0.5)
   expect_equal(ctsem:::.ctBackendHessianDistance(flat, c(0, 0), c(0.005, 0)),
     0.01)
+  # Steeper than the prior's there, more: a negative curvature of -9 makes a
+  # move of 0.1 along it 0.3.
+  expect_equal(ctsem:::.ctBackendHessianDistance(-diag(c(4, -9)), c(0, 0),
+    c(0, 0.1)), 0.3)
+  # A coordinate that lies mostly along such a direction is not read through
+  # its trusted standard error: the affect pilot's case, a loading on a
+  # negative curvature with a small trusted part. Its trusted standard error
+  # is tiny, and a move along the negative direction alone is its raw length.
+  angle <- 0.02
+  rot <- matrix(c(cos(angle), sin(angle), -sin(angle), cos(angle)), 2, 2)
+  info <- rot %*% diag(c(1e6, -0.16)) %*% t(rot)
+  along <- 0.0046 * rot[, 2]
+  expect_equal(ctsem:::.ctBackendHessianDistance(-info, c(0, 0), along),
+    0.0046, tolerance = 1e-10)
+  # Nothing trusted: no standard error to keep.
+  expect_equal(ctsem:::.ctBackendHessianDistance(diag(2), c(0, 0), c(0.1, 0)), Inf)
   # A matrix that cannot be decomposed describes nothing.
   expect_equal(ctsem:::.ctBackendHessianDistance(matrix(NA_real_, 1, 1), 0, 1),
     Inf)
@@ -331,6 +348,66 @@ test_that("a stored Hessian is reused within the fit's hessianreuse standard err
   expect_null(ctsem:::.ctBackendStoredHessian(
     list(uncertainty = list(hessian = stored)), 1))
   expect_null(ctsem:::.ctBackendStoredHessian(fit, c(1, 1)))
+})
+
+test_that("the flat walk's record is the screen R reads, and is reused only for its own Hessian", {
+  # A record as the engine sends it (`_ctsem_flatwalk_fields`): three
+  # parameters, the engine's eigenvalues ascending, two candidates of which
+  # one is flat. No fit: R's half is reading it.
+  vectors <- diag(3)
+  engine <- list(newton_flat_ran = TRUE, newton_flat_at = c(0.5, -1, 2),
+    newton_flat_eigenvalues = c(1e-9, 1e-8, 5), newton_flat_eigenvectors = vectors,
+    newton_flat_candidates = c(1L, 2L), newton_flat_change = c(0.01, 3.2, NaN),
+    newton_flat_flat = c(TRUE, FALSE, FALSE), newton_flat_gain = 0,
+    newton_flat_point = 0, newton_flat_direction = 0L,
+    newton_flat_evaluations = 9L, newton_flat_gradients = 0L,
+    newton_flat_complete = TRUE)
+  walk <- ctsem:::.ctBackendFlatWalkFields(engine, 3)
+  expect_identical(walk$candidates, c(1L, 2L))
+  expect_null(walk$point)
+  expect_true(is.na(walk$direction))
+  screen <- ctsem:::.ctOptimScreenFromWalk(walk)
+  expect_identical(screen$flat, c(TRUE, FALSE, FALSE))
+  expect_true(is.na(screen$change[3]))
+  expect_equal(screen$change[1:2], c(0.01, 3.2))
+  expect_equal(screen$eig$vectors, vectors)
+  expect_true(screen$walked)
+  expect_equal(screen$gain, 0)
+  # The covariance reads it as it reads the screen: the flat direction out.
+  info <- diag(c(1e-9, 1e-8, 5))
+  inverse <- ctsem:::.ctOptimIdentifiedInverse(info, eig = screen$eig, flat = screen$flat)
+  expect_equal(inverse$cov[3, 3], 1 / 5)
+  expect_equal(inverse$cov[1, 1], 0)
+  # Nothing ran, or a record for another size: nothing to read.
+  expect_null(ctsem:::.ctBackendFlatWalkFields(list(newton_flat_ran = FALSE), 3))
+  expect_null(ctsem:::.ctBackendFlatWalkFields(engine, 4))
+  # No candidate: no screen, as the screen returns before walking anything.
+  none <- utils::modifyList(engine, list(newton_flat_candidates = 0L,
+    newton_flat_eigenvectors = matrix(0, 1, 1)))
+  expect_null(ctsem:::.ctOptimScreenFromWalk(ctsem:::.ctBackendFlatWalkFields(none, 3)))
+  # A gain the walk found is reported past the tolerance, with its point.
+  gained <- ctsem:::.ctBackendFlatWalkFields(utils::modifyList(engine,
+    list(newton_flat_gain = 0.4, newton_flat_point = c(0.6, -1, 2),
+      newton_flat_direction = 1L)), 3)
+  expect_equal(ctsem:::.ctOptimScreenFromWalk(gained)$gain, 0.4)
+  expect_equal(ctsem:::.ctOptimScreenFromWalk(gained)$point, c(0.6, -1, 2))
+  # Reused for the stored Hessian at the walk's point; anything else asks the
+  # engine, and with no engine to ask, R walks (FALSE).
+  hessian <- -info
+  stored <- list(hessian = hessian, evaluated_at = walk$at, flatwalk = walk)
+  lpg <- function(x) 0
+  read <- ctsem:::.ctBackendFlatScreen(stored, hessian, hessian, walk$at, lpg)
+  expect_true(is.function(read))
+  expect_identical(read(hessian)$flat, screen$flat)
+  expect_false(ctsem:::.ctBackendFlatScreen(stored, hessian, hessian,
+    walk$at + c(0.1, 0, 0), lpg)(hessian))
+  other <- hessian * 2
+  expect_false(ctsem:::.ctBackendFlatScreen(stored, other, other, walk$at, lpg)(other))
+  partial <- utils::modifyList(stored, list(flatwalk = utils::modifyList(walk,
+    list(complete = FALSE))))
+  expect_false(ctsem:::.ctBackendFlatScreen(partial, hessian, hessian, walk$at, lpg)(hessian))
+  # A Hessian the stage changed (a natural-scale prior added) is R's to walk.
+  expect_null(ctsem:::.ctBackendFlatScreen(stored, hessian, other, walk$at, lpg))
 })
 
 # --- the resume rule ----------------------------------------------------------

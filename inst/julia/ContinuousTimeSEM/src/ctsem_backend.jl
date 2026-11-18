@@ -2837,7 +2837,12 @@ curvature, so with the finish's Hessian in hand the candidates are the
 coordinates that lie in its flat subspace (`_ctsem_flat_loaded`), together
 with those whose transform the route flags as saturated or that have lost
 all but `stall_ratio` of its live responsiveness (`_ctsem_flat_coordinates`,
-the stall watch's own rule). A collapsed population scale brings its
+the stall watch's own rule). Where the finish's flat walk walked every
+direction of that subspace from here (`walked`, `_ctsem_flatwalk_covers`), it
+has been searched, ridges followed, and only the transforms' coordinates are
+pulled back: walking a direction a few raw units cannot leave a transform
+saturated twenty units out, which pulling the coordinate back can. A
+collapsed population scale brings its
 correlations in through the first: their curvature goes with its variance,
 whatever their transforms still do. A coordinate with curvature behind it is
 estimated, and pulling it back is a move the quadratic model already prices;
@@ -2858,11 +2863,13 @@ from. The search over every coordinate cost 26 minutes a set, 22 sets, after
 a one-iteration fit of 1324 Laplace units.
 """
 function _ctsem_overshoot_candidates(objective, minimizer, saturated_parameters,
-        hessian, flat_rtol::Real, stall_ratio::Real; capped::Bool=false)
+        hessian, flat_rtol::Real, stall_ratio::Real; capped::Bool=false,
+        walked::Bool=false)
     n = length(minimizer)
     usable = hessian !== nothing && size(hessian, 1) == n &&
         size(hessian, 2) == n && all(isfinite, hessian)
-    loaded = usable ? _ctsem_flat_loaded(hessian; rtol=flat_rtol) : nothing
+    loaded = !usable ? nothing : walked ? Int[] :
+        _ctsem_flat_loaded(hessian; rtol=flat_rtol)
     loaded === nothing && !capped && return nothing
     # An objective with no transform layer (`_ctsem_params`) has nothing to
     # ask about responsiveness; the stall watch reads the same absence.
@@ -4232,7 +4239,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             saturated_parameters,
             (finish === nothing || finish.hessian === nothing) ? nothing :
                 finish.hessian,
-            flat_rtol, stall_ratio; capped=stop_reason == "cap"),
+            flat_rtol, stall_ratio; capped=stop_reason == "cap",
+            walked=finish !== nothing &&
+                _ctsem_flatwalk_covers(finish.flatwalk, minimizer, converge_floor)),
         widen=stop_reason != "cap", held_start=first_finish[])
     saturated = verdict.saturated
     stalled = verdict.stalled
@@ -4418,6 +4427,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         probe_longest=finish === nothing ? 0.0 : finish.probe.longest,
         probe_direction=(finish === nothing || isempty(finish.probe.direction)) ?
             [0.0] : finish.probe.direction,
+        # The flat walk's record at the estimate (`_ctsem_flat_walk`): the
+        # verdicts the identifiability report and the covariance read in
+        # place of R walking the same directions again.
+        _ctsem_flatwalk_fields(finish === nothing ? nothing : finish.flatwalk,
+            length(minimizer))...,
         # One entry per step the finish took, in order: its kind ("newton",
         # "exact" or "saddle"), predicted gain, step length (a signed raw length
         # for an escape) and the objective after it. `newton_steps` says how

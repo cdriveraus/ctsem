@@ -1453,16 +1453,17 @@ end
 _ridge_c(a) = 0.15 * a^2
 _ridge(p) = -50 * (p[2] - _ridge_c(p[1]))^2 + 15 * exp(-(p[1] - 2)^2 / 2)
 
-@testset "the flat ladder follows a curved ridge that a straight step leaves" begin
+@testset "the flat walk follows a curved ridge that a straight step leaves" begin
     m = _endgame_mock(_ridge)
     fg! = ContinuousTimeSEM._ctsem_trial_closure(m, :adjoint)
+    value_at = y -> ContinuousTimeSEM._ctsem_probe_value(m, y)
     x = [-4.0, _ridge_c(-4.0)]
     G = zeros(2)
     f = fg!(0.0, G, x)
     split = ContinuousTimeSEM._ctsem_information_split(-ForwardDiff.hessian(_ridge, x);
         rtol=1e-6)
     @test count(.!split.trusted) == 1
-    out = ContinuousTimeSEM._ctsem_flat_ladder(fg!, x, f, G, split)
+    out = ContinuousTimeSEM._ctsem_flat_walk(fg!, value_at, x, f, G, split)
     @test out.best !== nothing
     @test f - out.best.f > 0.01            # measured, against ~2e-7 at the start
     @test out.best.length == 4             # towards the bump, the longest rung
@@ -1474,18 +1475,131 @@ _ridge(p) = -50 * (p[2] - _ridge_c(p[1]))^2 + 15 * exp(-(p[1] - 2)^2 / 2)
     @test off(out.best.point) < off(x .+ 4 .* u) / 20
     # The corrections are what keep it on the ridge: without them every rung
     # falls off, and so does the certification's straight probe.
-    @test ContinuousTimeSEM._ctsem_flat_ladder(fg!, x, f, G, split;
-        corrections=0).best === nothing
+    @test ContinuousTimeSEM._ctsem_flat_walk(fg!, value_at, x, f, G, split;
+        corrections=0, screen_corrections=0).best === nothing
     @test ContinuousTimeSEM._ctsem_flat_probe(_ridge, x, -f, u).gain == 0
+    # Its first side taken straight is the certification's probe, as the
+    # straight probe gives it.
+    straight = ContinuousTimeSEM._ctsem_flat_probe(_ridge, x, -f, u)
+    @test out.probe.gain == straight.gain
+    @test out.probe.longest == straight.longest
+    @test out.probe.direction ≈ u
+    # The one candidate direction is walked beside the leading one (the
+    # gradient's), and its verdict is from its own rungs.
+    @test out.walked == 1 && out.complete
+    k = findfirst(.!split.trusted)
+    @test out.flat[k] == (out.change[k] < ContinuousTimeSEM._CTSEM_FLAT_LADDER_BAR)
     # Each rung is reported before it is walked, both sides, with its
     # signed length; the result is the same.
     walked = Float64[]
-    told = ContinuousTimeSEM._ctsem_flat_ladder(fg!, x, f, G, split;
+    told = ContinuousTimeSEM._ctsem_flat_walk(fg!, value_at, x, f, G, split;
         progress=len -> push!(walked, len))
     @test told.best.point == out.best.point && told.gcalls == out.gcalls
     @test walked[1:3] == [0.25, 1.0, 4.0]
     @test any(<(0), walked) && all(len -> abs(len) <=
         ContinuousTimeSEM._CTSEM_FLAT_LADDER_REACH, walked)
+end
+
+@testset "the flat walk's verdicts are the screen's: flat, refused, one-sided, unusable" begin
+    # Maximised: a peak in a, a direction b the objective is flat along to
+    # within the bar over four raw units (a quadratic of curvature 1e-3), one,
+    # c, that falls past the bar inside four units (curvature 0.3, flat to the
+    # eigenvalue rule at 1e-7 of 1e4 only by its scale here), one, d, flat on
+    # its positive side and falling on its negative, and one, e, that cannot
+    # be evaluated past two units on either side. As R's
+    # `.ctOptimFlatDirectionScreen()` judges them: b flat, c not, d flat by its
+    # one flat side, e not judged (both sides say nothing).
+    obj(p) = -5e3 * p[1]^2 - 5e-4 * p[2]^2 - 0.15 * p[3]^2 -
+        (p[4] < 0 ? 2.0 * p[4]^2 : 1e-5 * p[4]^2) - 1e-6 * p[5]^2
+    m = _endgame_mock(p -> abs(p[5]) > 2 ? -Inf : obj(p))
+    fg! = ContinuousTimeSEM._ctsem_trial_closure(m, :adjoint)
+    value_at = y -> ContinuousTimeSEM._ctsem_probe_value(m, y)
+    x = zeros(5)
+    G = zeros(5)
+    f = fg!(0.0, G, x)
+    split = ContinuousTimeSEM._ctsem_information_split(
+        Matrix(Diagonal([1e4, 1e-3, 0.3, 2e-5, 2e-6])); rtol=1e-4)
+    @test count(.!split.trusted) == 4
+    out = ContinuousTimeSEM._ctsem_flat_walk(fg!, value_at, x, f, G, split)
+    @test out.complete && out.walked == 4
+    @test out.best === nothing
+    # The eigenvector of each coordinate's curvature, by its axis.
+    axis(j) = findfirst(k -> abs(split.vectors[j, k]) > 0.99, 1:5)
+    bar = ContinuousTimeSEM._CTSEM_FLAT_LADDER_BAR
+    @test out.flat[axis(2)]
+    @test out.change[axis(2)] ≈ 5e-4 * 16 atol = 1e-8
+    @test !out.flat[axis(3)] && out.change[axis(3)] >= bar
+    @test out.flat[axis(4)] && out.change[axis(4)] < bar
+    @test !out.flat[axis(5)] && isnan(out.change[axis(5)])
+    @test !out.flat[axis(1)] && isnan(out.change[axis(1)])
+    # At most `maxdirections`, the flattest first; the rest unwalked.
+    two = ContinuousTimeSEM._ctsem_flat_walk(fg!, value_at, x, f, G, split;
+        maxdirections=2)
+    @test two.walked == 2 && two.candidates == [axis(5), axis(4)]
+    @test isnan(two.change[axis(2)])
+    # And as R reads it, the record the finish hands over.
+    fields = ContinuousTimeSEM._ctsem_flatwalk_fields(
+        (walk=out, at=x, f=f, split=split), 5)
+    @test fields.newton_flat_ran && fields.newton_flat_complete
+    @test fields.newton_flat_flat == out.flat
+    @test size(fields.newton_flat_eigenvectors) == (5, 5)
+    @test fields.newton_flat_gain == 0.0 && fields.newton_flat_point == [0.0]
+    @test !ContinuousTimeSEM._ctsem_flatwalk_fields(nothing, 5).newton_flat_ran
+    # The same record from a Hessian R holds, the maximised objective's.
+    held = ContinuousTimeSEM.ctsem_flat_walk(m, x,
+        -Matrix(Diagonal([1e4, 1e-3, 0.3, 2e-5, 2e-6])); rtol=1e-4)
+    @test held.newton_flat_flat == out.flat
+    @test isequal(held.newton_flat_change, out.change)
+    # Every direction trusted: nothing to walk, whatever the gradient, which
+    # outside the trusted directions is then the projection's roundoff.
+    trusted = ContinuousTimeSEM._ctsem_information_split(
+        Matrix(Diagonal([1e4, 1e-3, 0.3, 2e-5, 2e-6])); rtol=1e-12)
+    @test all(trusted.trusted)
+    none = ContinuousTimeSEM._ctsem_flat_walk(fg!, value_at, [0.01, 0.2, 0.1, 0.3, 0.1],
+        f, [1.0, 0.5, -0.3, 0.2, 0.1], trusted)
+    @test none.fcalls == 0 && none.gcalls == 0 && none.walked == 0
+    @test none.probe.evaluations == 0 && none.best === nothing
+    # One untrusted direction, b, with the gradient along it: the leading
+    # direction is that candidate, and its rungs settle it, with no second
+    # walk -- the same calls as a walk that has no candidate to judge.
+    one = ContinuousTimeSEM._ctsem_information_split(
+        Matrix(Diagonal([1e4, 1e-3, 0.3, 50.0, 60.0])); rtol=1e-6)
+    @test count(.!one.trusted) == 1
+    xb = [0.0, 0.5, 0.0, 0.0, 0.0]
+    Gb = zeros(5)
+    fb = fg!(0.0, Gb, xb)
+    led = ContinuousTimeSEM._ctsem_flat_walk(fg!, value_at, xb, fb, Gb, one)
+    alone = ContinuousTimeSEM._ctsem_flat_walk(fg!, value_at, xb, fb, Gb, one;
+        maxdirections=0)
+    b = findfirst(k -> abs(one.vectors[2, k]) > 0.99, 1:5)
+    @test led.walked == 1 && led.complete
+    @test led.fcalls == alone.fcalls && led.gcalls == alone.gcalls
+    @test isfinite(led.change[b]) && isnan(alone.change[b])
+    @test led.flat[b] == (led.change[b] < bar)
+    @test led.probe.evaluations > 0
+end
+
+@testset "a move along a direction without a standard error is measured in raw units" begin
+    C = ContinuousTimeSEM
+    dist(H, d) = C._ctsem_hessian_distance(C._ctsem_information_split(H), zeros(length(d)), d)
+    # Trusted: the largest move over its standard error, as R's covariance.
+    info = [4.0 1.0; 1.0 25.0]
+    se = sqrt.(diag(inv(info)))
+    @test dist(info, [0.01, -0.02]) ≈ maximum(abs.([0.01, -0.02]) ./ se)
+    # Untrusted: raw units, more where the curvature is steeper than the prior's.
+    @test dist(Matrix(Diagonal([4.0, 0.0])), [0.0, 0.5]) ≈ 0.5
+    @test dist(Matrix(Diagonal([4.0, -9.0])), [0.0, 0.1]) ≈ 0.3
+    # The affect pilot's case: a coordinate lying mostly along a negative
+    # curvature, its trusted standard error tiny. A move along that direction
+    # is its raw length, where read through the trusted standard error it was
+    # hundreds.
+    a = 0.02
+    R = [cos(a) -sin(a); sin(a) cos(a)]
+    H = R * Diagonal([1e6, -0.16]) * transpose(R)
+    @test dist(H, 0.0046 .* R[:, 2]) ≈ 0.0046 rtol = 1e-8
+    # Nothing trusted: no standard error to keep.
+    @test dist(-Matrix(1.0I, 2, 2), [0.1, 0.0]) == Inf
+    @test dist(H, [0.0, 0.0]) == 0.0
 end
 
 @testset "the finish leaves a plateau on a curved ridge where the route allows it" begin
@@ -2653,7 +2767,10 @@ end
     with = C.ctsem_optimize(m, start; lbfgs_local=true, kw...)
     @test with.local_builds == 1 && with.local_columns == groups * own
     @test lbfgs(with) > 2
-    @test with.g_calls - with.newton_steps < 16
+    # The optimiser's gradients, not the flat walk's: the mock's prior of 1e8
+    # on one coordinate puts every direction under 1e-7 of it among the
+    # candidates the walk measures (`_ctsem_flat_walk`).
+    @test with.g_calls - with.newton_steps - with.newton_flat_gradients < 16
     @test value(best) - value(with.minimizer) < C._ctsem_hessian_reach(C._CTSEM_HESSIAN_REUSE_SE)
     # A run handed a curvature is not cold: it stops by its rule, unbuilt.
     warm = C.ctsem_optimize(m, start; lbfgs_local=true, lbfgs_inverse=inv(Hm), kw...)

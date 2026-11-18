@@ -7861,7 +7861,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     out$uncertainty <- list(certification = correction$certification,
       hessian = correction$hessian,
       evaluated_at = if (is.null(correction$evaluated_at)) minimizer else
-        as.numeric(correction$evaluated_at))
+        as.numeric(correction$evaluated_at),
+      flatwalk = correction$flatwalk)
     out <- .ctBackendCertifiedVerdict(out)
   }
   class(out) <- c("ctJuliaFit", "ctFit")
