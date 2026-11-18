@@ -508,6 +508,12 @@ function _laplace_soft_quadrature_reverse(laplace::CTSEMLaplaceObjective, z0::Ve
                 else
                     rb = objf(ub)
                     h = Float64(rb.value)
+                    # No mass outside the support, as the forward rule.
+                    if _laplace_soft_node_outside(h)
+                        terms[j] = -Inf
+                        nodes[j] = (kind=:outside,)
+                        continue
+                    end
                     nodes[j] = (kind=:node1, a=a, ub=ub)
                 end
             else
@@ -520,6 +526,11 @@ function _laplace_soft_quadrature_reverse(laplace::CTSEMLaplaceObjective, z0::Ve
             a = sqrt(2) * x / sqrt(lam1c)
             ub = z0 .+ a .* v1
             rb = objf(ub)
+            if _laplace_soft_node_outside(rb.value)
+                terms[j] = -Inf
+                nodes[j] = (kind=:outside,)
+                continue
+            end
             rgrad = Vector{Float64}(rb.gradient)
             Mb = _dense_sym(Matrix{Float64}(curvf(ub)))
             B = _dense_sym(_dense_mul(_dense_t(Vh), _dense_mul(Mb, Vh)))
@@ -553,6 +564,7 @@ function _laplace_soft_quadrature_reverse(laplace::CTSEMLaplaceObjective, z0::Ve
     for j in 1:nn
         hbar = softbar * ex[j] / total
         node = nodes[j]
+        node.kind === :outside && continue
         if node.kind === :centre1
             gbar0 += hbar
         elseif node.kind === :centre
@@ -704,6 +716,11 @@ function _laplace_soft_quadrature_reverse_factored(laplace::CTSEMLaplaceObjectiv
             a = sqrt(2) * x / sqrt(lam1c)
             ub = z0 .+ a .* v1
             rb = objf(ub)
+            if _laplace_soft_node_outside(rb.value)
+                terms[j] = -Inf
+                nodes[j] = (kind=:outside,)
+                continue
+            end
             rgrad = Vector{Float64}(rb.gradient)
             Mb = curvb(ub)
             _soft_shifted_factor(Mb, blocks, top) === nothing && return nothing
@@ -736,6 +753,7 @@ function _laplace_soft_quadrature_reverse_factored(laplace::CTSEMLaplaceObjectiv
     for j in 1:nn
         hbar = softbar * ex[j] / total
         node = nodes[j]
+        node.kind === :outside && continue
         if node.kind === :centre
             # -(logdet M0 - log lambda1) / 2.
             gbar0 += hbar
