@@ -393,8 +393,9 @@ test_that("the map sampler draws the joint posterior with the filter's effects i
   seen <- list()
   said <- testthat::capture_messages(out <- suppressWarnings(ctFitUncertainty(fit,
     method = "sample", intoverpop = "none", cores = 1, verbose = 1,
-    control = list(chains = 2, draws = 20L, minESS = 0, processes = FALSE,
-      sampler = "map", callback = function(phase, iteration, total, logp, divergent)
+    control = list(chains = 2, warmup = 2000L, draws = 20L, minESS = 0,
+      processes = FALSE, sampler = "map",
+      callback = function(phase, iteration, total, logp, divergent)
         seen[[length(seen) + 1L]] <<- list(phase = phase, iteration = iteration,
           total = total)))))
   phase <- vapply(seen, `[[`, "", "phase")
@@ -412,6 +413,10 @@ test_that("the map sampler draws the joint posterior with the filter's effects i
     fixed = TRUE)))
   expect_false(any(grepl("200 warmup", said, fixed = TRUE)))
   expect_gt(out$sample$warmup, max(at))
+  # A warmup written is unused, and said to be: it would only lengthen the
+  # first window's step-size tuning, which settles no chain further.
+  expect_true(any(grepl("warmup is not used by the map sampler", said, fixed = TRUE)))
+  expect_lt(max(at), 2000)
 })
 
 test_that("the map sampler maps the effects the filter cannot integrate", {
