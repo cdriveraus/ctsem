@@ -646,6 +646,22 @@ CTSEMUnitColumns() = CTSEMUnitColumns(Float64[], Float64[], typemin(Int), -1,
     zeros(Float64, 0, 0, 0), fill(false, 0, 0), Int[], Int[])
 
 """
+A unit's exact curvature at its anchor, the first matrix of its anchored
+solves (`_laplace_newton_unit_mode`'s `warm`): `anchor`, at the coordinates
+`anchor_at` (empty: none), and `last`, the curvature the unit's last solve
+ended on, at `last_at`, which becomes the anchor's when the anchors move to
+that solve's modes (`_laplace_anchor_curvatures!`).
+"""
+mutable struct CTSEMUnitCurvature
+    anchor::Matrix{Float64}
+    anchor_at::Vector{Float64}
+    last::Matrix{Float64}
+    last_at::Vector{Float64}
+end
+CTSEMUnitCurvature() = CTSEMUnitCurvature(Matrix{Float64}(undef, 0, 0), Float64[],
+    Matrix{Float64}(undef, 0, 0), Float64[])
+
+"""
     CTSEMLaplaceObjective(objective, spec; inner_maxiter, inner_tol)
 
 A `CTSEMObjective` plus the hierarchy to integrate out of it.
@@ -760,6 +776,9 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     # Per unit, the curvature columns its last curvature pass formed, which
     # the gradient reads where they are the mode's (`CTSEMUnitColumns`).
     columns::Vector{CTSEMUnitColumns}
+    # Per unit, the exact curvature at its anchor, which its anchored solves
+    # step on first (`CTSEMUnitCurvature`).
+    curvatures::Vector{CTSEMUnitCurvature}
 end
 
 # `soft_blend_lo = 0.2` and `soft_blend_hi = 0.7` are measured, not derived: see the
@@ -788,7 +807,77 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
         isempty(known) ? [Vector{Float64}[] for _ in 1:nunits] : known,
         Vector{Float64}[], [Vector{Float64}[] for _ in 1:nunits],
         Vector{Vector{Float64}}[], [Float64[] for _ in 1:nunits], Vector{Float64}[],
-        [CTSEMUnitColumns() for _ in 1:nunits])
+        [CTSEMUnitColumns() for _ in 1:nunits],
+        [CTSEMUnitCurvature() for _ in 1:nunits])
+end
+
+"""
+Whether an anchored mode solve steps first on the exact curvature at its
+anchor (`_laplace_newton_unit_mode`'s `warm`, `CTSEMUnitCurvature`), forming
+one only where a step shows that matrix no longer describes the unit, and at
+the end. On; off forms the exact curvature at the start first, the same mode
+at one curvature more a unit. `ctsem_set_warm_curvature!` sets it.
+"""
+const _LAPLACE_WARM_CURVATURE = Ref(true)
+
+export ctsem_set_warm_curvature!
+"""Set whether an anchored mode solve starts on the curvature at its anchor."""
+ctsem_set_warm_curvature!(on::Bool) = (_LAPLACE_WARM_CURVATURE[] = on)
+
+"""Forget every unit's curvature at its anchor: a search follows, or a hold,
+whose values are the parameters' alone given what it holds."""
+function _laplace_forget_curvatures!(laplace::CTSEMLaplaceObjective)
+    for c in laplace.curvatures
+        resize!(c.anchor_at, 0)
+        resize!(c.last_at, 0)
+    end
+    return nothing
+end
+
+"""
+The exact curvature unit `U`'s solve ended on (`final`, its mode in
+`laplace.modes[U]`), kept for the anchors to take (`_laplace_anchor_curvatures!`):
+a unit of one block and one maximum, the units an anchored solve starts on a
+kept matrix (`_laplace_newton_unit_mode`). Before the primal reads `final`,
+which shifts a curvature it repairs in place.
+"""
+function _laplace_keep_final!(laplace::CTSEMLaplaceObjective, U::Integer, final)
+    _LAPLACE_WARM_CURVATURE[] || return nothing
+    c = laplace.curvatures[U]
+    d = laplace.units.dims[U]
+    if final === nothing || d == 0 || length(laplace.units.blocks[U]) != 1 ||
+            !isempty(laplace.alt_modes[U])
+        resize!(c.last_at, 0)
+        return nothing
+    end
+    size(c.last) == (d, d) || (c.last = Matrix{Float64}(undef, d, d))
+    copyto!(c.last, final.diag[1])
+    resize!(c.last_at, d)
+    copyto!(c.last_at, laplace.modes[U])
+    return nothing
+end
+
+"""
+Each unit's curvature at its anchor, after the anchors moved to the modes the
+last evaluation left (`_ctsem_anchor_here!`, `_ctsem_anchor_start!`): the
+curvature that evaluation's solve ended on where the anchor is its mode, and
+none where the anchor is another point. So an anchored solve's first matrix
+is the anchor's own, and the value at given parameters is the same whatever
+was evaluated between the anchors' moves.
+"""
+function _laplace_anchor_curvatures!(laplace::CTSEMLaplaceObjective)
+    for U in eachindex(laplace.curvatures)
+        c = laplace.curvatures[U]
+        a = U <= length(laplace.anchors) ? laplace.anchors[U] : Float64[]
+        if !isempty(a) && c.last_at == a
+            c.anchor, c.last = c.last, c.anchor
+            c.anchor_at, c.last_at = c.last_at, c.anchor_at
+            resize!(c.last_at, 0)
+        elseif c.anchor_at != a
+            resize!(c.anchor_at, 0)
+        end
+    end
+    return nothing
 end
 
 """
@@ -3827,7 +3916,7 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
     # fit, from its modes held (`ctsem_laplace_hold_modes!`), the same way.
     if !retain && !isempty(laplace.anchors) && length(laplace.anchors[U]) == d
         held = _laplace_newton_unit_mode(laplace, U, values, Ls, aws,
-            laplace.anchors[U])
+            laplace.anchors[U]; warm=true)
         # A unit with other maxima follows each from its own anchor
         # (`_laplace_follow_modes`); the sum over them decides its term
         # (`_laplace_mode_sum`), and the first kept stands as its mode till then.
@@ -4103,7 +4192,7 @@ twice from different starts -- see the cold retry there.
 """
 function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws,
-    start::AbstractVector{Float64})
+    start::AbstractVector{Float64}; warm::Bool=false)
     d = laplace.units.dims[U]
     blocks = laplace.units.blocks[U]
     # The current point and the trial, with their gradients, swapped when a step
@@ -4168,6 +4257,25 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     sstep = _laplace_scratch_vector!(laplace, Float64, d, :newton_sr1_s)
     rvec = _laplace_scratch_vector!(laplace, Float64, d, :newton_sr1_r)
     exact = true
+    # An anchored solve (`warm`) starts at its anchor, a step or two from its
+    # mode, at parameters a step from the anchor's, so the exact curvature at
+    # the anchor, which the evaluation that set the anchor formed, is nearly
+    # this start's (`CTSEMUnitCurvature`). It is the first matrix, updated by
+    # SR1 as any other, and the exact one is formed where a step is shortened
+    # or does not halve the gradient, and at the end, as below. The anchor's,
+    # not the last evaluation's: a value at given parameters must not depend
+    # on what was evaluated before it. On the affect pilot a unit's exact
+    # curvature was 35 ms and an anchored solve formed two, at its start and
+    # at its end, with four gradients at 5 ms between: 156 ms a value 0.01
+    # standard errors from the anchors' point against 57 at it (dev3, one
+    # thread, `82_step_cost.R`).
+    if warm && sr1 && _LAPLACE_WARM_CURVATURE[]
+        wc = laplace.curvatures[U]
+        if size(wc.anchor) == (d, d) && length(wc.anchor_at) == d && wc.anchor_at == start
+            copyto!(B, wc.anchor)
+            exact = false
+        end
+    end
     # Whether the step that reached `u` was taken on an exact curvature, and
     # whether `fstore` holds an exact, unrepaired factorization, whose solve
     # measures the distance left. A start was reached by no step: from any
@@ -5297,6 +5405,7 @@ function _ctsem_anchor_start!(laplace::CTSEMLaplaceObjective, x::AbstractVector;
     resume_units=nothing, resume_values=nothing)
     laplace.anchors = Vector{Float64}[]
     laplace.anchor_values = Vector{Float64}[]
+    _laplace_forget_curvatures!(laplace)
     _LAPLACE_ANCHORS[] || return nothing
     laplace.alt_anchors = Vector{Vector{Float64}}[]
     known = laplace.known
@@ -5318,6 +5427,7 @@ function _ctsem_anchor_start!(laplace::CTSEMLaplaceObjective, x::AbstractVector;
     laplace.anchors = [copy(m) for m in laplace.modes]
     laplace.alt_anchors = [Vector{Float64}[copy(m) for m in a] for a in laplace.alt_modes]
     laplace.anchor_values = _laplace_values_copy(laplace.mode_values)
+    _laplace_anchor_curvatures!(laplace)
     return nothing
 end
 
@@ -5382,6 +5492,7 @@ function _ctsem_anchor_here!(laplace::CTSEMLaplaceObjective)
     laplace.anchors = [copy(m) for m in laplace.modes]
     laplace.alt_anchors = [Vector{Float64}[copy(m) for m in a] for a in laplace.alt_modes]
     laplace.anchor_values = _laplace_values_copy(laplace.mode_values)
+    _laplace_anchor_curvatures!(laplace)
     return nothing
 end
 
@@ -5810,6 +5921,7 @@ function ctsem_laplace_hold_modes!(laplace::CTSEMLaplaceObjective,
     laplace.anchors = anchors
     laplace.alt_anchors = alts
     laplace.anchor_values = [at for _ in 1:n]
+    _laplace_forget_curvatures!(laplace)
     return held
 end
 
@@ -7129,6 +7241,7 @@ function _laplace_store_unit_primal!(laplace::CTSEMLaplaceObjective, U::Integer,
         _laplace_solve_unit_mode!(laplace, U, theta, Ls, aws; retain=retain).final
     end
     _laplace_charge!(_LAPLACE_BYTES_MODE, b0)
+    _laplace_keep_final!(laplace, U, given)
     U <= length(laplace.mode_values) && (laplace.mode_values[U] = theta)
     primal = _laplace_unit_primal(laplace, U, theta, Ls, laplace.modes[U], aws;
         given=given)

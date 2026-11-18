@@ -1047,7 +1047,9 @@ function _ctsem_subset_objective(L::CTSEMLaplaceObjective, keep::AbstractVector{
             L.anchor_values[keep],
         # A unit's own, formed as it is evaluated: the curvature columns its
         # value's pass keeps for its gradient.
-        :columns => [CTSEMUnitColumns() for _ in 1:n])
+        :columns => [CTSEMUnitColumns() for _ in 1:n],
+        # And its curvature at its anchor.
+        :curvatures => [CTSEMUnitCurvature() for _ in 1:n])
     args = map(fieldnames(typeof(L))) do name
         haskey(fresh, name) && return fresh[name]
         v = getfield(L, name)
