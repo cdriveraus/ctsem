@@ -454,3 +454,83 @@ end
         C.ctsem_set_series_discretization_below!(below)
     end
 end
+
+@testset "the curvature's kept columns are the gradient's sweeps" begin
+    # A level whose root is not square -- a reduced rank, own variances --
+    # takes its explicit trace terms from each member's gradient differentiated
+    # along the level's dimensions (`_laplace_seeded_unit_gradient!`), which
+    # are the columns the value's curvature pass formed at the mode and kept
+    # (`CTSEMUnitColumns`): by the full sweeps, by the split route, and for a
+    # unit of several members under two levels, dense and by block. The
+    # columns kept are the sweeps' at every effect, and the gradient that reads
+    # them is the gradient that sweeps (`ctsem_set_kept_columns!(false)`).
+    C = ContinuousTimeSEM
+    cases = [
+        # Three effects in the means at rank one: loadings at raw 6-8.
+        ("rank one", () -> (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE;
+            re_index=[1, 2, 5], sd_scale=ones(3), level_nre=[3], group=collect(1:6),
+            level_ngroups=[6], level_rank=[1], load_index=[6, 7, 8]),
+            [0.2, -0.1, 0.3, -0.2, 0.05, 0.6, 0.4, 0.3])),
+        # Five effects, two of them on the dynamics and noise, at rank two with
+        # an own variance each: seven coordinates, so the split route's one full
+        # sweep and one forward are fewer than the coordinates' two.
+        ("rank two with own variances, split", () -> (ctsem_laplace_objective(
+            _LAPLACE_LINEAR_OBJECTIVE; re_index=[1, 2, 5, 3, 4], sd_scale=ones(5),
+            level_nre=[5], group=collect(1:6), level_ngroups=[6], level_rank=[2],
+            load_index=collect(6:14), unique_index=collect(15:19),
+            affine_level=[1, 1, 1], affine_effect=[1, 2, 3]),
+            vcat(_LAPLACE_LINEAR_VALUES[1:5], 0.4 .* cos.(1:9), fill(-0.4, 5)))),
+        # Subjects' two effects at rank one within studies' one.
+        ("two levels", () -> (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE;
+            re_index=[1, 2, 5], sd_index=[8], sd_scale=ones(3), level_nre=[2, 1],
+            group=vcat(1:6, _TWOLEVEL_GROUP), level_ngroups=[6, 3], level_rank=[1, 1],
+            load_index=[6, 7]), [0.2, -0.1, 0.3, -0.2, 0.05, 0.5, 0.35, -0.25])),
+    ]
+    threshold = C._LAPLACE_BLOCK_THRESHOLD[]
+    try
+        for (name, make) in cases, blocked in (false, true)
+            C.ctsem_set_block_threshold!(blocked ? 1 : threshold)
+            @testset "$name, $(blocked ? "blocked" : "dense")" begin
+                laplace, values = make()
+                @test !C._laplace_square_roots(laplace.spec)
+                on = ctsem_laplace_evaluate(laplace, values; gradient=true)
+                @test isfinite(on.value) && all(isfinite, on.gradient)
+                theta = collect(Float64, C._laplace_extend(laplace, values))
+                Ls = C._laplace_popchols(theta, laplace.spec)
+                for U in eachindex(laplace.units.members)
+                    u = laplace.modes[U]
+                    k = C._laplace_kept_columns(laplace, U, theta, u, C._laplace_hmode(laplace))
+                    @test k !== nothing
+                    k === nothing && continue
+                    nm = length(laplace.units.members[U])
+                    for (l, level) in enumerate(laplace.spec.levels), q in 1:C.nlatent(level)
+                        D = zeros(length(theta), 1)
+                        D[level.re_index, 1] .= Ls[l][:, q]
+                        pass = C._laplace_unit_seeded_gradient(laplace, U, theta, Ls, u, 1:nm,
+                            D, 1)
+                        @test pass.ok
+                        for m in 1:nm
+                            swept = pass.d1c[k.pos, m]
+                            @test k.filled[k.coff[l] + q, m]
+                            @test maximum(abs, swept .- k.H[:, k.coff[l] + q, m]) <=
+                                1e-9 * max(1.0, maximum(abs, swept))
+                        end
+                    end
+                end
+                C.ctsem_set_kept_columns!(false)
+                try
+                    swept, _ = make()
+                    off = ctsem_laplace_evaluate(swept, values; gradient=true)
+                    @test !any(c -> any(c.filled), swept.columns)
+                    @test abs(on.value - off.value) <= 1e-10 * max(1.0, abs(off.value))
+                    @test maximum(abs, on.gradient .- off.gradient) <=
+                        1e-9 * max(1.0, maximum(abs, off.gradient))
+                finally
+                    C.ctsem_set_kept_columns!(true)
+                end
+            end
+        end
+    finally
+        C.ctsem_set_block_threshold!(threshold)
+    end
+end

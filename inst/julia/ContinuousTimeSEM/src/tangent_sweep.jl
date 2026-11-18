@@ -295,6 +295,50 @@ function _tan_forward_begin!(fw::TanForward{W}, mod::TanModel{W}) where {W}
     return fw
 end
 
+"""The exponential off the intercept series' chain on or off; off is the
+Pade approximant and its Frechet derivative, the oracle."""
+const _TAN_CHAIN_EXP = Ref(true)
+ctsem_set_chain_exponential!(on::Bool) = (_TAN_CHAIN_EXP[] = on)
+
+# Whether a prediction takes `exp(JAx dt)` off its intercept series' chain
+# (`_tan_series_exp!`): the series is the interval's route (`sint`), on the
+# table (the drift holds over the rows), over every state.
+@inline _tan_chain_exp(mod::TanModel, sint::Bool, n::Int) =
+    _TAN_CHAIN_EXP[] && sint && !mod.rows && (!mod.aug || mod.na == n)
+
+# `out = A P A'` through `tmp`, by `lists`' terms where the exponential is the
+# chain's and so has its pattern, the covariance taken as dense.
+function _tan_apa!(out::TanMat{W}, tmp::TanMat{W}, A::TanMat{W}, P::TanMat{W},
+    lists::Union{Nothing,TanSeriesLists}) where {W}
+    if lists === nothing
+        _tan_mul!(tmp, A, P)
+        _tan_mulNT!(out, tmp, A)
+    else
+        _tan_mul_list!(tmp, A, P, lists.ED)
+        _tan_mul_list!(out, tmp, A, lists.DEt)
+    end
+    return out
+end
+
+# The reverse of `A Pt A'` for the cotangent `Ps`: `Abar += 2 Ps A Pt` and
+# `Pnew = A' Ps A`, through `t1` and `t2`.
+function _tan_apa_reverse!(Abar::TanMat{W}, Pnew::TanMat{W}, t1::TanMat{W}, t2::TanMat{W},
+    Ps::TanMat{W}, A::TanMat{W}, Pt::TanMat{W},
+    lists::Union{Nothing,TanSeriesLists}) where {W}
+    if lists === nothing
+        _tan_mul!(t1, Ps, A)
+        _tan_mul!(Abar, t1, Pt, 2.0, true)
+        _tan_mulTN!(t2, A, Ps)
+        _tan_mul!(Pnew, t2, A)
+    else
+        _tan_mul_list!(t1, Ps, A, lists.DE)
+        _tan_mul!(Abar, t1, Pt, 2.0, true)
+        _tan_mul_list!(t2, A, Ps, lists.EtD)
+        _tan_mul_list!(Pnew, t2, A, lists.DE)
+    end
+    return Abar
+end
+
 """exp(JAx dt) with tangents, from the ring or computed into it."""
 function _tan_exp_cached!(fw::TanForward{W}, mod::TanModel{W}, dt::Float64) where {W}
     @inbounds for e in 1:fw.count[]
@@ -326,7 +370,16 @@ function _tan_predict!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W}, fw::TanFo
     snoise = _series_needed(fw.conditioning[], dt)
     rec.sint[] = sint
     rec.snoise[] = snoise
-    A = _tan_exp_cached!(fw, mod, dt)
+    # The exponential off the intercept series' chain, where there is one.
+    chain = _tan_chain_exp(mod, sint, fw.n)
+    Phi = nothing
+    A = if chain
+        Phi = _tan_intercept_series!(fw.seri, fw.tabi, mod.JAx, dt, mod.rows)
+        _tan_series_exp!(fw.seri, fw.tabi)
+    else
+        _tan_exp_cached!(fw, mod, dt)
+    end
+    lists = chain && fw.tabi.lists.on ? fw.tabi.lists : nothing
     _tan_copy!(rec.A, A)
     _tan_copy!(rec.x, x)
     _tan_copy!(rec.P, P)
@@ -337,9 +390,8 @@ function _tan_predict!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W}, fw::TanFo
     mod.rows && _tan_mulvec!(rec.affine, mod.DmJ, x, true, true)
     mod.momon[] && _tan_lincomb!(rec.affine, true, rec.affine, true, mod.mc)
     dINT = rec.dINT
-    Phi = nothing
     if sint
-        Phi = _tan_intercept_series!(fw.seri, fw.tabi, mod.JAx, dt, mod.rows)
+        chain || (Phi = _tan_intercept_series!(fw.seri, fw.tabi, mod.JAx, dt, mod.rows))
         _tan_mulvec!(dINT, Phi, rec.affine)
     else
         _tan_mulvec!(dINT, A, rec.affine)
@@ -352,8 +404,7 @@ function _tan_predict!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W}, fw::TanFo
     # The covariance, ridged before the propagation as the filter does.
     _tan_diag!(P, 1e-10)
     _tan_lower_to_upper!(P)
-    _tan_mul!(fw.nn1, A, P)
-    _tan_mulNT!(fw.nn2, fw.nn1, A)  # A P A'
+    _tan_apa!(fw.nn2, fw.nn1, A, P, lists)  # A P A'
     # dDIFF = X - (A X) A', or V, added in.
     if snoise
         _tan_comb!(P, ((1.0, fw.nn2),
@@ -715,6 +766,8 @@ function _tan_reverse_predict!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPredRec
     A, JAx, X = rec.A, mod.JAx, fw.X
     Abar, JAxbar, Ps = rv.Abar, rv.JAxbar, rv.Ps
     sint, snoise, dt = rec.sint[], rec.snoise[], rec.dt[]
+    chain = _tan_chain_exp(mod, sint, fw.n)
+    lists = chain && fw.tabi.lists.on ? fw.tabi.lists : nothing
     _tan_zero!(JAxbar)
     sint && _tan_zero!(rv.Phibar)
     # The mean: x+ = A x + dINT; and the hybrid's columns, X+ = A X + Xinc.
@@ -735,10 +788,7 @@ function _tan_reverse_predict!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPredRec
     _tan_sym!(Ps, Pbar)
     _tan_copy!(rv.Pt, rec.P)
     _tan_diag!(rv.Pt, 1e-10)
-    _tan_mul!(rv.nn1, Ps, A)
-    _tan_mul!(Abar, rv.nn1, rv.Pt, 2.0, true)
-    _tan_mulTN!(rv.nn2, A, Ps)
-    _tan_mul!(rv.Pnew, rv.nn2, A)
+    _tan_apa_reverse!(Abar, rv.Pnew, rv.nn1, rv.nn2, Ps, A, rv.Pt, lists)
     if snoise
         # dDIFF = V, its series run again and pulled back -- onto its table's
         # powers, weighted, where it has one; it reads no A.
@@ -772,6 +822,8 @@ function _tan_reverse_predict!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPredRec
         _tan_ger!(rv.Phibar, true, xbar, rec.affine, true)
         if mod.rows
             _tan_series_intercept_pullback!(JAxbar, fw.seri, rv.Phibar)
+        elseif chain
+            _tan_series_intercept_table_pullback!(fw.tabi, fw.seri, rv.Phibar, w, Abar)
         else
             _tan_series_intercept_table_pullback!(fw.tabi, fw.seri, rv.Phibar, w)
         end
@@ -795,7 +847,7 @@ function _tan_reverse_predict!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPredRec
     _tan_comb!(JAxbar, ((1.0, rv.JAxdbar),), true)
     _tan_comb!(acc.JAx, ((w, JAxbar),), true)
     _tan_comb!(acc.Qc, ((w, rv.Qcdbar),), true)
-    _tan_enqueue!(acc, rec.dt[], Abar, w)
+    chain || _tan_enqueue!(acc, rec.dt[], Abar, w)
     _tan_copy!(xbar, rv.xnew)
     _tan_copy!(Pbar, rv.Pnew)
     return xbar, Pbar
@@ -1149,7 +1201,17 @@ function _tan_predict_aug!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W},
     snoise = _series_needed(fw.conditioning[], dt)
     rec.sint[] = sint
     rec.snoise[] = snoise
-    A = _tan_exp_cached!(fw, mod, dt)
+    # The exponential off the intercept series' chain, where that block is
+    # every state.
+    chain = _tan_chain_exp(mod, sint, fw.n)
+    Phi = nothing
+    A = if chain
+        Phi = _tan_intercept_series!(fa.seria, fa.tabi, mod.JAa, dt, mod.rows)
+        _tan_series_exp!(fa.seria, fa.tabi)
+    else
+        _tan_exp_cached!(fw, mod, dt)
+    end
+    lists = chain && fa.tabi.lists.on ? fa.tabi.lists : nothing
     _tan_copy!(rec.A, A)
     _tan_copy!(rec.x, x)
     _tan_copy!(rec.P, P)
@@ -1160,7 +1222,8 @@ function _tan_predict_aug!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W},
     ra, da = fa.ra, fa.dINTa
     _tan_gather!(ra, rec.affine, 1:na)
     if sint
-        _tan_mulvec!(da, _tan_intercept_series!(fa.seria, fa.tabi, mod.JAa, dt, mod.rows), ra)
+        chain || (Phi = _tan_intercept_series!(fa.seria, fa.tabi, mod.JAa, dt, mod.rows))
+        _tan_mulvec!(da, Phi, ra)
     else
         _tan_gather!(fa.Aa, A, 1:na, 1:na)
         _tan_mulvec!(da, fa.Aa, ra)
@@ -1174,8 +1237,7 @@ function _tan_predict_aug!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W},
     _tan_lincomb!(x, true, fw.v1, true, dINT)
     _tan_diag!(P, 1e-10)
     _tan_lower_to_upper!(P)
-    _tan_mul!(fw.nn1, A, P)
-    _tan_mulNT!(fw.nn2, fw.nn1, A)
+    _tan_apa!(fw.nn2, fw.nn1, A, P, lists)
     D = fa.dD
     _tan_zero!(D)
     if snoise
@@ -1214,6 +1276,8 @@ function _tan_reverse_predict_aug!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPre
     A = rec.A
     Abar, JAxbar, Ps = rv.Abar, rv.JAxbar, rv.Ps
     sint, snoise, dt = rec.sint[], rec.snoise[], rec.dt[]
+    chain = _tan_chain_exp(mod, sint, fw.n)
+    lists = chain && fa.tabi.lists.on ? fa.tabi.lists : nothing
     _tan_zero!(JAxbar)
     # The mean, x+ = A x + dINT; and the hybrid's columns, X+ = A X + Xinc, a
     # series intercept's column into Phibar before the intercept's own.
@@ -1233,10 +1297,7 @@ function _tan_reverse_predict_aug!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPre
     _tan_sym!(Ps, Pbar)
     _tan_copy!(rv.Pt, rec.P)
     _tan_diag!(rv.Pt, 1e-10)
-    _tan_mul!(rv.nn1, Ps, A)
-    _tan_mul!(Abar, rv.nn1, rv.Pt, 2.0, true)
-    _tan_mulTN!(rv.nn2, A, Ps)
-    _tan_mul!(rv.Pnew, rv.nn2, A)
+    _tan_apa_reverse!(Abar, rv.Pnew, rv.nn1, rv.nn2, Ps, A, rv.Pt, lists)
     # The noise over the diffusing states.
     Qb = fa.Qb
     _tan_gather!(Qb, Ps, dyn, dyn)
@@ -1277,6 +1338,8 @@ function _tan_reverse_predict_aug!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPre
             _tan_zero!(fa.JAabar)
             _tan_series_intercept_pullback!(fa.JAabar, fa.seria, fa.Phibar)
             _tan_scatter!(JAxbar, 1.0, fa.JAabar, 1:na, 1:na)
+        elseif chain
+            _tan_series_intercept_table_pullback!(fa.tabi, fa.seria, fa.Phibar, w, Abar)
         else
             _tan_series_intercept_table_pullback!(fa.tabi, fa.seria, fa.Phibar, w)
         end
@@ -1302,7 +1365,7 @@ function _tan_reverse_predict_aug!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPre
         _tan_mulTvec!(rv.xnew, mod.DmJ, affbar, true, true)
     end
     _tan_comb!(acc.JAx, ((w, JAxbar),), true)
-    _tan_enqueue!(acc, dt, Abar, w)
+    chain || _tan_enqueue!(acc, dt, Abar, w)
     _tan_copy!(xbar, rv.xnew)
     _tan_copy!(Pbar, rv.Pnew)
     return xbar, Pbar

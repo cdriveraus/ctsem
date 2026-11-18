@@ -17,12 +17,13 @@ mutable struct TanSeries{W}
     horner::Vector{TanMat{W}}; taylor::Vector{TanMat{W}}
     Es::Vector{TanMat{W}}; Ps::Vector{TanMat{W}}
     b1::TanMat{W}; b2::TanMat{W}; b3::TanMat{W}; Ebar::TanMat{W}; Xbar::TanMat{W}
+    A::TanMat{W}            # e^{J h} off the chain (`_tan_series_exp!`)
     s::Int
     m::Int
     h0::Float64
 end
 TanSeries(n::Int, W::Int) = TanSeries{W}(n, (TanMat{W}(n, n) for _ in 1:3)...,
-    TanMat{W}[], TanMat{W}[], TanMat{W}[], TanMat{W}[], (TanMat{W}(n, n) for _ in 1:5)...,
+    TanMat{W}[], TanMat{W}[], TanMat{W}[], TanMat{W}[], (TanMat{W}(n, n) for _ in 1:6)...,
     0, 0, 0.0)
 
 @inline function _tan_series_grow!(tape::Vector{TanMat{W}}, count::Int, n::Int) where {W}
@@ -55,6 +56,86 @@ function _tan_series_plan!(sb::TanSeries{W}, J::TanMat{W}, h::Float64,
     return sb
 end
 
+# The doublings by their nonzero terms. A drift is usually sparse -- processes
+# that do not act on each other, a level a faster process reverts to, an
+# average read off one process -- and what the doublings multiply is then
+# sparse too: `e^{J h}` and the intercept's integral are nonzero only where
+# one process reaches another (the pattern's transitive closure), the noise's
+# integral only between processes that noise reaches together. Each product of
+# a doubling is listed once for a drift's pattern (`TanProdList`) and summed
+# over its terms; the reverse's cotangents are taken as dense, so its products
+# keep the terms of their primal factor. On the affect pilot's tied model (13
+# processes, 37 of the exponential's 169 cells) the doublings were most of a
+# Laplace value and gradient, 5.2 of them a row (2026-11-18, dev2).
+# `ctsem_set_series_lists!(false)` is the oracle.
+"""
+The doubling products' terms for a drift's and a diffusion's patterns (`mJ`,
+`mQ`): `EE` is `E E` and `E Phi`, `EV` is `E V`, `TEt` is `(E V) E'`; of the
+reverse, with `D` a dense cotangent, `DEt` is `D E'` and `D Phi'`, `EtD` is
+`E' D`, `DE` is `D E`, `ED` is `E D`, `DV` is `D V`, `DVt` is `D V'` and `DtV`
+is `D' V`. `on` where the pattern is sparse enough to pay.
+"""
+mutable struct TanSeriesLists
+    on::Bool
+    built::Bool             # `mJ` and `mQ` are a drift's and a diffusion's
+    ready::Bool             # and the lists are theirs (sparse enough to list)
+    mJ::Matrix{Bool}
+    mQ::Matrix{Bool}
+    sJ::Matrix{Bool}        # scratch for the patterns in hand
+    sQ::Matrix{Bool}
+    EE::TanProdList
+    EV::TanProdList
+    TEt::TanProdList
+    DEt::TanProdList
+    EtD::TanProdList
+    DE::TanProdList
+    ED::TanProdList
+    DV::TanProdList
+    DVt::TanProdList
+    DtV::TanProdList
+    eE::Vector{Int32}       # the exponential's entries, and the noise integral's
+    eV::Vector{Int32}
+end
+TanSeriesLists(n::Int) = TanSeriesLists(false, false, false, fill(false, n, n), fill(false, n, n),
+    fill(false, n, n), fill(false, n, n),
+    _TAN_NO_LIST, _TAN_NO_LIST, _TAN_NO_LIST, _TAN_NO_LIST, _TAN_NO_LIST, _TAN_NO_LIST,
+    _TAN_NO_LIST, _TAN_NO_LIST, _TAN_NO_LIST, _TAN_NO_LIST, Int32[], Int32[])
+
+"""Listed doublings on or off; off is the dense products, the oracle."""
+const _TAN_SERIES_LISTS = Ref(true)
+ctsem_set_series_lists!(on::Bool) = (_TAN_SERIES_LISTS[] = on)
+"""The largest share of the exponential's cells that may be nonzero for the
+doublings to go by lists, and the fewest processes."""
+const _TAN_SERIES_LIST_SHARE = 0.5
+const _TAN_SERIES_LIST_MIN = 4
+
+# `m` with its diagonal, closed under composition: where one process reaches
+# another.
+function _tan_reach(m::Matrix{Bool})
+    n = size(m, 1)
+    R = copy(m)
+    for i in 1:n
+        R[i, i] = true
+    end
+    changed = true
+    while changed
+        changed = false
+        for j in 1:n, i in 1:n
+            R[i, j] && continue
+            for q in 1:n
+                if R[i, q] && R[q, j]
+                    R[i, j] = true
+                    changed = true
+                    break
+                end
+            end
+        end
+    end
+    return R
+end
+_tan_bmul(A::Matrix{Bool}, B::Matrix{Bool}) =
+    Bool[any(A[i, q] && B[q, j] for q in axes(A, 2)) for i in axes(A, 1), j in axes(B, 2)]
+
 """`Phi(h)` into `sb.out` (`_series_intercept!`): `Phi = h0 G`, `G` the series
 of `phi_1(X)` by Horner's rule, then the doublings `Phi(2h) = Phi + e^{Jh} Phi`."""
 function _tan_series_intercept!(sb::TanSeries{W}, J::TanMat{W}, h::Float64) where {W}
@@ -82,39 +163,65 @@ end
 """The doubling chain both series end with (`_series_doublings!`), from
 `sb.Es[1]` and `sb.Ps[1]` into `out`: `P_{k+1} = P_k + E_k P_k E_k'` for the
 noise, `P_k + E_k P_k` for the intercept, `E_{k+1} = E_k^2`."""
-function _tan_series_doublings!(sb::TanSeries{W}, out::TanMat{W}, noise::Bool) where {W}
+function _tan_series_doublings!(sb::TanSeries{W}, out::TanMat{W}, noise::Bool,
+    lists::Union{Nothing,TanSeriesLists}=nothing) where {W}
     s, t1 = sb.s, sb.b1
+    listed = lists !== nothing && lists.on
     for k in 1:s
         E, P = sb.Es[k], sb.Ps[k]
         next = k == s ? out : sb.Ps[k + 1]
-        if noise
+        if listed
+            if noise
+                _tan_mul_list!(t1, E, P, lists.EV)
+                _tan_mul_list!(next, t1, E, lists.TEt)
+            else
+                _tan_mul_list!(next, E, P, lists.EE)
+            end
+        elseif noise
             _tan_mul!(t1, E, P)
             _tan_mulNT!(next, t1, E)
         else
             _tan_mul!(next, E, P)
         end
         _tan_comb!(next, ((1.0, P),), true)
-        k < s && _tan_mul!(sb.Es[k + 1], E, E)
+        if k < s
+            listed ? _tan_mul_list!(sb.Es[k + 1], E, E, lists.EE) :
+                _tan_mul!(sb.Es[k + 1], E, E)
+        end
     end
     return out
 end
 
 """The intercept's doubling chain reversed (`_series_intercept_doubling_pullback!`):
 the cotangents of `Phi(h0)` (`b1`) and of `e^{J h0}` (`Ebar`)."""
-function _tan_series_intercept_doubling_pullback!(sb::TanSeries{W}, Phibar::TanMat{W}) where {W}
+function _tan_series_intercept_doubling_pullback!(sb::TanSeries{W}, Phibar::TanMat{W},
+    lists::Union{Nothing,TanSeriesLists}=nothing,
+    Abar::Union{Nothing,TanMat{W}}=nothing) where {W}
     Pb, Eb, t1, t2 = sb.b1, sb.Ebar, sb.b2, sb.b3
     _tan_copy!(Pb, Phibar)
-    _tan_zero!(Eb)
+    # `Abar`: the cotangent of `e^{J h}`, the square of the chain's last
+    # exponential (`_tan_series_exp!`), which is what `Eb` is of at every
+    # doubling below the last.
+    Abar === nothing ? _tan_zero!(Eb) : _tan_copy!(Eb, Abar)
+    listed = lists !== nothing && lists.on
     for k in sb.s:-1:1
         E, P = sb.Es[k], sb.Ps[k]
-        if k < sb.s
+        if k == sb.s && Abar === nothing
+            _tan_zero!(t1)
+        elseif listed
+            _tan_mul_list!(t1, Eb, E, lists.DEt)
+            _tan_mul_list!(t1, E, Eb, lists.EtD, 1.0, 1.0)
+        else
             _tan_mulNT!(t1, Eb, E)
             _tan_mulTN!(t1, E, Eb, true, true)
-        else
-            _tan_zero!(t1)
         end
-        _tan_mulNT!(t1, Pb, P, true, true)
-        _tan_mulTN!(t2, E, Pb)
+        if listed
+            _tan_mul_list!(t1, Pb, P, lists.DEt, 1.0, 1.0)
+            _tan_mul_list!(t2, E, Pb, lists.EtD)
+        else
+            _tan_mulNT!(t1, Pb, P, true, true)
+            _tan_mulTN!(t2, E, Pb)
+        end
         _tan_comb!(Pb, ((1.0, t2),), true)
         _tan_copy!(Eb, t1)
     end
@@ -193,22 +300,34 @@ end
 """The noise's doubling chain reversed (`_series_noise_doubling_pullback!`),
 `Vbar` symmetrised first: the cotangents of `V(h0)` (`b1`) and `e^{J h0}`
 (`Ebar`)."""
-function _tan_series_noise_doubling_pullback!(sb::TanSeries{W}, Vbar::TanMat{W}) where {W}
+function _tan_series_noise_doubling_pullback!(sb::TanSeries{W}, Vbar::TanMat{W},
+    lists::Union{Nothing,TanSeriesLists}=nothing) where {W}
     Vb, Eb, t1, t2 = sb.b1, sb.Ebar, sb.b2, sb.b3
     _tan_sym!(Vb, Vbar)
     _tan_zero!(Eb)
+    listed = lists !== nothing && lists.on
     for k in sb.s:-1:1
         E, P = sb.Es[k], sb.Ps[k]
-        if k < sb.s
+        if k == sb.s
+            _tan_zero!(t1)
+        elseif listed
+            _tan_mul_list!(t1, Eb, E, lists.DEt)
+            _tan_mul_list!(t1, E, Eb, lists.EtD, 1.0, 1.0)
+        else
             _tan_mulNT!(t1, Eb, E)
             _tan_mulTN!(t1, E, Eb, true, true)
-        else
-            _tan_zero!(t1)
         end
-        _tan_mul!(t2, Vb, E)
-        _tan_mul!(t1, t2, P, 2.0, true)
-        _tan_copy!(Eb, t1)
-        _tan_mulTN!(t1, E, t2)
+        if listed
+            _tan_mul_list!(t2, Vb, E, lists.DE)
+            _tan_mul_list!(t1, t2, P, lists.DV, 2.0, 1.0)
+            _tan_copy!(Eb, t1)
+            _tan_mul_list!(t1, E, t2, lists.EtD)
+        else
+            _tan_mul!(t2, Vb, E)
+            _tan_mul!(t1, t2, P, 2.0, true)
+            _tan_copy!(Eb, t1)
+            _tan_mulTN!(t1, E, t2)
+        end
         _tan_comb!(Vb, ((1.0, t1),), true)
     end
     return Vb, Eb
@@ -286,10 +405,56 @@ mutable struct TanSeriesTable{W}
     Lpbar::Vector{TanMat{W}}
     Jbar::TanMat{W}
     Qbar::TanMat{W}
+    lists::TanSeriesLists
 end
 TanSeriesTable(n::Int, W::Int, noise::Bool) = TanSeriesTable{W}(n, noise, false, 0,
     TanMat{W}(n, n), TanMat{W}(n, n), TanMat{W}[], TanMat{W}[], TanMat{W}(n, n), false, 0,
-    TanMat{W}[], TanMat{W}[], TanMat{W}(n, n), TanMat{W}(n, n))
+    TanMat{W}[], TanMat{W}[], TanMat{W}(n, n), TanMat{W}(n, n), TanSeriesLists(n))
+
+"""`tab`'s lists for the drift and diffusion it holds: kept where their
+patterns are the ones the lists were built for, as a model's subjects' are."""
+function _tan_series_lists!(tab::TanSeriesTable{W}) where {W}
+    L = tab.lists
+    n = tab.n
+    if !_TAN_SERIES_LISTS[] || n < _TAN_SERIES_LIST_MIN
+        L.on = false
+        return L
+    end
+    # The patterns in hand, into scratch; swapped with the lists' own where
+    # they differ.
+    mJ = _tan_mask!(L.sJ, tab.J)
+    mQ = tab.noise ? _tan_mask!(L.sQ, tab.Q) : fill!(L.sQ, false)
+    if L.built && mJ == L.mJ && mQ == L.mQ
+        L.on = L.ready
+        return L
+    end
+    L.sJ, L.sQ = L.mJ, L.mQ
+    L.mJ, L.mQ, L.built, L.ready = mJ, mQ, true, false
+    mE = _tan_reach(mJ)
+    if count(mE) > _TAN_SERIES_LIST_SHARE * n * n
+        L.on = false
+        return L
+    end
+    dense = fill(true, n, n)
+    L.EE = _tan_prod_list(mE, false, mE, false)
+    L.DEt = _tan_prod_list(dense, false, mE, true)
+    L.EtD = _tan_prod_list(mE, true, dense, false)
+    L.DE = _tan_prod_list(dense, false, mE, false)
+    L.ED = _tan_prod_list(mE, false, dense, false)
+    L.eE = _tan_entries(mE)
+    if tab.noise
+        mV = _tan_bmul(_tan_bmul(mE, mQ), permutedims(mE))
+        L.EV = _tan_prod_list(mE, false, mV, false)
+        L.TEt = _tan_prod_list(_tan_bmul(mE, mV), false, mE, true)
+        L.DV = _tan_prod_list(dense, false, mV, false)
+        L.DVt = _tan_prod_list(dense, false, mV, true)
+        L.eV = _tan_entries(mV)
+        L.DtV = _tan_prod_list(dense, true, mV, false)
+    end
+    L.ready = true
+    L.on = true
+    return L
+end
 
 """Whether `A` and `B` are the same, tangents and second parts included."""
 function _tan_identical(A::TanMat, B::TanMat)
@@ -318,6 +483,7 @@ function _tan_table_for!(tab::TanSeriesTable{W}, J::TanMat{W}, Q) where {W}
     tab.noise && _tan_copy!(tab.Q, Q)
     tab.count = 0
     tab.valid = true
+    _tan_series_lists!(tab)
     return tab
 end
 
@@ -329,14 +495,18 @@ function _tan_table_extend!(tab::TanSeriesTable{W}, count::Int) where {W}
     tab.noise && _tan_series_grow!(tab.Lp, count + 1, n)
     tab.count == 0 && tab.noise && _tan_copy!(tab.Lp[1], tab.Q)
     for j in (tab.count + 1):count
+        listed = tab.lists.on
         if j == 1
             _tan_copy!(tab.Jp[1], tab.J)
+        elseif listed
+            _tan_mul_list!(tab.Jp[j], tab.J, tab.Jp[j - 1], tab.lists.EE)
         else
             _tan_mul!(tab.Jp[j], tab.J, tab.Jp[j - 1])
         end
         if tab.noise
             # L^j(Q) = J L^{j-1}(Q) + its transpose.
-            _tan_mul!(tab.tmp, tab.J, tab.Lp[j])
+            listed ? _tan_mul_list!(tab.tmp, tab.J, tab.Lp[j], tab.lists.EV) :
+                _tan_mul!(tab.tmp, tab.J, tab.Lp[j])
             _tan_comb!(tab.Lp[j + 1], ((1.0, tab.tmp),))
             _tan_add!(tab.Lp[j + 1], 1.0, tab.tmp, true, Val(:T))
         end
@@ -355,12 +525,14 @@ function _tan_series_intercept_table!(sb::TanSeries{W}, tab::TanSeriesTable{W},
     _tan_table_extend!(tab, s > 0 ? m + 1 : m)
     out = sb.out
     first = s == 0 ? out : sb.Ps[1]
+    listed = tab.lists.on
     _tan_zero!(first)
     _tan_diag!(first, h0)
     c = h0
     for j in 1:m
         c *= h0 / (j + 1)
-        _tan_comb!(first, ((c, tab.Jp[j]),), true)
+        listed ? _tan_axpy_list!(first, c, tab.Jp[j], tab.lists.eE) :
+            _tan_comb!(first, ((c, tab.Jp[j]),), true)
     end
     s == 0 && return out
     E0 = sb.Es[1]
@@ -369,9 +541,10 @@ function _tan_series_intercept_table!(sb::TanSeries{W}, tab::TanSeriesTable{W},
     e = 1.0
     for i in 1:(m + 1)
         e *= h0 / i
-        _tan_comb!(E0, ((e, tab.Jp[i]),), true)
+        listed ? _tan_axpy_list!(E0, e, tab.Jp[i], tab.lists.eE) :
+            _tan_comb!(E0, ((e, tab.Jp[i]),), true)
     end
-    return _tan_series_doublings!(sb, out, false)
+    return _tan_series_doublings!(sb, out, false, tab.lists)
 end
 
 """`V(h)` into `sb.out` from `tab`'s powers (`_series_noise_table!`):
@@ -384,11 +557,13 @@ function _tan_series_noise_table!(sb::TanSeries{W}, tab::TanSeriesTable{W},
     _tan_table_extend!(tab, m)
     out = sb.out
     first = s == 0 ? out : sb.Ps[1]
+    listed = tab.lists.on
     c = h0
     _tan_comb!(first, ((c, tab.Lp[1]),))
     for j in 1:m
         c *= h0 / (j + 1)
-        _tan_comb!(first, ((c, tab.Lp[j + 1]),), true)
+        listed ? _tan_axpy_list!(first, c, tab.Lp[j + 1], tab.lists.eV) :
+            _tan_comb!(first, ((c, tab.Lp[j + 1]),), true)
     end
     if s > 0
         E0 = sb.Es[1]
@@ -397,9 +572,10 @@ function _tan_series_noise_table!(sb::TanSeries{W}, tab::TanSeriesTable{W},
         e = 1.0
         for j in 1:m
             e *= h0 / j
-            _tan_comb!(E0, ((e, tab.Jp[j]),), true)
+            listed ? _tan_axpy_list!(E0, e, tab.Jp[j], tab.lists.eE) :
+                _tan_comb!(E0, ((e, tab.Jp[j]),), true)
         end
-        _tan_series_doublings!(sb, out, true)
+        _tan_series_doublings!(sb, out, true, tab.lists)
     end
     _tan_sym!(sb.b1, out)
     _tan_copy!(out, sb.b1)
@@ -429,16 +605,19 @@ end
 `_tan_series_intercept_table!` last computed in `sb`, for `Phibar`
 (`_series_intercept_table_pullback!`)."""
 function _tan_series_intercept_table_pullback!(tab::TanSeriesTable{W}, sb::TanSeries{W},
-    Phibar::TanMat{W}, w::Float64) where {W}
+    Phibar::TanMat{W}, w::Float64, Abar::Union{Nothing,TanMat{W}}=nothing) where {W}
     s, m, h0 = sb.s, sb.m, sb.h0
-    Pb, Eb = _tan_series_intercept_doubling_pullback!(sb, Phibar)
-    _tan_table_bar_grow!(tab, s > 0 ? m + 1 : m)
+    Pb, Eb = _tan_series_intercept_doubling_pullback!(sb, Phibar, tab.lists, Abar)
+    # The exponential's own series is read where the chain doubles, or where
+    # `e^{J h}` was handed out with no doubling (`_tan_series_exp!`).
+    expo = s > 0 || Abar !== nothing
+    _tan_table_bar_grow!(tab, expo ? m + 1 : m)
     c = h0
     for j in 1:m
         c *= h0 / (j + 1)
         _tan_comb!(tab.Jpbar[j], ((w * c, Pb),), true)
     end
-    if s > 0
+    if expo
         e = 1.0
         for i in 1:(m + 1)
             e *= h0 / i
@@ -448,13 +627,42 @@ function _tan_series_intercept_table_pullback!(tab::TanSeriesTable{W}, sb::TanSe
     return tab
 end
 
+"""
+`e^{J h}` for the interval `_tan_series_intercept_table!` last computed in
+`sb`, off its chain: the square of the last doubling's exponential, or with no
+doubling the series itself. A prediction on the series takes it from here
+(`_tan_predict!`) rather than as a Pade approximant and its Frechet derivative
+beside the chain: on the affect pilot's tied model those were a quarter of a
+Laplace gradient, the same squarings a third time (2026-11-18, dev2). Its
+cotangent goes back with the intercept's (`_tan_series_intercept_table_pullback!`).
+"""
+function _tan_series_exp!(sb::TanSeries{W}, tab::TanSeriesTable{W}) where {W}
+    A = sb.A
+    s, m, h0 = sb.s, sb.m, sb.h0
+    if s > 0
+        E = sb.Es[s]
+        tab.lists.on ? _tan_mul_list!(A, E, E, tab.lists.EE) : _tan_mul!(A, E, E)
+        return A
+    end
+    _tan_table_extend!(tab, m + 1)
+    _tan_zero!(A)
+    _tan_diag!(A, 1.0)
+    e = 1.0
+    for i in 1:(m + 1)
+        e *= h0 / i
+        tab.lists.on ? _tan_axpy_list!(A, e, tab.Jp[i], tab.lists.eE) :
+            _tan_comb!(A, ((e, tab.Jp[i]),), true)
+    end
+    return A
+end
+
 """Add to `tab`'s cotangents, times `w`, those of the interval
 `_tan_series_noise_table!` last computed in `sb`, for `Vbar`
 (`_series_noise_table_pullback!`)."""
 function _tan_series_noise_table_pullback!(tab::TanSeriesTable{W}, sb::TanSeries{W},
     Vbar::TanMat{W}, w::Float64) where {W}
     s, m, h0 = sb.s, sb.m, sb.h0
-    Vb, Eb = _tan_series_noise_doubling_pullback!(sb, Vbar)
+    Vb, Eb = _tan_series_noise_doubling_pullback!(sb, Vbar, tab.lists)
     _tan_table_bar_grow!(tab, m)
     c = h0
     _tan_comb!(tab.Lpbar[1], ((w * c, Vb),), true)
@@ -480,19 +688,33 @@ function _tan_table_release!(tab::TanSeriesTable{W}) where {W}
     tab.pending || return false
     c, J, Jb = tab.bcount, tab.J, tab.Jbar
     _tan_zero!(Jb)
+    L = tab.lists
+    listed = L.on
     if tab.noise
         for j in c:-1:1
             Lb, A, prev = tab.Lpbar[j + 1], tab.Lp[j], tab.Lpbar[j]
-            _tan_mulNT!(Jb, Lb, A, true, true)
-            _tan_mulTN!(Jb, Lb, A, true, true)
-            _tan_mulTN!(prev, J, Lb, true, true)
-            _tan_mul!(prev, Lb, J, true, true)
+            if listed
+                _tan_mul_list!(Jb, Lb, A, L.DVt, 1.0, 1.0)
+                _tan_mul_list!(Jb, Lb, A, L.DtV, 1.0, 1.0)
+                _tan_mul_list!(prev, J, Lb, L.EtD, 1.0, 1.0)
+                _tan_mul_list!(prev, Lb, J, L.DE, 1.0, 1.0)
+            else
+                _tan_mulNT!(Jb, Lb, A, true, true)
+                _tan_mulTN!(Jb, Lb, A, true, true)
+                _tan_mulTN!(prev, J, Lb, true, true)
+                _tan_mul!(prev, Lb, J, true, true)
+            end
         end
         _tan_copy!(tab.Qbar, tab.Lpbar[1])
     end
     for j in c:-1:2
-        _tan_mulNT!(Jb, tab.Jpbar[j], tab.Jp[j - 1], true, true)
-        _tan_mulTN!(tab.Jpbar[j - 1], J, tab.Jpbar[j], true, true)
+        if listed
+            _tan_mul_list!(Jb, tab.Jpbar[j], tab.Jp[j - 1], L.DEt, 1.0, 1.0)
+            _tan_mul_list!(tab.Jpbar[j - 1], J, tab.Jpbar[j], L.EtD, 1.0, 1.0)
+        else
+            _tan_mulNT!(Jb, tab.Jpbar[j], tab.Jp[j - 1], true, true)
+            _tan_mulTN!(tab.Jpbar[j - 1], J, tab.Jpbar[j], true, true)
+        end
     end
     c >= 1 && _tan_comb!(Jb, ((1.0, tab.Jpbar[1]),), true)
     tab.pending = false

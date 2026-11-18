@@ -143,9 +143,10 @@ function _tan_laplace_columns!(Jw::Matrix{Float64}, ctx::TanLaplaceContext{W},
     # The hybrid's factor is the population's, the same for every member and
     # unmoved by the coordinates: values only.
     _tan_laplace_hybrid!(ctx, values) || (fill!(Jw, NaN); return true)
+    keep = _tan_keep_begin!(ctx, laplace, U, values, base, mode)
     if _laplace_pool_width() <= 1 || npos < 2 || isempty(_LAPLACE_FREE)
         st = _tan_laplace_members!(Jw, ctx, laplace, U, values, Ls, base, columns,
-            members, 1:npos, cross)
+            members, 1:npos, cross, keep)
         st == _TAN_REFUSED && return false
         st == _TAN_OK || fill!(Jw, NaN)
         return true
@@ -165,7 +166,7 @@ function _tan_laplace_columns!(Jw::Matrix{Float64}, ctx::TanLaplaceContext{W},
         fill!(J, 0.0)
         used[slot] = true
         status[slot] = _tan_laplace_members!(J, c, laplace, U, values, Ls, base, columns,
-            members, mine, cross)
+            members, mine, cross, keep)
         return status[slot] == _TAN_OK
     end
     any(==(_TAN_REFUSED), status) && return false
@@ -175,6 +176,67 @@ function _tan_laplace_columns!(Jw::Matrix{Float64}, ctx::TanLaplaceContext{W},
         Jw .+= _laplace_scratch_matrix!(laplace, Float64, d, nx, :tan_curv_J, w)
     end
     return true
+end
+
+"""
+Unit `U`'s kept columns (`CTSEMUnitColumns`) for a curvature pass at `values`,
+`base` and `mode`: as they are where an earlier pass at the same point left
+them -- a unit's curvature is several passes, a block each -- and emptied
+otherwise. `nothing` with the switch off.
+"""
+function _tan_keep_begin!(ctx::TanLaplaceContext, laplace::CTSEMLaplaceObjective, U::Int,
+    values::AbstractVector{Float64}, base::AbstractVector{Float64}, mode::Int)
+    _LAPLACE_KEEP_COLUMNS[] || return nothing
+    k = laplace.columns[U]
+    rows = _laplace_unit_rows(laplace, U)
+    (k.mode == mode && k.rows == rows && k.values == values && k.base == base) && return k
+    pos = _tan_member_positions!(ctx, laplace)
+    levels = laplace.spec.levels
+    resize!(k.coff, length(levels))
+    R = 0
+    for (l, level) in enumerate(levels)
+        k.coff[l] = R
+        R += nlatent(level)
+    end
+    npos, nmem = length(pos), length(laplace.units.members[U])
+    if size(k.H) != (npos, R, nmem)
+        k.H = zeros(Float64, npos, R, nmem)
+        k.filled = fill(false, R, nmem)
+    end
+    fill!(k.filled, false)
+    resize!(k.values, length(values))
+    copyto!(k.values, values)
+    resize!(k.base, length(base))
+    copyto!(k.base, base)
+    resize!(k.pos, npos)
+    copyto!(k.pos, pos)
+    k.mode, k.rows = mode, rows
+    return k
+end
+
+"""Member `m`'s raw columns `Hb`, a lane for each of `cols`' coordinates, into
+the kept columns: their rows at the effects' positions, under the level
+dimension each coordinate is of the member's."""
+function _tan_keep_columns!(k::CTSEMUnitColumns, Hb::Matrix{Float64},
+    laplace::CTSEMLaplaceObjective, U::Int, m::Int, columns::Vector{Int}, cols)
+    offsets = laplace.units.offsets[U][m]
+    pos, H = k.pos, k.H
+    @inbounds for (a, t) in enumerate(cols)
+        c = columns[t]
+        for (l, level) in enumerate(laplace.spec.levels)
+            r = nlatent(level)
+            (nrandomeffects(level) == 0 || r == 0) && continue
+            q = c - offsets[l]
+            1 <= q <= r || continue
+            cc = k.coff[l] + q
+            for j in eachindex(pos)
+                H[j, cc, m] = Hb[pos[j], a]
+            end
+            k.filled[cc, m] = true
+            break
+        end
+    end
+    return nothing
 end
 
 """The hybrid's factor into the context's model (a curvature's or a jet's),
@@ -214,7 +276,7 @@ cross curvature into `cross` where given. A status code.
 function _tan_laplace_members!(J::Matrix{Float64}, ctx::TanLaplaceContext{W,DC},
     laplace::CTSEMLaplaceObjective, U::Int, values::AbstractVector{Float64},
     Ls::Vector{<:AbstractMatrix}, base::AbstractVector{Float64}, columns::Vector{Int},
-    members::Vector{Int}, mine, cross) where {W,DC}
+    members::Vector{Int}, mine, cross, keep=nothing) where {W,DC}
     spec, units = laplace.spec, laplace.units
     objective = laplace.objective
     d = length(base)
@@ -235,7 +297,7 @@ function _tan_laplace_members!(J::Matrix{Float64}, ctx::TanLaplaceContext{W,DC},
         for p in mine
             st = _tan_laplace_gn_member!(J, ctx, laplace, U, values, Ls, base, members[p])
             st == _TAN_FULL && (st = _tan_laplace_split_member!(J, ctx, laplace, U, values,
-                Ls, base, members[p]))
+                Ls, base, members[p], keep))
             st == _TAN_FULL && (push!(rest, p); st = _TAN_OK)
             st == _TAN_OK || break
         end
@@ -274,6 +336,7 @@ function _tan_laplace_members!(J::Matrix{Float64}, ctx::TanLaplaceContext{W,DC},
             cross isa _HybridFixedCross && _tan_laplace_dfix!(ctx.mod, cross.joint, m, data)
             st = _tan_laplace_member!(ctx, objective, i, xw, nl)
             st == _TAN_OK || return st
+            keep === nothing || _tan_keep_columns!(keep, ctx.Hb, laplace, U, m, columns, cols)
             cross === nothing || _tan_laplace_cross!(cross isa _HybridFixedCross ?
                 cross.cross : cross, m, ctx.sw.hs, ctx.mod, data, columns, cols)
             @inbounds for (a, t) in enumerate(cols)
@@ -625,7 +688,8 @@ member by coordinates. A status code otherwise.
 """
 function _tan_laplace_split_member!(J::Matrix{Float64}, ctx::TanLaplaceContext{W,DC},
     laplace::CTSEMLaplaceObjective, U::Int, values::AbstractVector{Float64},
-    Ls::Vector{<:AbstractMatrix}, base::AbstractVector{Float64}, m::Int) where {W,DC}
+    Ls::Vector{<:AbstractMatrix}, base::AbstractVector{Float64}, m::Int,
+    keep=nothing) where {W,DC}
     spec, units = laplace.spec, laplace.units
     objective = laplace.objective
     offsets = units.offsets[U][m]
@@ -734,6 +798,15 @@ function _tan_laplace_split_member!(J::Matrix{Float64}, ctx::TanLaplaceContext{W
                         s += H[a + (b - 1) * npos] * vdir[b]
                     end
                     gv[pos[a]] = s
+                end
+                # The coordinate's raw column at the effects: what the full
+                # sweeps keep (`_tan_keep_columns!`).
+                if keep !== nothing
+                    cc = keep.coff[l] + q
+                    for a in 1:npos
+                        keep.H[a, cc, m] = gv[pos[a]]
+                    end
+                    keep.filled[cc, m] = true
                 end
             end
             _laplace_loading_chain!(view(J, :, t), gv, spec, Ls, offsets)

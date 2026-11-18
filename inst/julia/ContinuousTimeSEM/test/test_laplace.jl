@@ -1417,3 +1417,74 @@ end
     @test length(diagnostics.converged) == length(laplace.objective.subject_objectives)
     @test all(isfinite, diagnostics.max_gradient)
 end
+
+@testset "an anchored solve from its anchor's curvature ends where the exact start does" begin
+    # Within an optimisation a unit's solve starts from its anchor and steps
+    # first on the exact curvature at the anchor, which the evaluation that
+    # set the anchor formed (`_laplace_newton_unit_mode`'s `warm`,
+    # `CTSEMUnitCurvature`), forming one at the end, where the exact start
+    # (`ctsem_set_warm_curvature!(false)`) forms one at its start too. The
+    # same modes, value and gradient at parameters moved from the anchors'
+    # point, and the same value there whatever was evaluated before it:
+    # effects in the means, on the dynamics and noise, and a drift evaluated
+    # by row, whose unit is not Gaussian in its effect.
+    C = ContinuousTimeSEM
+    cases = [
+        ("means", () -> _fresh_linear()),
+        ("dynamics and noise", () -> (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE,
+            [3, 4], [6, 7], [8], [1.0, 1.0]), copy(_LAPLACE_LINEAR_VALUES))),
+        ("drift by row", () -> _fresh_nonlinear()),
+    ]
+    for (name, make) in cases
+        @testset "$name" begin
+            function run(warm::Bool)
+                C.ctsem_set_warm_curvature!(warm)
+                laplace, values = make()
+                C._ctsem_anchor_start!(laplace, values)
+                at = ctsem_laplace_evaluate(laplace, values; gradient=true)
+                # As after an accepted step: the anchors take that evaluation's
+                # modes, and with them the curvatures its solves ended on. (A
+                # search's solve does not always return one.)
+                C._ctsem_anchor_here!(laplace)
+                stored = count(c -> !isempty(c.anchor_at), laplace.curvatures)
+                moved = values .+ 0.05 .* sin.(1:length(values))
+                r = ctsem_laplace_evaluate(laplace, moved; gradient=true)
+                modes = deepcopy(laplace.modes)
+                # Another point between, then the same one again.
+                ctsem_laplace_evaluate(laplace, values .- 0.03 .* cos.(1:length(values));
+                    gradient=false)
+                again = ctsem_laplace_evaluate(laplace, moved; gradient=true)
+                return (anchored=!isempty(laplace.anchors), at=at, moved=r, again=again,
+                    againmodes=deepcopy(laplace.modes), stored=stored, modes=modes,
+                    units=length(laplace.units.members))
+            end
+            try
+                exact = run(false)
+                warm = run(true)
+                @test exact.anchored && warm.anchored
+                @test exact.stored == 0
+                @test warm.stored == warm.units
+                # One function of the parameters given the anchors: each unit's
+                # mode to the last bit whatever was evaluated between (the sums
+                # over units are divided among threads as they come free, so
+                # the totals are compared to rounding).
+                @test warm.againmodes == warm.modes
+                @test exact.againmodes == exact.modes
+                @test abs(warm.again.value - warm.moved.value) <=
+                    1e-12 * max(1.0, abs(warm.moved.value))
+                @test maximum(abs, warm.again.gradient .- warm.moved.gradient) <=
+                    1e-12 * max(1.0, maximum(abs, warm.moved.gradient))
+                @test isfinite(exact.moved.value) && all(isfinite, exact.moved.gradient)
+                @test abs(warm.at.value - exact.at.value) <= 1e-9
+                @test abs(warm.moved.value - exact.moved.value) <= 1e-8
+                @test maximum(abs, warm.moved.gradient .- exact.moved.gradient) <=
+                    1e-6 * max(1.0, maximum(abs, exact.moved.gradient))
+                for U in 1:exact.units
+                    @test maximum(abs, warm.modes[U] .- exact.modes[U]; init=0.0) <= 1e-7
+                end
+            finally
+                C.ctsem_set_warm_curvature!(true)
+            end
+        end
+    end
+end

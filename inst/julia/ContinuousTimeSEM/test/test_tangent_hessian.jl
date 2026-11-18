@@ -1,4 +1,4 @@
-using DataFrames, ForwardDiff, LinearAlgebra
+using DataFrames, ForwardDiff, LinearAlgebra, Random
 
 # The hand-coded second order (`tangent_hessian.jl`) against the Hessian's dual
 # route (`dual_oracles.jl`), its oracle: the two compute the same derivative of
@@ -377,6 +377,111 @@ end
         @test ContinuousTimeSEM._tan_hessian_columns!(H, objective, values, collect(1:n),
             nothing)
         @test (H .+ H') ./ 2 ≈ reference rtol = 1e-10
+    end
+end
+
+@testset "the series by listed terms is the series by dense products" begin
+    # A drift with most cells zero -- a level two processes revert to, an
+    # average read off one of them, a rotation -- so the doublings, the power
+    # tables and their pullbacks go by the terms their patterns leave
+    # (`TanSeriesLists`), and the exponential comes off the intercept's chain
+    # (`_tan_series_exp!`). `ctsem_set_series_lists!(false)` runs the same
+    # sweep on the dense products: intervals with no doubling, a few and many,
+    # tangents alone and with second parts, forward and pulled back.
+    C = ContinuousTimeSEM
+    W = 4
+    n = 6
+    cells = ((1, 1), (1, 2), (1, 3), (2, 1), (2, 2), (2, 3), (3, 3), (4, 1), (4, 4))
+    intervals = (0.03, 0.7, 6.0)
+    snapshot(M) = (copy(M.v), copy(M.d), copy(M.s))
+    function dense_random(rng, jets)
+        M = C.TanMat{W}(n, n)
+        M.v .= randn(rng, n, n)
+        M.d .= randn(rng, W, n, n)
+        jets && (M.s .= randn(rng, n, n))
+        C._tan_setnz_from!(M)
+        C._tan_setsnz_from!(M)
+        return M
+    end
+    function sweep(lists::Bool, jets::Bool)
+        C.ctsem_set_series_lists!(lists)
+        try
+            Base.ScopedValues.with(C._TAN_JETS => jets) do
+                rng = Random.Xoshiro(11)
+                J = C.TanMat{W}(n, n)
+                Q = C.TanMat{W}(n, n)
+                for (i, j) in cells
+                    J.v[i, j] = i == j ? -abs(randn(rng)) - 0.2 : 0.4 * randn(rng)
+                    J.d[:, i, j] .= 0.3 .* randn(rng, W)
+                    jets && (J.s[i, j] = 0.2 * randn(rng))
+                end
+                J.v[5, 6] = -2.0
+                J.v[6, 5] = 2.0
+                drift = copy(J.v)
+                for (i, j) in ((1, 1), (2, 1), (2, 2), (3, 3))
+                    q = i == j ? 0.5 + abs(randn(rng)) : 0.3 * randn(rng)
+                    d = 0.2 .* randn(rng, W)
+                    c = 0.1 * randn(rng)
+                    for (a, b) in ((i, j), (j, i))
+                        Q.v[a, b] = q
+                        Q.d[:, a, b] .= d
+                        jets && (Q.s[a, b] = c)
+                    end
+                end
+                for M in (J, Q)
+                    C._tan_setnz_from!(M)
+                    C._tan_setsnz_from!(M)
+                end
+                tabi = C.TanSeriesTable(n, W, false)
+                tabn = C.TanSeriesTable(n, W, true)
+                si, sn = C.TanSeries(n, W), C.TanSeries(n, W)
+                out = Dict{String,Any}()
+                for (k, h) in enumerate(intervals)
+                    Phi = C._tan_series_intercept_table!(si, C._tan_table_for!(tabi, J, nothing), h)
+                    out["Phi$k"] = snapshot(Phi)
+                    out["A$k"] = snapshot(C._tan_series_exp!(si, tabi))
+                    V = C._tan_series_noise_table!(sn, C._tan_table_for!(tabn, J, Q), h)
+                    out["V$k"] = snapshot(V)
+                    out["doublings$k"] = (si.s, sn.s)
+                    C._tan_series_intercept_table_pullback!(tabi, si, dense_random(rng, jets),
+                        0.7, dense_random(rng, jets))
+                    C._tan_series_noise_table_pullback!(tabn, sn, dense_random(rng, jets), 0.7)
+                end
+                released = C._tan_table_release!(tabi) && C._tan_table_release!(tabn)
+                out["Jbar, intercept"] = snapshot(tabi.Jbar)
+                out["Jbar, noise"] = snapshot(tabn.Jbar)
+                out["Qbar"] = snapshot(tabn.Qbar)
+                return (out=out, on=tabi.lists.on && tabn.lists.on, released=released,
+                    drift=drift)
+            end
+        finally
+            C.ctsem_set_series_lists!(true)
+        end
+    end
+    for jets in (false, true)
+        dense = sweep(false, jets)
+        listed = sweep(true, jets)
+        @test !dense.on
+        @test listed.on
+        @test dense.released && listed.released
+        # No doubling at the shortest interval, several at the longest.
+        @test dense.out["doublings1"] == (0, 0)
+        @test all(>=(3), dense.out["doublings3"])
+        for (key, d) in dense.out
+            l = listed.out[key]
+            if d isa Tuple{Int,Int}
+                @test l == d
+                continue
+            end
+            for part in 1:3
+                scale = 1 + maximum(abs, d[part]; init=0.0)
+                @test maximum(abs, l[part] .- d[part]; init=0.0) <= 1e-12 * scale
+            end
+        end
+        # The exponential off the chain is the exponential.
+        for (k, h) in enumerate(intervals)
+            @test listed.out["A$k"][1] ≈ exp(listed.drift .* h) rtol = 1e-11
+        end
     end
 end
 
