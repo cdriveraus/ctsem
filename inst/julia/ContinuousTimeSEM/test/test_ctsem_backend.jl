@@ -801,6 +801,65 @@ end
     @test maximum(abs, diag.minimizer) < 1e-4
 end
 
+# A sum over units for the batch test below: unit k's log likelihood is
+# -|x - c_k|^2 / 2, except that a unit marked `bad` cannot be evaluated where
+# x[1] > 0.5. The methods are the few a batch reads of its objective.
+if !isdefined(@__MODULE__, :_BatchToy)
+    struct _BatchToy
+        centres::Vector{Vector{Float64}}
+        bad::Vector{Bool}
+    end
+    function ContinuousTimeSEM.ctsem_subject_gradients(o::_BatchToy, x::AbstractVector)
+        S = reduce(vcat, [permutedims(c .- x) for c in o.centres])
+        value = -sum(sum(abs2, c .- x) for c in o.centres) / 2
+        if any(o.bad) && x[1] > 0.5
+            S[o.bad, :] .= NaN
+            value = NaN
+        end
+        return (value=value, scores=S)
+    end
+    ContinuousTimeSEM._ctsem_batch_nsubjects(o::_BatchToy) = length(o.centres)
+    ContinuousTimeSEM._ctsem_prior_objective(o::_BatchToy) = o
+    ContinuousTimeSEM._ctsem_log_prior(o::_BatchToy, x) = 0.0
+    ContinuousTimeSEM._ctsem_log_prior_gradient!(g, o::_BatchToy, x) = g
+    ContinuousTimeSEM._ctsem_subset_objective(o::_BatchToy, idx::AbstractVector{<:Integer}) =
+        _BatchToy(o.centres[idx], o.bad[idx])
+end
+
+@testset "a grown batch that cannot evaluate the point goes back to one it can" begin
+    C = ContinuousTimeSEM
+    # Seven units centred near x1 = 1.3 and an eighth at x1 = -8 that cannot
+    # be evaluated past x1 = 0.5; the full optimum is at x1 = 0.2. The batch
+    # starts on the first two and takes the eighth last, so it has carried the
+    # fit past 0.5 when the eighth joins.
+    centres = [[1.0 + 0.1k, 0.2 * (-1)^k] for k in 1:7]
+    push!(centres, [-8.0, 0.0])
+    full = _BatchToy(centres, [fill(false, 7); true])
+    calls = Tuple{Int,Bool}[]   # each evaluation: its units, and whether refused
+    trial = function (o, F, G, x)
+        r = C.ctsem_subject_gradients(o, x)
+        push!(calls, (length(o.centres), !isfinite(r.value)))
+        if !isfinite(r.value)
+            G === nothing || fill!(G, NaN)
+            return F === nothing ? nothing : floatmax(Float64) / 1e8
+        end
+        G === nothing || (G .= -vec(sum(r.scores; dims=1)))
+        F === nothing ? nothing : -r.value
+    end
+    fg! = (F, G, x) -> trial(full, F, G, x)
+    m = 2
+    batch = C.CTSEMBatch(full, C._ctsem_subset_objective(full, 1:m), collect(1:8), m, 8,
+        8, 0.25, trial, [m], [0], nothing, Float64[])
+    r = C._ctsem_lbfgs(fg!, [0.0, 0.0]; maxiter=200, g_tol=1e-8, batch=batch)
+    # The eighth unit joined at a point it refuses, which the run left.
+    first8 = findfirst(c -> c[1] == 8, calls)
+    @test first8 !== nothing && calls[first8][2]
+    @test r.batch_sizes[end] == 8
+    @test r.minimum < C._CTSEM_REFUSED
+    @test r.g_converged
+    @test r.minimizer ≈ sum(centres) ./ 8 atol = 1e-6
+end
+
 @testset "the sgd phase climbs an ill-conditioned problem and hands over on its progress rule" begin
     C = ContinuousTimeSEM
     # Minimised: a quadratic with curvatures five orders apart, offset so the

@@ -347,6 +347,10 @@ function _ctsem_lbfgs_diagonal!(B0, s::Vector{Float64}, y::Vector{Float64},
     B
 end
 
+"""Whether a value and gradient the objective returned are a usable point:
+not the refused sentinel, and finite."""
+_ctsem_lbfgs_usable(f, G) = isfinite(f) && f < _CTSEM_REFUSED && all(isfinite, G)
+
 """
     _ctsem_lbfgs(fg!, x0; ...)
 
@@ -444,6 +448,10 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         b === nothing ? fg!(F, Gout, y) : _ctsem_batch_fg!(b, F, Gout, y)
     coreset === nothing || (coreset.g_tol = Float64(g_tol))
     f = evaluate!(batch, 0.0, G, x); fcalls += 1; gcalls += 1
+    # The points accepted while a batch is in force, the start first: where a
+    # grown batch cannot evaluate the point the smaller one reached, the run
+    # goes back to the newest of them it can (below).
+    trail = batch === nothing ? Vector{Float64}[] : [copy(x)]
     # Iteration 0 only on a run that is a run of its own; a continuation's
     # starting point is the last row its predecessor already recorded.
     stopped = callback !== nothing && iteration0 == 0 &&
@@ -700,6 +708,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             Dinv = 1 ./ B
         end
         x = xn; f = fn; G = Gn
+        batch === nothing || push!(trail, copy(x))
         push!(recent, f)
         Qn = eta * Q + 1
         C = (eta * Q * C + f) / Qn; Q = Qn
@@ -725,6 +734,22 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
                 batch = nothing
             end
             f = evaluate!(batch, 0.0, G, x); fcalls += 1; gcalls += 1
+            # The smaller batch accepted `x`, but a unit the grown one adds may
+            # not be evaluable there. Back to the newest accepted point it can
+            # evaluate, the start at the latest, keeping the pairs: they are the
+            # curvature, which the batches share. Ending on the refused value
+            # instead, the run reported its start as unusable: three
+            # Bursti-CT-VAR fits whose grown batch held a person whose term was
+            # NaN where the first batch had taken the fit.
+            j = length(trail) - 1
+            while !_ctsem_lbfgs_usable(f, G) && j >= 1
+                x = copy(trail[j]); j -= 1
+                f = evaluate!(batch, 0.0, G, x); fcalls += 1; gcalls += 1
+            end
+            # Not even the start: it is unusable on this objective, which the
+            # caller reports.
+            _ctsem_lbfgs_usable(f, G) || (lsfail = true; break)
+            batch === nothing ? empty!(trail) : resize!(trail, j + 1)
             gconv = maximum(abs, G; init=0.0) <= g_tol
             # The reference level belongs to the objective it averaged.
             C = f; Q = 1.0; recent = [f]
