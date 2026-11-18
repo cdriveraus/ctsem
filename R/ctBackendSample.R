@@ -458,6 +458,15 @@
   out
 }
 
+# The iterations a chain ran before its kept draws: the map's learning
+# schedule and its final warm-up where the map sampled (`warmup` in its
+# record), the warmup asked for otherwise. The map takes `warmup` as its first
+# learning window's only, so the count asked for describes nothing it ran.
+.ctBackendRanWarmup <- function(result, warmup) {
+  ran <- result[["map"]][["warmup"]]
+  if (is.null(ran)) as.integer(warmup) else as.integer(ran)[1L]
+}
+
 # The map's learning record (`ctsem_sample_map`): its cost in gradients and
 # learning's share of it, and per window its draws a chain, the chains
 # restarted, the summaries refitted, theta's shrinkage (NaN for the check
@@ -1516,7 +1525,13 @@
       if (identical(settings$sampler, "map")) " through a learnt map" else "",
       ": ", chains, " chain",
       if (chains == 1L) "" else "s",
-      ", ", warmup, " warmup + ",
+      # The map is learnt over windows of its own before any draw is kept;
+      # a warmup the caller wrote is the first window's
+      # (`.ctBackendUncertaintySample()` drops one not written).
+      if (identical(settings$sampler, "map")) paste0(", learning the map first",
+        if (!is.null(control$warmup)) paste0(" from a ", warmup,
+          "-iteration warm-up") else "", ", then ")
+      else paste0(", ", warmup, " warmup + "),
       if (target_ess > 0) paste0("up to ", .ctJuliaOr(budget$max_draws, draws))
         else draws,
       " draws each",
@@ -1546,7 +1561,7 @@
   .ctBackendSampleAssemble(fit, result, target$npar,
     isTRUE(saveEffects) && !isTRUE(target$marginal),
     if (smc) as.integer(result$nchains) else as.integer(chains),
-    if (smc) 0L else warmup,
+    if (smc) 0L else .ctBackendRanWarmup(result, warmup),
     as.integer(result$ndraws), target$hessian,
     target$estimate[seq_len(target$npar)], marginal = isTRUE(target$marginal),
     ess_target = .ctBackendSampleTargetESS(control),

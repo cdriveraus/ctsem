@@ -3717,12 +3717,14 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' runner \code{ctFit(backend = 'julia', optimize = FALSE)} uses, and with the
 #' same defaults. Its settings are entries of \code{control}, and
 #' \code{draws} and \code{finishsamples} are not used: \code{chains} (4),
-#' \code{warmup} (200), \code{draws} (800, after warmup), \code{seed},
+#' \code{warmup} (200; the map sampler learns its map over warm-up windows of
+#' its own first, and a \code{warmup} given is the first window's), \code{draws}
+#' (800, after warmup), \code{seed},
 #' \code{saveEffects} (\code{FALSE}; whether to keep every draw of every random
 #' effect rather than only their summary -- either way they are each
 #' parameter's deviation from its population value on the raw scale, per
 #' subject or group, in \code{fit$sample$effects}, \code{effect_mean} and
-#' \code{effect_sd}) and \code{processes} (\code{TRUE}).
+#' \code{effect_sd}) and \code{processes} (\code{FALSE}).
 #'
 #' \emph{What is sampled} is what the fit's \code{intoverpop} says, read as
 #' \code{ctFit(optimize = FALSE)} reads it: the filter's marginal for

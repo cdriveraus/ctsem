@@ -719,6 +719,9 @@
     effect_cov_rows = as.integer(result$effect_cov_rows),
     effect_cov_cols = as.integer(result$effect_cov_cols),
     sampler = if (is.null(result$sampler)) "nuts" else as.character(result$sampler),
+    # What the chains ran before their kept draws (`.ctBackendRanWarmup()`);
+    # NA where the warmup asked for is the answer.
+    ran_warmup = .ctBackendRanWarmup(result, NA_integer_),
     # Each worker placed its own chain; the first worker's placement stands for
     # the run's in the assembled fit.
     placement = result$placement,
@@ -858,6 +861,8 @@
     coreset_abandoned = unlist(lapply(drawn, function(d) d$coreset_abandoned)),
     coreset_error = unlist(lapply(drawn, function(d) d$coreset_error)))
 
+  ran <- drawn[[1]][["ran_warmup"]]
+  if (!is.null(ran) && !is.na(ran)) warmup <- ran
   out <- .ctBackendSampleAssemble(fit, result, npar, keepeffects,
     as.integer(chains), warmup, ndraws, target$hessian,
     target$estimate[seq_len(npar)], marginal = isTRUE(target$marginal),

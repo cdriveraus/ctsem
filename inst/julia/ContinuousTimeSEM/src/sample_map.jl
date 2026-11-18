@@ -1629,6 +1629,37 @@ end
 ################################################################################
 
 """
+    _JMapLearnReport(reporter, callback, offset, nwarmup, total)
+
+The learning windows' progress, reported as one phase counted over the whole
+schedule (`total` iterations a chain). It is the callback chain 1 of each
+window calls (`_run_chains`, rate-limited there), and maps that window's own
+counts -- warm-up from one, then draws from one -- onto the schedule:
+`offset` is the iterations a chain before this window, `nwarmup` this
+window's warm-up. It prints on `reporter` and hands the caller's callback the
+same five fields under the phase `"learning"`, which is all a worker process
+reports through (`.ctBackendProgressFileWriter()`). Reported as they came,
+the counts would restart eight times; reported not at all, as until
+2026-11-18, the line was blank from the sampler's start to its kept draws --
+hours on a hard model -- and a run in worker processes showed nothing then.
+"""
+mutable struct _JMapLearnReport
+    reporter::CTSEMProgress
+    callback::CTSEMCallback
+    offset::Int
+    nwarmup::Int
+    total::Int
+end
+
+function (r::_JMapLearnReport)(phase, iteration, total, logp, divergent)
+    at = r.offset + Int(iteration) + (phase == "sampling" ? r.nwarmup : 0)
+    _due(r.reporter) && _progress_line(r.reporter, at, r.total,
+        @sprintf("logp %11.2f", logp), @sprintf("div %d", divergent))
+    _invoke_callback(r.callback, "learning", at, r.total, logp, divergent)
+    return nothing
+end
+
+"""
     _jmap_final(m, counter, nchains, parallel, seed, centre, metric, nwarmup,
         ndraws, ...)
 
@@ -1755,13 +1786,28 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     # third window.
     learn = theta_map
     windows = windows === nothing ? (learn ? [40, 80, 160] : [40, 80]) : windows
+    checking = ncheck > 0 && !isempty(windows)
+    # The windows and the check window, reported as one phase; handed to the
+    # chains only where something reads it. A loop, not a generator, which
+    # would capture `nwarmup`, assigned twice here, in a box.
+    nlearn = checking ? Int(nsettle) + Int(ncheck) : 0
+    for (w, nw) in enumerate(windows)
+        nlearn += (w == 1 ? nwarmup : Int(nsettle)) + Int(nw)
+    end
+    learning = _JMapLearnReport(CTSEMProgress(verbose; label="learning the map",
+            overwrite=progress_overwrite, sink=progress_sink),
+        CTSEMCallback(progress_callback; every=0.0), 0, 0, nlearn)
+    watch = (verbose || progress_callback !== nothing) ? learning : nothing
     pooled = zeros(npar, 0)
     for (w, nw) in enumerate(windows)
         mw = m
+        learning.nwarmup = w == 1 ? nwarmup : Int(nsettle)
         results = _sample_chains(nchains, parallel, seed + 101 * w, centre, metric,
             w == 1 ? nwarmup : Int(nsettle), Int(nw), Int(maxdepth), Float64(target_accept),
             Float64(maxdelta), Float64(init_scale), adapt_metric, adapt,
-            c -> CTSEMJointMapDensity(mw, counter); init_eps=eps, starts=starts)
+            c -> CTSEMJointMapDensity(mw, counter); init_eps=eps, starts=starts,
+            progress_callback=watch)
+        learning.offset += learning.nwarmup + Int(nw)
         moved = _jmap_moved(results, npar)
         Wl = _pool_draws(results[moved], D)
         m2, refit, lambda, rows = _jmap_refit(m, Wl, rng; maxrows=Int(maxrows))
@@ -1774,17 +1820,19 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
         eps = median([r.stepsize for r in results[moved]])
         push!(windowlog, (window=Int(nw), stopped=count(!, moved), refit=refit,
             shrink=lambda, stepsize=eps))
+        _progress_break(learning.reporter)
         verbose && println(_console(), "  map window ", w, " of ", length(windows), ": ",
             nw, " draws a chain, ", count(!, moved), " chain(s) restarted, ", refit,
             " summaries refitted, step ", round(eps; sigdigits=3))
         m = m2
     end
-    if ncheck > 0 && !isempty(windows)
+    if checking
         mc = m
+        learning.nwarmup = Int(nsettle)
         results = _sample_chains(nchains, parallel, seed + 997, centre, metric, Int(nsettle),
             Int(ncheck), Int(maxdepth), Float64(target_accept), Float64(maxdelta), 0.0,
             adapt_metric, adapt, c -> CTSEMJointMapDensity(mc, counter); init_eps=eps,
-            starts=starts)
+            starts=starts, progress_callback=watch)
         moved = _jmap_moved(results, npar)
         Wl = _pool_draws(results[moved], D)
         starts = _jmap_restarts(m, m, results, moved, Wl, rng)
@@ -1792,6 +1840,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
         push!(windowlog, (window=0, stopped=count(!, moved), refit=0, shrink=NaN,
             stepsize=eps))
     end
+    _progress_done(learning.reporter, @sprintf("%d iterations a chain", learning.total))
     learned = time() - t0
     learn_gradients = counter[] + extra
 
@@ -1874,6 +1923,9 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
         (sampler="map", placement=_saem_placement_summary(nothing),
          map=(gradients=counter[] + extra + (hybrid ? total : 0),
               learn_gradients=learn_gradients, learn_secs=learned,
+              # Iterations a chain before its kept draws: the learning
+              # schedule and the final phase's warm-up.
+              warmup=learning.total + (isempty(windows) ? nwarmup : Int(nsettle)),
               windows=windowlog, coordinates=D - npar, latent_mean=lmean,
               latent_sd=lsd, integrated=hybrid, coupled=length(mf.R),
               theta_parents=mf.tri === nothing ? -1 :
