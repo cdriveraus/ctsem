@@ -318,12 +318,41 @@
     precision = as.numeric(rep(penalty$lambda, lengths(penalty$index))))
 }
 
+# The most a smoothing parameter is raised to: the largest eigenvalue of the
+# information without the penalties (`data`), the sharpest thing the data and
+# the other priors determine. A term at its linear limit has no fixed point
+# short of infinity, so its parameter runs to whatever bounds it, and the
+# bound is then an eigenvalue of every Hessian of the fit. ctsem's rules about
+# a curvature are relative to its largest eigenvalue: which directions are
+# flat or negative (the certification, the finish's ladder and saddle test,
+# the pullback check, the flat-direction screen, the identifiability report),
+# and the floors of the Krylov model's and the local curvature's eigenvalues.
+# Bounded at 1e10, as it was, the affect pilot's tied fit (819 parameters,
+# three of six terms at the limit, the data's largest eigenvalue 2.2e6) had
+# 598 eigenvalues under the Krylov model's floor of 1e-6, which turned the
+# exact smoothing step of 6.9, 3.1 and 205 into 25.7, 6.6 and 27540; 344
+# directions under the ladder's and the screen's 1e-7, walked for ten hours;
+# and 149 under the identifiability report's 1e-8, reported as directions the
+# data do not identify (review/GRADIENT-cost-tied-2026-11-18.md). At the data's
+# largest eigenvalue the Hessian's is at most twice the data's and every such
+# rule reads what it was written to read; the terms at the limit there keep
+# 0.005 to 0.08 of a degree of freedom between them. 1e10 where the
+# information has no positive eigenvalue to measure against.
+.ctTIsmoothLambdaMax <- function(data) {
+  top <- suppressWarnings(try(max(eigen((data + t(data)) / 2, symmetric = TRUE,
+    only.values = TRUE)$values), silent = TRUE))
+  if (inherits(top, "try-error") || !is.finite(top) || top <= 0) return(1e10)
+  top
+}
+
 # The smoothing parameters' generalised Fellner-Schall fixed point on the
 # quadratic model a fit's Hessian gives at its estimate. `hessian` is the log
 # posterior's at `theta`, with the penalties at `penalty$lambda`, and
 # `gradient` its gradient there. Returns the new lambdas, each term's
 # effective degrees of freedom at them (`edf`) and at the lambdas it came
-# with (`edf0`), and where the quadratic model puts the optimum at them.
+# with (`edf0`), and where the quadratic model puts the optimum at them. A
+# parameter stays between 1e-8 and the data's sharpest curvature
+# (`.ctTIsmoothLambdaMax()`).
 .ctTIsmoothLambda <- function(penalty, hessian, theta, gradient = NULL,
   maxiter = 200L, tol = 1e-6) {
   npar <- length(theta)
@@ -337,6 +366,7 @@
   data[cbind(at, at)] <- data[cbind(at, at)] - old
   datagradient <- gradient
   datagradient[at] <- datagradient[at] + old * theta[at]
+  upper <- .ctTIsmoothLambdaMax(data)
   lambda <- penalty$lambda
   edf <- edf0 <- rep(NA_real_, length(lambda))
   for (iter in seq_len(maxiter)) {
@@ -357,7 +387,7 @@
       updated[g] <- if (size > 0) max(edf[g], 0) / size else Inf
     }
     if (iter == 1L) edf0 <- edf
-    updated <- pmin(pmax(updated, 1e-8), 1e10)
+    updated <- pmin(pmax(updated, 1e-8), upper)
     change <- max(abs(log(updated) - log(lambda)))
     lambda <- updated
     if (change < tol) break
@@ -385,8 +415,8 @@
 # effective degrees of freedom, which is what a smoothing parameter sets. Not
 # the change in the parameters themselves: a term at its linear limit, or with
 # no penalty left, takes any lambda beyond it at the same curve, and judged
-# by lambda its passes went on until the clamp (four of the affect pilot's six
-# terms end at 1e10) or the pass limit. Zero where the step had no curvature
+# by lambda its passes went on until the bound (four of the affect pilot's six
+# terms ended at it) or the pass limit. Zero where the step had no curvature
 # to read.
 .ctTIsmoothMoved <- function(gfs) {
   moved <- suppressWarnings(max(abs(gfs$edf - gfs$edf0)))
