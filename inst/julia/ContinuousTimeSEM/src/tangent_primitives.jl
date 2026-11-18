@@ -231,6 +231,14 @@ function _tan_mirror_s!(C::TanMat)
     return nothing
 end
 
+# Whether the tangent column at offset `o` holds a nonzero.
+@inline function _tan_anynz(d, o, ::Val{W}) where {W}
+    @inbounds for w in 1:W
+        iszero(d[o + w]) || return true
+    end
+    return false
+end
+
 """
 The product kernel: `C = alpha op(A) op(B) + beta C` with tangents. `ta`, `tb`
 say which factor is transposed, read through strides; with `tri` and `sym`
@@ -351,6 +359,205 @@ end
 @inline _tan_mulTN!(C::TanMat, A::TanMat, B::TanMat, alpha=true, beta=false, tri=Val(:full), sym=Val(false)) =
     _tan_prod_flags!(C, A, B, Float64(alpha), Float64(beta), _tan_tricode(tri), _tan_symflag(sym),
         true, false)
+
+# A product by the list of its terms.
+#
+# Where the pattern of a product's factors is known before it is formed -- the
+# drift's, and so its powers', its exponentials' and its noise integrals', which
+# a subject's rows share -- its nonzero terms are listed once (`_tan_prod_list`)
+# and every product of that shape sums over the list. Finding the zeros
+# product by product instead, by a scan of each factor, was tried first: it
+# cost about what it saved (3.3 against 5.0 microseconds a 13 x 13 product at
+# a fifth and two fifths full, dev2). A term's operands are linear offsets, so
+# a transposed factor is only other offsets.
+struct TanProdList
+    lc::Vector{Int32}       # the outputs: offsets into C
+    ptr::Vector{Int32}      # output e's terms are ptr[e]:(ptr[e + 1] - 1)
+    la::Vector{Int32}       # each term's entry of A
+    lb::Vector{Int32}       # and of B
+    rest::Vector{Int32}     # C's entries without a term
+end
+const _TAN_NO_LIST = TanProdList(Int32[], Int32[1], Int32[], Int32[], Int32[])
+
+"""
+The terms of `op(A) op(B)` for factors nonzero only where `ma` and `mb` say
+(as stored, before `ta` and `tb` transpose them), into a matrix whose rows are
+the product's.
+"""
+function _tan_prod_list(ma::AbstractMatrix{Bool}, ta::Bool, mb::AbstractMatrix{Bool},
+    tb::Bool)
+    lda, ldb = size(ma, 1), size(mb, 1)
+    r = ta ? size(ma, 2) : lda
+    k = ta ? lda : size(ma, 2)
+    c = tb ? ldb : size(mb, 2)
+    sai, saq = ta ? (lda, 1) : (1, lda)
+    sbq, sbj = tb ? (ldb, 1) : (1, ldb)
+    lc, ptr, la, lb, rest = Int32[], Int32[1], Int32[], Int32[], Int32[]
+    for j in 1:c, i in 1:r
+        before = length(la)
+        for q in 1:k
+            oa = (i - 1) * sai + (q - 1) * saq
+            ob = (q - 1) * sbq + (j - 1) * sbj
+            if ma[oa + 1] && mb[ob + 1]
+                push!(la, oa)
+                push!(lb, ob)
+            end
+        end
+        o = (i - 1) + (j - 1) * r
+        if length(la) > before
+            push!(lc, o)
+            push!(ptr, length(la) + 1)
+        else
+            push!(rest, o)
+        end
+    end
+    return TanProdList(lc, ptr, la, lb, rest)
+end
+
+"""`_tan_prod!` over a list's terms: `C = alpha op(A) op(B) + beta C`."""
+function _tan_prod_list!(C::TanMat{W}, A::TanMat{W}, B::TanMat{W}, L::TanProdList,
+    alpha::Float64, beta::Float64, fa::Val{FA}, fb::Val{FB}) where {W,FA,FB}
+    Av, Bv, Cv, dA, dB, dC = A.v, B.v, C.v, A.d, B.d, C.d
+    lc, ptr, la, lb = L.lc, L.ptr, L.la, L.lb
+    bz = iszero(beta)
+    @inbounds for e in eachindex(lc)
+        acc = 0.0
+        dacc = _tan_zeros(Val(W))
+        for t in ptr[e]:(ptr[e + 1] - 1)
+            oa = Int(la[t])
+            ob = Int(lb[t])
+            a = Av[oa + 1]
+            b = Bv[ob + 1]
+            acc = muladd(a, b, acc)
+            if FA || FB
+                dacc = _tan_fma(dacc, fa, fb, dA, W * oa, b, a, dB, W * ob)
+            end
+        end
+        o = Int(lc[e])
+        Cv[o + 1] = bz ? alpha * acc : muladd(alpha, acc, beta * Cv[o + 1])
+        (FA || FB) && _tan_store!(dC, W * o, dacc, alpha, beta)
+    end
+    @inbounds for o32 in L.rest
+        o = Int(o32)
+        Cv[o + 1] = bz ? 0.0 : beta * Cv[o + 1]
+        (FA || FB) && _tan_store!(dC, W * o, _tan_zeros(Val(W)), alpha, beta)
+    end
+    return C
+end
+
+"""`_tan_prod_s!` over a list's terms."""
+@noinline function _tan_prod_list_s!(C::TanMat{W}, A::TanMat{W}, B::TanMat{W},
+    L::TanProdList, alpha::Float64, beta::Float64) where {W}
+    sa, sb, x = _tan_snz(A), _tan_snz(B), _tan_nz(A) && _tan_nz(B)
+    keep = !iszero(beta) && _tan_snz(C)
+    if !(sa || sb || x)
+        keep ? (isone(beta) || (C.s .*= beta)) : _tan_setsnz!(C, false)
+        return C
+    end
+    Av, Bv, As, Bs, Cs, dA, dB = A.v, B.v, A.s, B.s, C.s, A.d, B.d
+    lc, ptr, la, lb = L.lc, L.ptr, L.la, L.lb
+    @inbounds for e in eachindex(lc)
+        acc = 0.0
+        for t in ptr[e]:(ptr[e + 1] - 1)
+            oa = Int(la[t])
+            ob = Int(lb[t])
+            sa && (acc = muladd(As[oa + 1], Bv[ob + 1], acc))
+            sb && (acc = muladd(Av[oa + 1], Bs[ob + 1], acc))
+            x && (acc = muladd(2.0, _tan_dot(dA, W * oa, dB, W * ob, Val(W)), acc))
+        end
+        o = Int(lc[e])
+        Cs[o + 1] = keep ? muladd(alpha, acc, beta * Cs[o + 1]) : alpha * acc
+    end
+    @inbounds for o32 in L.rest
+        o = Int(o32)
+        Cs[o + 1] = keep ? beta * Cs[o + 1] : 0.0
+    end
+    C.snz[] = true
+    return C
+end
+
+"""`C = alpha op(A) op(B) + beta C` with tangents and second parts, over the
+terms `L` lists (`_tan_prod_list`): `_tan_prod_flags!` for a listed product."""
+function _tan_mul_list!(C::TanMat{W}, A::TanMat{W}, B::TanMat{W}, L::TanProdList,
+    alpha::Float64=1.0, beta::Float64=0.0) where {W}
+    fa, fb = _tan_nz(A), _tan_nz(B)
+    _tan_jet_check(C, _tan_snz(A) || _tan_snz(B))
+    C.jet && _tan_prod_list_s!(C, A, B, L, alpha, beta)
+    if fa && fb
+        _tan_prod_list!(C, A, B, L, alpha, beta, Val(true), Val(true))
+    elseif fa
+        _tan_prod_list!(C, A, B, L, alpha, beta, Val(true), Val(false))
+    elseif fb
+        _tan_prod_list!(C, A, B, L, alpha, beta, Val(false), Val(true))
+    else
+        _tan_prod_list!(C, A, B, L, alpha, beta, Val(false), Val(false))
+        if !iszero(beta) && _tan_nz(C)
+            isone(beta) || (C.d .*= beta)
+        else
+            _tan_setnz!(C, false)
+        end
+        return C
+    end
+    (iszero(beta) || !_tan_nz(C)) && (C.nz[] = true)
+    return C
+end
+
+"""
+`C += a A` over the entries `idx` lists (offsets), `A` zero elsewhere:
+`_tan_comb!(C, ((a, A),), true)` for an `A` of a known pattern. A quantity
+whose tangents or second parts are marked zero holds zeros there
+(`_tan_setnz!`), so the sum reads them as they are.
+"""
+function _tan_axpy_list!(C::TanMat{W}, a::Float64, A::TanMat{W},
+    idx::Vector{Int32}) where {W}
+    _tan_jet_check(C, _tan_snz(A))
+    Cv, Av = C.v, A.v
+    @inbounds for o32 in idx
+        o = Int(o32)
+        Cv[o + 1] = muladd(a, Av[o + 1], Cv[o + 1])
+    end
+    if _tan_nz(A)
+        dC, dA = C.d, A.d
+        @inbounds for o32 in idx
+            o = W * Int(o32)
+            _tan_st!(dC, o, _tan_axpyo(_tan_ld(dC, o, Val(W)), a, dA, o))
+        end
+        C.nz[] = true
+    end
+    (C.jet && _tan_snz(A)) && _tan_axpy_list_s!(C, a, A, idx)
+    return C
+end
+@noinline function _tan_axpy_list_s!(C::TanMat, a::Float64, A::TanMat, idx::Vector{Int32})
+    Cs, As = C.s, A.s
+    @inbounds for o32 in idx
+        o = Int(o32)
+        Cs[o + 1] = muladd(a, As[o + 1], Cs[o + 1])
+    end
+    C.snz[] = true
+    return C
+end
+
+"""The offsets of `m`'s true entries, column by column."""
+function _tan_entries(m::AbstractMatrix{Bool})
+    idx = Int32[]
+    r = size(m, 1)
+    for j in axes(m, 2), i in 1:r
+        m[i, j] && push!(idx, (i - 1) + r * (j - 1))
+    end
+    return idx
+end
+
+"""Where `A` is nonzero: a value, a tangent or a second part."""
+function _tan_mask!(m::Matrix{Bool}, A::TanMat{W}) where {W}
+    r = size(A.v, 1)
+    nz, snz = _tan_nz(A), _tan_snz(A)
+    @inbounds for j in axes(A.v, 2), i in 1:r
+        o = (i - 1) + r * (j - 1)
+        m[i, j] = !iszero(A.v[i, j]) || (nz && _tan_anynz(A.d, W * o, Val(W))) ||
+            (snz && !iszero(A.s[i, j]))
+    end
+    return m
+end
 
 """The matrix-vector kernel: `y = alpha op(A) x + beta y`, with tangents."""
 function _tan_prodvec!(y::TanVec{W}, A::TanMat{W}, x::TanVec{W}, alpha::Float64, beta::Float64,
