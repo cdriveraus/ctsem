@@ -1923,6 +1923,9 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
         (sampler="map", placement=_saem_placement_summary(nothing),
          map=(gradients=counter[] + extra + (hybrid ? total : 0),
               learn_gradients=learn_gradients, learn_secs=learned,
+              # Iterations a chain before its kept draws: the learning
+              # schedule and the final phase's warm-up.
+              warmup=learning.total + (isempty(windows) ? nwarmup : Int(nsettle)),
               windows=windowlog, coordinates=D - npar, latent_mean=lmean,
               latent_sd=lsd, integrated=hybrid, coupled=length(mf.R),
               theta_parents=mf.tri === nothing ? -1 :

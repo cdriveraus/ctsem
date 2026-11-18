@@ -391,8 +391,8 @@ test_that("the map sampler draws the joint posterior with the filter's effects i
   # once, and a run in worker processes, which reports only through this
   # callback, showed nothing until its kept draws began: hours on a hard model.
   seen <- list()
-  suppressWarnings(suppressMessages(ctFitUncertainty(fit, method = "sample",
-    intoverpop = "none", cores = 1,
+  said <- testthat::capture_messages(out <- suppressWarnings(ctFitUncertainty(fit,
+    method = "sample", intoverpop = "none", cores = 1, verbose = 1,
     control = list(chains = 2, draws = 20L, minESS = 0, processes = FALSE,
       sampler = "map", callback = function(phase, iteration, total, logp, divergent)
         seen[[length(seen) + 1L]] <<- list(phase = phase, iteration = iteration,
@@ -406,6 +406,12 @@ test_that("the map sampler draws the joint posterior with the filter's effects i
   expect_false(is.unsorted(at))
   expect_equal(unique(total), max(at))
   expect_setequal(unique(phase[-learning]), c("warmup", "sampling"))
+  # Announced as what it does, and recorded so: the map takes no NUTS warmup
+  # of 200, and its chains ran the whole schedule and a final warm-up first.
+  expect_true(any(grepl("learning the map first, then 20 draws each", said,
+    fixed = TRUE)))
+  expect_false(any(grepl("200 warmup", said, fixed = TRUE)))
+  expect_gt(out$sample$warmup, max(at))
 })
 
 test_that("the map sampler maps the effects the filter cannot integrate", {
