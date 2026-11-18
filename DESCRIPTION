@@ -13,7 +13,7 @@ Description: Hierarchical continuous (and discrete) time state space modelling,
     count or censored variables. The subject specific dynamic system is a
     stochastic differential equation (SDE) or difference equation, measured
     through a (typically) multivariate factor model. Individual differences on
-    any parameter, at one or several nested levels, are integrated out by an
+    any parameter, at one or more nested levels, are integrated out by an
     augmented Kalman filter or a Laplace approximation, or sampled. Estimation
     is by maximum likelihood or maximum a posteriori optimisation, with
     uncertainty from the Hessian, importance sampling or the bootstrap, or by
