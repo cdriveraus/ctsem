@@ -469,16 +469,18 @@ end
     # second, whose integrand cannot be evaluated left of z1 = -1: the rule's
     # nodes sit at z1 = 0 and +-sqrt(3), so the left one is outside. As in a
     # stationary model whose drift turns unstable there.
-    laplace, values = _fresh_nonlinear()
+    # A unit of two coordinates, as the testset above builds one; only its
+    # layout and the objective's settings are read.
+    laplace = ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE, [1, 2], [5, 6],
+        [7], [1.0, 1.0])
+    values = [0.1, -2.0, -0.2, 0.05, -0.25, 2.0, 0.0]
     ctsem_laplace_evaluate(laplace, values; gradient=false)
     Ls = C._laplace_popchols(collect(Float64, values), laplace.spec)
     U = 1
     blocks = laplace.units.blocks[U]
     A = [0.1 0.0; 0.0 2.0]
-    M0 = C._laplace_unit_curvature(laplace, U, collect(Float64, values), Ls,
-        laplace.modes[U])
-    @test length(M0.diag) == 1 && size(M0.diag[1]) == (2, 2)
-    curv(z) = C.CTSEMBlockMatrix{Float64}([copy(A)], M0.coupling)
+    @test sum(b.size for b in blocks) == 2
+    curv(z) = C._laplace_block_of(copy(A), blocks)
     for edge in (-1.0, -Inf)
         obj(z) = z[1] < edge ? (value=NaN, gradient=fill(NaN, 2), hlogdet=0.0) :
             (value=-dot(z, A * z) / 2, gradient=-(A * z), hlogdet=0.0)
