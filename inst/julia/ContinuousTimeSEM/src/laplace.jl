@@ -623,6 +623,29 @@ export ctsem_set_laplace_prune!
 ctsem_set_laplace_prune!(on::Bool) = (_LAPLACE_PRUNE[] = on)
 
 """
+A unit's curvature columns as the pass that formed them left them
+(`_tan_laplace_columns!`), for the gradient's explicit trace terms, which read
+the same columns (`_laplace_seeded_unit_gradient!`): `H[r, c, m]` is member
+`m`'s gradient at its `r`th effect position (`pos`) differentiated along its
+`c`th coordinate, its levels' dimensions in turn (`coff[l] + q`), and `filled`
+says which were formed. They are the columns at `values`, `base` (the unit's
+coordinates), the hybrid `mode` and the members' `rows` of data, and are read
+only there: a pass at another point starts them afresh.
+"""
+mutable struct CTSEMUnitColumns
+    values::Vector{Float64}
+    base::Vector{Float64}
+    mode::Int
+    rows::Int
+    H::Array{Float64,3}
+    filled::Matrix{Bool}
+    pos::Vector{Int}
+    coff::Vector{Int}
+end
+CTSEMUnitColumns() = CTSEMUnitColumns(Float64[], Float64[], typemin(Int), -1,
+    zeros(Float64, 0, 0, 0), fill(false, 0, 0), Int[], Int[])
+
+"""
     CTSEMLaplaceObjective(objective, spec; inner_maxiter, inner_tol)
 
 A `CTSEMObjective` plus the hierarchy to integrate out of it.
@@ -734,6 +757,9 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     # outside an optimisation.
     mode_values::Vector{Vector{Float64}}
     anchor_values::Vector{Vector{Float64}}
+    # Per unit, the curvature columns its last curvature pass formed, which
+    # the gradient reads where they are the mode's (`CTSEMUnitColumns`).
+    columns::Vector{CTSEMUnitColumns}
 end
 
 # `soft_blend_lo = 0.2` and `soft_blend_hi = 0.7` are measured, not derived: see the
@@ -761,7 +787,71 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
         inert === nothing ? Vector{Vector{Int}}[] : inert,
         isempty(known) ? [Vector{Float64}[] for _ in 1:nunits] : known,
         Vector{Float64}[], [Vector{Float64}[] for _ in 1:nunits],
-        Vector{Vector{Float64}}[], [Float64[] for _ in 1:nunits], Vector{Float64}[])
+        Vector{Vector{Float64}}[], [Float64[] for _ in 1:nunits], Vector{Float64}[],
+        [CTSEMUnitColumns() for _ in 1:nunits])
+end
+
+"""
+Whether the gradient's explicit trace terms read the curvature columns the
+value's pass formed at the mode (`CTSEMUnitColumns`). On; off sweeps them again
+(`_laplace_seeded_unit_gradient!`), the same numbers at a sweep for every four
+dimensions of a level, and is there to show that they are.
+`ctsem_set_kept_columns!` sets it.
+"""
+const _LAPLACE_KEEP_COLUMNS = Ref(true)
+
+export ctsem_set_kept_columns!
+"""Set whether a Laplace gradient reads the curvature columns its value formed."""
+ctsem_set_kept_columns!(on::Bool) = (_LAPLACE_KEEP_COLUMNS[] = on)
+
+"""The rows of data unit `U`'s members hold, which a truncated record changes."""
+function _laplace_unit_rows(laplace::CTSEMLaplaceObjective, U::Integer)
+    n = 0
+    subjects = laplace.objective.subject_objectives
+    for i in laplace.units.members[U]
+        n += size(subjects[i].data, 2)
+    end
+    return n
+end
+
+"""Unit `U`'s kept curvature columns where they are the ones at `values`, `u`
+and `mode`; `nothing` otherwise."""
+function _laplace_kept_columns(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::Vector{Float64}, u::Vector{Float64}, mode::Int)
+    _LAPLACE_KEEP_COLUMNS[] || return nothing
+    k = laplace.columns[U]
+    (k.mode == mode && k.rows == _laplace_unit_rows(laplace, U) && k.values == values &&
+        k.base == u) || return nothing
+    return k
+end
+
+"""
+Level `l`'s dimensions `q0 + 1:q0 + nd` of the explicit trace terms' sweeps
+(`levelsweeps[l]`, each `npar x nmem`) from the kept columns: the rows at the
+effects' positions, which are the rows read. `false`, and nothing written,
+unless every member of `seeing` has each of the dimensions it sees.
+"""
+function _laplace_kept_levelsweeps!(out::Vector{Matrix{Float64}}, k::CTSEMUnitColumns,
+    laplace::CTSEMLaplaceObjective, U::Integer, l::Int, q0::Int, nd::Int,
+    seeing::Vector{Int}, isactive::Vector{Bool}, npar::Int, nmem::Int)
+    offsets = laplace.units.offsets[U]
+    c0 = k.coff[l]
+    @inbounds for m in seeing, j in 1:nd
+        isactive[offsets[m][l] + q0 + j] || continue
+        k.filled[c0 + q0 + j, m] || return false
+    end
+    pos = k.pos
+    for j in 1:nd
+        swept = zeros(Float64, npar, nmem)
+        @inbounds for m in seeing
+            isactive[offsets[m][l] + q0 + j] || continue
+            for r in eachindex(pos)
+                swept[pos[r], m] = k.H[r, c0 + q0 + j, m]
+            end
+        end
+        out[q0 + j] = swept
+    end
+    return true
 end
 
 """
@@ -7918,6 +8008,9 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     levelsweeps = needV ? Vector{Vector{Matrix{Float64}}}(undef, nlev) :
         _LAPLACE_NO_LEVELSWEEPS
     if needV
+        # The columns are the curvature's at the mode, which the value's pass
+        # formed and kept (`CTSEMUnitColumns`); swept here where it kept none.
+        kept = _laplace_kept_columns(laplace, U, values, uhat, _laplace_hmode(laplace))
         lanes = _laplace_seeded_lanes(laplace)
         dirsV = _laplace_scratch_matrix!(laplace, Float64, npar, lanes, :sg_dirsV)
         dirV = _laplace_scratch_vector!(laplace, Float64, npar, :sg_dirV)
@@ -7950,6 +8043,8 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
                     end
                     continue
                 end
+                kept !== nothing && _laplace_kept_levelsweeps!(levelsweeps[l], kept,
+                    laplace, U, l, q0, nd, seeing, isactive, npar, nmem) && continue
                 pass = _laplace_unit_seeded_gradient(laplace, U, values, Ls, uhat,
                     seeing, dirsV, nd)
                 pass.ok || return false
