@@ -348,9 +348,21 @@
   # After the sampler: the map's default placement is the fit's estimate.
   placement <- .ctBackendPlacementFor(control, marginal || isTRUE(state_explicit))
   # The map sampler's warm-up is its learning schedule's (`ctsem_sample_map`'s
-  # `nwarmup`, then its windows), not NUTS's 200: a warmup the caller did not
-  # write is left to it.
-  if (identical(control$sampler, "map") && !"warmup" %in% nutsgiven) control$warmup <- NULL
+  # `nwarmup`, then its windows), and the engine call never sets it
+  # (`.ctBackendSampleEngine()`). The windows carry each chain from one to the
+  # next and restart a stopped one from the others' draws, so a chain has run
+  # the whole schedule in the posterior before its first kept draw. A longer
+  # first warm-up would only tune the starting map's step size for longer,
+  # which settles no chain further, so a warmup the caller wrote is unused and
+  # said to be.
+  if (identical(control$sampler, "map")) {
+    if ("warmup" %in% nutsgiven) {
+      message("warmup is not used by the map sampler, which learns its map over ",
+        "warm-up windows of its own before keeping draws. sampler = 'nuts' ",
+        "runs a NUTS warmup.")
+    }
+    control$warmup <- NULL
+  }
   # Resolved once here for its refusals, before any worker is started or the
   # engine reached: a setting refused deep in a worker process would surface
   # as a failed chain and a fallback rather than as the error it is.
@@ -460,8 +472,8 @@
 
 # The iterations a chain ran before its kept draws: the map's learning
 # schedule and its final warm-up where the map sampled (`warmup` in its
-# record), the warmup asked for otherwise. The map takes `warmup` as its first
-# learning window's only, so the count asked for describes nothing it ran.
+# record), the warmup asked for otherwise. The map takes no `warmup`, so the
+# count R resolved describes nothing it ran.
 .ctBackendRanWarmup <- function(result, warmup) {
   ran <- result[["map"]][["warmup"]]
   if (is.null(ran)) as.integer(warmup) else as.integer(ran)[1L]
@@ -1381,7 +1393,7 @@
     if (!saem && !mapped) arguments$adapt_effects <- settings$adapt_effects
     if (identical(target$placement, "saem") && !mapped) arguments$saem <- TRUE
     if (mapped && !is.null(report)) arguments$report <- report
-    if (mapped && is.null(control$warmup)) arguments$nwarmup <- NULL
+    if (mapped) arguments$nwarmup <- NULL
   } else if (!identical(target$gradient, "adjoint")) {
     # `ctsem_sample_marginal`'s own default is `:adjoint`; only said
     # explicitly when something asked for the other one. `ctsem_sample` (the
@@ -1525,12 +1537,9 @@
       if (identical(settings$sampler, "map")) " through a learnt map" else "",
       ": ", chains, " chain",
       if (chains == 1L) "" else "s",
-      # The map is learnt over windows of its own before any draw is kept;
-      # a warmup the caller wrote is the first window's
-      # (`.ctBackendUncertaintySample()` drops one not written).
-      if (identical(settings$sampler, "map")) paste0(", learning the map first",
-        if (!is.null(control$warmup)) paste0(" from a ", warmup,
-          "-iteration warm-up") else "", ", then ")
+      # The map is learnt over windows of its own before any draw is kept,
+      # and takes no warmup (`.ctBackendUncertaintySample()`).
+      if (identical(settings$sampler, "map")) ", learning the map first, then "
       else paste0(", ", warmup, " warmup + "),
       if (target_ess > 0) paste0("up to ", .ctJuliaOr(budget$max_draws, draws))
         else draws,

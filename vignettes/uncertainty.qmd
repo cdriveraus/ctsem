@@ -409,7 +409,7 @@ re_fit$args$resolved$intoverpop
 
 ```{r re-sample}
 quick_time <- system.time(re_quick <- ctFitUncertainty(re_fit, "sample",
-  cores = 1, control = list(chains = 4, warmup = 100, draws = 100, minESS = 50,
+  cores = 1, control = list(chains = 4, draws = 100, minESS = 50,
     rhatTarget = 1.07, processes = FALSE)))[["elapsed"]]
 full_time <- system.time(re_full <- ctFitUncertainty(re_fit, "sample",
   cores = 1, control = list(processes = FALSE)))[["elapsed"]]

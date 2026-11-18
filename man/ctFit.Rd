@@ -319,8 +319,8 @@ To generate data based on the posterior of a fitted model, see \code{\link{ctGen
 \item{sampleControl}{Used when \code{optimize=FALSE}: a list of sampler
 settings. \code{chains} (4 on julia, 2 on stan); \code{iter} (1000, warmup
 and sampling together); \code{warmup} (200, or half of \code{iter} if that
-is less; the map sampler learns its map over warm-up windows of its own
-first, and a \code{warmup} given is the first window's); \code{draws}, the
+is less; not used by the map sampler, which learns its map over warm-up
+windows of its own first); \code{draws}, the
 post-warmup count, which wins over \code{iter}
 when given; \code{seed}; \code{saveEffects}, whether every random-effect
 draw is kept; and \code{processes} (FALSE), whether the chains run in worker
