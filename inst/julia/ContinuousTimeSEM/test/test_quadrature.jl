@@ -462,3 +462,42 @@ end
     @test isapprox(g.value, plain.value + g.weight * (soft - plain.value); rtol=1e-12)
 end
 
+@testset "a soft-direction node the unit cannot be evaluated at carries no mass" begin
+    C = ContinuousTimeSEM
+    # A Gaussian unit of two coordinates, soft along the first (curvature 0.1,
+    # under the band, so the term is the rule alone) and stiff along the
+    # second, whose integrand cannot be evaluated left of z1 = -1: the rule's
+    # nodes sit at z1 = 0 and +-sqrt(3), so the left one is outside. As in a
+    # stationary model whose drift turns unstable there.
+    laplace, values = _fresh_nonlinear()
+    ctsem_laplace_evaluate(laplace, values; gradient=false)
+    Ls = C._laplace_popchols(collect(Float64, values), laplace.spec)
+    U = 1
+    blocks = laplace.units.blocks[U]
+    A = [0.1 0.0; 0.0 2.0]
+    M0 = C._laplace_unit_curvature(laplace, U, collect(Float64, values), Ls,
+        laplace.modes[U])
+    @test length(M0.diag) == 1 && size(M0.diag[1]) == (2, 2)
+    curv(z) = C.CTSEMBlockMatrix{Float64}([copy(A)], M0.coupling)
+    for edge in (-1.0, -Inf)
+        obj(z) = z[1] < edge ? (value=NaN, gradient=fill(NaN, 2), hlogdet=0.0) :
+            (value=-dot(z, A * z) / 2, gradient=-(A * z), hlogdet=0.0)
+        xs, ws = C._gauss_hermite(3)
+        # Each node's value: the soft direction's Gaussian, and the stiff
+        # direction's Laplace term, its curvature 2 above every floor.
+        h(x) = -0.1 * (sqrt(2) * x)^2 / 2 - log(2.0) / 2
+        inside = [sqrt(2) * x >= edge for x in xs]
+        expected = log(sum(ws[j] * exp(h(xs[j]) + xs[j]^2) for j in eachindex(xs)
+            if inside[j])) - log(pi) / 2
+        for factored in (true, false)
+            old = C.ctsem_set_soft_quadrature_factored!(factored)
+            r = C._laplace_soft_quadrature_term(laplace, U, collect(Float64, values), Ls,
+                [0.0, 0.0], C._laplace_workspace!(laplace, Float64, length(values));
+                objective=obj, curvature=curv, blocks=blocks)
+            C.ctsem_set_soft_quadrature_factored!(old)
+            @test r.flagged
+            @test r.value ≈ expected rtol = 1e-10
+        end
+    end
+end
+

@@ -6343,6 +6343,21 @@ units' steps, 35 to 529 sds long, lost hundreds of nats to millions
 const _LAPLACE_SOFT_NODE_STEP_LOSS = 0.5
 
 """
+    _laplace_soft_node_outside(h)
+
+Whether a soft-direction node lies where the unit cannot be evaluated: outside
+the model's support, so the integrand has no mass there and the rule sums the
+other nodes, as the value reference (`_laplace_soft_rule_unit`) always did.
+The rule returned `NaN` for the whole unit instead, which stopped fits. On the
+Bursti-CT-VAR with `stationary = TRUE` a person's node 1.7 prior sds along a
+soft direction made the drift unstable, where no stationary start exists: the
+unit's value fell from -88.1 at the mode to -92.8 at 93 per cent of the way
+there and was `NaN` from 95 per cent. Near that edge a node's share of the
+rule is small, and the term moves by it as the node crosses.
+"""
+@inline _laplace_soft_node_outside(h) = !isfinite(_laplace_deepvalue(h))
+
+"""
     _laplace_soft_node_stepped(h0, hs)
 
 A soft-direction node's value after its Newton step: `hs`, the value at the
@@ -6493,6 +6508,8 @@ function _laplace_soft_quadrature_term(laplace::CTSEMLaplaceObjective, U::Intege
             if d == 1
                 ub = u .+ (sqrt(2) * x / sqrt(lam1c)) .* v1
                 h = abs(x) < 1e-12 ? g : objf(ub).value
+                # Outside the model's support: no mass (`_laplace_soft_node_outside`).
+                _laplace_soft_node_outside(h) && (terms[j] = T(-Inf); continue)
             else
                 Bc = _laplace_soft_node_floored_curvature(transpose(Vh) * dense * Vh)
                 F = _ctsem_cholesky(Matrix(_laplace_symmetrise(Bc)), d - 1)
@@ -6501,6 +6518,7 @@ function _laplace_soft_quadrature_term(laplace::CTSEMLaplaceObjective, U::Intege
         else
             ub = u .+ (sqrt(2) * x / sqrt(lam1c)) .* v1
             r = objf(ub)
+            _laplace_soft_node_outside(r.value) && (terms[j] = T(-Inf); continue)
             Mb = _laplace_block_dense(curvf(ub), blocks, d)
             Bc = _laplace_soft_node_floored_curvature(transpose(Vh) * Mb * Vh)
             F = _ctsem_cholesky(Matrix(_laplace_symmetrise(Bc)), d - 1)
@@ -6772,6 +6790,7 @@ function _laplace_soft_quadrature_factored(laplace::CTSEMLaplaceObjective,
         else
             ub = u .+ (sqrt(2) * x / sqrt(lam1c)) .* v1
             r = objf(ub)
+            _laplace_soft_node_outside(r.value) && (terms[j] = -Inf; continue)
             Mb = curvf(ub)
             _soft_shifted_factor(Mb, blocks, top) === nothing && return nothing
             Fb = _soft_shifted_factor(Mb, blocks, 0.0)
