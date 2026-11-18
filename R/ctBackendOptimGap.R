@@ -266,6 +266,103 @@
     ok = TRUE)
 }
 
+# The flat walk's record off an engine result (`_ctsem_flatwalk_fields`), or
+# NULL when none ran. The engine walks every direction its final Hessian does
+# not trust once, for the finish's escape, the certification's probe and the
+# verdicts R's flat-direction screen gives (`_ctsem_flat_walk`), so the
+# uncertainty stage reads those verdicts here rather than walking the same
+# directions again (`.ctBackendFlatScreen()`). The bridge hangs on an empty
+# vector, so the engine pads what it has nothing to send with one entry;
+# `newton_flat_ran` and the candidates say what is real.
+#' @keywords internal
+.ctBackendFlatWalkFields <- function(r, npar) {
+  if (!isTRUE(as.logical(r$newton_flat_ran)[1L])) return(NULL)
+  at <- suppressWarnings(as.numeric(r$newton_flat_at))
+  values <- suppressWarnings(as.numeric(r$newton_flat_eigenvalues))
+  if (length(at) != npar || length(values) != npar) return(NULL)
+  candidates <- suppressWarnings(as.integer(r$newton_flat_candidates))
+  candidates <- candidates[!is.na(candidates) & candidates >= 1L &
+    candidates <= npar]
+  vectors <- NULL
+  if (length(candidates)) {
+    vectors <- as.matrix(r$newton_flat_eigenvectors)
+    if (!identical(dim(vectors), c(as.integer(npar), as.integer(npar))))
+      return(NULL)
+    storage.mode(vectors) <- "double"
+  }
+  gain <- suppressWarnings(as.numeric(r$newton_flat_gain)[1L])
+  if (!length(gain) || !is.finite(gain)) gain <- 0
+  point <- suppressWarnings(as.numeric(r$newton_flat_point))
+  direction <- suppressWarnings(as.integer(r$newton_flat_direction)[1L])
+  list(at = at, eigenvalues = values, eigenvectors = vectors,
+    candidates = candidates, change = as.numeric(r$newton_flat_change),
+    flat = as.logical(r$newton_flat_flat), gain = gain,
+    point = if (gain > 0 && length(point) == npar) point else NULL,
+    direction = if (is.na(direction) || direction < 1L) NA_integer_ else direction,
+    evaluations = as.integer(r$newton_flat_evaluations)[1L],
+    complete = isTRUE(as.logical(r$newton_flat_complete)[1L]))
+}
+
+# What `.ctOptimFlatDirectionScreen()` returns, from a flat walk's record
+# (`.ctBackendFlatWalkFields()`): NULL where no direction was a candidate,
+# as the screen returns before walking anything. The eigenvalues and vectors
+# are the engine's decomposition of the same Hessian, which the verdicts
+# index; `gain` counts only past `tolerance`, as the screen's does.
+#' @keywords internal
+.ctOptimScreenFromWalk <- function(walk, tolerance = 1e-6) {
+  if (is.null(walk) || !length(walk$candidates)) return(NULL)
+  change <- walk$change
+  change[is.nan(change)] <- NA_real_
+  found <- is.finite(walk$gain) && walk$gain > tolerance && !is.null(walk$point)
+  list(eig = list(values = walk$eigenvalues, vectors = walk$eigenvectors),
+    flat = walk$flat, change = change, bar = stats::qchisq(0.95, 1) / 2,
+    rtol = 1e-7, candidates = walk$candidates, lengths = c(0.25, 1, 4),
+    base = NA_real_, evaluations = walk$evaluations,
+    gain = if (found) walk$gain else 0,
+    point = if (found) walk$point else NULL,
+    direction = if (found) walk$direction else NA_integer_, walked = TRUE)
+}
+
+# The flat-direction screen of a julia fit's uncertainty stage, as a function
+# of the Hessian that stage settles on (`ctOptimComputeUncertainty()`'s
+# `flatscreen`): the record of the walk the fit's finish made on that Hessian
+# at `est` where it is the stored one (`stored$flatwalk`), else the engine's
+# walk on it now (`ctsem_flat_walk`), on the density's own objective
+# (`attr(lpgFunc, "engine")`). FALSE where neither can be had, and R walks
+# (`.ctOptimFlatDirectionScreen()`); NULL from here where the stage's Hessian
+# is not the objective's (a natural-scale prior added to it), whose
+# directions R walks on the density it scores.
+#' @keywords internal
+.ctBackendFlatScreen <- function(stored, objectivehessian, hessian, est,
+    lpgFunc, cores = NA_integer_) {
+  if (is.null(hessian) || !identical(objectivehessian, hessian)) return(NULL)
+  engine <- attr(lpgFunc, "engine")
+  est <- as.numeric(est)
+  function(hess) {
+    walk <- stored$flatwalk
+    reuse <- !is.null(walk) && isTRUE(walk$complete) &&
+      identical(hessian, stored$hessian) &&
+      length(walk$at) == length(est) &&
+      isTRUE(all.equal(as.numeric(walk$at), est, tolerance = 0))
+    if (!reuse) {
+      if (!is.function(engine)) return(FALSE)
+      e <- try(engine(), silent = TRUE)
+      if (inherits(e, "try-error") || !isTRUE(tryCatch(
+          is.function(e$module$ctsem_flat_walk), error = function(err) FALSE)))
+        return(FALSE)
+      m <- as.matrix(hess)
+      storage.mode(m) <- "double"
+      out <- try(.ctBackendWithMaxChunks(cores, .ctJuliaGet(
+        e$module$ctsem_flat_walk(e$objective, .ctJuliaNumericVector(est),
+          .ctJuliaPut(m)))), silent = TRUE)
+      if (inherits(out, "try-error")) return(FALSE)
+      walk <- .ctBackendFlatWalkFields(out, length(est))
+      if (is.null(walk)) return(FALSE)
+    }
+    .ctOptimScreenFromWalk(walk)
+  }
+}
+
 # The parameters a direction runs through: those carrying at least `share` of
 # its largest component, largest first, at most `most` of them.
 #
@@ -1050,7 +1147,8 @@
   list(hessian = hessian, evaluated_at = at,
     distance = if (length(distance) && is.finite(distance)) distance else 0,
     probe = .ctBackendProbeFields(result, npar),
-    saddle = .ctBackendSaddleFields(result), hessians = 0L)
+    saddle = .ctBackendSaddleFields(result), hessians = 0L,
+    flatwalk = .ctBackendFlatWalkFields(result, npar))
 }
 
 # The same numbers at a point the optimiser left without a finish: the engine's
@@ -1095,7 +1193,8 @@
   list(hessian = hessian, evaluated_at = est, distance = 0,
     probe = .ctBackendProbeFields(out, npar),
     saddle = .ctBackendSaddleFields(out),
-    hessians = as.integer(.ctJuliaOr(out$newton_hessians, 1L)))
+    hessians = as.integer(.ctJuliaOr(out$newton_hessians, 1L)),
+    flatwalk = .ctBackendFlatWalkFields(out, npar))
 }
 
 # Certify the optimiser's result, and try again when it stopped short, under
@@ -1330,6 +1429,7 @@
     hessian = if (is.null(endgame)) NULL else endgame$hessian,
     evaluated_at = if (is.null(endgame)) NULL else endgame$evaluated_at,
     distance = if (is.null(endgame)) NA_real_ else endgame$distance,
+    flatwalk = if (is.null(endgame)) NULL else endgame$flatwalk,
     corrections = history, totals = totals,
     hessians = as.integer(totals[["newton_hessians"]]) + formed,
     escapes = escapes)

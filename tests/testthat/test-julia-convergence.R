@@ -228,7 +228,7 @@ test_that("a fit that reaches a rising plateau climbs it to the maximum", {
   # L-BFGS scaling the first start reaches the plateau further out, at raw
   # drift -5.6, where the ridge is flat to 1e-5 over five raw units and the
   # Hessian negative definite; the finish leaves it along the ridge
-  # (`_ctsem_flat_ladder`), which a straight probe could not.
+  # (`_ctsem_flat_walk`), which a straight probe could not.
   for (start in list(c(0.1, -0.2), c(-4.204915, -0.161058))) {
     fit <- fit_from(start)
     expect_equal(fit$estimate$loglik, -25.1894, tolerance = 1e-4,

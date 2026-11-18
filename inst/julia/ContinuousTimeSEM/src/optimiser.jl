@@ -2055,7 +2055,7 @@ _ctsem_cheap_hessian(::Any) = false
     _ctsem_flat_escape(objective)
 
 Whether the finish may leave a point along a direction its curvature calls flat
-(`_ctsem_flat_ladder`); `_ctsem_flat_allowed` judges the point it would go to.
+(`_ctsem_flat_walk`); `_ctsem_flat_allowed` judges the point it would go to.
 On the marginal objective, the likelihood itself, a gain along such a direction
 is a gain. On the Laplace objective it is one only if the integral gains too:
 a flat direction is where the approximation is least reliable, and on AnomAuth
@@ -2166,10 +2166,11 @@ fit passes in, so the certification, the intervals and the probe share one rule.
 const _CTSEM_FLAT_RTOL = 1e-12
 
 """
-The relative curvature at or below which the Newton finish's flat ladder
-(`_ctsem_flat_ladder`) walks a direction: the candidates R's
-`.ctOptimFlatDirectionScreen()` walks after the fit (its `rtol`), so the finish
-looks for a way off every direction the certification would ask about.
+The relative curvature at or below which the Newton finish's flat walk
+(`_ctsem_flat_walk`) walks a direction: R's `.ctOptimFlatDirectionScreen()`
+`rtol`, so the walk asks of every direction what that screen asked, and the
+finish looks for a way off every direction the identifiability report would
+name.
 
 Not `_CTSEM_FLAT_RTOL`: along a flat ray the curvature decays with where the
 optimiser stopped, so a ray stopped short reads well above 1e-12 of the
@@ -2412,123 +2413,399 @@ function _ctsem_saddle_ladder(value_at, x::AbstractVector, value::Real, split,
     (best=best, evaluations=evaluations, walked=walked)
 end
 
+const _CTSEMFlatBest = NamedTuple{(:point, :f, :G, :length, :direction),
+    Tuple{Vector{Float64},Float64,Union{Nothing,Vector{Float64}},Float64,Int}}
+
+"""How many candidate directions the flat walk (`_ctsem_flat_walk`) walks,
+the flattest first: R's screen's `maxdirections`."""
+const _CTSEM_FLAT_DIRECTIONS = 20
+
 """
-    _ctsem_flat_ladder(fg!, x, f, G, split; lengths, corrections, progress)
+    _ctsem_flat_walk(fg!, valueof, x, f, G, split; lengths, corrections,
+        screen_corrections, reach, bar, maxdirections, enough, progress)
 
-At a point with no negative curvature, the best point along the directions the
-curvature calls flat, followed as a ridge: a step of each of `lengths` raw units
-along the gradient's part outside the trusted directions, both signs, the
-gradient's first -- along a flat direction its sign can be noise -- then up to
-`corrections` Newton steps in the trusted directions, so the point rides the
-ridge rather than leaving it. Each correction takes its direction from the
-curvature at `x` and its length from the secant of the gradients at its two
-ends: the Hessian at `x` describes the ridge less well the further along it the
-rung is, and on a ridge curving as sharply as a parabola's four units out its
-curvature was 2.5 times too strong, so uncorrected lengths each recovered only
-two fifths of the way back. Returns the best point below `f` (minimised) as
-`(point, f, G, length)`, or `nothing`, and the calls spent.
+Every direction at `x` that the curvature `split` does not trust, walked once
+for the three questions asked of such a direction, which were three walks
+until 2026-11-18 (the finish's flat ladder, the certification's straight
+probe, and R's `.ctOptimFlatDirectionScreen()` after the fit, each from the
+same Hessian): is there a better point along it, for the finish to take; what
+the gradient's own share outside the trusted directions is worth, for the
+certification; and is the objective flat along it, which the identifiability
+report and the covariance read. `split` is the curvature at the candidate
+rule (`_CTSEM_FLAT_CANDIDATE_RTOL`, R's `rtol`); `f` and `G` are the minimised
+objective and its gradient at `x`; `fg!` is the optimiser's trial path and
+`valueof` the probe's maximised value (`-Inf` where the route refuses a
+point).
 
-Why followed, not straight: a ridge flat in one direction is curved in raw
-coordinates, so a straight step leaves it. On test-julia-convergence.R's random
-walks fitted with an OU model, the fit can stop on the white-noise plateau,
-where drift and diffusion trade along a ridge flat to 1e-5 over five raw units
-and the Hessian is negative definite. Four raw units along it the straight
-step has lost 1.04 nats and the followed one gained 0.02, and the maximum, 14.7
-higher, lies further up the same ridge. The probe the certification reads
-(`_ctsem_flat_probe`) steps straight, so it could not see this, and certified
-the plateau.
+**The leading direction** is the gradient's part outside the trusted
+directions, or with none the flattest direction, walked as the ladder walked
+it: both sides, the gradient's first -- along a flat direction its sign can be
+noise -- at each of `lengths` raw units, each rung followed back to the ridge
+by up to `corrections` Newton steps in the trusted directions, and a side
+walked on at twice the length while its last rung stayed within `bar` of `f`,
+up to `reach`. Why followed, not straight: a ridge flat in one direction is
+curved in raw coordinates, so a straight step leaves it. On
+test-julia-convergence.R's random walks fitted with an OU model, the fit can
+stop on the white-noise plateau, where drift and diffusion trade along a ridge
+flat to 1e-5 over five raw units and the Hessian is negative definite. Four
+raw units along it the straight step has lost 1.04 nats and the followed one
+gained 0.02, and the maximum, 14.7 higher, lies further up the same ridge.
+Each correction takes its direction from the curvature at `x` and its length
+from the secant of the gradients at its two ends: on a ridge curving as
+sharply as a parabola's four units out the curvature at `x` was 2.5 times too
+strong, and uncorrected lengths each recovered only two fifths of the way
+back. Why walked on: on test-julia-count.R's Poisson model the white-noise
+maximum's ridge is flat to 5e-5 over eight raw units of drift and rises only
+inside raw -3, so a fit that stopped at raw -6.3 found the rise four units out
+and one that stopped at -8.0 did not; walked on, the rung at eight units
+gained 19.2 nats and the fit reached the best maximum, 41 higher (2026-11-08).
+The rungs of its first side taken straight, before their corrections, are the
+certification's probe (`probe`, as `_ctsem_flat_probe` reports it), where
+the leading direction is the gradient's.
 
-Past the last of `lengths`, a side is walked on at twice the length while its
-last rung stayed flat -- within `_CTSEM_FLAT_LADDER_BAR` of `f` -- up to
-`_CTSEM_FLAT_LADDER_REACH` raw units: a direction the data do not determine is
-followed until it stops being flat, not to a fixed length. On
-test-julia-count.R's Poisson model the white-noise maximum's ridge is flat to
-5e-5 over eight raw units of drift and rises only inside raw -3, so a fit that
-stopped at raw -6.3 found the rise four units out and one that stopped at -8.0
-did not; walked on, the rung at eight units gained 19.2 nats and the fit
-reached the best maximum, 41 higher (2026-11-08).
+**Then each candidate direction** -- the eigenvectors at or under the rule,
+the smallest curvature first, at most `maxdirections` of them -- as R's screen
+walked it: a side's rungs longest first, value only, a rung that falls past
+`bar` followed back by up to `screen_corrections` steps before it is judged,
+the side refused at its first rung past `bar` either way, and a direction
+settled by one flat side. Its `change` is the smaller of its sides' largest
+`|f(rung) - f|` over `lengths`, and it is flat under `bar`. A rise counts
+against flatness: along it the estimate is not a maximum. A side with a rung
+the model cannot evaluate says nothing. The leading direction, where it is a
+candidate's own -- no gradient outside the trusted directions, or that
+gradient along one candidate, as wherever one direction is untrusted -- has
+its verdict from its own rungs and is not walked again.
 
-With no gradient at all outside the trusted directions, the flattest direction.
-`fg!` is the optimiser's trial path: an unusable point comes back as the
-sentinel value, which no correction improves and no comparison accepts.
-`progress`, when given, is called with each rung's signed length before the
-rung is walked (`_ctsem_ladder_progress`).
+Without `follow` -- a walk that measures for a finish that cannot take its
+point (`_ctsem_flat_escape`, no steps, no escapes left) -- the leading
+direction is the certification's straight probe alone (`_ctsem_flat_probe`:
+its gradient's side, value only, at `lengths`), as it was before the walk
+existed, and every candidate is walked as the screen walks it: a ridge
+followed for a point nobody takes cost the optimiser's gradients for nothing.
+
+The walk stops after a direction that gained more than `enough`: the finish
+takes that point and walks again from it. `best` is the lowest point found as
+`(point, f, G, length, direction)`, `direction` 0 for the gradient's; `G` is
+the gradient there. `complete` says every candidate was walked.
 """
-function _ctsem_flat_ladder(fg!, x::AbstractVector, f::Real, G::AbstractVector,
-        split; lengths=_CTSEM_FLAT_PROBE_LENGTHS, corrections::Integer=3,
-        reach::Real=_CTSEM_FLAT_LADDER_REACH, bar::Real=_CTSEM_FLAT_LADDER_BAR,
-        progress=nothing)
-    flat = findall(.!split.trusted)
-    isempty(flat) && return (best=nothing, fcalls=0, gcalls=0)
-    r = _ctsem_flat_residual(split, -G)
-    if !(all(isfinite, r) && norm(r) > 0)
-        r = split.vectors[:, flat[argmin(abs.(split.values[flat]))]]
-    end
-    u = r ./ norm(r)
+function _ctsem_flat_walk(fg!, valueof, x::Vector{Float64}, f::Float64,
+        G::Vector{Float64}, split::_CTSEMInformationSplit;
+        lengths=_CTSEM_FLAT_PROBE_LENGTHS, corrections::Integer=3,
+        screen_corrections::Integer=2, reach::Real=_CTSEM_FLAT_LADDER_REACH,
+        bar::Real=_CTSEM_FLAT_LADDER_BAR,
+        maxdirections::Integer=_CTSEM_FLAT_DIRECTIONS, enough::Real=Inf,
+        follow::Bool=true, progress=nothing)
+    n = length(x)
+    base = collect(Float64, lengths)
+    order = sort!(findall(.!split.trusted); by=k -> split.values[k])
+    candidates = order[1:min(length(order), Int(maxdirections))]
+    change = fill(NaN, n)
+    flat = fill(false, n)
     V = split.vectors[:, split.trusted]
     curvature = split.values[split.trusted]
-    best = nothing; fcalls = 0; gcalls = 0
-    for side in (1.0, -1.0)
-        rungs = collect(Float64, lengths)
-        k = 0
-        while k < length(rungs)
-            k += 1
-            len = rungs[k]
-            progress === nothing || progress(side * len)
-            y = x .+ (side * len) .* u
-            g = similar(G)
-            fy = fg!(0.0, g, y); fcalls += 1; gcalls += 1
-            isfinite(fy) || continue
-            for _ in 1:corrections
-                d = -(V * ((transpose(V) * g) ./ curvature))
-                slope = dot(d, g)
-                slope < 0 || break
-                z = y .+ d
-                gz = similar(G)
-                fz = fg!(0.0, gz, z); fcalls += 1; gcalls += 1
-                # The secant of the slope along `d` between its ends: the step's
-                # length where the slope vanishes, exact on a quadratic along it.
-                ends = isfinite(fz) ? dot(d, gz) : NaN
-                if isfinite(ends) && ends > slope
-                    t = slope / (slope - ends)
-                    if 0 < t <= 10 && abs(t - 1) > 0.05
-                        zt = y .+ t .* d
-                        gt = similar(G)
-                        ft = fg!(0.0, gt, zt); fcalls += 1; gcalls += 1
-                        if isfinite(ft) && !(isfinite(fz) && fz <= ft)
-                            z = zt; fz = ft; gz = gt
-                        end
-                    end
+    fcalls = 0; gcalls = 0
+    best::Union{Nothing,_CTSEMFlatBest} = nothing
+    probe = _ctsem_no_probe()
+    # The gradient's part outside the trusted directions, where there are any:
+    # with none it is the projection's roundoff, and walked as a ridge it
+    # cost every finish twenty-odd gradients for nothing (the bench's 70
+    # cells, 2026-11-18), where the ladder had returned at once.
+    r = _ctsem_flat_residual(split, -G)
+    residual = !isempty(order) && all(isfinite, r) && norm(r) > 0
+    complete = true
+    walked = 0
+    if !follow && residual
+        probe = _ctsem_flat_probe(valueof, x, -f, r ./ norm(r); lengths=base)
+        fcalls += probe.evaluations
+    end
+    # The candidate the leading direction is, if any: the flattest where the
+    # gradient has no part outside the trusted directions, or the one that
+    # part lies along. Its rungs settle it. Walked again as the screen walks
+    # it, the tied fit's one untrusted direction (a curvature of -0.16) was
+    # walked twice, a few minutes a rung (2026-11-18).
+    own = 0
+    if follow && (residual || !isempty(candidates))
+        u = residual ? r ./ norm(r) : split.vectors[:, candidates[1]]
+        if residual
+            for k in candidates
+                if abs(dot(u, view(split.vectors, :, k))) > 0.999
+                    own = k
+                    break
                 end
-                (isfinite(fz) && fz < fy) || break
-                y = z; fy = fz; g = gz
             end
-            if fy < f && (best === nothing || fy < best.f)
-                best = (point=y, f=fy, G=g, length=side * len)
-            end
-            # Still flat at the last rung: walk on.
-            if k == length(rungs) && fy - f < bar && 2 * len <= reach
-                push!(rungs, 2 * len)
+        else
+            own = candidates[1]
+        end
+        worst = (NaN, NaN)
+        for (i, side) in enumerate((1.0, -1.0))
+            s = _ctsem_flat_side(fg!, valueof, x, f, u, side, V, curvature, base;
+                lead=true, corrections=Int(corrections), reach=Float64(reach),
+                bar=Float64(bar), progress=progress)
+            fcalls += s.fcalls; gcalls += s.gcalls
+            best = _ctsem_flat_better(best, s.best, residual ? 0 : own)
+            worst = i == 1 ? (s.worst, worst[2]) : (worst[1], s.worst)
+            if residual && i == 1
+                probe = _ctsem_flat_straight(s.straight, base, u, s.fcalls)
             end
         end
+        if own != 0
+            change[own] = _ctsem_flat_change(worst)
+            flat[own] = isfinite(change[own]) && change[own] < bar
+            walked += 1
+        end
     end
-    (best=best, fcalls=fcalls, gcalls=gcalls)
+    for k in candidates
+        k == own && continue
+        if best !== nothing && f - best.f > enough
+            complete = false
+            break
+        end
+        v = split.vectors[:, k]
+        first = dot(-G, v) >= 0 ? 1.0 : -1.0
+        worst = (NaN, NaN)
+        for (i, side) in enumerate((first, -first))
+            s = _ctsem_flat_side(fg!, valueof, x, f, v, side, V, curvature, base;
+                lead=false, corrections=Int(screen_corrections),
+                reach=Float64(reach), bar=Float64(bar), progress=progress)
+            fcalls += s.fcalls; gcalls += s.gcalls
+            best = _ctsem_flat_better(best, s.best, k)
+            worst = i == 1 ? (s.worst, worst[2]) : (worst[1], s.worst)
+            # One flat side settles it.
+            (isfinite(s.worst) && s.worst < bar) && break
+        end
+        change[k] = _ctsem_flat_change(worst)
+        flat[k] = isfinite(change[k]) && change[k] < bar
+        walked += 1
+    end
+    # The point the finish would take, with its gradient: a rung taken by
+    # value alone has none yet.
+    if best !== nothing && best.G === nothing
+        g = similar(G)
+        fb = fg!(0.0, g, best.point); fcalls += 1; gcalls += 1
+        best = _ctsem_trial_ok(fb) ?
+            (point=best.point, f=fb, G=g, length=best.length, direction=best.direction) :
+            nothing
+    end
+    return (best=best, fcalls=fcalls, gcalls=gcalls, probe=probe,
+        candidates=candidates, change=change, flat=flat, complete=complete,
+        walked=walked, followed=follow)
+end
+
+# Whether the optimiser's trial path evaluated a point: it returns its
+# sentinel, floatmax / 1e8 (`ctsem_optimize`'s `invalid_objective`), where the
+# route refuses one.
+@inline _ctsem_trial_ok(fy::Real) = isfinite(fy) && fy < floatmax(Float64) / 1e9
+
+# A direction's `change` from its sides' largest moves: the smaller of the
+# sides that said anything, NaN where neither did.
+_ctsem_flat_change(worst::Tuple{Float64,Float64}) =
+    isnan(worst[1]) ? worst[2] : isnan(worst[2]) ? worst[1] : min(worst[1], worst[2])
+
+# The lower of two best points, the new one tagged with its direction.
+function _ctsem_flat_better(best, found, direction::Int)::Union{Nothing,_CTSEMFlatBest}
+    found === nothing && return best
+    (best === nothing || found.f < best.f) || return best
+    return (point=found.point, f=found.f, G=found.G, length=found.length,
+        direction=direction)
+end
+
+# The certification's probe from the leading direction's first side taken
+# straight: `straight[i]` is what the rung at `base[i]` gained, maximised.
+function _ctsem_flat_straight(straight::Vector{Float64}, base::Vector{Float64},
+        u::Vector{Float64}, evaluations::Int)
+    gain = 0.0; at = 0.0; longest = 0.0
+    for (i, len) in enumerate(base)
+        isfinite(straight[i]) || continue
+        longest = max(longest, len)
+        if straight[i] > gain
+            gain = straight[i]; at = len
+        end
+    end
+    return (gain=gain, length=at, longest=longest, direction=copy(u),
+        evaluations=evaluations)
 end
 
 """
-How far the flat ladder (`_ctsem_flat_ladder`) follows a direction that stays
-flat, in raw units: past where any of ctsem's transforms is anything but
+One side of one direction of `_ctsem_flat_walk`: the leading direction's
+(`lead`: rungs shortest first, each through `fg!` and followed back by up to
+`corrections` steps, walked on while flat) or a candidate's (rungs longest
+first by value, followed back only past `bar`, the side refused at its first
+rung past it). Returns the side's largest `|f(rung) - f|` over `base` (`worst`,
+NaN where a base rung could not be evaluated), the lowest point below `f`
+(without its gradient where it was taken by value), what each base rung gained
+taken straight (`straight`, the leading direction's), and the calls spent.
+"""
+function _ctsem_flat_side(fg!, valueof, x::Vector{Float64}, f::Float64,
+        u::Vector{Float64}, side::Float64, V::Matrix{Float64},
+        curvature::Vector{Float64}, base::Vector{Float64}; lead::Bool,
+        corrections::Int, reach::Float64, bar::Float64, progress)
+    nbase = length(base)
+    rungs = lead ? copy(base) : sort(base; rev=true)
+    straight = fill(NaN, nbase)
+    worst = 0.0
+    usable = true
+    best = nothing
+    fcalls = 0; gcalls = 0
+    k = 0
+    while k < length(rungs)
+        k += 1
+        len = rungs[k]
+        isbase = k <= nbase
+        progress === nothing || progress(side * len)
+        y = x .+ (side * len) .* u
+        g = nothing
+        if lead
+            g = similar(x)
+            fy = fg!(0.0, g, y); fcalls += 1; gcalls += 1
+            if !_ctsem_trial_ok(fy)
+                isbase && (usable = false)
+                continue
+            end
+        else
+            v = valueof(y); fcalls += 1
+            if !isfinite(v)
+                usable = false
+                break
+            end
+            fy = -v
+        end
+        if isbase
+            j = findfirst(==(len), base)
+            straight[j] = f - fy
+        end
+        if corrections > 0 && !isempty(curvature) && (lead || fy - f >= bar)
+            if g === nothing
+                g = similar(x)
+                fz = fg!(0.0, g, y); fcalls += 1; gcalls += 1
+                _ctsem_trial_ok(fz) || (g = nothing)
+            end
+            if g !== nothing
+                c = _ctsem_flat_correct(fg!, y, fy, g, V, curvature, corrections)
+                fcalls += c.fcalls; gcalls += c.gcalls
+                y = c.point; fy = c.f; g = c.G
+            end
+        end
+        if fy < f && (best === nothing || fy < best.f)
+            best = (point=copy(y), f=fy, G=g === nothing ? nothing : copy(g),
+                length=side * len)
+        end
+        isbase && (worst = max(worst, abs(fy - f)))
+        # Past the bar a candidate's side is refused, and no other rung can
+        # un-refuse it: on the Laplace route every rung is an inner mode solve
+        # a unit, and the directions that are not flat are the ones a whole
+        # ladder would spend most on.
+        (!lead && worst >= bar) && break
+        # The leading direction, still flat at its last rung: walk on.
+        if lead && k == length(rungs) && fy - f < bar && 2 * len <= reach
+            push!(rungs, 2 * len)
+        end
+    end
+    return (worst=usable ? worst : NaN, best=best, straight=straight,
+        fcalls=fcalls, gcalls=gcalls)
+end
+
+"""
+    _ctsem_flatwalk_fields(flatwalk, n)
+
+A flat walk's record (`_ctsem_flat_walk`, with the point it walked from and
+the split it walked) as R reads it (`.ctBackendFlatWalkFields()`), the screen
+`.ctOptimFlatDirectionScreen()` would have returned: `newton_flat_ran`, the
+point (`_at`), the decomposition the verdicts index (`_eigenvalues`, and
+`_eigenvectors` where any direction was a candidate), the candidates, each
+direction's `_change` and `_flat` verdict, what the best point found gained
+(`_gain`, maximised; `_point`, `_direction`, 0 for the gradient's), the
+evaluations (`_evaluations`, of which `_gradients` with a gradient) and
+whether every candidate was walked (`_complete`). The bridge
+hangs on an empty vector, so a field with nothing to send is one placeholder
+entry and `newton_flat_ran` says what is real.
+"""
+function _ctsem_flatwalk_fields(flatwalk, n::Integer)
+    none = (newton_flat_ran=false, newton_flat_at=[0.0], newton_flat_eigenvalues=[0.0],
+        newton_flat_eigenvectors=zeros(1, 1), newton_flat_candidates=[0],
+        newton_flat_change=[0.0], newton_flat_flat=[false], newton_flat_gain=0.0,
+        newton_flat_point=[0.0], newton_flat_direction=0, newton_flat_evaluations=0,
+        newton_flat_gradients=0, newton_flat_complete=false)
+    (flatwalk === nothing || length(flatwalk.at) != n) && return none
+    w = flatwalk.walk
+    sp = flatwalk.split
+    have = !isempty(w.candidates)
+    return (newton_flat_ran=true, newton_flat_at=collect(Float64, flatwalk.at),
+        newton_flat_eigenvalues=collect(Float64, sp.values),
+        newton_flat_eigenvectors=have ? Matrix{Float64}(sp.vectors) : zeros(1, 1),
+        newton_flat_candidates=have ? collect(Int, w.candidates) : [0],
+        newton_flat_change=collect(Float64, w.change),
+        newton_flat_flat=collect(Bool, w.flat),
+        newton_flat_gain=w.best === nothing ? 0.0 : flatwalk.f - w.best.f,
+        newton_flat_point=w.best === nothing ? [0.0] : collect(Float64, w.best.point),
+        newton_flat_direction=w.best === nothing ? 0 : w.best.direction,
+        newton_flat_evaluations=w.fcalls, newton_flat_gradients=w.gcalls,
+        newton_flat_complete=w.complete)
+end
+
+"""
+Whether a flat walk searched the curvature's flat subspace at the point `at`:
+it followed its leading direction (`follow`), walked every direction its split
+does not trust, and found nothing gaining more than `tol` there -- a gain it
+found and the finish could not take is the pullback's to report. Then the
+end-of-run pullback has no need to pull back the coordinates that subspace
+loads on (`_ctsem_overshoot_candidates`).
+"""
+_ctsem_flatwalk_covers(flatwalk, at::AbstractVector, tol::Real) =
+    flatwalk !== nothing && flatwalk.at == at && flatwalk.walk.followed &&
+    flatwalk.walk.complete &&
+    count(.!flatwalk.split.trusted) <= _CTSEM_FLAT_DIRECTIONS &&
+    (flatwalk.walk.best === nothing || flatwalk.f - flatwalk.walk.best.f <= tol)
+
+"""
+Up to `n` Newton steps from `y` (minimised value `fy`, gradient `g`) in the
+trusted directions `V` with curvatures `curvature`, each taking its length
+from the secant of the slopes at its two ends, kept while the value falls:
+the flat walk's way back to a ridge (`_ctsem_flat_walk`).
+"""
+function _ctsem_flat_correct(fg!, y::Vector{Float64}, fy::Float64,
+        g::Vector{Float64}, V::Matrix{Float64}, curvature::Vector{Float64}, n::Int)
+    fcalls = 0; gcalls = 0
+    for _ in 1:n
+        d = -(V * ((transpose(V) * g) ./ curvature))
+        slope = dot(d, g)
+        slope < 0 || break
+        z = y .+ d
+        gz = similar(g)
+        fz = fg!(0.0, gz, z); fcalls += 1; gcalls += 1
+        # The secant of the slope along `d` between its ends: the step's
+        # length where the slope vanishes, exact on a quadratic along it.
+        ends = _ctsem_trial_ok(fz) ? dot(d, gz) : NaN
+        if isfinite(ends) && ends > slope
+            t = slope / (slope - ends)
+            if 0 < t <= 10 && abs(t - 1) > 0.05
+                zt = y .+ t .* d
+                gt = similar(g)
+                ft = fg!(0.0, gt, zt); fcalls += 1; gcalls += 1
+                if _ctsem_trial_ok(ft) && !(_ctsem_trial_ok(fz) && fz <= ft)
+                    z = zt; fz = ft; gz = gt
+                end
+            end
+        end
+        (_ctsem_trial_ok(fz) && fz < fy) || break
+        y = z; fy = fz; g = gz
+    end
+    return (point=y, f=fy, G=g, fcalls=fcalls, gcalls=gcalls)
+end
+
+"""
+How far the flat walk (`_ctsem_flat_walk`) follows its leading direction while
+it stays flat, in raw units: past where any of ctsem's transforms is anything but
 asymptotic, so a ridge that is still flat there runs to a limit, not to
 another maximum.
 """
 const _CTSEM_FLAT_LADDER_REACH = 64.0
 
 """
-How far a rung of the flat ladder may fall below the point it started from and
-still count as flat, so that the side is walked on: R's
-`.ctOptimFlatDirectionScreen()` bar, `qchisq(0.95, 1) / 2`, the change along a
-direction under which the certification calls it one the data do not
-determine.
+How far a rung of the flat walk (`_ctsem_flat_walk`) may move from the point
+it started from and still count as flat: `qchisq(0.95, 1) / 2`, the change
+along a direction under which the identifiability report calls it one the
+data do not determine (R's `.ctOptimFlatDirectionScreen()` bar, which stan's
+fits walk), and the bar under which the leading direction is walked on.
 """
 const _CTSEM_FLAT_LADDER_BAR = 1.920729410347062
 
@@ -3324,12 +3601,14 @@ returned point is returned with it (`saddle_walked`, `saddle_gain`), so a
 direction whose negative curvature is rounding, walked and found flat, is a
 measurement the certification reads rather than a saddle. With no negative curvature but a
 direction the curvature calls flat, or a saddle whose ladder found nothing
-worth having, the flat ladder (`_ctsem_flat_ladder`) is tried, when
+worth having, the flat walk (`_ctsem_flat_walk`) is tried, when
 `flat_escape` (the fit sets it where `_ctsem_flat_escape` allows), along what
 `flat_allowed(from, to)` accepts its point (`_ctsem_flat_allowed`), within the same cap, the steps continuing on the exact Hessian there with a fresh step
 budget. Either escape is taken only when it gains more than `certify_tol`.
-Then, when `probe`, the flat-direction probe (`_ctsem_flat_probe`) at the final
-point.
+The last walk at the final point is returned (`flatwalk`): its first side is
+the certification's probe and its verdicts the identifiability report's.
+Where none ran there, when `probe`, it is walked at the final point, taking
+nothing.
 
 The two tolerances divide by what a decision reads. `certify_tol`, the
 certification's own (the fit sets it; 0 turns off what follows), is for what
@@ -3813,6 +4092,8 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     steps = 0; escapes = 0; gain = Inf
     saddle = false; ladder_tried = false; ladder_gain = 0.0
     saddle_walked = 0; saddle_gain = NaN
+    # The last flat walk (`_ctsem_flat_walk`) and the point it walked from.
+    flatwalk = nothing
     firstgain = Inf; firstwhole = true; handed = false
     # The jump watch (`trust`'s `watch`), where the caller asks for it: the
     # jump a search saw (`seen`) and where, the searches in a row since that
@@ -3835,7 +4116,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         gcalls=gcalls, escapes=escapes, saddle=false, ladder_tried=false,
         ladder_gain=0.0, saddle_walked=0, saddle_gain=NaN,
         probe=_ctsem_no_probe(), history=history, handback=false,
-        walked=nothing, jumped=named)
+        walked=nothing, jumped=named, flatwalk=nothing)
     if H === nothing
         return (x=x, f=f, G=G, hessian=nothing, hessian_at=hat, distance=NaN,
             steps=0, gain=Inf, full_hessians=full_hessians[],
@@ -3843,7 +4124,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             krylov_products=kspent[], fcalls=0, gcalls=0, escapes=0,
             saddle=false, ladder_tried=false, ladder_gain=0.0, saddle_walked=0,
             saddle_gain=NaN, probe=_ctsem_no_probe(), history=history,
-            handback=false, walked=nothing, jumped=nothing)
+            handback=false, walked=nothing, jumped=nothing, flatwalk=nothing)
     end
     at_x = exact && hat == x            # `H` is the exact Hessian at `x`
     # The trust region, in raw units. Each Hessian starts without one -- its
@@ -4173,7 +4454,8 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             krylov_products=kspent[], fcalls=fcalls[], gcalls=gcalls,
             escapes=0, saddle=false, ladder_tried=false, ladder_gain=0.0,
             saddle_walked=0, saddle_gain=NaN, probe=_ctsem_no_probe(),
-            history=history, handback=true, walked=nothing, jumped=nothing)
+            history=history, handback=true, walked=nothing, jumped=nothing,
+            flatwalk=nothing)
         jumped === nothing ||
             return on_jump(jumped, x, f, G, hat, steps, gain, gcalls, escapes)
         H === nothing && break
@@ -4190,7 +4472,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                 fcalls=fcalls[], gcalls=gcalls, escapes=escapes, saddle=false,
                 ladder_tried=false, ladder_gain=0.0, saddle_walked=0,
                 saddle_gain=NaN, probe=_ctsem_no_probe(), history=history,
-                handback=false, walked=-Hs, jumped=nothing)
+                handback=false, walked=-Hs, jumped=nothing, flatwalk=nothing)
         end
         # The final Hessian. A chord Hessian the steps converged on, taken
         # within `reuse_se` standard errors of here, is kept: the exact one at
@@ -4367,22 +4649,25 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             end
         end
         # No saddle to leave, or none worth leaving: a direction the curvature
-        # does not trust may still have somewhere better along it, which neither
-        # the Newton step (no gradient there) nor the certification's straight
-        # probe can see -- `_ctsem_flat_ladder`, where the route allows it.
-        # Along the directions the certification's flat screen would walk
+        # does not trust may still have somewhere better along it, which the
+        # Newton step (no gradient there) cannot see -- the flat walk
+        # (`_ctsem_flat_walk`), where the route allows it, along every
+        # direction the identifiability report would name
         # (`_CTSEM_FLAT_CANDIDATE_RTOL`), not only those the step distrusts.
+        # Where it finds nothing, its verdicts are the report's and its first
+        # side the certification's probe (below).
         (flat_escape && escapes < max_escapes) || break
         ladder_split = _ctsem_information_split(H; rtol=max(flat_rtol,
             _CTSEM_FLAT_CANDIDATE_RTOL), negative=negative)
         ladder_split === nothing && break
-        walked = _ctsem_flat_ladder(fg!, x, f, G, ladder_split;
-            lengths=probe_lengths, progress=ladder_progress)
+        walked = _ctsem_flat_walk(fg!, valueof, x, f, G, ladder_split;
+            lengths=probe_lengths, enough=certify_now(), progress=ladder_progress)
         fcalls[] += walked.fcalls; gcalls += walked.gcalls
+        flatwalk = (walk=walked, at=copy(x), f=f, split=ladder_split)
         (walked.best !== nothing && f - walked.best.f > certify_now() &&
             flat_allowed(x, walked.best.point)) || break
         x = collect(Float64, walked.best.point); f = walked.best.f
-        G = walked.best.G
+        G = walked.best.G::Vector{Float64}
         steps += 1; escapes += 1
         remember!("flat", NaN, walked.best.length, f)
         report(NaN, steps, f, G, x)
@@ -4403,16 +4688,27 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     distance = H === nothing ? NaN : _ctsem_hessian_distance(split, hat, x)
     # What the directions the curvature does not trust are worth, at the point
     # being returned, against its own value: the probe the certification
-    # reads (`.ctBackendCertify()`).
+    # reads (`.ctBackendCertify()`), and the verdicts the identifiability
+    # report and the covariance read (`newton_flat_*`). The last flat walk's,
+    # where it ran here; otherwise walked now, taking nothing, so following
+    # nothing (`follow`).
     probed = _ctsem_no_probe()
-    if probe && split !== nothing && all(isfinite, G)
-        residual = _ctsem_flat_residual(split, -G)
-        if norm(residual) > 0
-            probed = _ctsem_flat_probe(valueof, x, -f, residual;
-                lengths=probe_lengths)
-            fcalls[] += probed.evaluations
+    # A walk that stopped at a gain the finish could not take (`complete`
+    # false) left directions unwalked: walked again, all of them.
+    if !(flatwalk !== nothing && flatwalk.at == x && flatwalk.walk.complete)
+        flatwalk = nothing
+        if probe && H !== nothing && all(isfinite, G)
+            ws = _ctsem_information_split(H; rtol=max(flat_rtol,
+                _CTSEM_FLAT_CANDIDATE_RTOL), negative=negative)
+            if ws !== nothing
+                w = _ctsem_flat_walk(fg!, valueof, x, f, G, ws;
+                    lengths=probe_lengths, follow=false, progress=ladder_progress)
+                fcalls[] += w.fcalls; gcalls += w.gcalls
+                flatwalk = (walk=w, at=copy(x), f=f, split=ws)
+            end
         end
     end
+    probe && flatwalk !== nothing && (probed = flatwalk.walk.probe)
     (x=x, f=f, G=G, hessian=H === nothing ? nothing : -H, hessian_at=hat,
      distance=distance, steps=steps, gain=gain, full_hessians=full_hessians[],
      subset_hessians=subset_hessians[], krylov_models=kmodels[],
@@ -4420,7 +4716,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
      escapes=escapes, saddle=saddle, ladder_tried=ladder_tried,
      ladder_gain=ladder_gain, saddle_walked=saddle_walked,
      saddle_gain=saddle_gain, probe=probed, history=history, handback=false,
-     walked=nothing, jumped=nothing)
+     walked=nothing, jumped=nothing, flatwalk=flatwalk)
 end
 
 """
@@ -4508,10 +4804,40 @@ function ctsem_endgame(objective::CTSEMOptimisable, values::AbstractVector;
         newton_saddle_gain=out.saddle_gain,
         probe_ran=!isempty(probed.direction), probe_gain=probed.gain,
         probe_length=probed.length, probe_longest=probed.longest,
-        probe_direction=isempty(probed.direction) ? [0.0] : probed.direction)
+        probe_direction=isempty(probed.direction) ? [0.0] : probed.direction,
+        _ctsem_flatwalk_fields(out.flatwalk, length(x))...)
 end
 
 export ctsem_endgame
+
+"""
+    ctsem_flat_walk(objective, values, hessian; lengths, rtol)
+
+The flat walk (`_ctsem_flat_walk`) at `values` on `hessian` (of the MAXIMISED
+objective), taking nothing: the record R reads in place of walking the
+directions itself (`.ctOptimFlatDirectionScreen()`), for an uncertainty stage
+whose Hessian is not the one the fit's finish walked. Fields as
+`_ctsem_flatwalk_fields`, with the certification's probe beside them as
+`ctsem_endgame` names it.
+"""
+function ctsem_flat_walk(objective, values::AbstractVector, hessian::AbstractMatrix;
+        lengths=_CTSEM_FLAT_PROBE_LENGTHS, rtol::Real=_CTSEM_FLAT_CANDIDATE_RTOL,
+        gradient_method=:adjoint)
+    x = collect(Float64, values)
+    n = length(x)
+    fg! = _ctsem_trial_closure(objective, gradient_method)
+    G = zeros(n)
+    f = fg!(0.0, G, x)
+    split = _ctsem_information_split(-Matrix{Float64}(hessian); rtol=rtol)
+    (split === nothing || !_ctsem_trial_ok(f) || !all(isfinite, G)) &&
+        return _ctsem_flatwalk_fields(nothing, n)
+    valueof = y -> _ctsem_probe_value(objective, y)
+    w = _ctsem_flat_walk(fg!, valueof, x, Float64(f), G, split;
+        lengths=collect(Float64, lengths), follow=false)
+    return _ctsem_flatwalk_fields((walk=w, at=x, f=Float64(f), split=split), n)
+end
+
+export ctsem_flat_walk
 
 """
     ctsem_hessian_progress(objective, values; forward, chunk, progress,

@@ -343,10 +343,16 @@
       hessian[cbind(natural$index, natural$index)] + curvature
   }
 
+  # The flat directions of that Hessian, as the engine walked them: the fit's
+  # finish where the Hessian is its own, else a walk now
+  # (`.ctBackendFlatScreen()`).
+  flatscreen <- .ctBackendFlatScreen(stored, objectivehessian, hessian, est,
+    lpgFunc, cores)
   uncertaintyfit <- ctOptimComputeUncertainty(est = est, standata = shape,
     sm = NULL, lpgFunc = lpgFunc, uncertainty = uncertainty,
     finishsamples = finishsamples, cores = cores, matsetup = NA,
-    control = control, verbose = verbose, scores = scores, hessian = hessian)
+    control = control, verbose = verbose, scores = scores, hessian = hessian,
+    flatscreen = flatscreen)
 
   # The draw choice itself is `.ctOptimDrawSamples()`, shared with the stan
   # branch of `ctOptimUncertainty()`. It used to be written out here as well,

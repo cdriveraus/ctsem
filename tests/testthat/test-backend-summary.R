@@ -638,6 +638,9 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
   measured <- uncertain$uncertainty$details$flatdirections
   expect_equal(measured$n, 1L)
   expect_lt(max(measured$change), measured$bar)
+  # Walked by the engine (`_ctsem_flat_walk`), once, as the finish walks the
+  # same directions, rather than again in R.
+  expect_true(isTRUE(measured$walked))
   # And the reader is told, in the note that is always there rather than in a
   # section that comes and goes.
   expect_match(interval$uncertaintyNote, "No curvature at the estimate along")

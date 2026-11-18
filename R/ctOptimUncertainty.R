@@ -2571,7 +2571,7 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
   uncertainty=c('hessian','checked','is','bootstrap','fullbootstrap',
     'sandwich','opg'),
   finishsamples=1000, cores=1, matsetup=NA, control=list(), verbose=0,
-  scores=NULL, hessian=NULL){
+  scores=NULL, hessian=NULL, flatscreen=NULL){
   
   uncertainty <- match.arg(uncertainty)
   ctOptimCheckUncertaintyData(standata=standata, uncertainty=uncertainty,
@@ -2628,7 +2628,15 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
     # to reproduce an older result, or to measure what this is worth -- has
     # asked for it, and accepting the argument and ignoring it would be worse
     # than either answer.
+    #
+    # On julia the engine has walked these directions already, in the fit's
+    # finish or on this Hessian now (`flatscreen`, `.ctBackendFlatScreen()`),
+    # once for the escape, the certification's probe and this screen's
+    # verdicts (`_ctsem_flat_walk`); R walks them only where it could not.
+    walked <- if(identical(control$flatScreen, FALSE) || !is.function(flatscreen))
+      FALSE else flatscreen(hess)
     screen <- if(identical(control$flatScreen, FALSE)) NULL else
+      if(!isFALSE(walked)) walked else
       .ctOptimFlatDirectionScreen(-(hess + t(hess)) / 2, lpgFunc, est,
         progress = .ctBackendProgressSink(verbose))
     # The routes that draw from this covariance give the directions it holds at
@@ -2657,7 +2665,7 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
       method_details$flatdirections <- list(
         n = sum(screen$flat), bar = screen$bar, lengths = screen$lengths,
         rtol = screen$rtol, candidates = length(screen$candidates),
-        evaluations = screen$evaluations,
+        evaluations = screen$evaluations, walked = isTRUE(screen$walked),
         change = screen$change[screen$flat],
         eigenvalue = screen$eig$values[screen$flat] /
           max(screen$eig$values),

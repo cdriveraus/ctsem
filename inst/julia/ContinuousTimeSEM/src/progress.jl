@@ -522,12 +522,12 @@ _ctsem_probe_progress(reporter) = (reporter === nothing || !reporter.enabled) ?
 """
     _ctsem_ladder_progress(reporter)
 
-The `(length) -> nothing` callback the finish's flat ladder reports each rung
-through (`_ctsem_flat_ladder`), the rung's signed length in raw units, or
-`nothing` when there is nothing to report through. A rung is up to seven
-gradients and a ladder up to fourteen rungs: on the affect pilot's tied fit
-one ran for over an hour after the exact Hessian with nothing in the log
-(2026-11-16).
+The `(length) -> nothing` callback the finish's flat walk reports each rung
+through (`_ctsem_flat_walk`), the rung's signed length in raw units, or
+`nothing` when there is nothing to report through. A rung of its leading
+direction is up to seven gradients, and that direction up to fourteen rungs: on
+the affect pilot's tied fit the ladder it replaced ran for over an hour after
+the exact Hessian with nothing in the log (2026-11-16).
 """
 _ctsem_ladder_progress(reporter) = (reporter === nothing || !reporter.enabled) ?
     nothing : function (len::Real)
