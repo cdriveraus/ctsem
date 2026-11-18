@@ -2260,28 +2260,50 @@ end
     _ctsem_hessian_distance(split, from, to)
 
 How far `to` is from `from`, in the standard errors the curvature `split`
-describes: the largest `abs(to[i] - from[i]) / se[i]`, with `se` the square
-root of the diagonal of the inverse information over its trusted directions --
-the covariance a fit reports. A coordinate the trusted curvature says nothing
-about has a standard error of zero there, so moving it at all is infinitely far
-and the Hessian is not reused, which is the safe side. R's
-`.ctBackendHessianDistance()` is the same arithmetic.
+describes. The move's part in the trusted directions is measured as a fit's
+standard errors are: the largest `abs(dt[i]) / se[i]` of that part `dt`, with
+`se` the square root of the diagonal of the inverse information over the
+trusted directions -- the covariance a fit reports. Its part in the other
+directions, which have no standard error, is measured in raw units, the scale
+of the raw prior and of every transform, and more where a direction's
+curvature is steeper than that: `sqrt(sum p_k^2 max(|lambda_k|, 1))` over
+them, `p_k` the move along each. The distance is the larger of the two. With
+no trusted direction it is infinite: there is no standard error to keep.
+
+Until 2026-11-18 the whole move was read against the trusted standard errors,
+so a move along an untrusted direction counted through every coordinate
+loading on it. On the affect pilot's tied fit two Newton steps on the
+certification's Hessian moved the point 0.024 standard errors in the trusted
+metric and 0.0046 raw units along a curvature of -0.16, which a population
+loading lies along, with a trusted standard error of 0.0017: the move read
+as 2.75 standard errors, past `hessianreuse`, and the finish formed a second
+exact Hessian, three hours. R's `.ctBackendHessianDistance()` is the same
+arithmetic.
 """
 function _ctsem_hessian_distance(split, from::AbstractVector, to::AbstractVector)
     d = collect(Float64, to) .- collect(Float64, from)
     all(iszero, d) && return 0.0
     split === nothing && return Inf
     keep = findall(split.trusted)
+    isempty(keep) && return Inf
+    V = split.vectors
+    along = transpose(V) * d
+    trusted_move = V[:, keep] * along[keep]
     worst = 0.0
     for i in eachindex(d)
-        iszero(d[i]) && continue
+        iszero(trusted_move[i]) && continue
         variance = 0.0
         for k in keep
-            variance += split.vectors[i, k]^2 / split.values[k]
+            variance += V[i, k]^2 / split.values[k]
         end
-        worst = max(worst, variance > 0 ? abs(d[i]) / sqrt(variance) : Inf)
+        worst = max(worst, variance > 0 ? abs(trusted_move[i]) / sqrt(variance) : Inf)
     end
-    worst
+    other = 0.0
+    for k in eachindex(along)
+        split.trusted[k] && continue
+        other += abs2(along[k]) * max(abs(split.values[k]), 1.0)
+    end
+    max(worst, sqrt(other))
 end
 
 """

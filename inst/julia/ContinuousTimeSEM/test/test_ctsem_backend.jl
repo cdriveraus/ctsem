@@ -1579,6 +1579,29 @@ end
     @test led.probe.evaluations > 0
 end
 
+@testset "a move along a direction without a standard error is measured in raw units" begin
+    C = ContinuousTimeSEM
+    dist(H, d) = C._ctsem_hessian_distance(C._ctsem_information_split(H), zeros(length(d)), d)
+    # Trusted: the largest move over its standard error, as R's covariance.
+    info = [4.0 1.0; 1.0 25.0]
+    se = sqrt.(diag(inv(info)))
+    @test dist(info, [0.01, -0.02]) ≈ maximum(abs.([0.01, -0.02]) ./ se)
+    # Untrusted: raw units, more where the curvature is steeper than the prior's.
+    @test dist(Matrix(Diagonal([4.0, 0.0])), [0.0, 0.5]) ≈ 0.5
+    @test dist(Matrix(Diagonal([4.0, -9.0])), [0.0, 0.1]) ≈ 0.3
+    # The affect pilot's case: a coordinate lying mostly along a negative
+    # curvature, its trusted standard error tiny. A move along that direction
+    # is its raw length, where read through the trusted standard error it was
+    # hundreds.
+    a = 0.02
+    R = [cos(a) -sin(a); sin(a) cos(a)]
+    H = R * Diagonal([1e6, -0.16]) * transpose(R)
+    @test dist(H, 0.0046 .* R[:, 2]) ≈ 0.0046 rtol = 1e-8
+    # Nothing trusted: no standard error to keep.
+    @test dist(-Matrix(1.0I, 2, 2), [0.1, 0.0]) == Inf
+    @test dist(H, [0.0, 0.0]) == 0.0
+end
+
 @testset "the finish leaves a plateau on a curved ridge where the route allows it" begin
     m = _endgame_mock(_ridge)
     x0 = [-4.0, _ridge_c(-4.0)]

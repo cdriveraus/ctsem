@@ -295,13 +295,30 @@ test_that("distance is measured in the standard errors the Hessian implies", {
   d <- c(0.01, -0.02)
   expect_equal(ctsem:::.ctBackendHessianDistance(-info, c(0, 0), d),
     max(abs(d) / se))
-  # A coordinate the trusted curvature says nothing about has no standard
-  # error there, so moving it at all is infinitely far -- and not moving it
-  # costs nothing.
+  # A direction the curvature does not trust has no standard error, so a move
+  # along it is measured in raw units, the raw prior's scale -- and not moving
+  # it costs nothing.
   flat <- -diag(c(4, 0))
-  expect_equal(ctsem:::.ctBackendHessianDistance(flat, c(0, 0), c(0, 1e-9)), Inf)
+  expect_equal(ctsem:::.ctBackendHessianDistance(flat, c(0, 0), c(0, 1e-9)), 1e-9)
+  expect_equal(ctsem:::.ctBackendHessianDistance(flat, c(0, 0), c(0, 0.5)), 0.5)
   expect_equal(ctsem:::.ctBackendHessianDistance(flat, c(0, 0), c(0.005, 0)),
     0.01)
+  # Steeper than the prior's there, more: a negative curvature of -9 makes a
+  # move of 0.1 along it 0.3.
+  expect_equal(ctsem:::.ctBackendHessianDistance(-diag(c(4, -9)), c(0, 0),
+    c(0, 0.1)), 0.3)
+  # A coordinate that lies mostly along such a direction is not read through
+  # its trusted standard error: the affect pilot's case, a loading on a
+  # negative curvature with a small trusted part. Its trusted standard error
+  # is tiny, and a move along the negative direction alone is its raw length.
+  angle <- 0.02
+  rot <- matrix(c(cos(angle), sin(angle), -sin(angle), cos(angle)), 2, 2)
+  info <- rot %*% diag(c(1e6, -0.16)) %*% t(rot)
+  along <- 0.0046 * rot[, 2]
+  expect_equal(ctsem:::.ctBackendHessianDistance(-info, c(0, 0), along),
+    0.0046, tolerance = 1e-10)
+  # Nothing trusted: no standard error to keep.
+  expect_equal(ctsem:::.ctBackendHessianDistance(diag(2), c(0, 0), c(0.1, 0)), Inf)
   # A matrix that cannot be decomposed describes nothing.
   expect_equal(ctsem:::.ctBackendHessianDistance(matrix(NA_real_, 1, 1), 0, 1),
     Inf)

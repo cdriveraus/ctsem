@@ -1047,12 +1047,19 @@
   if (!length(d) || all(d == 0)) return(0)
   split <- .ctBackendInformationSplit(hessian, rtol = rtol)
   if (is.null(split) || length(split$values) != length(d)) return(Inf)
+  if (!any(split$trusted)) return(Inf)
+  # The move's part in the trusted directions against the standard errors a
+  # fit reports; its part in the others, which have none, in raw units, more
+  # where the curvature there is steeper (the engine's
+  # `_ctsem_hessian_distance`, which says why).
+  along <- as.numeric(crossprod(split$vectors, d))
   vectors <- split$vectors[, split$trusted, drop = FALSE]
   values <- split$values[split$trusted]
-  variance <- if (length(values)) rowSums(sweep(vectors^2, 2L, values, "/")) else
-    rep(0, length(d))
-  ratio <- ifelse(d == 0, 0, ifelse(variance > 0, abs(d) / sqrt(variance), Inf))
-  max(ratio)
+  moved <- as.numeric(vectors %*% along[split$trusted])
+  variance <- rowSums(sweep(vectors^2, 2L, values, "/"))
+  ratio <- ifelse(moved == 0, 0, ifelse(variance > 0, abs(moved) / sqrt(variance), Inf))
+  other <- along[!split$trusted]
+  max(max(ratio), sqrt(sum(other^2 * pmax(abs(split$values[!split$trusted]), 1))))
 }
 
 # How far, in standard errors, the estimate may be from where a Hessian was
