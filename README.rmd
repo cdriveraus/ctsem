@@ -59,21 +59,19 @@ accurately than earlier versions did.
 ## Installation
 
 ```r
-install.packages('ctsem')                     # CRAN release
-remotes::install_github('cdriveraus/ctsem')   # development version
-
+remotes::install_github('cdriveraus/ctsem')
 library(ctsem)
 ctJuliaInstall()   # once, to set up Julia
 ```
 
-Version 4 is not on CRAN yet, so install it from GitHub for now. The first fit
-after installing takes a few minutes longer while the engine compiles. Without
-Julia, `ctFit(..., backend = 'stan')` fits models as ctsem 3 did.
+The first fit after installing takes a few minutes longer while the engine
+compiles. Without Julia, `ctFit(..., backend = 'stan')` fits models as ctsem 3
+did.
 
 <details><summary>Compiler problems on Windows</summary>
 
-Installing from GitHub, and fitting nonlinear models with the Stan backend,
-need the Rtools version that matches your R. If compiling fails, check that
+Installing from GitHub compiles the package, which on Windows needs the Rtools
+version that matches your R. If compiling fails, check that
 `rstan` itself works, and try adding this line to `~/.R/Makevars.win`:
 
 ```
