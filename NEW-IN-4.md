@@ -1,8 +1,9 @@
 # New in ctsem 4
 
-ctsem 4 adds an estimation engine written in Julia, now the default, and most
-new features build on it. Models and code written for ctsem 3 still work. This
-page summarises what changed; [NEWS.md](NEWS.md) lists every change.
+Version 4 adds an estimation engine written in Julia, now the default, and most
+new features build on it. Most code written for version 3 still runs; the
+tables at the end list the changed defaults and the renamed and removed
+functions. [NEWS.md](NEWS.md) is the change log.
 
 ## Julia engine
 
@@ -12,40 +13,36 @@ fit <- ctFit(data, model)
 ```
 
 `ctJuliaInstall()` sets up Julia and the engine, asking before each download.
-The first fit after installing or updating ctsem takes a few extra minutes
-while the engine is compiled.
+The first fit after installing or updating ctsem takes a few minutes longer
+while the engine compiles.
 
-- Fits are two to three times faster than with Stan on one core, and use
-  several cores at once (`cores`).
-- Models are not compiled one by one, so a nonlinear model starts fitting
-  straight away. With Stan, each new nonlinear model took several minutes to
-  compile.
-- `backend = 'stan'` still fits as ctsem 3 did.
+- Fits are two to three times faster than with Stan, and use multiple cores
+  (`cores`).
+- New models need no compilation, so a nonlinear model starts fitting at once.
+  With Stan, each new nonlinear model took minutes to compile.
+- `backend = 'stan'` fits as ctsem 3 did.
 
 ## Random effects
 
 - Random effects are integrated with a Laplace approximation. Version 3 carried
   them as extra states of the Kalman filter, which underestimates individual
-  differences in the dynamics. Random intercepts in linear models are still
-  integrated exactly, also beside random dynamics, where Laplace then
-  approximates only the integral over the rest
-  (`optimcontrol$laplace_onestep = TRUE` approximates them all together).
-  `intoverpop = 'augmented'` gives the old method, and `ctFit()` warns when
-  that method meets nonlinear dynamics.
+  differences in the dynamics. In linear models, random intercepts are
+  integrated exactly. `intoverpop = 'augmented'` gives the old method, and
+  `ctFit()` warns when that method meets nonlinear dynamics.
 - Each fit checks the approximation and warns if it affects the estimates.
   `intoverpop = 'quadrature'` then refines the fit, and
   `ctFitUncertainty(fit, 'sample')` samples the full posterior instead.
-- Random effects can sit at several nested levels, such as people within
+- Random effects can be at multiple nested levels, such as people within
   couples: `id = c('person', 'couple')`, with each parameter's `indvarying`
   naming the levels it varies at. See the
   [multilevel vignette](https://cdriveraus.github.io/ctsem/articles/laplace-multilevel.html).
-- `poprank`, `popunique` and `popblocks` simplify the random effects
-  covariance when many parameters vary.
+- `poprank`, `popunique` and `popblocks` give the random effects covariance
+  fewer parameters when many parameters vary.
 
 ## Measurement models
 
-Observed variables can be continuous, binary, ordinal, counts or censored, set
-for each variable with `manifesttype`, and types can be mixed in one model.
+Observed variables can be continuous, binary, ordinal, counts or censored, in
+any mix, set for each variable with `manifesttype`.
 
 | `manifesttype` | type | also needed |
 |---|---|---|
@@ -55,8 +52,8 @@ for each variable with `manifesttype`, and types can be mixed in one model.
 | 3 | count | |
 | 4 | censored | `censormin`, `censormax` |
 
-Measurement and dynamics that depend on the latent state are also handled more
-accurately. See the vignettes on
+Nonlinear measurement and dynamics are filtered more accurately than in version
+3. See the vignettes on
 [measurement models](https://cdriveraus.github.io/ctsem/articles/measurement-models.html),
 [item response models](https://cdriveraus.github.io/ctsem/articles/irt-items.html)
 and [ordinal or continuous data](https://cdriveraus.github.io/ctsem/articles/ordinal-or-continuous.html).
@@ -65,19 +62,19 @@ and [ordinal or continuous data](https://cdriveraus.github.io/ctsem/articles/ord
 
 - Smooth effects of time independent covariates:
   `TIpredNames = ~ s(age) + sex`.
-- Missing values of time independent covariates are handled automatically.
-- Subject weights, to estimate population values from an unrepresentative
-  sample: `ctFit(..., weights = w)`. See the
+- Subject weights, for population estimates from a sample that does not
+  represent the population: `ctFit(..., weights = w)`. See the
   [sampling weights vignette](https://cdriveraus.github.io/ctsem/articles/sampling-weights.html).
 
 ## Uncertainty and sampling
 
-- Standard errors come from the Hessian, and ctsem checks whether that
-  approximation holds.
-- `ctFitUncertainty()` recomputes the uncertainty by other methods, such as
-  the bootstrap or importance sampling. It replaces `ctOptimUncertainty()`.
+- Standard errors come from the Hessian, as before, and each fit checks whether
+  that approximation holds.
+- `ctFitUncertainty()`, which replaces `ctOptimUncertainty()`, computes the
+  uncertainty by other methods, such as a sandwich estimator, the bootstrap or
+  importance sampling.
 - `ctFit(optimize = FALSE)`, or `ctFitUncertainty(fit, 'sample')` after a fit,
-  samples the posterior until the effective sample size is large enough. See
+  samples the posterior until the effective sample size reaches its target. See
   the [uncertainty vignette](https://cdriveraus.github.io/ctsem/articles/uncertainty.html).
 
 ## Checking and improving models
@@ -86,25 +83,24 @@ and [ordinal or continuous data](https://cdriveraus.github.io/ctsem/articles/ord
 |---|---|
 | `ctReport(fit)` | run the main summaries, plots and checks, and save them to a folder |
 | `ctIdentify(data, model)` | see which parameters the data can inform, before fitting |
-| `ctScoreTest(fit)` | test whether the model is missing random effects, covariate effects or nonlinearity, without refitting; `intoverpop = 'quadrature'` integrates the random effects by quadrature for the tests that extend the model ([vignette](https://cdriveraus.github.io/ctsem/articles/score-tests.html)) |
+| `ctScoreTest(fit)` | test whether the model is missing random effects, covariate effects or nonlinearity, without refitting ([vignette](https://cdriveraus.github.io/ctsem/articles/score-tests.html)) |
 | `ctFitAdequacy(fit)` | test the model's one-step-ahead predictions |
-| `ctModelImprove(fit)` | search for a better model, step by step, guided by those tests |
-| `ctLOO(fit, method = 'psis')` | cross validate without refitting |
+| `ctModelImprove(fit)` | search for a better model step by step, guided by score tests |
+| `ctLOO(fit, method = 'psis')` | cross validation without refitting |
 | `ctFitProfile(fit)` | profile likelihood |
-| `anova()`, `coef()`, `vcov()`, `logLik()` | the usual R generics |
+| `anova()`, `coef()`, `vcov()`, `logLik()` | the standard R generics |
 
 `ctModelHigherOrder()`, `ctModelSlowComponent()`, `ctModelPeriodicComponent()`
-and `ctModelUniqueProcess()` extend a model with a second order, a slow
+and `ctModelUniqueProcess()` extend a model with second order dynamics, a slow
 process, a cycle, or a process specific to one indicator.
 
-## Plots and summaries
+## Plots
 
 `ctNetwork()` and `ctNetworkPlot()` draw temporal and contemporaneous networks,
-`ctPhasePortrait()` a phase portrait, `ctStateDependencePlot()` how a nonlinear
-model's parameters change with the state, and `ctVarianceDecomposition()`
-splits variance into between person, process and measurement parts.
-`ctTracePlot()` shows the optimisation or sampling. `summary()` also gives the
-correlation matrices (`DIFFUSIONcor`, `T0cor`, `MANIFESTcor`).
+`ctPhasePortrait()` a phase portrait, and `ctStateDependencePlot()` how a
+nonlinear model's parameters change with the state. `ctVarianceDecomposition()`
+splits variance into between subject, process and measurement parts, and
+`ctTracePlot()` shows the path of the optimiser or sampler.
 
 ## Model specification
 
@@ -112,8 +108,8 @@ correlation matrices (`DIFFUSIONcor`, `T0cor`, `MANIFESTcor`).
   `'cint, indvarying=TRUE, tipreds=c(age)'`. `ctPar()` writes these, and
   `ctCov()` writes covariance matrices.
 - Covariance matrices use a new parameterisation (a matrix logarithm), so their
-  off-diagonal parameters are not correlations. The correlation matrices in
-  `summary()` give the correlations.
+  off-diagonal parameters are not correlations. `summary()` reports the
+  correlation matrices (`DIFFUSIONcor`, `T0cor`, `MANIFESTcor`).
 - `ctGenerate()` simulates data from any model, including random effects and
   non-Gaussian indicators.
 

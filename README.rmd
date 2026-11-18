@@ -28,9 +28,8 @@ knitr::opts_chunk$set(
 <!-- badges: end -->
 
 ctsem fits continuous and discrete time dynamic models to longitudinal data in
-R. It works with panel data with a few waves, intensive longitudinal data and
-single long time series, and observation times can be irregular and different
-for each person.
+R: panel data, intensive longitudinal data or a single time series.
+Observations can be at any times, and the times can differ between subjects.
 
 [Website](https://cdriveraus.github.io/ctsem/) ·
 [New in version 4](NEW-IN-4.md) ·
@@ -38,46 +37,44 @@ for each person.
 
 ## Features
 
-- Several interacting processes, oscillations and other higher order dynamics,
-  time-varying inputs and interventions, and nonlinear dynamics.
-- Several indicators per process, which can be continuous, binary, ordinal,
-  counts or censored.
-- Individual differences in any parameter, at one or more levels (for example
-  people within couples), and covariate effects on any parameter.
-- Maximum likelihood, maximum a posteriori, or Bayesian sampling.
-- Tools for checking a model and finding what it is missing.
-- Latent growth curves, latent change scores and cross-lagged panel models are
+- Multiple interacting processes, including higher order (such as oscillating)
+  and nonlinear dynamics.
+- Effects of time-varying inputs, such as interventions.
+- Multiple indicators, which can be continuous, binary, ordinal, counts or
+  censored.
+- Individual differences in any parameter, including at multiple nested levels
+  (such as people within couples).
+- Covariate effects on any parameter.
+- Maximum likelihood, or Bayesian estimation by optimisation or sampling.
+- Tools for testing a model's fit and finding how to improve it.
+- Latent growth curve, latent change score and cross-lagged panel models as
   special cases.
 
-Version 4 adds an estimation engine written in Julia, now the default. It is
-two to three times faster than the Stan backend of earlier versions on one
-core, uses several cores at once, and does not need to compile each new model.
-Random effects are integrated with a Laplace approximation, which estimates
-individual differences in the dynamics more accurately.
+Version 4 adds an estimation engine written in Julia, now the default. It is two
+to three times faster than the Stan backend, uses multiple cores, and needs no
+compilation for new models. Random effects are integrated with a Laplace
+approximation, which estimates individual differences in the dynamics more
+accurately than earlier versions did.
 
 ## Installation
 
 ```r
-install.packages('ctsem')   # CRAN release
-
-# or the development version
-remotes::install_github('cdriveraus/ctsem',
-  INSTALL_opts = "--no-multiarch", dependencies = c("Depends", "Imports"))
+install.packages('ctsem')                     # CRAN release
+remotes::install_github('cdriveraus/ctsem')   # development version
 
 library(ctsem)
 ctJuliaInstall()   # once, to set up Julia
 ```
 
-The first fit after installing takes a few extra minutes while the engine is
-compiled. Without Julia, `ctFit(..., backend = 'stan')` fits models as ctsem 3
-did.
+Version 4 is not on CRAN yet, so install it from GitHub for now. The first fit
+after installing takes a few minutes longer while the engine compiles. Without
+Julia, `ctFit(..., backend = 'stan')` fits models as ctsem 3 did.
 
 <details><summary>Compiler problems on Windows</summary>
 
 Installing from GitHub, and fitting nonlinear models with the Stan backend,
-need a C++ toolchain: a recent R with the matching Rtools. If compiling fails,
-check that `rstan` itself works, and put this line, alone, in
-`~/.R/Makevars.win`:
+need the Rtools version that matches your R. If compiling fails, check that
+`rstan` itself works, and try adding this line to `~/.R/Makevars.win`:
 
 ```
 CXX17FLAGS += -mtune=native -Wno-ignored-attributes -Wno-deprecated-declarations
@@ -90,8 +87,8 @@ problems.
 
 ## Example
 
-Daily milk yield and fat percentage of 53 cows over a lactation, from the
-[doBy](https://cran.r-project.org/package=doBy) package:
+Milk yield and fat percentage of 53 cows, recorded on most days of a lactation,
+from the [doBy](https://cran.r-project.org/package=doBy) package:
 
 ```{r firstmodel, results = 'hide'}
 library(ctsem)
@@ -114,37 +111,36 @@ model <- ctModel(
 fit <- ctFit(milk, model)
 ```
 
-Everything not given in `ctModel()`, including the effects between the two
-processes, takes its default and is estimated.
+Anything not given to `ctModel()` takes a default. The effects between the two
+processes, for example, are estimated.
 
 ```{r firstsummary}
 summary(fit)$popmeans
 ```
 
 `drift_yield` and `drift_fat` are the auto effects: negative values mean each
-process returns towards its equilibrium. `drift_yield_fat` is the effect of fat
-on yield and `drift_fat_yield` the reverse. Higher fat predicts a later fall in
-yield, while the reverse effect is close to zero. The `diff` parameters
-describe the random fluctuations of the processes, `mvar` the measurement
-error, `mm` the measurement intercepts, and `T0m` the starting values.
+process tends back towards its equilibrium. `drift_yield_fat` is the effect of
+fat on yield, and `drift_fat_yield` the reverse. Higher fat is followed by lower
+yield, while yield has little or no effect on fat. The `diff` parameters
+describe the process noise, `mvar` the measurement error, `mm` the measurement
+intercepts and `T0m` the initial states.
 
 ```{r firstplot, fig.height = 4.4, fig.width = 8, fig.alt = "Observed yield and fat percentage for two cows over one lactation, with the model's expected trajectory and uncertainty band tracking each series."}
 ctPredict(fit, subjects = unique(milk$cow)[1:2], plot = TRUE)
 ```
 
-The observations for two cows, with the model's predictions and their
-uncertainty.
+Observations for two cows, with the model's predictions and their uncertainty.
 
 ```{r firstdiscrete, fig.height = 4.4, fig.width = 8, fig.alt = "Auto and cross regression coefficients plotted against the time interval. The effect of fat on yield grows steadily more negative; the reverse effect stays near zero."}
 ctDiscretePars(fit, plot = TRUE)
 ```
 
-The auto and cross effects as regression coefficients, for any time interval
-between observations.
+The auto and cross effects as regression coefficients, as they change with the
+time interval.
 
 ## Covariate effects
 
-Covariates can act on any parameter. Here diet affects the growth of chicks
+This example estimates the effect of diet on the growth of chicks
 (`ChickWeight`, in base R):
 
 ```{r chickdata}
@@ -171,15 +167,15 @@ m <- ctModel(
 f <- ctFit(chickdata, m, priors = TRUE)
 ```
 
-In a model, a string is a free parameter and a number is fixed. A parameter's
-options follow its name, such as `tipreds` for covariate effects or
-`indvarying` for random effects; `ctPar()` writes them for you.
+In `ctModel()`, a string is a free parameter and a number a fixed value. Options
+follow the parameter's name, such as `tipreds` for covariate effects or
+`indvarying` for random effects; `ctPar()` writes these strings.
 
 ```{r chicktipreds}
 summary(f)$tipreds
 ```
 
-Diets 3 and 4 increase the intercept, and so the growth, compared with diet 1.
+Diets 3 and 4 raise the intercept, and so the growth rate, compared with diet 1.
 
 ```{r chickpredict, fig.height = 4.2, fig.width = 8, fig.alt = "Predicted weight trajectories for one chick from each of the four diets, based on the diet covariates alone, separating into four increasing curves."}
 ctPredict(f, plot = TRUE, removeObs = TRUE, polygonalpha = 0,

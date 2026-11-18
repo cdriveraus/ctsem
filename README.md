@@ -16,9 +16,9 @@ status](https://www.r-pkg.org/badges/version/ctsem)](https://cran.r-project.org/
 <!-- badges: end -->
 
 ctsem fits continuous and discrete time dynamic models to longitudinal
-data in R. It works with panel data with a few waves, intensive
-longitudinal data and single long time series, and observation times can
-be irregular and different for each person.
+data in R: panel data, intensive longitudinal data or a single time
+series. Observations can be at any times, and the times can differ
+between subjects.
 
 [Website](https://cdriveraus.github.io/ctsem/) · [New in version
 4](NEW-IN-4.md) · [Tutorial
@@ -26,42 +26,40 @@ paper](https://osf.io/preprints/psyarxiv/4q9ex_v3)
 
 ## Features
 
-- Several interacting processes, oscillations and other higher order
-  dynamics, time-varying inputs and interventions, and nonlinear
-  dynamics.
-- Several indicators per process, which can be continuous, binary,
-  ordinal, counts or censored.
-- Individual differences in any parameter, at one or more levels (for
-  example people within couples), and covariate effects on any
-  parameter.
-- Maximum likelihood, maximum a posteriori, or Bayesian sampling.
-- Tools for checking a model and finding what it is missing.
-- Latent growth curves, latent change scores and cross-lagged panel
-  models are special cases.
+- Multiple interacting processes, including higher order (such as
+  oscillating) and nonlinear dynamics.
+- Effects of time-varying inputs, such as interventions.
+- Multiple indicators, which can be continuous, binary, ordinal, counts
+  or censored.
+- Individual differences in any parameter, including at multiple nested
+  levels (such as people within couples).
+- Covariate effects on any parameter.
+- Maximum likelihood, or Bayesian estimation by optimisation or
+  sampling.
+- Tools for testing a model’s fit and finding how to improve it.
+- Latent growth curve, latent change score and cross-lagged panel models
+  as special cases.
 
 Version 4 adds an estimation engine written in Julia, now the default.
-It is two to three times faster than the Stan backend of earlier
-versions on one core, uses several cores at once, and does not need to
-compile each new model. Random effects are integrated with a Laplace
-approximation, which estimates individual differences in the dynamics
-more accurately.
+It is two to three times faster than the Stan backend, uses multiple
+cores, and needs no compilation for new models. Random effects are
+integrated with a Laplace approximation, which estimates individual
+differences in the dynamics more accurately than earlier versions did.
 
 ## Installation
 
 ``` r
-install.packages('ctsem')   # CRAN release
-
-# or the development version
-remotes::install_github('cdriveraus/ctsem',
-  INSTALL_opts = "--no-multiarch", dependencies = c("Depends", "Imports"))
+install.packages('ctsem')                     # CRAN release
+remotes::install_github('cdriveraus/ctsem')   # development version
 
 library(ctsem)
 ctJuliaInstall()   # once, to set up Julia
 ```
 
-The first fit after installing takes a few extra minutes while the
-engine is compiled. Without Julia, `ctFit(..., backend = 'stan')` fits
-models as ctsem 3 did.
+Version 4 is not on CRAN yet, so install it from GitHub for now. The
+first fit after installing takes a few minutes longer while the engine
+compiles. Without Julia, `ctFit(..., backend = 'stan')` fits models as
+ctsem 3 did.
 
 <details>
 
@@ -71,9 +69,9 @@ Compiler problems on Windows
 </summary>
 
 Installing from GitHub, and fitting nonlinear models with the Stan
-backend, need a C++ toolchain: a recent R with the matching Rtools. If
-compiling fails, check that `rstan` itself works, and put this line,
-alone, in `~/.R/Makevars.win`:
+backend, need the Rtools version that matches your R. If compiling
+fails, check that `rstan` itself works, and try adding this line to
+`~/.R/Makevars.win`:
 
     CXX17FLAGS += -mtune=native -Wno-ignored-attributes -Wno-deprecated-declarations
 
@@ -84,8 +82,9 @@ problems.
 
 ## Example
 
-Daily milk yield and fat percentage of 53 cows over a lactation, from
-the [doBy](https://cran.r-project.org/package=doBy) package:
+Milk yield and fat percentage of 53 cows, recorded on most days of a
+lactation, from the [doBy](https://cran.r-project.org/package=doBy)
+package:
 
 ``` r
 library(ctsem)
@@ -108,34 +107,34 @@ model <- ctModel(
 fit <- ctFit(milk, model)
 ```
 
-Everything not given in `ctModel()`, including the effects between the
-two processes, takes its default and is estimated.
+Anything not given to `ctModel()` takes a default. The effects between
+the two processes, for example, are estimated.
 
 ``` r
 summary(fit)$popmeans
 #>                   mean    sd   2.5%    50%  97.5%   mode
-#> T0m_yield       -0.940 0.144 -1.223 -0.944 -0.647 -0.943
-#> T0m_fat          0.133 0.191 -0.227  0.130  0.529  0.150
-#> drift_yield     -0.041 0.004 -0.050 -0.040 -0.033 -0.041
+#> T0m_yield       -0.949 0.142 -1.209 -0.950 -0.663 -0.943
+#> T0m_fat          0.158 0.185 -0.212  0.155  0.506  0.151
+#> drift_yield     -0.041 0.004 -0.049 -0.041 -0.033 -0.041
 #> drift_yield_fat -0.020 0.004 -0.027 -0.020 -0.013 -0.020
-#> drift_fat_yield -0.006 0.004 -0.013 -0.006  0.001 -0.006
-#> drift_fat       -0.015 0.004 -0.025 -0.015 -0.008 -0.015
-#> diff_yield       0.136 0.004  0.128  0.136  0.143  0.136
-#> diff_fat_yield  -0.595 0.061 -0.715 -0.596 -0.480 -0.592
-#> diff_fat         0.115 0.005  0.106  0.115  0.125  0.116
-#> mvaryield        0.329 0.003  0.323  0.329  0.334  0.328
-#> mvarfat          0.582 0.005  0.574  0.582  0.591  0.582
-#> mm_yield        -0.060 0.117 -0.299 -0.059  0.161 -0.054
-#> mm_fat           0.149 0.110 -0.065  0.146  0.360  0.142
+#> drift_fat_yield -0.006 0.004 -0.013 -0.006  0.002 -0.006
+#> drift_fat       -0.015 0.004 -0.024 -0.015 -0.009 -0.015
+#> diff_yield       0.136 0.004  0.129  0.136  0.143  0.136
+#> diff_fat_yield  -0.591 0.062 -0.708 -0.592 -0.472 -0.592
+#> diff_fat         0.116 0.005  0.106  0.116  0.125  0.116
+#> mvaryield        0.329 0.003  0.323  0.329  0.335  0.328
+#> mvarfat          0.582 0.005  0.573  0.582  0.591  0.582
+#> mm_yield        -0.053 0.123 -0.299 -0.052  0.187 -0.054
+#> mm_fat           0.141 0.108 -0.063  0.140  0.352  0.142
 ```
 
 `drift_yield` and `drift_fat` are the auto effects: negative values mean
-each process returns towards its equilibrium. `drift_yield_fat` is the
-effect of fat on yield and `drift_fat_yield` the reverse. Higher fat
-predicts a later fall in yield, while the reverse effect is close to
-zero. The `diff` parameters describe the random fluctuations of the
-processes, `mvar` the measurement error, `mm` the measurement
-intercepts, and `T0m` the starting values.
+each process tends back towards its equilibrium. `drift_yield_fat` is
+the effect of fat on yield, and `drift_fat_yield` the reverse. Higher
+fat is followed by lower yield, while yield has little or no effect on
+fat. The `diff` parameters describe the process noise, `mvar` the
+measurement error, `mm` the measurement intercepts and `T0m` the initial
+states.
 
 ``` r
 ctPredict(fit, subjects = unique(milk$cow)[1:2], plot = TRUE)
@@ -143,7 +142,7 @@ ctPredict(fit, subjects = unique(milk$cow)[1:2], plot = TRUE)
 
 <img src="man/figures/README-firstplot-1.png" alt="Observed yield and fat percentage for two cows over one lactation, with the model's expected trajectory and uncertainty band tracking each series." width="100%" />
 
-The observations for two cows, with the model’s predictions and their
+Observations for two cows, with the model’s predictions and their
 uncertainty.
 
 ``` r
@@ -152,13 +151,13 @@ ctDiscretePars(fit, plot = TRUE)
 
 <img src="man/figures/README-firstdiscrete-1.png" alt="Auto and cross regression coefficients plotted against the time interval. The effect of fat on yield grows steadily more negative; the reverse effect stays near zero." width="100%" />
 
-The auto and cross effects as regression coefficients, for any time
-interval between observations.
+The auto and cross effects as regression coefficients, as they change
+with the time interval.
 
 ## Covariate effects
 
-Covariates can act on any parameter. Here diet affects the growth of
-chicks (`ChickWeight`, in base R):
+This example estimates the effect of diet on the growth of chicks
+(`ChickWeight`, in base R):
 
 ``` r
 chickdata <- ChickWeight
@@ -184,20 +183,20 @@ m <- ctModel(
 f <- ctFit(chickdata, m, priors = TRUE)
 ```
 
-In a model, a string is a free parameter and a number is fixed. A
-parameter’s options follow its name, such as `tipreds` for covariate
-effects or `indvarying` for random effects; `ctPar()` writes them for
-you.
+In `ctModel()`, a string is a free parameter and a number a fixed value.
+Options follow the parameter’s name, such as `tipreds` for covariate
+effects or `indvarying` for random effects; `ctPar()` writes these
+strings.
 
 ``` r
 summary(f)$tipreds
 #>                  mean    sd   2.5%   50% 97.5%  mode     z
-#> tip_Diet_2_cint 0.020 0.014 -0.007 0.020 0.047 0.021 1.488
-#> tip_Diet_3_cint 0.050 0.013  0.024 0.050 0.075 0.051 3.747
-#> tip_Diet_4_cint 0.028 0.013  0.002 0.028 0.053 0.028 2.138
+#> tip_Diet_2_cint 0.021 0.013 -0.005 0.021 0.046 0.021 1.570
+#> tip_Diet_3_cint 0.050 0.013  0.025 0.050 0.074 0.051 3.983
+#> tip_Diet_4_cint 0.028 0.013  0.001 0.028 0.052 0.028 2.135
 ```
 
-Diets 3 and 4 increase the intercept, and so the growth, compared with
+Diets 3 and 4 raise the intercept, and so the growth rate, compared with
 diet 1.
 
 ``` r

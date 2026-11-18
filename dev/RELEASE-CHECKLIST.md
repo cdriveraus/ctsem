@@ -128,3 +128,8 @@ Written last, in one deliberate pass, from the user's side. A bug introduced and
 fixed within the same unreleased cycle gets no entry. See the house rules in
 `CLAUDE.md`; the register is one line per change, no mechanism and no
 measurements.
+
+## README
+
+While version 4 is not on CRAN, the README's installation section says to
+install it from GitHub. Remove that sentence once 4.0 is on CRAN.
