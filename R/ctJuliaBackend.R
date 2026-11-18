@@ -7370,8 +7370,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         theta <- as.numeric(result$minimizer)
         if (modelled && !certified && is.null(exact)) curvature <-
           .ctTIsmoothExactColumns(model_spec, curvature, theta, cores)
+        # On a model the step only tightens (`loosen`).
         gfs <- .ctTIsmoothLambda(model_spec$penalty, curvature, theta,
-          gradient = as.numeric(result$gradient))
+          gradient = as.numeric(result$gradient),
+          loosen = !(modelled && !certified && is.null(exact)))
         model_spec$penalty$edf <- gfs$edf
         settled <- .ctTIsmoothMoved(gfs) < 0.01
         if (settled && certified) break

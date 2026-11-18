@@ -526,6 +526,27 @@ test_that("smoothing parameters are settled when the curve's degrees of freedom 
   expect_gt(ctsem:::.ctTIsmoothMoved(gfs), 1)
 })
 
+test_that("a smoothing step on a model of the curvature only tightens", {
+  # No fit. A model whose account of the other parameters is short leaves a
+  # term's coefficients with no curvature of their own, here negative once
+  # the penalty is taken off: the step from an exact Hessian reads that as
+  # the term having no penalty to pay and moves it far, which is the reading
+  # that sent terms at their linear limit to 1e-8 on a Krylov model. Told the
+  # matrix is a model, it leaves the term where it was, and still tightens a
+  # term whose coefficients sit at zero.
+  penalty <- data.frame(lambda = c(100, 1))
+  penalty$index <- list(1:3, 4:6)
+  data <- diag(c(-5, -5, -5, 2, 2, 2, 5e5))
+  theta <- c(0.01, -0.02, 0.01, 0, 0, 0, 0.3)
+  information <- data + diag(c(rep(penalty$lambda, each = 3), 0))
+  free <- ctsem:::.ctTIsmoothLambda(penalty, -information, theta)
+  held <- ctsem:::.ctTIsmoothLambda(penalty, -information, theta, loosen = FALSE)
+  expect_gt(abs(log(free$lambda[1] / penalty$lambda[1])), 2)
+  expect_equal(held$lambda[1], penalty$lambda[1])
+  expect_equal(held$lambda[2], 5e5)
+  expect_equal(free$lambda[2], 5e5)
+})
+
 test_that("a curvature model takes the smooths' own columns exactly", {
   # No fit: the columns' source is mocked. One term on parameter 1: its
   # penalised coefficients (2, 3), its line (4) and another predictor's

@@ -353,8 +353,21 @@
 # with (`edf0`), and where the quadratic model puts the optimum at them. A
 # parameter stays between 1e-8 and the data's sharpest curvature
 # (`.ctTIsmoothLambdaMax()`).
+#
+# `loosen = FALSE` is for a `hessian` that is a model of the curvature, not
+# the curvature (the finish's Krylov model with the smooths' own columns
+# exact, `.ctTIsmoothExactColumns()`): the step then raises a term's parameter
+# or leaves it, and never lowers it. A term's degrees of freedom rest on its
+# coefficients' curvature given every other parameter, which a model has
+# through its own account of the others, and where that account is short the
+# coefficients look free, or their curvature negative. On the affect pilot's
+# tied fit a 45-product model sent two terms the exact Hessian holds at
+# their linear limit to 1e-8 and a third from 205 to 5.7 (run L,
+# 2026-11-18); such a step lets the coefficients run in the pass that
+# follows, and the passes before it had gone 20, 25390, 1e-8, 158. A term
+# held too smooth costs the exact step a small move back.
 .ctTIsmoothLambda <- function(penalty, hessian, theta, gradient = NULL,
-  maxiter = 200L, tol = 1e-6) {
+  maxiter = 200L, tol = 1e-6, loosen = TRUE) {
   npar <- length(theta)
   if (is.null(gradient)) gradient <- numeric(npar)
   index <- penalty$index
@@ -387,6 +400,7 @@
       updated[g] <- if (size > 0) max(edf[g], 0) / size else Inf
     }
     if (iter == 1L) edf0 <- edf
+    if (!loosen) updated <- pmax(updated, penalty$lambda)
     updated <- pmin(pmax(updated, 1e-8), upper)
     change <- max(abs(log(updated) - log(lambda)))
     lambda <- updated
