@@ -3756,8 +3756,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # mechanisms for one job, where the second can only act in cases the first
     # did not fix, is a way to be surprised rather than a safety net.
     # A start the route refuses is not a point to stop at. L-BFGS accepts only
-    # usable points, so ending on the sentinel means the start was refused --
-    # and it took no step from it, having no gradient to step along. This used
+    # usable points, and a grown batch that refuses the point goes back to one
+    # it can evaluate (`_ctsem_lbfgs`), so ending on the sentinel means the
+    # start was refused, on the batch or the whole data -- and it took no step
+    # from it, having no gradient to step along. This used
     # to fall through to the finish and the Hessian at that point, silently
     # (the SNSF pilot, restarting from another build's checkpoint).
     if !(isfinite(result.minimum) && result.minimum < invalid_objective)
