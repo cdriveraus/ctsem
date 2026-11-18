@@ -75,8 +75,13 @@
 # entries, the members with a cross term, and whether the hand route served.
 # The cross terms are the joint term's (`_HYBRID_PROFILE`); the curvature the
 # default term reads, of the deviations' exact integral (`_HYBRID_FULL`), is
-# compared too (`errF`).
-.th_curvature <- function(fit) {
+# compared too (`errF`). At `.th_point()`, as `.th_compare()`: where this
+# fixture's `estonly` fit stops depends on the CPU's arithmetic. It can stop
+# with a drift's raw value near -260 (a rate near -1000 over intervals near 1)
+# and an item's error variance near zero. There the routes differed by up to
+# 4e-5, on builds before and after the two-step term alike; at a moderate
+# point they agree to 1e-13.
+.th_curvature <- function(fit, at = .th_point(fit)) {
   .th_oracles()
   f <- ctsem:::.ctJuliaEval(paste(
     "function (lap, x)",
@@ -124,7 +129,7 @@
     "    served = served)",
     "end", sep = "\n"))
   f(ctsem:::.ctJuliaObjective(fit, hybrid = TRUE),
-    ctsem:::.ctJuliaNumericVector(as.numeric(fit$estimate$raw)))
+    ctsem:::.ctJuliaNumericVector(as.numeric(at)))
 }
 
 test_that("the hand-coded unit curvature is the dual's, cross terms included", {
