@@ -385,6 +385,27 @@ test_that("the map sampler draws the joint posterior with the filter's effects i
   expect_error(ctFitUncertainty(fit, method = "sample", intoverpop = "none",
     control = list(sampler = "map", adapt_effects = TRUE)),
     "control$adapt_effects", fixed = TRUE)
+
+  # The map's learning windows report, as one phase counted over the whole
+  # schedule, before the kept draws' warm-up and draws. They reported nothing
+  # once, and a run in worker processes, which reports only through this
+  # callback, showed nothing until its kept draws began: hours on a hard model.
+  seen <- list()
+  suppressWarnings(suppressMessages(ctFitUncertainty(fit, method = "sample",
+    intoverpop = "none", cores = 1,
+    control = list(chains = 2, draws = 20L, minESS = 0, processes = FALSE,
+      sampler = "map", callback = function(phase, iteration, total, logp, divergent)
+        seen[[length(seen) + 1L]] <<- list(phase = phase, iteration = iteration,
+          total = total)))))
+  phase <- vapply(seen, `[[`, "", "phase")
+  learning <- which(phase == "learning")
+  expect_gt(length(learning), 3L)
+  expect_true(all(learning < min(which(phase != "learning"))))
+  at <- vapply(seen[learning], `[[`, 0, "iteration")
+  total <- vapply(seen[learning], `[[`, 0, "total")
+  expect_false(is.unsorted(at))
+  expect_equal(unique(total), max(at))
+  expect_setequal(unique(phase[-learning]), c("warmup", "sampling"))
 })
 
 test_that("the map sampler maps the effects the filter cannot integrate", {
