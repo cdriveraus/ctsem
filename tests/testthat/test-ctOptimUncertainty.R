@@ -21,6 +21,45 @@ test_that("ctOptimComputeUncertainty recovers quadratic covariance", {
   expect_equal(is_proposal$method, 'is')
 })
 
+test_that("an interval check that fails leaves the curvature's normal, not a stopped fit", {
+  # It runs after the optimisation: a LAPACK failure in it (dgesdd not
+  # converging on gradients at draws far along a weakly identified direction)
+  # stopped a fit whose optimisation had finished, and the fit was lost.
+  A <- diag(c(2, 4))
+  lpg <- function(p) {
+    out <- -0.5 * drop(t(p) %*% A %*% p)
+    attr(out, 'gradient') <- -drop(A %*% p)
+    out
+  }
+  testthat::local_mocked_bindings(.ctOptimNormalCheck = function(...)
+    stop("error code 1 from Lapack routine 'dgesdd'"))
+  for (method in c('hessian', 'checked')) {
+    expect_warning(out <- ctsem:::ctOptimComputeUncertainty(c(0, 0), list(nsubjects = 1),
+      sm = NULL, lpgFunc = lpg, uncertainty = method, finishsamples = 20, verbose = 0,
+      control = list(check = TRUE)), 'interval check could not be made')
+    expect_match(out$details$normalcheck$failed, 'dgesdd')
+    expect_equal(diag(out$cov), c(.5, .25), tolerance = .01)
+  }
+  drawn <- ctsem:::.ctOptimDrawSamples(out, 'imis', list(), c(0, 0), 30, lpg = lpg)
+  expect_identical(drawn$draws, 'normal')
+  expect_match(ctsem:::.ctUncertaintyCheckNote(list(uncertainty = list(
+    settings = list(method = 'hessian'), details = out$details))), 'could not be made')
+})
+
+test_that("the checks' SVD falls back to the cross product's eigendecomposition", {
+  set.seed(5)
+  x <- matrix(stats::rnorm(40 * 6), 40) %*% diag(10^(0:5))
+  a <- svd(x)
+  b <- ctsem:::.ctSvdByEigen(x)
+  expect_equal(b$d, a$d, tolerance = 1e-8)
+  # Each singular vector up to its sign.
+  expect_equal(abs(colSums(b$v * a$v)), rep(1, 6), tolerance = 1e-6)
+  expect_equal(abs(colSums(b$u * a$u)), rep(1, 6), tolerance = 1e-6)
+  expect_equal(dim(ctsem:::.ctSvdByEigen(x, nu = 0L)$v), c(6L, 6L))
+  expect_null(ctsem:::.ctSvdByEigen(x, nu = 0L)$u)
+  expect_equal(ctsem:::.ctSvd(x)$d, a$d)
+})
+
 test_that("ctOptimNormalDraws returns requested dimensions", {
   draws <- ctsem:::ctOptimNormalDraws(c(1, 2), diag(c(.2, .3)), n=12)
   expect_equal(dim(draws), c(12, 2))

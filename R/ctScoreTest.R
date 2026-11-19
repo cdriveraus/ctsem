@@ -118,10 +118,11 @@
 #'   \code{dimension} tests every direction at once: whether subjects vary
 #'   along some combination of the tested parameters, a new dimension of
 #'   person variation, its covariances with what already varies held at
-#'   zero. It is not computed on a reduced-rank level, where in
-#'   simulation it found a dimension the rank lacked 10 per cent of the time
-#'   and the per-parameter tests of variation outside the shared dimensions 58
-#'   per cent; those are the test there. Adding
+#'   zero. It is not computed over a reduced-rank level's parameters, where
+#'   in simulation it found a dimension the rank lacked 10 per cent of the
+#'   time and the per-parameter tests of variation outside the shared
+#'   dimensions 58 per cent; the level's blocks are tested instead (below).
+#'   Adding
 #'   variance along a direction \code{u} changes a subject's log likelihood,
 #'   at zero, by \code{(u's_i)^2/2 + u'H_iu/2}, so the variances are
 #'   the diagonal of one score matrix; its largest eigenvalue, scaled by each
@@ -130,6 +131,20 @@
 #'   scale). It can detect variation spread over parameters that no single
 #'   test singles out, and is less sensitive than the best single test when
 #'   one parameter carries it.
+#'
+#'   On a reduced-rank level, \code{blocks} tests what its blocks of shared
+#'   dimensions (\code{popblocks}; without them, the level as one block) leave
+#'   out, beside those own variances. \code{blocks$dimension}: within each
+#'   block with more effects than dimensions, the dimension test over its
+#'   effects, with the block's fitted loadings projected out -- whether the
+#'   block needs another shared dimension, which the per-parameter rows, own
+#'   variances, cannot say. \code{blocks$covariance}: for each pair of blocks,
+#'   the joint score test, two sided, of the covariances between their
+#'   dimensions, which the blocks hold at zero -- whether, say, a response
+#'   style shared by an item's thresholds covaries with the dynamic level.
+#'   Both are calibrated by resampling subjects. An effect whose population
+#'   mean is stated has no coordinate to differentiate along and is left out
+#'   of both.
 #'
 #' @section Covariates: For each covariate, the effects it would have on every
 #'   tested parameter if added as a time independent predictor (on the raw
@@ -345,7 +360,9 @@
 #'   \code{heterogeneity} (a data frame, one row per parameter or fixed
 #'   \code{MANIFESTMEANS} cell),
 #'   \code{dimension} (the largest eigenvalue, its p-value and the direction,
-#'   when two or more parameters are tested),
+#'   when two or more parameters are tested), \code{blocks} (on a reduced-rank
+#'   level, \code{dimension}, a row per block, and \code{covariance}, a row
+#'   per pair of blocks),
 #'   \code{covariates} (one element per covariate, each a list of its
 #'   \code{joint} test and a data frame \code{parameters}),
 #'   \code{statedependence} (a list of \code{terms}, a data frame, and
@@ -512,11 +529,26 @@ ctScoreTest <- function(fit, covariates = NULL,
       g <- as.matrix(expand.grid(het, R))
       unname(g[g[, 1] != g[, 2], , drop = FALSE])
     } else NULL
-    rows <- union(union(het, cov), R)
-    say("Score contributions: ", 2L * (length(rows) + NCOL(dirs) + NROW(pairs)) + 1L,
-      " per-subject gradient passes")
-    pieces <- .ctScorePieces(fit, est, rows = rows, second = union(het, R),
-      dirs = dirs, pairs = pairs, cores = cores)
+    # On a reduced-rank level, the blocks of its shared dimensions
+    # (`.ctScoreBlockPlan()`): each block's effects, for the test of a further
+    # dimension within it, and its loadings as directions, for the test of
+    # covariances between blocks, which needs each direction's pass and one
+    # along every pair of directions from two blocks.
+    plan <- if (reduced && 'heterogeneity' %in% tests && is.null(parameters))
+      .ctScoreBlockPlan(fit, est) else NULL
+    within <- unique(unlist(lapply(plan, function(b)
+      if (length(b$index) > b$rank) b$index)))
+    vdirs <- do.call(cbind, lapply(plan, `[[`, 'dirs'))
+    vblock <- unlist(lapply(seq_along(plan), function(i) rep(i, NCOL(plan[[i]]$dirs))))
+    vpairs <- if (length(unique(vblock)) > 1L) {
+      g <- as.matrix(expand.grid(a = seq_along(vblock), b = seq_along(vblock)))
+      unname(g[vblock[g[, 1]] < vblock[g[, 2]], , drop = FALSE])
+    } else NULL
+    rows <- union(union(union(het, cov), R), within)
+    say("Score contributions: ", 2L * (length(rows) + NCOL(dirs) + NROW(pairs) +
+      NCOL(vdirs) + NROW(vpairs)) + 1L, " per-subject gradient passes")
+    pieces <- .ctScorePieces(fit, est, rows = rows, second = union(union(het, R), within),
+      dirs = dirs, pairs = pairs, vdirs = vdirs, vpairs = vpairs, cores = cores)
     if (nrow(pieces$S) != .ctFitNsubjects(fit)) stop("This model has a level ",
       "above the subject, so its independent units are not subjects. ",
       "Heterogeneity and covariate tests need subjects; use ",
@@ -533,11 +565,15 @@ ctScoreTest <- function(fit, covariates = NULL,
           NULL
         }))
       out$heterogeneity <- .ctScoreHeterogeneity(pieces, ptab, items, variance, nboot)
-      # Not on a reduced-rank level: there it found a missing dimension 10 per
-      # cent of the time where the per-parameter test of variation outside the
-      # shared dimensions found it 58 (simulation, rank 1 fitted to rank 2).
+      # Not over a reduced-rank level's parameters: there it found a missing
+      # dimension 10 per cent of the time where the per-parameter test of
+      # variation outside the shared dimensions found it 58 (simulation, rank
+      # 1 fitted to two independent effects). Its blocks are tested below.
       if (length(het) > 1L && !reduced) out$dimension <- .ctScoreDimension(pieces, ptab,
         het, nboot)
+    })
+    if (length(plan)) attempt('heterogeneity, blocks', {
+      out$blocks <- .ctScoreBlocks(pieces, ptab, plan, vblock, variance, nboot)
     })
     if (length(cov)) attempt('covariates', {
       items <- .ctScoreItems(pieces, ptab, cov)
@@ -650,11 +686,18 @@ ctScoreTest <- function(fit, covariates = NULL,
 # the second difference is d2_jj + 2 d2_jr + d2_rr, so with j's and r's own
 # it gives d2 s_ik / d theta_j d theta_r, summed over subjects (`Tmix`, a
 # column a pair).
+#
+# `vdirs` are directions whose second derivatives a covariance between them
+# needs (a reduced-rank level's loadings, `.ctScoreBlocks()`): along each, H_i v
+# (`Hv`) and the summed second difference of the scores (`Dv`); along each pair
+# of them in `vpairs`, the summed mixed second derivative v_a' d2 s v_b
+# (`Vmix`), from the difference along their sum.
 .ctScorePieces <- function(fit, est, rows, second, dirs = NULL, pairs = NULL,
-  step = 1e-3, cores = 2L) {
+  vdirs = NULL, vpairs = NULL, step = 1e-3, cores = 2L) {
   p <- length(est)
-  if (!length(rows)) stop("No parameters to test.", call. = FALSE)
-  Hdir <- Tmix <- NULL
+  if (!length(rows) && !NCOL(vdirs)) stop("No parameters to test.", call. = FALSE)
+  Hdir <- Tmix <- Hv <- Dv <- Vmix <- NULL
+  along <- function(w) step * max(1, max(abs(est[w != 0]))) / max(abs(w))
   .ctBackendWithMaxChunks(cores, {
     S <- .ctBackendScoreMatrix(fit, est)
     n <- nrow(S)
@@ -694,11 +737,33 @@ ctScoreTest <- function(fit, covariates = NULL,
         Tmix[, k] <- (d2 - own(jr[1]) - own(jr[2])) / 2
       }
     }
+    if (NCOL(vdirs)) {
+      Hv <- array(0, c(n, ncol(vdirs), p))
+      Dv <- matrix(0, p, ncol(vdirs))
+      for (d in seq_len(ncol(vdirs))) {
+        h <- along(vdirs[, d])
+        plus <- .ctBackendScoreMatrix(fit, est + h * vdirs[, d])
+        minus <- .ctBackendScoreMatrix(fit, est - h * vdirs[, d])
+        Hv[, d, ] <- (plus - minus) / (2 * h)
+        Dv[, d] <- colSums(plus - 2 * S + minus) / h^2
+      }
+      if (NROW(vpairs)) {
+        Vmix <- matrix(0, p, nrow(vpairs))
+        for (k in seq_len(nrow(vpairs))) {
+          w <- vdirs[, vpairs[k, 1]] + vdirs[, vpairs[k, 2]]
+          h <- along(w)
+          d2 <- colSums(.ctBackendScoreMatrix(fit, est + h * w) - 2 * S +
+            .ctBackendScoreMatrix(fit, est - h * w)) / h^2
+          Vmix[, k] <- (d2 - Dv[, vpairs[k, 1]] - Dv[, vpairs[k, 2]]) / 2
+        }
+      }
+    }
     Hsum <- .ctBackendHessian(fit, est)
   })
   Hsum <- (Hsum + t(Hsum)) / 2
   list(S = S, H = H, rows = rows, D2 = D2, second = second, Hsum = Hsum,
-    dirs = dirs, Hdir = Hdir, pairs = pairs, Tmix = Tmix)
+    dirs = dirs, Hdir = Hdir, pairs = pairs, Tmix = Tmix, vdirs = vdirs, Hv = Hv,
+    Dv = Dv, vpairs = vpairs, Vmix = Vmix)
 }
 
 # What a new random effect's covariances are tested with: each initial mean (a
@@ -1018,6 +1083,133 @@ ctScoreTest <- function(fit, covariates = NULL,
     direction = stats::setNames(u, ptab$name[het])[order(-abs(u))])
 }
 
+
+# The subject level's blocks on a reduced-rank level (`popblocks`; without
+# them the level is one block of every effect, its rank the level's): each
+# block's name, rank, its effects and their raw population-mean coordinates
+# (`index`; an effect with a stated mean has none, and is left out of both
+# tests), and its fitted loadings as directions in those coordinates
+# (`dirs`, one column a dimension, each loading times the effect's sd scale
+# as `_laplace_poploading` builds it). A dimension whose loadings are all zero
+# gives no direction. NULL where the subject level is not of reduced rank.
+.ctScoreBlockPlan <- function(fit, est) {
+  levels <- fit$model_spec$laplace$levels
+  if (!length(levels)) return(NULL)
+  lv <- levels[[1]]
+  if (!length(lv$load_index) || !isTRUE(lv$rank > 0)) return(NULL)
+  npar <- length(est)
+  k <- length(lv$param)
+  raw <- as.integer(lv$re_index)
+  raw[raw > npar] <- NA_integer_
+  entries <- .ctJuliaLoadingEntries(lv)
+  L <- matrix(0, k, lv$rank)
+  L[cbind(entries$row, entries$col)] <- est[lv$load_index] *
+    as.numeric(lv$sd_scale)[entries$row]
+  blocks <- if (length(lv$blocks)) lv$blocks else
+    list(list(name = 'level', rank = lv$rank, param = lv$param))
+  start <- 0L
+  lapply(blocks, function(b) {
+    cols <- start + seq_len(b$rank)
+    start <<- start + b$rank
+    members <- match(b$param, lv$param)
+    free <- !is.na(raw[members])
+    dirs <- matrix(0, npar, b$rank,
+      dimnames = list(NULL, paste0(b$name, '.dim', seq_len(b$rank))))
+    dirs[raw[members[free]], ] <- L[members[free], cols, drop = FALSE]
+    dirs <- dirs[, colSums(abs(dirs)) > 0, drop = FALSE]
+    list(name = b$name, rank = as.integer(b$rank), param = b$param,
+      index = raw[members[free]], dirs = dirs)
+  })
+}
+
+# What a reduced-rank level's blocks leave out, beside the per-parameter own
+# variances: a further shared dimension within a block, and covariances between
+# blocks.
+#
+# Within a block, the dimension test (`.ctScoreDimension()`) over its effects:
+# whether subjects vary along a direction among them that the block's
+# dimensions do not span, the fitted loadings projected out with the other
+# parameters. Only where the block has more effects than dimensions; an effect
+# whose own variance the fit estimates determines its diagonal and drops out.
+#
+# Between blocks A and B, the covariances of their dimensions: Sigma_AB = L_A
+# C L_B', zero in the fit. Along `u` (a column of L_A) and `w` (one of L_B),
+# a subject's log likelihood moves at C = 0 by u'(s_i s_i' + H_i) w, as for
+# the per-parameter covariances (Chesher, 1984), projected on the fitted
+# parameters with the mixed third derivative along `u` and `w`
+# (`.ctScorePieces()`'s `Vmix`); the loadings' own dependence on the
+# parameters enters with expectation zero and is left out. The r_A r_B
+# covariances are tested jointly, two sided, by a studentised bootstrap of
+# the subjects' contributions, as the covariates' joint tests are; with the
+# model variance, against chi-square.
+.ctScoreBlocks <- function(pieces, ptab, plan, vblock, variance = 'robust',
+  nboot = 1999L) {
+  dimension <- do.call(rbind, lapply(plan, function(b) {
+    if (length(b$index) <= b$rank) return(NULL)
+    d <- .ctScoreDimension(pieces, ptab, b$index, nboot)
+    top <- if (is.null(d)) character() else utils::head(names(d$direction), 5L)
+    data.frame(block = b$name, rank = b$rank, effects = length(b$index),
+      lambda = if (is.null(d)) NA_real_ else d$lambda,
+      p = if (is.null(d)) NA_real_ else d$p,
+      direction = if (is.null(d)) NA_character_ else
+        paste0(top, ' ', signif(d$direction[top], 2), collapse = ', '),
+      stringsAsFactors = FALSE)
+  }))
+  covariance <- NULL
+  if (NROW(pieces$vpairs)) {
+    S <- pieces$S
+    n <- nrow(S)
+    Iinv <- .ctScorePinv(-pieces$Hsum)$inv
+    V <- pieces$vdirs
+    Hd <- function(a) {
+      M <- pieces$Hv[, a, , drop = TRUE]
+      if (is.null(dim(M))) M <- matrix(M, n)
+      M
+    }
+    sv <- S %*% V
+    pairs <- pieces$vpairs
+    key <- paste(vblock[pairs[, 1]], vblock[pairs[, 2]])
+    covariance <- do.call(rbind, lapply(unique(key), function(kk) {
+      idx <- which(key == kk)
+      ab <- pairs[idx, , drop = FALSE]
+      blocks <- paste(plan[[vblock[ab[1, 1]]]]$name, plan[[vblock[ab[1, 2]]]]$name,
+        sep = ' x ')
+      Ha <- lapply(ab[, 1], Hd)
+      Hb <- lapply(ab[, 2], Hd)
+      raw <- matrix(0, n, length(idx))
+      D <- matrix(0, ncol(S), length(idx))
+      for (k in seq_along(idx)) {
+        a <- ab[k, 1]; b <- ab[k, 2]
+        raw[, k] <- sv[, a] * sv[, b] + as.numeric(Ha[[k]] %*% V[, b])
+        D[, k] <- colSums(Ha[[k]] * sv[, b]) + colSums(Hb[[k]] * sv[, a]) +
+          pieces$Vmix[, idx[k]]
+      }
+      X <- raw + S %*% (Iinv %*% D)
+      keep <- vapply(seq_along(idx), function(k) !.ctScoreDetermined(X[, k], raw[, k]),
+        logical(1))
+      if (!any(keep)) return(data.frame(blocks = blocks, LM = NA_real_, df = 0L,
+        p = NA_real_, stringsAsFactors = FALSE))
+      kept <- which(keep)
+      X <- X[, kept, drop = FALSE]
+      j <- if (variance == 'robust') .ctScoreJoint(colSums(X), .ctScoreSpread(X), X, nboot) else {
+        # cov(M_ab, M_cd) = H_ac H_bd + H_ad H_bc for a Gaussian score, along
+        # the directions, summed over subjects, less what estimation took.
+        info <- matrix(0, length(kept), length(kept))
+        for (k in seq_along(kept)) for (l in seq_len(k)) {
+          a2 <- ab[kept[l], 1]; b2 <- ab[kept[l], 2]
+          info[k, l] <- info[l, k] <- sum(
+            as.numeric(Ha[[kept[k]]] %*% V[, a2]) * as.numeric(Hb[[kept[k]]] %*% V[, b2]) +
+            as.numeric(Ha[[kept[k]]] %*% V[, b2]) * as.numeric(Hb[[kept[k]]] %*% V[, a2]))
+        }
+        Dk <- D[, kept, drop = FALSE]
+        info <- info - t(Dk) %*% Iinv %*% Dk
+        .ctScoreJoint(colSums(X), (info + t(info)) / 2, NULL, nboot)
+      }
+      data.frame(blocks = blocks, LM = j$LM, df = j$df, p = j$p, stringsAsFactors = FALSE)
+    }))
+  }
+  list(dimension = dimension, covariance = covariance)
+}
 
 # Whether a projected contribution is one the fitted scores already determine:
 # under one per cent of its spread left once estimation is taken out (the
@@ -2168,6 +2360,11 @@ plot.ctScoreTest <- function(x, family = NULL, top = 10, ...) {
       p_adj = p_adj, stringsAsFactors = FALSE)
   h <- x$heterogeneity
   if (!is.null(h)) add('heterogeneity', h$parameter, h$p, h$p_adj)
+  b <- rbind(if (NROW(x$blocks$dimension)) data.frame(label = paste0('dimension in ',
+    x$blocks$dimension$block), p = x$blocks$dimension$p),
+    if (NROW(x$blocks$covariance)) data.frame(label = paste0('covariance ',
+      x$blocks$covariance$blocks), p = x$blocks$covariance$p))
+  if (NROW(b)) add('blocks', b$label, b$p, .ctScoreBH(b$p))
   for (cv in x$covariates) add('covariates', paste0(cv$joint$covariate, ': ',
     cv$parameters$parameter), cv$parameters$p, cv$parameters$p_adj)
   s <- x$statedependence$terms
@@ -2245,6 +2442,15 @@ print.ctScoreTest <- function(x, digits = 3, top = 10, ...) {
       paste0(names(d$direction)[seq_len(min(5, length(d$direction)))], ' ',
         signif(d$direction[seq_len(min(5, length(d$direction)))], 2), collapse = ', '),
       "\n", sep = "")
+  }
+  if (!is.null(x$blocks$dimension) && nrow(x$blocks$dimension)) {
+    cat("\nA further shared dimension within each block (largest eigenvalue, its\n",
+      "loadings projected out):\n", sep = "")
+    fmt(x$blocks$dimension)
+  }
+  if (!is.null(x$blocks$covariance) && nrow(x$blocks$covariance)) {
+    cat("\nCovariances between blocks' dimensions (joint, two sided):\n")
+    fmt(x$blocks$covariance)
   }
   for (c in x$covariates) {
     j <- c$joint

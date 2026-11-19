@@ -86,7 +86,9 @@ An object of class \code{ctScoreTest}: a list with
   \code{heterogeneity} (a data frame, one row per parameter or fixed
   \code{MANIFESTMEANS} cell),
   \code{dimension} (the largest eigenvalue, its p-value and the direction,
-  when two or more parameters are tested),
+  when two or more parameters are tested), \code{blocks} (on a reduced-rank
+  level, \code{dimension}, a row per block, and \code{covariance}, a row
+  per pair of blocks),
   \code{covariates} (one element per covariate, each a list of its
   \code{joint} test and a data frame \code{parameters}),
   \code{statedependence} (a list of \code{terms}, a data frame, and
@@ -173,10 +175,11 @@ before interpreting their sizes.
   \code{dimension} tests every direction at once: whether subjects vary
   along some combination of the tested parameters, a new dimension of
   person variation, its covariances with what already varies held at
-  zero. It is not computed on a reduced-rank level, where in
-  simulation it found a dimension the rank lacked 10 per cent of the time
-  and the per-parameter tests of variation outside the shared dimensions 58
-  per cent; those are the test there. Adding
+  zero. It is not computed over a reduced-rank level's parameters, where
+  in simulation it found a dimension the rank lacked 10 per cent of the
+  time and the per-parameter tests of variation outside the shared
+  dimensions 58 per cent; the level's blocks are tested instead (below).
+  Adding
   variance along a direction \code{u} changes a subject's log likelihood,
   at zero, by \code{(u's_i)^2/2 + u'H_iu/2}, so the variances are
   the diagonal of one score matrix; its largest eigenvalue, scaled by each
@@ -185,6 +188,20 @@ before interpreting their sizes.
   scale). It can detect variation spread over parameters that no single
   test singles out, and is less sensitive than the best single test when
   one parameter carries it.
+
+  On a reduced-rank level, \code{blocks} tests what its blocks of shared
+  dimensions (\code{popblocks}; without them, the level as one block) leave
+  out, beside those own variances. \code{blocks$dimension}: within each
+  block with more effects than dimensions, the dimension test over its
+  effects, with the block's fitted loadings projected out -- whether the
+  block needs another shared dimension, which the per-parameter rows, own
+  variances, cannot say. \code{blocks$covariance}: for each pair of blocks,
+  the joint score test, two sided, of the covariances between their
+  dimensions, which the blocks hold at zero -- whether, say, a response
+  style shared by an item's thresholds covaries with the dynamic level.
+  Both are calibrated by resampling subjects. An effect whose population
+  mean is stated has no coordinate to differentiate along and is left out
+  of both.
 }
 
 \section{Covariates}{
