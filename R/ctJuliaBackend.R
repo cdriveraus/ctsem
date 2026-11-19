@@ -3873,15 +3873,18 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 }
 
 # Missing TI predictor values held at their imputed means (`ti_imputed`), made
-# parameters of the posterior: each cell a raw index past every other, its
-# imputation its prior (`_ctsem_log_prior` in the engine). A spec with nothing
-# imputed comes back unchanged. A cell that reads such a predictor reads the
-# sampled value, and the reverse pass carries its derivative back to it
-# (`_ctsem_tipred_scatter!`).
+# parameters of the posterior: each cell a raw index past every other free
+# one, its imputation its prior (`_ctsem_log_prior` in the engine). A spec
+# with nothing imputed comes back unchanged. A cell that reads such a
+# predictor reads the sampled value, and the reverse pass carries its
+# derivative back to it (`_ctsem_tipred_scatter!`). Stated population means
+# move on past them (`.ctJuliaAnchorsAfter()`).
 .ctJuliaTIMissingSampled <- function(spec) {
   cells <- spec$ti_imputed
   if (!NROW(cells)) return(spec)
-  cells$parameter <- .ctBackendNpar(spec) + seq_len(nrow(cells))
+  nfree <- .ctBackendNpar(spec)
+  spec <- .ctJuliaAnchorsAfter(spec, nfree + nrow(cells))
+  cells$parameter <- nfree + seq_len(nrow(cells))
   spec$tipred_data[cbind(cells$subject, cells$predictor)] <- .ctJuliaTIMissingPlaceholder
   spec$ti_missing <- rbind(spec$ti_missing, cells)
   spec["ti_imputed"] <- list(NULL)
@@ -3940,10 +3943,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # The fit's TI predictor values, carried onto `spec`, a rebuild over its
 # subjects or some of them, where `spec` is missing them too: a value the fit
 # imputed is the value it imputed, and one it sampled is the same raw
-# parameter, so the fit's raw vectors apply unchanged. A subject the fit did
-# not have keeps what `spec` made of it.
+# parameter, so the fit's raw vectors apply unchanged -- which needs any
+# stated population means where the fit has them, past every value it
+# sampled, whichever subjects the rebuild keeps. A subject the fit did not
+# have keeps what `spec` made of it.
 .ctJuliaCarryTIMissing <- function(spec, fitted) {
   spec$tipredMissing <- fitted[["tipredMissing"]]
+  if (NROW(fitted$ti_missing)) spec <- .ctJuliaAnchorsAfter(spec, .ctBackendNpar(fitted))
   own <- spec$ti_imputed
   if (NROW(own)) {
     idname <- spec$model$subjectIDname

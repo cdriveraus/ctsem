@@ -140,6 +140,48 @@ test_that("a fit holds the stated mean, and reports it as stated", {
   expect_equal(aug$estimate$loglik, fit$estimate$loglik, tolerance = 1e-3)
 })
 
+test_that("a sampled TI predictor value is a free parameter, before the stated mean", {
+  # Missing TI predictor values imputed by a fit become parameters when it is
+  # sampled (`.ctJuliaTIMissingSampled()`), and a rebuild carries them
+  # (`.ctJuliaCarryTIMissing()`). Numbered from the free count, they once took
+  # the stated mean's position, and the sampler refused the vector.
+  skip_without_julia()
+  dat <- .stated_data()
+  dat$age[dat$id %in% c(3, 7)] <- NA
+  prep <- function(d) suppressWarnings(suppressMessages(ctFit(d, .stated_model(),
+    backend = "julia", fit = FALSE, cores = 2)))
+  imputed <- prep(dat)
+  cells <- imputed$ti_imputed
+  n <- ctsem:::.ctBackendNpar(imputed)
+  expect_equal(nrow(cells), 2L)
+  sampled <- ctsem:::.ctJuliaTIMissingSampled(imputed)
+  expect_equal(sampled$ti_missing$parameter, n + 1:2)
+  expect_equal(sampled$anchors$index, n + 3L)
+  expect_equal(ctsem:::.ctBackendNpar(sampled), n + 2L)
+  # At their imputed means the sampled values give the imputed specification's
+  # objective, plus their imputation's density there.
+  set.seed(6)
+  theta <- stats::rnorm(n, 0, 0.3)
+  e0 <- ctJuliaEvaluate(imputed, theta, cores = 2)
+  e1 <- ctJuliaEvaluate(sampled, c(theta, cells$mu), cores = 2)
+  expect_equal(e1$value, e0$value + sum(stats::dnorm(0, 0, cells$sigma, log = TRUE)),
+    tolerance = 1e-10)
+  expect_equal(e1$gradient[seq_len(n)], e0$gradient, tolerance = 1e-9)
+  # A rebuild over some of the subjects reads the fit's raw vector: the stated
+  # mean follows every value the fit sampled, the dropped subject's included.
+  kept <- dat[dat$id != 3, ]
+  seven <- which(cells$subject == 7L)
+  carried <- ctsem:::.ctJuliaCarryTIMissing(prep(kept), sampled)
+  expect_equal(carried$ti_missing$parameter, n + seven)
+  expect_equal(carried$anchors$index, n + 3L)
+  held <- ctsem:::.ctJuliaCarryTIMissing(prep(kept), imputed)
+  e2 <- ctJuliaEvaluate(held, theta, cores = 2)
+  e3 <- ctJuliaEvaluate(carried, c(theta, cells$mu), cores = 2)
+  expect_equal(e3$value, e2$value + stats::dnorm(0, 0, cells$sigma[seven], log = TRUE),
+    tolerance = 1e-10)
+  expect_equal(e3$gradient[seq_len(n)], e2$gradient, tolerance = 1e-9)
+})
+
 test_that("a sampled fit draws the free parameters and holds the stated mean", {
   skip_without_julia()
   dat <- .stated_data(nsub = 30L, nt = 6L)

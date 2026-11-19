@@ -91,17 +91,41 @@
   map <- integer(nfull)
   map[free] <- seq_along(free)
   map[old] <- length(free) + seq_along(old)
-  remap <- function(x) {
-    if (is.null(x)) return(x)
-    x <- as.integer(x)
-    use <- !is.na(x) & x > 0L
-    x[use] <- map[x[use]]
-    x
+  # A stated value takes no prior: it is not a parameter.
+  if (!is.null(priors)) {
+    keep <- !as.integer(priors$index) %in% old
+    priors$index <- priors$index[keep]
+    priors$scale <- priors$scale[keep]
+  }
+  moved <- .ctJuliaRenumberRaw(list(parameter_table = parameter_table,
+    laplace = laplace, ti_effects = ti_effects, ti_fixed = ti_fixed,
+    ti_missing = ti_missing, random_effects = random_effects, priors = priors),
+    map)
+  c(moved, list(anchors = list(param = means$param, value = means$value,
+    raw = means$raw, index = as.integer(length(free) + seq_along(old)))))
+}
+
+# Every raw position `x` names, renumbered by `map` (`map[k]` the new position
+# of position k): a specification, or a list of its pieces, with the same
+# names. The parameter table's numbers and the `param[k]` its rendered
+# transforms read, the Laplace levels' indices, the TI effects, fixed TI
+# effects and sampled TI predictor values, the augmented route's random
+# effects, the priors and the smooth terms' penalties. A piece `x` lacks is
+# left out. The one place that knows which fields hold raw positions: a field
+# added to the specification that holds one is renumbered here.
+#' @keywords internal
+.ctJuliaRenumberRaw <- function(x, map) {
+  remap <- function(v) {
+    if (is.null(v)) return(v)
+    v <- as.integer(v)
+    use <- !is.na(v) & v > 0L
+    v[use] <- map[v[use]]
+    v
   }
   # The rendered transforms read raw positions by number, `param[k]`.
-  retext <- function(x) {
-    if (is.null(x)) return(x)
-    out <- as.character(x)
+  retext <- function(v) {
+    if (is.null(v)) return(v)
+    out <- as.character(v)
     for (i in which(!is.na(out) & grepl("param[", out, fixed = TRUE))) {
       at <- gregexpr("\\bparam\\[([0-9]+)\\]", out[i], perl = TRUE)
       hits <- regmatches(out[i], at)[[1]]
@@ -111,13 +135,16 @@
     }
     out
   }
-  parameter_table$parnumber <- remap(parameter_table$parnumber)
-  for (column in c("transform", "predicttransform", "updatetransform",
-      "tdtransform")) {
-    if (!is.null(parameter_table[[column]])) {
-      parameter_table[[column]] <- retext(parameter_table[[column]])
+  table <- x[["parameter_table"]]
+  if (!is.null(table)) {
+    table$parnumber <- remap(table$parnumber)
+    for (column in c("transform", "predicttransform", "updatetransform",
+        "tdtransform")) {
+      if (!is.null(table[[column]])) table[[column]] <- retext(table[[column]])
     }
+    x$parameter_table <- table
   }
+  laplace <- x[["laplace"]]
   if (!is.null(laplace)) {
     fields <- c("re_index", "sd_index", "cor_index", "load_index", "unique_index")
     for (l in seq_along(laplace$levels)) {
@@ -130,29 +157,51 @@
     for (f in c("re_index", "sd_index", "cor_index")) {
       if (!is.null(laplace[[f]])) laplace[[f]] <- remap(laplace[[f]])
     }
+    x$laplace <- laplace
   }
-  if (!is.null(ti_effects) && nrow(ti_effects)) {
-    ti_effects$parameter <- remap(ti_effects$parameter)
-    ti_effects$coefficient <- remap(ti_effects$coefficient)
+  if (NROW(x[["ti_effects"]])) {
+    x$ti_effects$parameter <- remap(x$ti_effects$parameter)
+    x$ti_effects$coefficient <- remap(x$ti_effects$coefficient)
   }
-  if (!is.null(ti_fixed) && nrow(ti_fixed)) ti_fixed$parameter <- remap(ti_fixed$parameter)
-  if (!is.null(ti_missing) && nrow(ti_missing)) {
-    ti_missing$parameter <- remap(ti_missing$parameter)
+  if (NROW(x[["ti_fixed"]])) x$ti_fixed$parameter <- remap(x$ti_fixed$parameter)
+  if (NROW(x[["ti_missing"]])) x$ti_missing$parameter <- remap(x$ti_missing$parameter)
+  if (NROW(x[["random_effects"]])) {
+    x$random_effects$parameter <- remap(x$random_effects$parameter)
   }
-  if (!is.null(random_effects) && length(random_effects) && nrow(random_effects)) {
-    random_effects$parameter <- remap(random_effects$parameter)
+  if (!is.null(x[["priors"]])) x$priors$index <- remap(x$priors$index)
+  if (NROW(x[["penalty"]])) {
+    x$penalty$parameter <- remap(x$penalty$parameter)
+    x$penalty$linear <- remap(x$penalty$linear)
+    x$penalty$index <- lapply(x$penalty$index, remap)
   }
-  # A stated value takes no prior: it is not a parameter.
-  if (!is.null(priors)) {
-    keep <- !as.integer(priors$index) %in% old
-    priors$index <- remap(priors$index[keep])
-    priors$scale <- priors$scale[keep]
+  x
+}
+
+# `spec` with its stated population means moved on to follow `nfree` free
+# parameters, every position naming one renumbered (`.ctJuliaRenumberRaw()`).
+# Raw parameters added to a prepared specification are free ones, and the
+# engine reads whatever follows the free parameters as the stated values
+# (`CTSEMAnchors`), so room is made for them before the stated means: numbered
+# from `.ctBackendNpar(spec) + 1` without it, sampled TI predictor values took
+# the stated means' positions. A specification without stated means, or with
+# them already there, comes back as it is.
+#' @keywords internal
+.ctJuliaAnchorsAfter <- function(spec, nfree) {
+  index <- as.integer(spec$anchors$index)
+  if (!length(index)) return(spec)
+  nfree <- as.integer(nfree)[1L]
+  now <- .ctBackendNpar(spec)
+  if (nfree == now) return(spec)
+  if (is.na(nfree) || nfree < now || !identical(index, now + seq_along(index))) {
+    stop("Internal layout error: stated population means at ",
+      paste(index, collapse = ", "), " cannot follow ", nfree, " free ",
+      "parameters. This is a bug in ctsem; please report it.", call. = FALSE)
   }
-  list(parameter_table = parameter_table, laplace = laplace,
-    ti_effects = ti_effects, ti_fixed = ti_fixed, ti_missing = ti_missing,
-    random_effects = random_effects, priors = priors,
-    anchors = list(param = means$param, value = means$value, raw = means$raw,
-      index = as.integer(length(free) + seq_along(old))))
+  map <- seq_len(now + length(index))
+  map[index] <- nfree + seq_along(index)
+  spec <- .ctJuliaRenumberRaw(spec, map)
+  spec$anchors$index <- as.integer(nfree + seq_along(index))
+  spec
 }
 
 # How many stated population means a fit or specification carries.
