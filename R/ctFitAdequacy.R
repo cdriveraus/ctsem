@@ -80,7 +80,10 @@
 #'     to the prior, so the differences have mean zero; a skewed or bimodal
 #'     distribution, or a subgroup, moves them. These integrate the gradient
 #'     function (Verbeke & Molenberghs, 2013; Drikvandi, Verbeke & Molenberghs,
-#'     2017), which is too heavy tailed to test directly.}
+#'     2017), which is too heavy tailed to test directly. An effect the data
+#'     leave at its prior in every unit has nothing to compare and is left out
+#'     (\code{degenerate}); a fit whose units carry more than four effects is
+#'     not tested, and says so.}
 #'   \item{tvcovariates}{With \code{tvcovariates}, whether time varying
 #'     variables the model does not use carry information about what it
 #'     predicts: each variable's error, and each latent's update, against each
@@ -258,7 +261,8 @@
 #'   \code{value}; NULL when no such family ran), \code{adequate},
 #'   \code{close_fit}, \code{informative} (with \code{tvcovariates}, whether
 #'   they predict the errors at \code{alpha}; NA without), \code{projection}
-#'   (the method used), and \code{fit}
+#'   (the method used), \code{degenerate} (the effects family's axes left out,
+#'   their posterior the prior in every unit), and \code{fit}
 #'   (with any generated data, for reuse). \code{plot()} draws the families,
 #'   or one family's statistics.
 #' @references Newey, W. K. (1985). Maximum likelihood specification testing
@@ -307,11 +311,14 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   if (is.null(covariates)) families <- setdiff(families, 'covariates')
   if (is.null(tvcovariates)) families <- setdiff(families, 'tvcovariates')
   # The effect distribution needs effects held as Laplace coordinates at one
-  # level; by default it is run where that is so, and said where it is not.
+  # level; by default it is run where that is so, and said where it is not
+  # whenever the fit has random effects on that route: dropped without a word,
+  # a fit whose units carry more effects than the quadrature takes lost the
+  # family with nothing to say why.
   if ('effects' %in% families) {
     why <- .ctAdequacyEffectsUnavailable(fit)
     if (!is.null(why)) {
-      if (asked) message("effects not tested: ", why)
+      if (asked || !isTRUE(attr(why, 'quiet'))) message("effects not tested: ", why)
       families <- setdiff(families, 'effects')
     }
   }
@@ -325,7 +332,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   on.exit(restore(), add = TRUE)
 
   statistics <- list(); fams <- list(); size <- NULL; used <- NA_character_
-  errors <- NULL
+  errors <- NULL; degenerate <- character()
   moments <- intersect(families, c('residuals', 'latent', 'volatility', 'pairs',
     'periodic', 'distribution', 'fit', 'effects', 'scores', 'tvcovariates'))
   if (length(moments) || 'dependence' %in% families) {
@@ -364,6 +371,11 @@ ctFitAdequacy <- function(fit, covariates = NULL,
       }
       mom <- momentsAt(est, err)
       tpass <- proc.time()[['elapsed']] - t0
+      degenerate <- as.character(mom$degenerate)
+      if (length(degenerate)) message("effects: ", paste(degenerate,
+        collapse = ', '), " not tested; the data leave ",
+        if (length(degenerate) > 1L) "their" else "its",
+        " posterior at the prior in every unit, so there is nothing to compare.")
       # Plug-in passes differ from the sequential ones only where the effects
       # are re-solved row by row: the Laplace route.
       laplace <- .ctFitIsJulia(fit) && identical(.ctBackendIntOverPop(fit$model_spec), 'laplace')
@@ -419,7 +431,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   structure(list(families = families_out, statistics = statistics, size = size,
     errors = errors, adequate = !length(failing), close_fit = all(failing %in% sized),
     informative = if (any(!own)) any(families_out$p[!own] < alpha) else NA,
-    alpha = alpha, close = close, projection = used,
+    alpha = alpha, close = close, projection = used, degenerate = degenerate,
     nsamples = if (length(generated)) nsamples else NA_integer_, fit = fit),
     class = 'ctFitAdequacy')
 }
@@ -1008,17 +1020,19 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     x, cores)
   list(M = do.call(cbind, lapply(parts, `[[`, 'M')),
     V0 = do.call(cbind, lapply(parts, `[[`, 'V0')),
-    meta = do.call(rbind, lapply(parts, `[[`, 'meta')))
+    meta = do.call(rbind, lapply(parts, `[[`, 'meta')),
+    degenerate = unlist(lapply(parts, `[[`, 'degenerate')))
 }
 
 # Why the effect distribution cannot be tested on this fit, or NULL.
 .ctAdequacyEffectsUnavailable <- function(fit) {
-  if (!.ctFitIsJulia(fit)) return("it needs backend = 'julia'.")
+  quiet <- function(why) structure(why, quiet = TRUE)
+  if (!.ctFitIsJulia(fit)) return(quiet("it needs backend = 'julia'."))
   if (!identical(.ctBackendIntOverPop(fit$model_spec), 'laplace'))
-    return("it needs random effects integrated by intoverpop = 'laplace'.")
+    return(quiet("it needs random effects integrated by intoverpop = 'laplace'."))
   dims <- try(.ctBackendUnitDims(fit), silent = TRUE)
   if (inherits(dims, 'try-error')) return("the effects are not at a single level.")
-  if (!length(dims) || all(dims == 0)) return("the model has no random effects.")
+  if (!length(dims) || all(dims == 0)) return(quiet("the model has no random effects."))
   if (length(unique(dims)) > 1L) return("the units differ in their number of effects.")
   if (dims[1] > 4L) return(paste0(dims[1], " effects a unit; the posterior by ",
     "quadrature would take ", 4^dims[1], " evaluations a unit."))
@@ -1039,31 +1053,57 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 # normal (`quadratic`: Gaussian, linear, the effects in mean vectors) the
 # expectation is Phi((c - m) / sqrt(h^2 + s^2)) for the axis's posterior mean m
 # and sd s, which two nodes a dimension give exactly.
+#
+# The rule's own error is taken out. It is a product Gauss-Hermite rule placed
+# at the unit's mode and curvature (`_gh_grid`), whose weights for its own
+# Gaussian are the product weights, the same in every unit: so each unit's
+# value less that Gaussian's by the rule, plus that Gaussian's exactly, is
+# exact wherever the posterior is that Gaussian, and errs elsewhere only by the
+# rule's error on the departure from it. Uncorrected, an effect the data leave
+# at its prior in every unit (a person-varying HC effect at low heterogeneity,
+# one dimension of a reduced-rank level) put the rule's error of up to 0.0065
+# in every unit with a spread of 4e-6 between them, and z reached 1e6. Such an
+# effect carries nothing to test: its statistics are left out and it is named
+# in `degenerate`.
 .ctAdequacyEffectMoments <- function(fit, x, cores) {
   if (is.null(x)) x <- .ctFitRawEstimate(fit)
   d <- .ctBackendUnitDims(fit)[1]
   normal <- isTRUE(.ctBackendSpec(fit)$laplace$quadratic)
-  post <- .ctBackendPosteriorNodes(fit, x,
-    nodes = if (normal) 2L else c(9L, 7L, 5L, 4L)[min(d, 4L)], cores)
+  nodes <- if (normal) 2L else c(9L, 7L, 5L, 4L)[min(d, 4L)]
+  post <- .ctBackendPosteriorNodes(fit, x, nodes = nodes, cores)
   W <- post$weights
   h <- 0.75
   cuts <- c(-1.5, -0.75, 0, 0.75, 1.5)
+  G <- if (!normal) {
+    Reduce(`%o%`, rep(list(.ctBackendGaussHermite(nodes)$weight), d))
+  }
+  G <- rep_len(as.numeric(G), ncol(W))
+  degenerate <- logical(d)
   C <- do.call(cbind, lapply(seq_len(d), function(k) {
     Pk <- matrix(post$points[, , k], nrow(W))
-    if (normal) {
-      m <- rowSums(W * Pk)
-      s2 <- pmax(rowSums(W * Pk^2) - m^2, 0)
-      return(vapply(cuts, function(cc) stats::pnorm((cc - m) / sqrt(h^2 + s2)) -
-        stats::pnorm(cc / sqrt(1 + h^2)), numeric(nrow(W))))
-    }
-    vapply(cuts, function(cc) rowSums(W * stats::pnorm((cc - Pk) / h)) -
-      stats::pnorm(cc / sqrt(1 + h^2)), numeric(nrow(W)))
+    m <- rowSums(W * Pk)
+    s2 <- pmax(rowSums(W * Pk^2) - m^2, 0)
+    degenerate[k] <<- all(is.finite(m) & is.finite(s2)) && max(abs(m)) < 1e-3 &&
+      max(abs(sqrt(s2) - 1)) < 1e-3
+    exact <- function(cc, m, s2) stats::pnorm((cc - m) / sqrt(h^2 + s2))
+    prior <- function(cc) stats::pnorm(cc / sqrt(1 + h^2))
+    if (normal) return(vapply(cuts, function(cc) exact(cc, m, s2) - prior(cc),
+      numeric(nrow(W))))
+    mg <- as.numeric(Pk %*% G)
+    s2g <- pmax(as.numeric(Pk^2 %*% G) - mg^2, 0)
+    vapply(cuts, function(cc) {
+      f <- stats::pnorm((cc - Pk) / h)
+      rowSums(W * f) - as.numeric(f %*% G) + exact(cc, mg, s2g) - prior(cc)
+    }, numeric(nrow(W)))
   }))
   C[!is.finite(C)] <- 0
-  n <- nrow(C)
   dims <- paste0('u', rep(seq_len(d), each = length(cuts)))
+  degenerate <- paste0('u', seq_len(d))[degenerate]
+  C[, dims %in% degenerate] <- 0
+  n <- nrow(C)
   list(M = C, V0 = matrix(NA_real_, n, ncol(C)), meta = .ctAdequacyMeta('effects',
-    paste0('P(', dims, ' < ', cuts, ')'), n, 'moment', variable = dims))
+    paste0('P(', dims, ' < ', cuts, ')'), n, 'moment', variable = dims),
+    degenerate = degenerate)
 }
 
 # The raw parameters whose row scores the scores family uses: named, or up to

@@ -473,13 +473,15 @@ test_that("row scores sum to the subjects' scores, on the filter and the Laplace
   expect_equal(p3$weights, as.matrix(pe$weights), tolerance = 1e-8)
   expect_equal(p3$logmarginal, as.numeric(pe$logmarginal), tolerance = 1e-8)
   # The effects family's statistics in closed form there, against the
-  # quadrature's on the evaluated nodes, which errs by up to about 1e-3 a unit.
+  # quadrature's on the evaluated nodes, which takes out the rule's own error
+  # for the Gaussian it is placed on: here every posterior is that Gaussian,
+  # so the two agree to rounding (with the rule's error left in they differed
+  # by up to 3e-3 a unit).
   lfe <- lfit
   lfe$model_spec <- evaluated
   closed <- ctsem:::.ctAdequacyEffectMoments(lfit, lest, 1L)$M
   quadrature <- ctsem:::.ctAdequacyEffectMoments(lfe, lest, 1L)$M
-  expect_lt(max(abs(closed - quadrature)), 3e-3)
-  expect_lt(mean(abs(closed - quadrature)), 5e-4)
+  expect_lt(max(abs(closed - quadrature)), 1e-8)
 
   # The effect-distribution family runs there, and is quiet on normal effects.
   ad <- suppressMessages(ctFitAdequacy(lfit, families = 'effects', cores = 1, nboot = 199))
@@ -520,6 +522,140 @@ test_that("row scores sum to the subjects' scores, on the filter and the Laplace
     expect_lt(abs(mean(tapply(mix$llrow, mix$subject, sum) -
       as.numeric(q7$subject_loglik))), 0.02)
   }
+})
+
+test_that("an effect the data leave at its prior is named and not tested", {
+  # Six units, two effects; along the second every unit's posterior is the
+  # prior, so the rule's nodes carry its own weights there. Uncorrected, the
+  # rule's error (0.0065 at four nodes) sat in every unit with a spread of
+  # rounding, and z reached 1e6 on a reduced-rank fit whose HC effect the data
+  # did not inform. The posteriors are built on the product rule the family
+  # asks for, placed at N(m, 0.16) along the first effect and the prior along
+  # the second, and tilted along the first unless `tilt` is 0.
+  units <- 6L
+  m <- (seq_len(units) - 3.5) / 2
+  tilt <- 0.3
+  nodes_for <- function(nodes) {
+    gh <- ctsem:::.ctBackendGaussHermite(nodes)
+    grid <- as.matrix(expand.grid(gh$node, gh$node))
+    G <- as.numeric(gh$weight %o% gh$weight)
+    points <- array(0, c(units, nrow(grid), 2L))
+    weights <- matrix(0, units, nrow(grid))
+    for (u in seq_len(units)) {
+      points[u, , 1] <- m[u] + 0.4 * grid[, 1]
+      points[u, , 2] <- grid[, 2]
+      w <- G * exp(tilt * grid[, 1]^2 / 2)
+      weights[u, ] <- w / sum(w)
+    }
+    list(points = points, weights = weights, logmarginal = numeric(units))
+  }
+  testthat::local_mocked_bindings(
+    .ctBackendUnitDims = function(fit) rep(2L, units),
+    .ctBackendSpec = function(fit) list(laplace = list(quadratic = FALSE)),
+    .ctBackendPosteriorNodes = function(fit, est, nodes, cores) nodes_for(nodes))
+  e <- ctsem:::.ctAdequacyEffectMoments(list(), 0, 1L)
+  expect_identical(e$degenerate, 'u2')
+  u2 <- e$meta$variable == 'u2'
+  expect_true(all(e$M[, u2] == 0))
+  expect_true(all(abs(e$M[, !u2]) > 0))
+  # Untilted, the posterior along the first is the rule's Gaussian, whose own
+  # error is taken out: each unit's value is the closed form.
+  tilt <- 0
+  e2 <- ctsem:::.ctAdequacyEffectMoments(list(), 0, 1L)
+  cuts <- c(-1.5, -0.75, 0, 0.75, 1.5)
+  closed <- sapply(cuts, function(cc) pnorm((cc - m) / sqrt(0.75^2 + 0.16)) -
+    pnorm(cc / sqrt(1 + 0.75^2)))
+  expect_equal(unname(e2$M[, !u2]), unname(closed), tolerance = 1e-12)
+})
+
+# A reduced-rank level in blocks, as the hc-wellbeing reanalysis fits them: a
+# subject's level in one block, item intercepts in another named by matrix,
+# one of them about a stated mean. The intercepts are generated from two
+# dimensions, which their block's one does not span, independently of the
+# level.
+.score_blocks_fit <- function() fit_cached('scoretest blocks', {
+  set.seed(21)
+  lam <- c(1, 0.8, 1.2, 1)
+  d <- do.call(rbind, lapply(seq_len(150L), function(i) {
+    times <- cumsum(c(0, stats::runif(9L, 0.5, 1.5)))
+    lev <- stats::rnorm(1, 0, 0.6)
+    f <- stats::rnorm(2)
+    mm <- c(0, 0.5 * f[1], 0.5 * f[1] + 0.5 * f[2], -0.5 * f[2])
+    eta <- numeric(10L); eta[1] <- stats::rnorm(1)
+    for (t in 2:10) {
+      e <- exp(-0.6 * (times[t] - times[t - 1]))
+      eta[t] <- e * eta[t - 1] + (1 - e) * lev / 0.6 +
+        stats::rnorm(1, 0, sqrt((1 - e^2) / 1.2))
+    }
+    y <- sapply(1:4, function(j) lam[j] * eta + mm[j] + stats::rnorm(10L, 0, 0.4))
+    data.frame(id = i, time = times, Y1 = y[, 1], Y2 = y[, 2], Y3 = y[, 3], Y4 = y[, 4])
+  }))
+  m <- suppressMessages(ctModel(type = 'ct', manifestNames = paste0('Y', 1:4),
+    latentNames = 'eta', LAMBDA = matrix(lam), DRIFT = matrix('dr'),
+    CINT = matrix(ctPar('lev', indvarying = TRUE)), DIFFUSION = matrix('q'),
+    MANIFESTMEANS = matrix(c(ctPar('mm1', indvarying = TRUE, mean = 0),
+      ctPar('mm2', indvarying = TRUE), ctPar('mm3', indvarying = TRUE),
+      ctPar('mm4', indvarying = TRUE))), T0MEANS = matrix(0), T0VAR = matrix(1)))
+  blocks <- list(dynamics = list(rank = 1, effects = 'lev'),
+    items = list(rank = 1, effects = 'MANIFESTMEANS'))
+  list(data = d, blocks = blocks, fit = suppressWarnings(suppressMessages(ctFit(d, m,
+    backend = 'julia', intoverpop = 'laplace', popblocks = blocks, cores = 1,
+    verbose = 0))))
+})
+
+test_that("a reduced-rank level's blocks are tested for a further dimension and for covariances", {
+  x <- .score_blocks_fit()
+  fit <- x$fit
+  est <- ctsem:::.ctFitRawEstimate(fit)
+  ptab <- ctsem:::.ctScoreParameterTable(fit)
+  plan <- ctsem:::.ctScoreBlockPlan(fit, est)
+  expect_identical(vapply(plan, `[[`, '', 'name'), c('dynamics', 'items'))
+  # The stated mean has no coordinate, so the items block tests three.
+  expect_setequal(ptab$name[plan[[2]]$index], c('mm2', 'mm3', 'mm4'))
+  # The directional pieces are the engine's: summed over subjects, H_i v is
+  # the exact Hessian along v, and the mixed second derivative along a pair
+  # is the exact Hessian's change along one direction applied to the other.
+  V <- cbind(plan[[1]]$dirs, plan[[2]]$dirs)
+  pieces <- ctsem:::.ctScorePieces(fit, est, rows = integer(), second = integer(),
+    vdirs = V, vpairs = matrix(1:2, 1), cores = 1)
+  atest <- fit
+  atest$uncertainty$hessian <- NULL
+  H <- suppressMessages(ctsem:::.ctBackendHessian(atest, est))
+  expect_equal(colSums(pieces$Hv[, 2, ]), as.numeric(H %*% V[, 2]), tolerance = 1e-5)
+  h <- 1e-3
+  Hp <- suppressMessages(ctsem:::.ctBackendHessian(atest, est + h * V[, 2]))
+  Hm <- suppressMessages(ctsem:::.ctBackendHessian(atest, est - h * V[, 2]))
+  expect_equal(pieces$Vmix[, 1], as.numeric((Hp - Hm) %*% V[, 1]) / (2 * h),
+    tolerance = 1e-3)
+
+  st <- suppressMessages(ctScoreTest(fit, tests = c('heterogeneity', 'level'), cores = 1,
+    nboot = 199, verbose = FALSE))
+  expect_null(st$info$errors)
+  # The items need a second dimension, which their own variances could not
+  # give; the level is independent of them.
+  dm <- st$blocks$dimension
+  expect_identical(dm$block, 'items')
+  expect_equal(dm$effects, 3L)
+  expect_lt(dm$p, 0.05)
+  cv <- st$blocks$covariance
+  expect_identical(cv$blocks, 'dynamics x items')
+  expect_equal(cv$df, 1L)
+  expect_gt(cv$p, 0.05)
+  expect_output(print(st), 'further shared dimension')
+  # A block naming a matrix reaches the extended models, which move the
+  # varying MANIFESTMEANS into PARS: the level family ran.
+  expect_true(all(c('mm2', 'mm3', 'mm4', 'lev') %in% st$level$terms$level))
+  named <- ctsem:::.ctScoreNamedLevels(fit, ctsem:::.ctFitReplayArgs(fit))
+  expect_identical(named$popblocks$id$items$effects, paste0('mm', 1:4))
+  # An extended model takes the fit's known modes with it: without them a
+  # unit's search can miss a maximum the fit's reached, and the extension did
+  # not reproduce the fit at zero (0.95 nats on a random-drift model).
+  withknown <- fit
+  withknown$model_spec$laplace$known <- list(units = 1L, values = matrix(0.5, 1, 1))
+  fx <- ctsem:::.ctScoreFixedModel(ctsem:::.ctFitBaseModel(fit))
+  ext <- ctsem:::.ctScoreExtendedSpec(withknown, est, fx$model, fx$terms$name, 'fixed',
+    cores = 1)
+  expect_identical(ext$spec$laplace$known, withknown$model_spec$laplace$known)
 })
 
 test_that("stability along a predicted state finds a drift that depends on it", {

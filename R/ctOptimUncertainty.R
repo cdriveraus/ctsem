@@ -2266,6 +2266,41 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
 # check names, singular vectors -- carries one sign instead
 # (`.ctSignedVectors()`): its largest entry positive, the first of any that
 # tie within a relative 1e-8, as a pair of exchangeable parameters' do.
+# `svd()` for the checks' decompositions of gradients at draws, which do not
+# stop where LAPACK's divide and conquer (`dgesdd`) fails to converge: "error
+# code 1 from Lapack routine 'dgesdd'" stopped a fit after its optimisation,
+# its rows gradients at draws far along a weakly identified direction (an
+# ordinal model with a random DIFFUSION diagonal and fast latents, OpenBLAS
+# on Linux). The transpose is a different bidiagonalisation and is tried
+# next; then the eigendecomposition of the cross product, which loses the
+# singular values below about `sqrt(eps)` of the largest, the directions the
+# callers drop as rounding anyway.
+.ctSvd <- function(x, nu = min(dim(x)), nv = min(dim(x))) {
+  x <- as.matrix(x)
+  out <- tryCatch(svd(x, nu = nu, nv = nv), error = function(e) NULL)
+  if (!is.null(out)) return(out)
+  out <- tryCatch(svd(t(x), nu = nv, nv = nu), error = function(e) NULL)
+  if (!is.null(out)) return(list(d = out$d, u = out$v, v = out$u))
+  .ctSvdByEigen(x, nu, nv)
+}
+.ctSvdByEigen <- function(x, nu = min(dim(x)), nv = min(dim(x))) {
+  k <- min(dim(x))
+  s <- max(abs(x))
+  if (!is.finite(s) || s <= 0) s <- 1
+  e <- eigen(crossprod(x / s), symmetric = TRUE)
+  d <- s * sqrt(pmax(e$values[seq_len(k)], 0))
+  v <- e$vectors[, seq_len(k), drop = FALSE]
+  out <- list(d = d)
+  if (nu > 0L) {
+    u <- x %*% v
+    pos <- d > 0
+    u[, pos] <- sweep(u[, pos, drop = FALSE], 2, d[pos], '/')
+    out$u <- u[, seq_len(min(nu, k)), drop = FALSE]
+  }
+  if (nv > 0L) out$v <- v[, seq_len(min(nv, k)), drop = FALSE]
+  out
+}
+
 .ctSignedVectors <- function(V) {
   V <- as.matrix(V)
   if (!length(V)) return(V)
@@ -2327,7 +2362,7 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
 # standard errors on each direction's slope and shape; see there.
 .ctNormalDepartures <- function(Z, R, A, bars) {
   n <- nrow(R)
-  v <- .ctSignedVectors(svd(R)$v)
+  v <- .ctSignedVectors(.ctSvd(R, nu = 0L)$v)
   along <- R %*% v
   zalong <- Z %*% v
   slope <- colSums(along * zalong) / colSums(zalong^2)
@@ -2480,7 +2515,7 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
   E <- sweep(E, 2, colMeans(E))
   # What the projection leaves of the sampled directions is rounding.
   scale <- sqrt(sum(odd^2) + sum(((Rplus + Rminus) / 2)^2))
-  sv <- svd(D, nu = 0L, nv = min(dim(D)))
+  sv <- .ctSvd(D, nu = 0L, nv = min(dim(D)))
   live <- sv$d > 1e-8 * scale
   V <- sv$v[, live, drop = FALSE]
   along <- D %*% V
@@ -2502,7 +2537,7 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
   # gradient underflowing at a draw far out along a flat direction -- leaves
   # LINPACK's QR an infinite column past its rank, which qr.Q() refuses, and
   # that stopped a fit after its optimisation.
-  sb <- svd(sweep(basis, 2, apply(abs(basis), 2, max), "/"), nv = 0L)
+  sb <- .ctSvd(sweep(basis, 2, apply(abs(basis), 2, max), "/"), nv = 0L)
   U <- sb$u[, sb$d > 1e-7 * sb$d[1L], drop = FALSE]
   # (I - B)^-1 - I along V, and 2 C, in the basis U.
   VU <- crossprod(U, V)
@@ -2678,11 +2713,20 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
     # it: the curvature's normal is reported as it is, and the check says
     # whether the posterior departs from it (a fit's development default,
     # `ctFit()`).
+    # It runs after the optimisation, so whatever stops it must not stop the
+    # fit: a LAPACK failure in it once lost a fit whose optimisation had
+    # finished. A check that fails is recorded as such (`failed`), and the
+    # intervals are the curvature's normal, as without the check.
     if(uncertainty == 'checked' ||
         (uncertainty == 'hessian' && isTRUE(control$check))) {
-      method_details$normalcheck <- .ctOptimNormalCheck(.ctJuliaOr(
+      method_details$normalcheck <- tryCatch(.ctOptimNormalCheck(.ctJuliaOr(
         .ctImisGradient(lpgFunc, est), attr(.ctImisPointGradbatch(lpgFunc), 'gradbatch')),
-        est, cov, progress = .ctBackendProgressSink(verbose))
+        est, cov, progress = .ctBackendProgressSink(verbose)),
+        error = function(e) {
+          warning("The interval check could not be made (", conditionMessage(e),
+            "); intervals are from the curvature at the estimate.", call. = FALSE)
+          list(failed = conditionMessage(e))
+        })
       # The widths its pairs measured where it samples nothing
       # (`.ctNormalSpread()`).
       if(uncertainty == 'checked' && !is.null(method_details$normalcheck$spread))
@@ -3066,6 +3110,9 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     place$uncertaintyfit$cov, finishsamples), uncertaintyfit = place$uncertaintyfit,
     control = control, draws = 'normal')
   checked <- !is.null(place$directions)
+  # A check that could not be made named nothing to sample (it warned).
+  if (checkedfit && !is.null(uncertaintyfit$details$normalcheck$failed))
+    return(normal(place))
   if (draws != 'imis' || (checked && !ncol(place$directions))) return(normal(place))
 
   # 'checked' starts at the widths its check measured, 'is' at the curvature.

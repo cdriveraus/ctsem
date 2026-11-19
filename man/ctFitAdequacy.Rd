@@ -101,7 +101,8 @@ An object of class \code{ctFitAdequacy}: \code{families} (one row
   \code{value}; NULL when no such family ran), \code{adequate},
   \code{close_fit}, \code{informative} (with \code{tvcovariates}, whether
   they predict the errors at \code{alpha}; NA without), \code{projection}
-  (the method used), and \code{fit}
+  (the method used), \code{degenerate} (the effects family's axes left out,
+  their posterior the prior in every unit), and \code{fit}
   (with any generated data, for reuse). \code{plot()} draws the families,
   or one family's statistics.
 }
@@ -155,7 +156,10 @@ a variable.
     to the prior, so the differences have mean zero; a skewed or bimodal
     distribution, or a subgroup, moves them. These integrate the gradient
     function (Verbeke & Molenberghs, 2013; Drikvandi, Verbeke & Molenberghs,
-    2017), which is too heavy tailed to test directly.}
+    2017), which is too heavy tailed to test directly. An effect the data
+    leave at its prior in every unit has nothing to compare and is left out
+    (\code{degenerate}); a fit whose units carry more than four effects is
+    not tested, and says so.}
   \item{tvcovariates}{With \code{tvcovariates}, whether time varying
     variables the model does not use carry information about what it
     predicts: each variable's error, and each latent's update, against each
