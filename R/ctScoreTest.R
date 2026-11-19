@@ -453,6 +453,10 @@ ctScoreTest <- function(fit, covariates = NULL,
 
   spec <- fit$model_spec
   est <- .ctFitRawEstimate(fit)
+  # The fit's objective is the one its run ended on, its modes held
+  # (R/ctJuliaFitModes.R): a score differenced either side of the estimate
+  # must not see a unit land on another maximum.
+  .ctJuliaHoldModes(spec, .ctJuliaFitModes(fit))
   ptab <- .ctScoreParameterTable(fit)
   out <- list(heterogeneity = NULL, covariates = NULL, statedependence = NULL,
     volatility = NULL, fixed = NULL, level = NULL, info = list(route = .ctBackendIntOverPop(spec),
@@ -1739,9 +1743,18 @@ ctScoreTest <- function(fit, covariates = NULL,
 # fitted values, which must reproduce the fit, and the pieces a test reads
 # from it -- its gradient there, where the fit's parameters sit in it
 # (`theta`) and where the new ones do (`delta`), and its objective.
-.ctScoreExtendedSpec <- function(fit, est, model, names_new, label, cores = 2L) {
+#
+# At zero the extension has the fit's random effects, laid out as the fit's,
+# so it takes the fit's modes: the known modes on its specification, which a
+# rebuilt one lacks (without them a unit's search missed a maximum the fit's
+# reached, and the extension read 0.95 nats below the fit), and the modes the
+# fit's run ended with, held on both objectives for as long as `hold`, the
+# caller's frame, runs (`.ctJuliaHoldModes()`), so that every difference
+# reads one function, the one the estimate maximises.
+.ctScoreExtendedSpec <- function(fit, est, model, names_new, label, cores = 2L,
+  hold = parent.frame()) {
   spec <- fit$model_spec
-  args <- .ctFitReplayArgs(fit)
+  args <- .ctScoreNamedLevels(fit, .ctFitReplayArgs(fit))
   args$model <- model
   args$fit <- FALSE
   args$inits <- NULL
@@ -1749,6 +1762,8 @@ ctScoreTest <- function(fit, covariates = NULL,
   args$intoverpop <- .ctBackendIntOverPop(spec)
   args$verbose <- 0
   spec2 <- suppressMessages(suppressWarnings(do.call(ctFit, args)))
+  if (!is.null(spec$laplace$known) && !is.null(spec2$laplace))
+    spec2$laplace$known <- spec$laplace$known
   nm1 <- as.character(.ctFitRawParNames(fit))
   nm2 <- as.character(.ctBackendRawParameterNames(list(model_spec = spec2),
     .ctBackendNpar(spec2)))
@@ -1780,6 +1795,14 @@ ctScoreTest <- function(fit, covariates = NULL,
     fit <- .ctLaplaceOneStep(fit)
     spec2 <- .ctLaplaceOneStep(spec2)
   }
+  modes <- .ctJuliaFitModes(fit)
+  if (!is.null(modes) && length(modes$at) == length(nm1)) {
+    .ctJuliaHoldModes(fit$model_spec, modes, hybrid = !layer, envir = hold)
+    at2 <- stats::setNames(numeric(length(nm2)), nm2)
+    at2[nm1] <- modes$at
+    modes$at <- as.numeric(at2)
+    .ctJuliaHoldModes(spec2, modes, hybrid = !layer, envir = hold)
+  }
   value1 <- .ctJuliaEvaluate(fit, est, gradient = FALSE, cores = cores, hybrid = !layer)$value
   ev <- .ctJuliaEvaluate(spec2, x2, gradient = TRUE, cores = cores, hybrid = !layer)
   # With priors = TRUE every raw parameter has a normal(0, 1) prior, the new
@@ -1798,6 +1821,36 @@ ctScoreTest <- function(fit, covariates = NULL,
     theta = match(nm1, nm2), delta = match(names_new, nm2), priored = priored,
     module = .ctJuliaModule(spec$project), objective = .ctJuliaObjective(spec2, hybrid = !layer),
     onestep = onestep, layer = layer)
+}
+
+# The fit's `popblocks` and `popunique` as the parameters they selected on the
+# fitted model, level by level. They may name matrices, and an extended model
+# moves a varying cell's parameter into PARS (the level terms move every
+# varying MANIFESTMEANS and CINT, the drift terms CINT, the volatility terms
+# the DIFFUSION diagonal), where a matrix name no longer reaches it: a block
+# naming MANIFESTMEANS stopped the level family. A parameter keeps its name
+# wherever it moves, so the extended model shares the fit's levels.
+.ctScoreNamedLevels <- function(fit, args) {
+  blocks <- .ctPopblocksRequested(args$popblocks)
+  unique <- .ctPopuniqueRequested(args$popunique)
+  if (!blocks && !unique) return(args)
+  base <- .ctFitBaseModel(fit)
+  if (is.null(base)) return(args)
+  base <- .ctResolveLevels(base)
+  levelnames <- c(base$subjectIDname, base$groupIDnames)
+  columns <- stats::setNames(c('indvarying', if (length(base$groupIDnames))
+    paste0('indvarying_', base$groupIDnames)), levelnames)
+  if (blocks) args$popblocks <- lapply(.ctPopblocksResolve(base, args$popblocks,
+    levelnames, columns), function(level) stats::setNames(lapply(level, function(b)
+      list(rank = b$rank, effects = b$param)), vapply(level, `[[`, '', 'name')))
+  if (unique) {
+    asked <- .ctPopuniqueByLevel(args$popunique, levelnames)
+    named <- Map(function(value, level) .ctPopuniqueSelect(base$pars, columns[[level]],
+      value, level), asked, names(asked))
+    named <- named[lengths(named) > 0L]
+    args$popunique <- if (length(named)) named else NULL
+  }
+  args
 }
 
 # The fit's curvature on the extended model's objective, at the fitted values

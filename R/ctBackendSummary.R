@@ -2265,6 +2265,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     "intervals to report."))
   check <- u$details$normalcheck
   if (is.null(check)) return(NULL)
+  if (!is.null(check$failed)) return(paste0("Intervals are from the curvature at ",
+    "the estimate; the interval check could not be made (", check$failed, ")."))
   named <- if (is.matrix(check$directions)) ncol(check$directions) else 0L
   if (!named) return(NULL)
   sprintf(paste0("Intervals are from the curvature at the estimate, and the ",
