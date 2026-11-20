@@ -222,9 +222,10 @@
 #'   dynamics or of the error variances depends on a subject's level, where
 #'   that level is a random intercept: for each free \code{DRIFT},
 #'   \code{DIFFUSION} and \code{MANIFESTVAR} parameter that does not vary over
-#'   subjects, and each \code{MANIFESTMEANS} or \code{CINT} intercept that
+#'   subjects, including a \code{PARS} parameter those matrices read in an
+#'   expression, and each \code{MANIFESTMEANS} or \code{CINT} intercept that
 #'   does, the score test of a term \code{g * intercept} added to the
-#'   parameter, at \code{g = 0}. When subjects' levels sit in the intercepts,
+#'   parameter, at \code{g = 0}, wherever the model reads it. When subjects' levels sit in the intercepts,
 #'   the latent states are deviations from them, so the state dependence and
 #'   volatility tests, which read the states, see dependence on the deviation
 #'   only; a parameter that depends on where a subject sits -- persistence or
@@ -2319,10 +2320,15 @@ ctScoreTest <- function(fit, covariates = NULL,
 
 # The fitted model with every parameter of the dynamics and of the error
 # variances that does not vary over subjects (free DRIFT, DIFFUSION and
-# MANIFESTVAR parameters) shifted, on its own scale, by a term times each
-# intercept that does (MANIFESTMEANS, CINT): every cell the parameter fills
-# becomes `<parameter> + t1 * <intercept 1> + ...`, each t a new PARS
-# parameter at zero, identity transform. The parameter and the intercepts are
+# MANIFESTVAR parameters, and PARS parameters their expressions read) shifted,
+# on its own scale, by a term times each intercept that does (MANIFESTMEANS,
+# CINT): the parameter becomes `<parameter> + t1 * <intercept 1> + ...`
+# wherever a cell reads it, each t a new PARS parameter at zero, identity
+# transform. A cell that is the parameter is rewritten so; one whose
+# expression reads it, such as a second process's drift `a_eta - d_med` held
+# at a gap from the first's, has the shifted parameter put in its place,
+# since a term that moved the parameter in one cell and not the other would
+# test a model that no longer ties them. The parameter and the intercepts are
 # declared in PARS so the cells can read them, each straight after the cell it
 # came from (.ctInsertMovedRows), so the random effects keep their order. At
 # zero the model is the fit. The constant part of an intercept is the
@@ -2336,14 +2342,17 @@ ctScoreTest <- function(fit, covariates = NULL,
     !pars$param %in% c('stationary', model$latentNames, model$TDpredNames)
   anyvaries <- function(p) any(varies[plain & pars$param == p])
   levels <- unique(pars$param[pars$matrix %in% c('MANIFESTMEANS', 'CINT') & plain & varies])
-  tested <- unique(pars$param[pars$matrix %in% c('DRIFT', 'DIFFUSION', 'MANIFESTVAR') & plain])
+  dynamic <- pars$matrix %in% c('DRIFT', 'DIFFUSION', 'MANIFESTVAR') & !is.na(pars$param)
+  declared <- unique(pars$param[isp & plain])
+  tested <- unique(c(pars$param[dynamic & plain], declared[vapply(declared, function(p)
+    any(.ctScoreReads(pars$param[dynamic & !plain], p)), logical(1))]))
   tested <- tested[!vapply(tested, anyvaries, logical(1))]
   if (!length(levels) || !length(tested)) return(list(model = model, terms = NULL))
   terms <- expand.grid(level = levels, parameter = tested, stringsAsFactors = FALSE)
   terms <- terms[, c('parameter', 'level')]
   terms$name <- paste0('ctscorelevel', seq_len(nrow(terms)))
   terms$matrix <- vapply(terms$parameter, function(p)
-    pars$matrix[!isp & plain & pars$param == p][1], '')
+    pars$matrix[dynamic & (pars$param == p | .ctScoreReads(pars$param, p))][1], '')
   effects <- grep('_effect$', names(pars), value = TRUE)
   levelflags <- grep('^indvarying_', names(pars), value = TRUE)
   nextpars <- max(c(0L, as.integer(pars$row[isp])))
@@ -2368,17 +2377,30 @@ ctScoreTest <- function(fit, covariates = NULL,
   for (p in tested) {
     cells <- which(!isp & plain & pars$param == p)
     tt <- terms[terms$parameter == p, , drop = FALSE]
-    pars$param[cells] <- paste0(p, ' + ', paste0(tt$name, ' * ', tt$level, collapse = ' + '))
+    shifted <- paste0(p, ' + ', paste0(tt$name, ' * ', tt$level, collapse = ' + '))
+    pars$param[cells] <- shifted
     pars$value[cells] <- NA
     pars$transform[cells] <- NA
     pars$indvarying[cells] <- FALSE
     for (e in effects) pars[[e]][cells] <- 'FALSE'
     for (l in levelflags) pars[[l]][cells] <- FALSE
+    # Expressions that read it, in any matrix, read the shifted parameter.
+    reads <- which(!plain & !is.na(pars$param) & .ctScoreReads(pars$param, p))
+    pars$param[reads] <- .ctScoreReplaceName(pars$param[reads], p,
+      paste0('(', shifted, ')'))
   }
   model$pars <- .ctInsertMovedRows(pars, moved, added)
   rownames(terms) <- NULL
   list(model = model, terms = terms)
 }
+
+# Whether each expression in `x` reads the name `p`: as a whole name, not part
+# of a longer one (`a_eta` is not read by `a_eta2` or `ba_eta`), and not as a
+# function called by that name.
+.ctScoreNamePattern <- function(p) paste0('(?<![A-Za-z0-9._])',
+  gsub('.', '\\.', p, fixed = TRUE), '(?![A-Za-z0-9._]|\\s*\\()')
+.ctScoreReads <- function(x, p) !is.na(x) & grepl(.ctScoreNamePattern(p), x, perl = TRUE)
+.ctScoreReplaceName <- function(x, p, by) gsub(.ctScoreNamePattern(p), by, x, perl = TRUE)
 
 #' Plot score tests
 #'

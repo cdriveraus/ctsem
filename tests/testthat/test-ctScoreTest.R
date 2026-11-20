@@ -288,6 +288,45 @@ test_that("a parameter that depends on the subject's level is found by the level
   expect_null(st1$info$errors)
 })
 
+test_that("a PARS parameter the dynamics read through an expression has level terms", {
+  # The same model with its drift written as a PARS parameter that the drift
+  # cell reads in an expression: the term shifts the parameter where it is
+  # read, so its test is the plain parameter's.
+  x <- .score_fit('level', seed = 4L)
+  m <- suppressMessages(ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
+    LAMBDA = matrix(1), DRIFT = matrix('a_eta * 1'),
+    PARS = matrix('a_eta|-(1e-06 + 2 * log1p_exp(-(2 * param)))')))
+  f <- fit_cached('scoretest level drift in PARS', suppressMessages(ctFit(
+    x$data[, c('id', 'time', 'Y1')], m, backend = 'julia', cores = 1, verbose = 0)))
+  st <- suppressMessages(ctScoreTest(f, tests = 'level', cores = 1, verbose = FALSE))
+  plain <- suppressMessages(ctScoreTest(x$fit, tests = 'level', cores = 1, verbose = FALSE))
+  expect_null(st$info$errors)
+  a <- st$level$terms[st$level$terms$parameter == 'a_eta', ]
+  d <- plain$level$terms[plain$level$terms$parameter == 'drift_eta1', ]
+  expect_equal(nrow(a), 1L)
+  expect_equal(a$LM, d$LM, tolerance = 1e-4)
+  expect_equal(a$estimate, d$estimate, tolerance = 1e-4)
+  # A second process held at a gap from the first reads the shifted
+  # parameter too, and the gap is tested.
+  two <- suppressMessages(ctModel(type = 'ct', manifestNames = c('y1', 'y2'),
+    latentNames = c('eta', 'med'), LAMBDA = matrix(c(1, 0, 1, 1), 2, 2, byrow = TRUE),
+    DRIFT = matrix(c('a_eta', 0, 0, 'a_eta - d_med'), 2, 2, byrow = TRUE),
+    PARS = matrix(c('a_eta|-log1p_exp(-param)', 'd_med|log1p_exp(param)'), ncol = 1),
+    CINT = matrix(c(ctPar('c_eta', indvarying = TRUE), 0)),
+    MANIFESTMEANS = matrix(0, 2, 1)))
+  lm <- ctsem:::.ctScoreLevelModel(two)
+  expect_true(all(c('a_eta', 'd_med') %in% lm$terms$parameter))
+  p <- lm$model$pars
+  ta <- lm$terms$name[lm$terms$parameter == 'a_eta']
+  td <- lm$terms$name[lm$terms$parameter == 'd_med']
+  expect_equal(p$param[p$matrix == 'DRIFT' & p$row == 2 & p$col == 2],
+    paste0('(a_eta + ', ta, ' * c_eta) - (d_med + ', td, ' * c_eta)'))
+  expect_equal(p$param[p$matrix == 'DRIFT' & p$row == 1 & p$col == 1],
+    paste0('a_eta + ', ta, ' * c_eta'))
+  expect_identical(ctsem:::.ctScoreReads(c('a_eta - d', 'a_eta2', 'ba_eta', 'x.a_eta',
+    'a_eta(1)', NA), 'a_eta'), c(TRUE, FALSE, FALSE, FALSE, FALSE, FALSE))
+})
+
 test_that("the level in the latent is the same linear model as the level in the indicator", {
   # With linear dynamics and the same initial distribution -- the deviation
   # from 0, the level from its stationary mean, each with its stationary
