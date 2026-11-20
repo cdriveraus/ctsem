@@ -406,6 +406,14 @@ test_that("a predictor the model has is tested on the parameters it does not act
   p <- e$model$pars
   expect_identical(p$z_effect[p$param %in% c('drift_eta1', 'mm_Y1')], c('TRUE', 'TRUE'))
   expect_true(all(p$z_effect[!p$param %in% c('drift_eta1', 'mm_Y1')] %in% 'FALSE'))
+  # Rebuilt without the change that added z (pruning it), the edit brings z
+  # in with the further effect alone.
+  e0 <- props[[1]]$edit(.score_model(), d[, c('id', 'time', 'Y1')],
+    unique(d[, c('id', 'z')]), list())
+  expect_identical(e0$model$TIpredNames, 'z')
+  p0 <- e0$model$pars
+  expect_identical(unique(p0$param[p0$z_effect %in% 'TRUE']), 'drift_eta1')
+  expect_true('z' %in% names(e0$data))
   refit <- ctsem:::.ctImproveRefit(fit, e$model, e$data, 1L, NULL, e$args)
   expect_true(ctsem:::.ctImproveCompare(fit, refit, 'LR', 0.05, 1L)$accept)
   expect_lt(summary(refit)$tipreds['tip_z_drift_eta1', 'mean'], 0)
