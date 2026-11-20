@@ -559,11 +559,12 @@ test_that("a reduced-rank level's blocks are given a dimension, or share theirs"
   # The refit starts at the fit's population covariance plus the test's
   # direction at its sd, also where the raised block's dimensions come first
   # and the others' are numbered after them, which a match by name misread.
-  popcov <- function(spec, x) as.matrix(ctsem:::.ctBackendJuliaValue(
-    ctsem:::.ctJuliaModule(spec$project)$ctsem_laplace_popcov(ctsem:::.ctJuliaObjective(spec),
-    ctsem:::.ctJuliaNumericVector(x), 1L)))
+  # `of`: a fit, or a specification prepared and not fitted.
+  popcov <- function(of, x) as.matrix(ctsem:::.ctBackendJuliaValue(
+    ctsem:::.ctJuliaModule(fit$model_spec$project)$ctsem_laplace_popcov(
+    ctsem:::.ctJuliaObjective(of), ctsem:::.ctJuliaNumericVector(x), 1L)))
   lv <- fit$model_spec$laplace$levels[[1]]
-  P1 <- popcov(fit$model_spec, ctsem:::.ctFitRawEstimate(fit))
+  P1 <- popcov(fit, ctsem:::.ctFitRawEstimate(fit))
   dimnames(P1) <- list(lv$param, lv$param)
   v <- stats::setNames(numeric(nrow(P1)), rownames(P1))
   v[names(dir)] <- 0.5 * dir
