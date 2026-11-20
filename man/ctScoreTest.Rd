@@ -198,8 +198,10 @@ before interpreting their sizes.
   variances, cannot say. \code{blocks$covariance}: for each pair of blocks,
   the joint score test, two sided, of the covariances between their
   dimensions, which the blocks hold at zero -- whether, say, a response
-  style shared by an item's thresholds covaries with the dynamic level.
-  Both are calibrated by resampling subjects. An effect whose population
+  style shared by an item's thresholds covaries with the dynamic level. A
+  pair in which one block loads on every effect of the other is not tested,
+  since those covariances are in the model already, and is listed with a
+  note. Both are calibrated by resampling subjects. An effect whose population
   mean is stated has no coordinate to differentiate along and is left out
   of both.
 }

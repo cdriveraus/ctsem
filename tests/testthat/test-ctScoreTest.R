@@ -568,6 +568,27 @@ test_that("an effect the data leave at its prior is named and not tested", {
   expect_equal(unname(e2$M[, !u2]), unname(closed), tolerance = 1e-12)
 })
 
+test_that("covariances between blocks are tested only where the blocks leave them out", {
+  # A dynamics block of two effects (one dimension) and a style block of four,
+  # two of them the dynamics' (two dimensions): the style block's loadings
+  # already move every covariance between the two, which Laplace's error
+  # then scored as LM 66 on the hc-wellbeing fits.
+  dirs <- function(rows, r) { m <- matrix(0, 5, r); m[rows, ] <- 1; m }
+  plan <- list(list(name = 'dynamics', index = 1:2, dirs = dirs(1:2, 1)),
+    list(name = 'style', index = 1:4, dirs = dirs(1:4, 2)))
+  V <- cbind(plan[[1]]$dirs, plan[[2]]$dirs)
+  vb <- c(1L, 2L, 2L)
+  pr <- ctsem:::.ctScoreBlockPairs(plan, V, vb)
+  expect_equal(NROW(pr), 0L)
+  expect_equal(attr(pr, 'nested'), matrix(1:2, 1))
+  # Disjoint blocks: each pair of dimensions is tested.
+  plan[[2]] <- list(name = 'style', index = 3:4, dirs = dirs(3:4, 2))
+  V <- cbind(plan[[1]]$dirs, plan[[2]]$dirs)
+  pr <- ctsem:::.ctScoreBlockPairs(plan, V, vb)
+  expect_equal(unclass(pr)[, 1:2], matrix(c(1L, 1L, 2L, 3L), 2))
+  expect_null(attr(pr, 'nested'))
+})
+
 # A reduced-rank level in blocks, as the hc-wellbeing reanalysis fits them: a
 # subject's level in one block, item intercepts in another named by matrix,
 # one of them about a stated mean. The intercepts are generated from two

@@ -141,8 +141,10 @@
 #'   variances, cannot say. \code{blocks$covariance}: for each pair of blocks,
 #'   the joint score test, two sided, of the covariances between their
 #'   dimensions, which the blocks hold at zero -- whether, say, a response
-#'   style shared by an item's thresholds covaries with the dynamic level.
-#'   Both are calibrated by resampling subjects. An effect whose population
+#'   style shared by an item's thresholds covaries with the dynamic level. A
+#'   pair in which one block loads on every effect of the other is not tested,
+#'   since those covariances are in the model already, and is listed with a
+#'   note. Both are calibrated by resampling subjects. An effect whose population
 #'   mean is stated has no coordinate to differentiate along and is left out
 #'   of both.
 #'
@@ -540,10 +542,9 @@ ctScoreTest <- function(fit, covariates = NULL,
       if (length(b$index) > b$rank) b$index)))
     vdirs <- do.call(cbind, lapply(plan, `[[`, 'dirs'))
     vblock <- unlist(lapply(seq_along(plan), function(i) rep(i, NCOL(plan[[i]]$dirs))))
-    vpairs <- if (length(unique(vblock)) > 1L) {
-      g <- as.matrix(expand.grid(a = seq_along(vblock), b = seq_along(vblock)))
-      unname(g[vblock[g[, 1]] < vblock[g[, 2]], , drop = FALSE])
-    } else NULL
+    vpairs <- .ctScoreBlockPairs(plan, vdirs, vblock)
+    nested <- attr(vpairs, 'nested')
+    if (!NROW(vpairs)) vpairs <- NULL
     rows <- union(union(union(het, cov), R), within)
     say("Score contributions: ", 2L * (length(rows) + NCOL(dirs) + NROW(pairs) +
       NCOL(vdirs) + NROW(vpairs)) + 1L, " per-subject gradient passes")
@@ -573,7 +574,8 @@ ctScoreTest <- function(fit, covariates = NULL,
         het, nboot)
     })
     if (length(plan)) attempt('heterogeneity, blocks', {
-      out$blocks <- .ctScoreBlocks(pieces, ptab, plan, vblock, variance, nboot)
+      out$blocks <- .ctScoreBlocks(pieces, ptab, plan, vblock, variance, nboot,
+        nested = nested)
     })
     if (length(cov)) attempt('covariates', {
       items <- .ctScoreItems(pieces, ptab, cov)
@@ -1122,6 +1124,32 @@ ctScoreTest <- function(fit, covariates = NULL,
   })
 }
 
+# The pairs of directions, one from each of two blocks, whose covariance the
+# blocks hold at zero (`vdirs`' columns; `vblock` their blocks). A covariance
+# between dimension `u` of block A and `w` of block B moves the covariance by
+# u w' + w u', which is a move of B's loadings along `u` (with a turn of B's
+# dimensions where its triangle fixes an entry) wherever `u` loads only on
+# B's effects, and likewise the other way. Such a covariance is in the model
+# already: its score at the estimate is the fitted loadings' score, zero, up
+# to how far Laplace's term departs from the Gaussian identity the test reads
+# it by. Tested, a style block over the thresholds and the dynamic effects
+# gave LM 66 on 4 df against a dynamics block over those effects, from
+# Laplace's error alone. So a pair of blocks one of whose effects contain the
+# other's is not tested; the pairs left out are the attribute `nested`, as
+# block indices.
+.ctScoreBlockPairs <- function(plan, vdirs, vblock) {
+  if (length(unique(vblock)) < 2L) return(NULL)
+  g <- as.matrix(expand.grid(a = seq_along(vblock), b = seq_along(vblock)))
+  g <- g[vblock[g[, 1]] < vblock[g[, 2]], , drop = FALSE]
+  inside <- function(d, blk) all(which(vdirs[, d] != 0) %in% plan[[blk]]$index)
+  inmodel <- vapply(seq_len(nrow(g)), function(r)
+    inside(g[r, 1], vblock[g[r, 2]]) || inside(g[r, 2], vblock[g[r, 1]]), logical(1))
+  out <- unname(g[!inmodel, , drop = FALSE])
+  nested <- unique(cbind(vblock[g[inmodel, 1]], vblock[g[inmodel, 2]]))
+  attr(out, 'nested') <- if (nrow(nested)) unname(nested) else NULL
+  out
+}
+
 # What a reduced-rank level's blocks leave out, beside the per-parameter own
 # variances: a further shared dimension within a block, and covariances between
 # blocks.
@@ -1143,7 +1171,7 @@ ctScoreTest <- function(fit, covariates = NULL,
 # the subjects' contributions, as the covariates' joint tests are; with the
 # model variance, against chi-square.
 .ctScoreBlocks <- function(pieces, ptab, plan, vblock, variance = 'robust',
-  nboot = 1999L) {
+  nboot = 1999L, nested = NULL) {
   dimension <- do.call(rbind, lapply(plan, function(b) {
     if (length(b$index) <= b$rank) return(NULL)
     d <- .ctScoreDimension(pieces, ptab, b$index, nboot)
@@ -1208,6 +1236,16 @@ ctScoreTest <- function(fit, covariates = NULL,
       data.frame(blocks = blocks, LM = j$LM, df = j$df, p = j$p, stringsAsFactors = FALSE)
     }))
   }
+  # Pairs of blocks whose covariances are in the model already
+  # (`.ctScoreBlockPairs()`): said, not tested.
+  if (NROW(nested)) covariance <- rbind(if (!is.null(covariance))
+    cbind(covariance, note = NA_character_, stringsAsFactors = FALSE),
+    do.call(rbind, lapply(seq_len(nrow(nested)), function(r) {
+      a <- plan[[nested[r, 1]]]$name; b <- plan[[nested[r, 2]]]$name
+      data.frame(blocks = paste(a, b, sep = ' x '), LM = NA_real_, df = 0L,
+        p = NA_real_, note = 'in the model: one block loads on every effect of the other',
+        stringsAsFactors = FALSE)
+    })))
   list(dimension = dimension, covariance = covariance)
 }
 
