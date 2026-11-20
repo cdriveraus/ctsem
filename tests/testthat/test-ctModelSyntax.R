@@ -283,6 +283,22 @@ test_that('ctPar() and quoted cells give the other fields', {
   m <- ctModelFormula(y1 ~ eta1, d(eta1) ~ eta1 + (1 | id))
   expect_identical(unname(m$fixedpopmeans['cint_eta1']), 0)
   expect_true(cell(m, 'CINT', 1)$indvarying)
+  # and the Mplus way: the mean of a random slope fixed in %BETWEEN%
+  s <- ctModelMplus('
+    eta1 BY y1;
+    eta2 BY y2;
+    s | eta1 ON eta2;
+    %BETWEEN%
+    [s@0.2];
+    s;')
+  expect_identical(cell(s, 'DRIFT', 1, 2)$param, 's')
+  expect_true(cell(s, 'DRIFT', 1, 2)$indvarying)
+  expect_identical(unname(s$fixedpopmeans['s']), 0.2)
+  roundtrip(s)
+  # statements may come in any order
+  expect_same_model(
+    ctModelLavaan('a ~ age\n a ~~ a\n eta1 =~ y1\n eta2 =~ y2\n eta1 ~ a*eta2'),
+    ctModelLavaan('eta1 =~ y1\n eta2 =~ y2\n eta1 ~ a*eta2\n a ~~ a\n a ~ age'))
 })
 
 test_that('indicator types', {

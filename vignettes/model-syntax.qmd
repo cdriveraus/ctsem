@@ -115,7 +115,8 @@ processes is also correlated. Both can be switched off, as shown below.
 
 The model is fitted with `ctFit()` like any other. The data are in long format
 with one row per subject and occasion. Here a time dependent predictor `TD1`
-affects the first process.
+affects the first process. The example data set is small, so the fit uses the
+default priors.
 
 ```{r fit}
 model <- ctModelLavaan('
@@ -124,8 +125,8 @@ model <- ctModelLavaan('
   eta1 ~ eta1 + eta2 + TD1
   eta2 ~ eta1 + eta2
 ')
-fit <- ctFit(ctstantestdat, model, cores = 2)
-summary(fit)$popmeans
+fit <- ctFit(ctstantestdat, model, priors = TRUE, cores = 2)
+round(summary(fit)$popmeans, 2)
 ```
 
 The rows are named by parameter. `drift_eta1_eta2` is the effect of `eta2` on

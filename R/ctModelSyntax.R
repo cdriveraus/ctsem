@@ -997,10 +997,11 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
       cells$value[k] <<- NA_real_
       cells$expr[k] <<- FALSE
     }
+    # A fixed cell keeps a label it was given: it still names the cell, and
+    # names the parameter again if the cell is made to vary around the value.
     fix <- function(value) {
       cells$free[k] <<- FALSE
       cells$value[k] <<- value
-      cells$name[k] <<- NA_character_
       cells$expr[k] <<- FALSE
     }
     if (mod$type %in% c('free', 'start')) {
@@ -1090,7 +1091,8 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
       return(.ctSynNumber(cells$value[k]))
     }
     # fixed and varying: random effects around a stated mean
-    name <- paste0(cells$auto[k], '=', .ctSynNumber(cells$value[k]))
+    name <- paste0(if (is.na(cells$name[k])) cells$auto[k] else cells$name[k],
+      '=', .ctSynNumber(cells$value[k]))
   } else {
     name <- cells$name[k]
     if (!is.na(cells$mean[k])) name <- paste0(name, '=',
@@ -1166,7 +1168,6 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
   idx <- function(matrix, row, col) which(cells$matrix == matrix &
       cells$row == row & cells$col == col)
   covcell <- function(matrix, i, j) idx(matrix, max(i, j), min(i, j))
-  handles <- function() c(cells$name[cells$free & !cells$expr], cells$auto)
   ishandle <- function(x) x %in% c(nm$labels, cells$auto)
   # The cells a name stands for: a label, a default name, or in a between
   # block an indicator or process for its intercept.
@@ -1184,7 +1185,7 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
         'the model.', call. = FALSE)
       return(rows)
     }
-    rows <- which(cells$free & !cells$expr & cells$name %in% x)
+    rows <- which(!cells$expr & cells$name %in% x)
     if (!length(rows)) rows <- which(cells$auto %in% x)
     if (!length(rows) && between) {
       if (x %in% manifests) rows <- idx('MANIFESTMEANS', match(x, manifests), 1L)
