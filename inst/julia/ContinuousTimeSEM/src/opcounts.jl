@@ -29,8 +29,17 @@ each, nearly all of them refused by the first screening gradient, and kept 2
 better modes from 9 Newton solves: the screen's gradients were most of the
 evaluation.
 
-A threaded subject loop increments these racily, so the counts are then lower
-bounds. Read them from a single-threaded run when the exact number matters.
+The `overshoot_*` counts are the overshoot probe's (`_ctsem_overshot`): trial
+points, sets it skipped as already tried, full evaluations of a trial, the
+screen's gradients at the estimate (`CTSEMProbeScreen`), its sampled
+evaluations and the units in them, and trials it settled without a full
+evaluation. A full evaluation costs every unit, so `overshoot_values * N +
+overshoot_units` is the trials' cost in unit evaluations. The probe runs them
+one after another, so these are exact at any thread count.
+
+A threaded subject loop increments the others racily, so the counts are then
+lower bounds. Read them from a single-threaded run when the exact number
+matters.
 """
 const _CTSEM_OPCOUNT = (
     exp = Ref(0),
@@ -50,6 +59,13 @@ const _CTSEM_OPCOUNT = (
     probe_nongaussian = Ref(0),
     probe_newtons = Ref(0),
     probe_better = Ref(0),
+    overshoot_trials = Ref(0),
+    overshoot_repeats = Ref(0),
+    overshoot_values = Ref(0),
+    overshoot_gradients = Ref(0),
+    overshoot_samples = Ref(0),
+    overshoot_units = Ref(0),
+    overshoot_screened = Ref(0),
 )
 
 """Zero every operation counter."""

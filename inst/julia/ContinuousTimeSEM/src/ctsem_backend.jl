@@ -1319,6 +1319,13 @@ function _ctsem_probe_value(objective, x)
     isfinite(value) ? value : -Inf
 end
 
+"""`_ctsem_probe_value` for one of the overshoot probe's trials, counted
+(`overshoot_values`)."""
+function _ctsem_probe_full(objective, x)
+    _CTSEM_OPCOUNT.overshoot_values[] += 1
+    return _ctsem_probe_value(objective, x)
+end
+
 export ctsem_evaluate_batch
 
 """
@@ -1686,7 +1693,7 @@ saturation detector flags -- the other two have transforms that are merely
 unresponsive rather than flat -- so selecting the set from the flag cannot work
 either. See `_ctsem_pullback_sets` for what is selected instead.
 
-At most `length(fractions)` value-only evaluations per set of
+At most `length(fractions)` value-only trials per set of
 `_ctsem_pullback_sets` (three more for a set far out,
 `_ctsem_pullback_fractions`), and it stops at the first set that improves -- so
 `gain` is a lower bound on what is left rather than the best pullback
@@ -1695,6 +1702,13 @@ any improvement settles that. `progress`, when given, is called `(done, total)`
 before each set (`_ctsem_probe_progress`); each set passes an interrupt
 checkpoint, since the value calls themselves refuse every exception as an
 unusable point.
+
+On an objective that is a sum over units, each trial is judged on samples of
+its units first (`CTSEMProbeScreen`, `screen`), and evaluated in full only
+where they do not show it a loss; `gain` is then the largest among the trials
+evaluated in full or exactly. `tried` holds the sets already tried at this
+`minimizer` without a gain, which are skipped: the verdict's second search,
+over every coordinate, starts with prefixes the first may have tried.
 
 It runs behind an inference barrier (`_ctsem_overshot_probe`), compiled for
 the types it is called with rather than for what inference makes of them at
@@ -1721,7 +1735,8 @@ const _CTSEMOvershot = @NamedTuple{overshot::Bool, gain::Float64,
 # `_ctsem_overshot`'s body, which its barrier dispatches to at run time.
 function _ctsem_overshot_probe(objective, minimizer, saturated_parameters, value,
         tolerance; fractions=_CTSEM_PULLBACK_FRACTIONS,
-        mode=_CTSEM_OVERSHOOT_PROBE[], progress=nothing, among=nothing)
+        mode=_CTSEM_OVERSHOOT_PROBE[], progress=nothing, among=nothing,
+        screen=nothing, tried=nothing)
     gain = 0.0
     empty_result = (overshot=false, gain=gain, coordinates=Int[], point=Float64[])
     (!isfinite(value) || isempty(minimizer)) && return empty_result
@@ -1737,6 +1752,9 @@ function _ctsem_overshot_probe(objective, minimizer, saturated_parameters, value
     isfinite(value) || return empty_result
     keep = collect(Float64, minimizer)
     probe = copy(keep)
+    # A screen handed over is used only at the point it was made for.
+    judge = (screen isa CTSEMProbeScreen && screen.minimizer == keep) ? screen :
+        _ctsem_probe_screen(objective, keep)
     # No ranking of the points that did not improve. Ordering them by how
     # little they lost is a proxy for nothing: the least bad candidate is the
     # one that disturbed the estimate least, which makes it the likeliest to
@@ -1746,9 +1764,18 @@ function _ctsem_overshot_probe(objective, minimizer, saturated_parameters, value
     for (i, set) in enumerate(sets)
         _ctsem_interrupt_check()
         progress === nothing || progress(i - 1, length(sets))
+        tried === nothing || begin
+            key = sort(Vector{Int}(set))
+            if key in tried
+                _CTSEM_OPCOUNT.overshoot_repeats[] += 1
+                continue
+            end
+            push!(tried, key)
+        end
         for f in _ctsem_pullback_fractions(maximum(p -> abs(keep[p]), set), fractions)
             for p in set; probe[p] = f * keep[p]; end
-            trial = _ctsem_probe_value(objective, probe)
+            _CTSEM_OPCOUNT.overshoot_trials[] += 1
+            trial = _ctsem_probe_trial(judge, objective, probe, value, tolerance)
             isfinite(trial) && (gain = max(gain, trial - value))
             if gain > tolerance
                 # The point as well as the verdict. It costs a copy and it is
@@ -3020,12 +3047,19 @@ function _ctsem_optimise_verdict(objective, minimizer, start_values, value,
     # step cannot pass here on an uninitialised number.
     converged_enough = isfinite(value) && finite_gradient &&
         (predicted_gain <= converge_tol || last_gain <= converge_tol)
-    overshoot = _ctsem_overshoot_skippable(minimizer, saturated_parameters,
-            candidates) ?
+    skippable = _ctsem_overshoot_skippable(minimizer, saturated_parameters,
+        candidates)
+    # One screen and one record of the sets tried, for both searches below: the
+    # screen's terms at the estimate cost a gradient or two, and the second
+    # search's first prefixes can be sets the first tried.
+    screen = (skippable || _ctsem_overshoot_mode(overshoot_probe) === :off) ?
+        nothing : _ctsem_probe_screen(objective, minimizer)
+    tried = Set{Vector{Int}}()
+    overshoot = skippable ?
         (overshot=false, gain=0.0, coordinates=Int[], point=Float64[]) :
         _ctsem_overshot(objective, minimizer, saturated_parameters,
             value, converge_tol; mode=overshoot_probe, progress=progress,
-            among=candidates)
+            among=candidates, screen=screen, tried=tried)
     # The curvature's pool settles "not a maximum" when it finds a gain, but
     # not "a maximum" when it finds none: the way out can need a coordinate
     # the curvature does not call flat beside one it does. A drift that went
@@ -3041,7 +3075,8 @@ function _ctsem_optimise_verdict(objective, minimizer, start_values, value,
     if widen && !overshoot.overshot && candidates !== nothing && !isempty(candidates) &&
             _ctsem_overshoot_mode(overshoot_probe) === :magnitude
         wider = _ctsem_overshot(objective, minimizer, saturated_parameters,
-            value, converge_tol; mode=overshoot_probe, progress=progress)
+            value, converge_tol; mode=overshoot_probe, progress=progress,
+            screen=screen, tried=tried)
         overshoot = wider.overshot ? wider : (overshot=false,
             gain=max(overshoot.gain, wider.gain), coordinates=Int[], point=Float64[])
     end
