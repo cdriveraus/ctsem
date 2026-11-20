@@ -2852,3 +2852,106 @@ end
     @test mwith.structured_steps > 0
     @test mwith.maximum_loglik ≈ mplain.maximum_loglik atol=1e-6
 end
+
+# The overshoot probe's screen (`CTSEMProbeScreen`): a trial it sets aside must
+# be one the full objective puts under the tolerance, and a value it reports
+# must be the full objective's. Every trial of the search over every coordinate
+# is judged both ways, at an optimum, where nothing gains, and with the random
+# effect's scale collapsed, where pulling it back does.
+@testset "the probe's screen keeps every trial the full objective gains on" begin
+    C = ContinuousTimeSEM
+    laplace = _endgame_laplace_objective(; nsubjects=300)
+    best = ctsem_laplace_optimize(laplace, [0.5, -0.4, -1.0, 0.2, 0.0];
+        maxiter=500, gap_tol=1e-10, newton=false, certify=false,
+        progress=false, overshoot_probe=:off)
+    x = collect(Float64, best.minimizer)
+    collapsed = copy(x)
+    collapsed[5] = -15.0
+    tol = 1e-3
+    N = C._ctsem_nunits(laplace)
+    for (at, gaining) in ((x, false), (collapsed, true))
+        v = C._ctsem_probe_value(laplace, at)
+        screen = C._ctsem_probe_screen(laplace, at)
+        @test screen isa C.CTSEMProbeScreen
+        spent = 0
+        full = 0
+        gains = 0
+        probe = copy(at)
+        for set in C._ctsem_pullback_sets(at, Int[])
+            for f in C._ctsem_pullback_fractions(maximum(p -> abs(at[p]), set))
+                for p in set
+                    probe[p] = f * at[p]
+                end
+                before = C.ctsem_opcounts()
+                judged = C._ctsem_probe_trial(screen, laplace, probe, v, tol)
+                after = C.ctsem_opcounts()
+                exact = C._ctsem_probe_value(laplace, probe)
+                gains += exact - v > tol
+                exact - v > tol && @test isfinite(judged)
+                isfinite(judged) && @test judged ≈ exact rtol=1e-10
+                spent += after.overshoot_units - before.overshoot_units +
+                    N * (after.overshoot_values - before.overshoot_values)
+                full += N
+            end
+            for p in set
+                probe[p] = at[p]
+            end
+        end
+        @test (gains > 0) == gaining
+        @test spent < full / 2
+    end
+    # The search itself, screened and not: the same verdict, and the same
+    # point where it finds one, since the first trial that gains is kept.
+    for at in (x, collapsed)
+        v = C._ctsem_probe_value(laplace, at)
+        on = C._ctsem_overshot(laplace, at, Int[], v, tol)
+        C.ctsem_set_probe_screen!(false)
+        off = try
+            C._ctsem_overshot(laplace, at, Int[], v, tol)
+        finally
+            C.ctsem_set_probe_screen!(true)
+        end
+        @test on.overshot == off.overshot
+        @test on.coordinates == off.coordinates
+        @test on.point == off.point
+        @test on.overshot ? on.gain ≈ off.gain : on.gain <= off.gain + 1e-9
+    end
+end
+
+@testset "the probe's screen samples units that read a coordinate few read apart" begin
+    C = ContinuousTimeSEM
+    readers = falses(200, 3)
+    readers[:, 1] .= true
+    readers[1:10, 2] .= true
+    readers[150:200, 3] .= true
+    @test isempty(C._ctsem_screen_strata(readers, Int[]))
+    @test C._ctsem_screen_strata(readers, [2]) == [collect(1:10)]
+    @test C._ctsem_screen_strata(readers, [1, 2]) == [collect(1:10), collect(11:200)]
+    @test C._ctsem_screen_strata(readers, [2, 3]) ==
+        [collect(1:10), collect(150:200)]
+    # A small stratum is taken whole, a large one by its share, never under
+    # the floor.
+    @test C._ctsem_screen_allot(10, 64, 200) == 10
+    @test C._ctsem_screen_allot(190, 64, 200) == cld(64 * 190, 200)
+    @test C._ctsem_screen_allot(20, 64, 200) == C._CTSEM_SCREEN_STRATUM
+    # A whole stratum adds its units' change exactly, and a sampled one with
+    # no spread adds its estimate alone.
+    b = C._ctsem_screen_bound([[1.0, 2.0], fill(-1.0, 16)], [[0.0, 0.0], zeros(16)],
+        [0.0, 0.0], [2, 100])
+    @test b.estimate ≈ 3.0 - 100.0
+    @test b.upper ≈ b.estimate
+    # A sampled unit far above the rest: the unsampled units may hold more
+    # like it, at the rule of three's rate.
+    y = vcat(fill(-1.0, 15), 2.0)
+    g = C._ctsem_screen_bound([y], [zeros(16)], [0.0], [100])
+    @test g.upper >= g.estimate + (100 - 16) * (3 / 16) * (2.0 - sum(y) / 16)
+    # Changes that are their first-order predictions and a constant: the
+    # predictions' spread is no uncertainty, and the stratum's sum of them,
+    # here zero, is known exactly.
+    p = collect(range(-5.0, 5.0; length=16))
+    r = C._ctsem_screen_bound([p .- 0.1], [p], [0.0], [100])
+    @test r.estimate ≈ -10.0
+    @test r.upper ≈ r.estimate atol=1e-9
+    plain = C._ctsem_screen_bound([p .- 0.1], [zeros(16)], [0.0], [100])
+    @test plain.upper > 100
+end

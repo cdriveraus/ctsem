@@ -10779,16 +10779,29 @@ function _laplace_hessian_readers(laplace::CTSEMLaplaceObjective, x::Vector{Floa
     readers = scores .!= 0
     NU = size(scores, 1)
     any(j -> 0 < count(view(readers, :, j)) < NU, columns) || return readers
-    y = copy(x)
+    y = _laplace_reader_point(x, step)
+    moved = zeros(Float64, size(scores))
+    p = _laplace_hessian_point(laplace, y, budget, retries; from=base, scores=moved)
+    (p.out.converged && all(isfinite, moved)) && (readers .|= moved .!= 0)
+    return readers
+end
+
+"""
+    _laplace_reader_point(x, step)
+
+`x` moved in every coordinate by one to two steps of `step * max(1, |x_j|)`,
+signs alternating and no two coordinates by the same step: a point beside `x`
+at which a unit that reads a parameter has, short of an accident, a nonzero
+score in it (`_laplace_hessian_readers`, `CTSEMProbeScreen`).
+"""
+function _laplace_reader_point(x::AbstractVector{Float64}, step::Real)
+    y = collect(Float64, x)
     for j in eachindex(y)
         # The golden ratio's multiples mod 1: steps no two coordinates share.
         move = step * max(1.0, abs(x[j])) * (1 + mod(j * 0.6180339887498949, 1.0))
         y[j] += isodd(j) ? move : -move
     end
-    moved = zeros(Float64, size(scores))
-    p = _laplace_hessian_point(laplace, y, budget, retries; from=base, scores=moved)
-    (p.out.converged && all(isfinite, moved)) && (readers .|= moved .!= 0)
-    return readers
+    return y
 end
 
 """
