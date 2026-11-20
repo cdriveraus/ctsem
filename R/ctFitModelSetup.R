@@ -898,24 +898,32 @@
       ctm$pars$indvarying[errfix] <- FALSE
     }
 
-    # A count's dispersion is scalar: each count row is updated on its own,
-    # sequentially and conditionally independent of the others given the state,
-    # so there is no off-diagonal for it to be correlated through and the
-    # engine reads only the diagonal. A free off-diagonal would therefore be
-    # accepted here and ignored there, which is the failure this fixes rather
-    # than reports -- the cell has one right value and it is zero.
-    countrows <- which(ctm$manifesttype %in% 3L)
-    offfix <- which(ctm$pars$matrix %in% 'MANIFESTVAR' &
+    # A count's dispersion and a censored item's standard deviation are
+    # scalars: each such row is updated on its own, sequentially and
+    # conditionally independent of the others given the state, so there is no
+    # off-diagonal for it to be correlated through and the engine reads only
+    # the diagonal (`_ordinal_thresholds!`). An off-diagonal, free or fixed
+    # away from zero, would be accepted here and ignored there. Zero is the
+    # default, so one that is not was written on purpose, and it is refused
+    # rather than changed (Charles, 2026-11-20; counts were fixed to zero with
+    # a message before, and censored items not at all, so a free residual
+    # covariance between two of them was a parameter the likelihood never
+    # read).
+    rowwise <- which(ctm$manifesttype %in% c(3L, 4L))
+    offbad <- which(ctm$pars$matrix %in% 'MANIFESTVAR' &
         ctm$pars$row != ctm$pars$col &
-        (ctm$pars$row %in% countrows | ctm$pars$col %in% countrows) &
-        is.na(suppressWarnings(as.numeric(ctm$pars$value))))
-    if(length(offfix) > 0){
-      message('Fixing free off-diagonal MANIFESTVAR parameters for count ',
-        'indicators to zero -- a count is scored one row at a time, so it has ',
-        'no correlated measurement error.')
-      ctm$pars$value[offfix] <- 0
-      ctm$pars[offfix,c('param','transform','multiplier','offset','meanscale','inneroffset','sdscale')] <- NA
-      ctm$pars$indvarying[offfix] <- FALSE
+        (ctm$pars$row %in% rowwise | ctm$pars$col %in% rowwise) &
+        !(suppressWarnings(as.numeric(ctm$pars$value)) %in% 0))
+    if(length(offbad) > 0){
+      cells <- paste0(ctm$manifestNames[ctm$pars$row[offbad]], ' with ',
+        ctm$manifestNames[ctm$pars$col[offbad]],
+        ifelse(is.na(ctm$pars$param[offbad]), '',
+          paste0(' (', ctm$pars$param[offbad], ')')))
+      stop('MANIFESTVAR off-diagonals must be 0 for count and censored ',
+        'indicators, which are scored one at a time and so have uncorrelated ',
+        'measurement error. Set to 0: ', paste(cells, collapse = ', '),
+        ". ctModel(MANIFESTVAR = 'diag'), the default, does this.",
+        call. = FALSE)
     }
 
     # A *fixed* non-zero variance on a binary indicator is left alone by the

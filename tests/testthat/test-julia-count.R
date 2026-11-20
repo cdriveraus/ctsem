@@ -362,18 +362,23 @@ test_that("a count keeps its measurement variance free, as its dispersion", {
     max(fixed$parameter_table$parnumber, na.rm = TRUE))
 })
 
-test_that("a count's off-diagonal measurement covariance is fixed to zero", {
+test_that("a count's off-diagonal measurement covariance is refused", {
   # Counts are applied one row at a time, conditionally independent given the
   # state, so the engine reads only the diagonal. A free off-diagonal would be
   # accepted here and ignored there.
-  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
-    n.manifest = 2, manifestNames = c("c1", "c2"), latentNames = "eta1",
-    manifesttype = c(3L, 3L), LAMBDA = matrix(1, 2, 1), CINT = matrix(0),
-    T0MEANS = matrix(0), MANIFESTVAR = "auto", Tpoints = 4)))
-  m$pars$indvarying <- FALSE
+  build <- function(mvar) {
+    m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+      n.manifest = 2, manifestNames = c("c1", "c2"), latentNames = "eta1",
+      manifesttype = c(3L, 3L), LAMBDA = matrix(1, 2, 1), CINT = matrix(0),
+      T0MEANS = matrix(0), MANIFESTVAR = mvar, Tpoints = 4)))
+    m$pars$indvarying <- FALSE
+    m
+  }
   d <- .count_data(nsubjects = 8, nobs = 4)
-  f <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
-    fit = FALSE)))
+  expect_error(suppressWarnings(suppressMessages(ctFit(d, build("auto"),
+    backend = "julia", fit = FALSE))), "must be 0 for count and censored")
+  f <- suppressWarnings(suppressMessages(ctFit(d, build("diag"),
+    backend = "julia", fit = FALSE)))
   pt <- f$parameter_table
   off <- pt[pt$matrix %in% "MANIFESTVAR" & pt$row != pt$col, ]
   expect_true(nrow(off) > 0)

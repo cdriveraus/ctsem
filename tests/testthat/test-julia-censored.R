@@ -75,6 +75,36 @@ test_that("a censored variable keeps its measurement standard deviation", {
   expect_true(any(!is.na(free$parnumber)))
 })
 
+test_that("a censored item's off-diagonal measurement covariance is refused", {
+  skip_without_julia()
+  # A censored row is scored on its own, so the engine reads only its
+  # standard deviation. A free covariance between two censored items was
+  # accepted and never entered the likelihood.
+  d <- .censored_data(nsubjects = 8, nobs = 4)
+  d$y2 <- d$y
+  build <- function(mvar) {
+    m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+      n.manifest = 2, manifestNames = c("y", "y2"), latentNames = "eta1",
+      manifesttype = c(4L, 4L), censormin = c(0, 0), censormax = c(5, 5),
+      LAMBDA = matrix(1, 2, 1), CINT = matrix(0), T0MEANS = matrix(0),
+      MANIFESTVAR = mvar)))
+    m$pars$indvarying <- FALSE
+    m
+  }
+  expect_error(suppressWarnings(suppressMessages(ctFit(d,
+    build(matrix(c("mvar1", "mvar21", 0, "mvar2"), 2, 2)), backend = "julia",
+    intoverpop = "augmented", fit = FALSE))), "y2 with y \\(mvar21\\)")
+  expect_error(suppressWarnings(suppressMessages(ctFit(d,
+    build(matrix(c("mvar1", 0.3, 0, "mvar2"), 2, 2)), backend = "julia",
+    intoverpop = "augmented", fit = FALSE))), "must be 0")
+  # The default, zero, is accepted and leaves both standard deviations free.
+  f <- suppressWarnings(suppressMessages(ctFit(d,
+    build(matrix(c("mvar1", 0, 0, "mvar2"), 2, 2)), backend = "julia",
+    intoverpop = "augmented", fit = FALSE)))
+  mv <- f$parameter_table[f$parameter_table$matrix %in% "MANIFESTVAR", ]
+  expect_true(all(!is.na(mv$parnumber[mv$row == mv$col])))
+})
+
 test_that("print names censored variables with their limits", {
   described <- paste(utils::capture.output(print(.censored_model())),
     collapse = " ")
