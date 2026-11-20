@@ -234,9 +234,9 @@ ggplot(uncertainty_table, aes(x = method, y = mean, ymin = X2.5., ymax = X97.5.,
 ```
 
 With eight subjects, the score based methods (`opg`, `sandwich`, `bootstrap`)
-warn that there are too few subjects, and give wider and less stable intervals
-than `hessian` or `checked`. `fullbootstrap` runs only with stan and is slower,
-so it is shown separately:
+warn that there are too few subjects for them to be reliable, and `opg` gives
+much wider intervals than the others. `fullbootstrap` runs only with stan and
+is slower, so it is shown separately:
 
 ```{r fullbootstrap}
 stan_fullboot <- ctFitUncertainty(

@@ -149,7 +149,7 @@ c(loglik_without = fit1$estimate$loglik, loglik_with = fit1b$estimate$loglik)
 ctScoreTest(fit1b, tests = "heterogeneity")
 ```
 
-With the drift free to vary, the log likelihood rises by about 11. Once the
+With the drift free to vary, the log likelihood rises by about 12. Once the
 tests are adjusted for their number (`p_adj`) nothing else stands out, so the
 other rows' signals came from the drift. (A drift that varies between subjects
 enters the filter nonlinearly, so `ctFit()` used the Laplace approximation for
@@ -254,10 +254,11 @@ summary(fit3b)$popmeans[c("dr11", "dstate"), ]
 
 The refit's `dstate` is a little smaller than the screen's estimate, because
 the generating `tanh` flattens away from zero and a linear term averages over
-the whole range of `eta2`. The first screen also flagged a weaker term,
-`eta1*eta1` in the equation for `eta2`. It came from the misfit in the
-dynamics of `eta1`, which reaches `eta2` through the cross effect, and testing
-the refitted model shows nothing left:
+the whole range of `eta2`. The first screen also flagged two weaker terms in
+the equation for `eta1`, `eta1*eta1` and `eta2*eta2`. These are probably
+echoes of the same moderation, since `eta1` and `eta2` are correlated through
+the cross effect. Testing the refitted model shows nothing left once the tests
+are adjusted for their number:
 
 ```{r sdep-retest}
 ctScoreTest(fit3b, tests = "statedependence")
@@ -285,8 +286,9 @@ bends it.
 ctScoreTest(fit3, tests = "instability")
 ```
 
-Ordered by the predicted state of `eta2`, the drift of `eta1` stands out. This
-is the moderation that generated the data, found without specifying its form.
+Ordered by the predicted state of `eta2`, the drift and the diffusion of
+`eta1` stand out. The moderation that generated the data is found without
+specifying its form.
 Ordered by time, nothing stands out. The test needs each observation's score,
 which takes a pass of the filter for every eight parameters, so it only runs
 when asked for.
@@ -302,11 +304,14 @@ the last data set:
 ctScoreTest(fit3)
 ```
 
-The state dependence stands out. The heterogeneity tests stay quiet here, but
-need not. A drift that changes with the state can also look like a drift that
+The state dependence stands out, in the drift of `eta1` and in the size of
+its innovations. So does the measurement error covariance between `Y1` and
+`Y2`, although the data were generated without one, probably as another effect
+of the missing moderation. The heterogeneity tests stay quiet here, but need
+not. A drift that changes with the state can also look like a drift that
 differs between subjects, and in simulations a missing nonlinearity did affect
-them. A badly misspecified model can show up in several tests at once, so
-free what stands out most, refit, and test again.
+them. A badly misspecified model can show up in several tests at once, so free
+what stands out most, refit, and test again.
 
 ## Do the model's predictions look like the data?
 
@@ -383,8 +388,10 @@ On the linear fit to the state dependent data:
 ctFitAdequacy(fit3)
 ```
 
-Every family passes, although this model is missing the state dependence that
-the score test found at p = 5e-6. A moderated drift, averaged over the data,
+Only the `pairs` family fails, on the same measurement error covariance the
+score tests flagged, and the remaining correlations are within the close-fit
+bound. The state dependence that the score test found (adjusted p of 2e-6)
+does not show. A moderated drift, averaged over the data,
 still decays much like a single exponential, so the errors it leaves are
 nearly uncorrelated and the root mean square residual correlation is close to
 zero. The checks are useful for things no score test covers: a missing slow
@@ -431,19 +438,18 @@ imp
 ```
 
 Each round shows what was tried, the score test that proposed it, and the
-result of the refit. The first round kept `age`, with effects on the cross
-effect, the intercept of `Y1` and the initial level of `eta1`. It also tried a
-random effect on the cross effect, which the score tests flagged because
-subjects of different ages differ in it, and the covariate fitted better. The
-second round kept the moderation, and rejected the dimension test's suggestion
-that three dynamic parameters vary together, whose refit gained 8 log
-likelihood units for 18 parameters. After that nothing more was indicated,
-every adequacy check passed, and removing each kept change again showed both
-were still needed. The estimated effects are close to those that generated the
-data (0.3 on the cross effect, 0.6 on the intercept of `Y1`). The effect on the
-initial level of `eta1` was not in the generating model. It is small and only
-just significant. A search that decides at `alpha = 0.05` keeps such effects
-about one time in twenty, and `alpha = 0.01` is stricter.
+result of the refit. The first round added `age` as a predictor of the
+intercept of `Y1`, the second the moderation, and the third a random effect on
+the cross effect, with its covariances with the initial states. Removing each
+kept change again showed all three were still needed, and every adequacy check
+passed. The moderation is found, and the age effect on the intercept of `Y1`
+is estimated at 0.42, against 0.6 in the generating model. The age effect on
+the cross effect was not added as an effect of age. Once `age` is in the model
+the search does not test it on further parameters, so its effect on the cross
+effect could only appear as variation between subjects, which the random
+effect describes without explaining. A search that decides at
+`alpha = 0.05` will sometimes keep effects that are not there, and
+`alpha = 0.01` is stricter.
 
 The final fit is an ordinary fit:
 

@@ -2,7 +2,7 @@
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
 
 <meta charset="utf-8">
-<meta name="generator" content="quarto-1.10.18">
+<meta name="generator" content="quarto-1.10.19">
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
@@ -134,21 +134,21 @@ border-radius: 0 4px 4px 0;
   <li><a href="#how-the-tests-work-briefly" id="toc-how-the-tests-work-briefly">How the tests work, briefly</a></li>
   </ul>
 </nav>
-<p>A fitted model can be wrong in ways its own estimates do not show. Subjects may differ in a parameter the model holds fixed; a parameter may depend on a covariate that was never put in the model; the dynamics may depend on where the process is. <code>ctScoreTest()</code> asks of one fitted model, without refitting it, whether any of these relaxations would fit better, and if so where:</p>
+<p>A fitted model can be wrong in ways its estimates do not show. Subjects may differ in a parameter the model holds fixed, a parameter may depend on a covariate that is not in the model, or the dynamics may depend on the level of the process. <code>ctScoreTest()</code> tests a fitted model, without refitting it, for whether such extensions would fit better:</p>
 <ul>
 <li><strong>heterogeneity</strong>: does a parameter differ between subjects, so that it should be individually varying?</li>
-<li><strong>covariates</strong>: does a parameter depend on a subject-level covariate the model does not contain – including the size of a random effect, not only its mean?</li>
+<li><strong>covariates</strong>: does a parameter depend on a subject level covariate that is not in the model? This includes the size of a random effect as well as its mean.</li>
 <li><strong>state dependence</strong>: does a drift coefficient change with the level of a latent state, so that the dynamics are nonlinear?</li>
-<li><strong>volatility</strong>: does the size of a process’s random shocks change with the level of a state – negative affect more variable when it is high, say?</li>
+<li><strong>volatility</strong>: does the size of a process’s random shocks change with the level of a state, for example negative affect being more variable when it is high?</li>
 </ul>
-<p>Each is a score (Lagrange multiplier) test: the slope of the log likelihood, at the fitted model, in the direction of the relaxation. It needs a few evaluations of the fitted model’s gradient rather than a new fit per candidate, so any number of candidates can be screened after one fit, and each test also says roughly how large the relaxation would be. The tests are screens: they point at what to relax, and the refit says how much it matters.</p>
-<p>The three examples below each generate data with one thing the fitted model lacks, fit the model without it, ask <code>ctScoreTest()</code>, and then refit with what it found. The sections after them add a fourth family of tests (cells the model fixes at zero), the posterior predictive checks as tests (<code>ctFitAdequacy()</code>), and a search that combines the two and does the refitting itself (<code>ctModelImprove()</code>).</p>
+<p>Each is a score (Lagrange multiplier) test, based on the slope of the log likelihood at the fitted model in the direction of the extension. It needs a few evaluations of the fitted model’s gradient and no new fit for each candidate, so many candidates can be screened after one fit. Each test also gives a rough estimate of the size of the effect. The tests are screens that point to what to add, and refitting shows how much it matters.</p>
+<p>The three examples below each generate data with something the fitted model lacks, fit the model without it, run <code>ctScoreTest()</code>, and refit with what it found. Later sections cover a fourth family of tests (cells the model fixes at zero), posterior predictive checks as tests (<code>ctFitAdequacy()</code>), and a search that combines both and does the refitting (<code>ctModelImprove()</code>).</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(ctsem)</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">3</span>)</span></code></pre></div>
 </div>
 <h2 id="the-process">The process</h2>
-<p>Two latent processes, each measured by one indicator, observed 30 times at irregular intervals for 150 subjects. <code>eta1</code> regulates towards its baseline at rate 0.6, <code>eta2</code> at 0.4, and <code>eta1</code> pushes <code>eta2</code> up (a cross effect of 0.25). Each subject has their own measurement intercepts. The generating model is written once, and each example changes one cell of it.</p>
+<p>Two latent processes, each measured by one indicator, observed 30 times at irregular intervals for 150 subjects. <code>eta1</code> returns towards its baseline at rate 0.6 and <code>eta2</code> at 0.4, and <code>eta1</code> pushes <code>eta2</code> up, with a cross effect of 0.25. Each subject has their own measurement intercepts. The generating model is written once, and each example changes one cell of it.</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>generator <span class="ot">&lt;-</span> <span class="cf">function</span>(DRIFT, <span class="at">MANIFESTMEANS =</span> <span class="fu">c</span>(<span class="st">&quot;mm1|param|TRUE|1&quot;</span>, <span class="st">&quot;mm2|param|TRUE|1&quot;</span>),</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">TIpredNames =</span> <span class="cn">NULL</span>) {</span>
@@ -160,14 +160,14 @@ border-radius: 0 4px 4px 0;
 <span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>    <span class="at">T0MEANS =</span> <span class="fu">matrix</span>(<span class="dv">0</span>, <span class="dv">2</span>, <span class="dv">1</span>), <span class="at">T0VAR =</span> <span class="fu">diag</span>(<span class="dv">1</span>, <span class="dv">2</span>), <span class="at">TIpredNames =</span> TIpredNames)</span>
 <span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div>
 </div>
-<p>The model fitted in every example is ctsem’s default for two latents with one indicator each: every drift, diffusion and measurement error parameter free and shared by all subjects, and individually varying measurement intercepts and initial states.</p>
+<p>The model fitted in every example is ctsem’s default for two latents with one indicator each. Every drift, diffusion and measurement error parameter is free and shared by all subjects, and the measurement intercepts and initial states vary over subjects.</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>model <span class="ot">&lt;-</span> <span class="fu">ctModel</span>(<span class="at">type =</span> <span class="st">&quot;ct&quot;</span>, <span class="at">silent =</span> <span class="cn">TRUE</span>,</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">manifestNames =</span> <span class="fu">c</span>(<span class="st">&quot;Y1&quot;</span>, <span class="st">&quot;Y2&quot;</span>), <span class="at">latentNames =</span> <span class="fu">c</span>(<span class="st">&quot;eta1&quot;</span>, <span class="st">&quot;eta2&quot;</span>),</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">LAMBDA =</span> <span class="fu">diag</span>(<span class="dv">2</span>))</span></code></pre></div>
 </div>
 <h2 id="subjects-who-differ-in-a-parameter">1. Subjects who differ in a parameter</h2>
-<p>Here the subjects differ in how quickly <code>eta1</code> regulates: the drift <code>DRIFT[1,1]</code> varies between subjects around -0.6, with a standard deviation of about 0.25.</p>
+<p>Here the subjects differ in how quickly <code>eta1</code> returns to baseline. The drift <code>DRIFT[1,1]</code> varies between subjects around -0.6, with a standard deviation of about 0.25.</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>gen1 <span class="ot">&lt;-</span> <span class="fu">generator</span>(<span class="at">DRIFT =</span> <span class="fu">matrix</span>(<span class="fu">c</span>(<span class="st">&quot;drift11|-log1p_exp(-param)|TRUE|0.6&quot;</span>, <span class="fl">0.25</span>,</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="dv">0</span>, <span class="sc">-</span><span class="fl">0.4</span>), <span class="dv">2</span>, <span class="dv">2</span>))</span>
@@ -192,7 +192,7 @@ border-radius: 0 4px 4px 0;
 <span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        parameter    LM df      z      p  p_adj      sd sd_natural</span></span>
 <span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       drift_eta1 19.40  5  2.580 0.0055 0.0292 0.19100    0.18400</span></span>
 <span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  drift_eta1_eta2 16.30  5  1.160 0.0065 0.0292 0.16300    0.16300</span></span>
-<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        diff_eta2 14.20  5 -0.104 0.0175 0.0525 0.00187    0.00217</span></span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        diff_eta2 14.20  5 -0.104 0.0175 0.0525 0.00176    0.00204</span></span>
 <span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        diff_eta1  9.59  5  1.790 0.0420 0.0918 0.10400    0.15600</span></span>
 <span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           mvarY2 12.00  5  1.600 0.0510 0.0918 0.05810    0.05690</span></span>
 <span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   diff_eta2_eta1  5.00  5  0.776 0.3330 0.5000 0.09630    0.09630</span></span>
@@ -203,16 +203,16 @@ border-radius: 0 4px 4px 0;
 <span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb5-21"><a href="#cb5-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; A new dimension of variation: largest eigenvalue 6.49, p = 0.0565; direction drift_eta1_eta2 1, drift_eta1 1, drift_eta2_eta1 0.54, diff_eta2_eta1 0.39, diff_eta1 0.38</span></span></code></pre></div>
 </div>
-<p>Each row tests whether that parameter varies over subjects, as <code>ctFit()</code> would fit it if it were made individually varying: its variance together with its covariances with what already varies, here each subject’s initial state and measurement intercepts (the line under the table names them). A variance cannot be negative, so that part is one sided; <code>LM</code> is referred to an equal mixture of chi-squares on <code>df - 1</code> and <code>df</code>. The covariances matter most for an intercept: one that varies independently of where each subject starts makes subjects drift apart from a common start, whereas the same intercept correlated with the initial state is a random intercept. <code>z</code> is the variance alone, and <code>p</code> the stronger of the two tests.</p>
-<p>The drift of <code>eta1</code> is flagged, on its variance alone (<code>z</code>). Other rows answer too, mostly through their covariances (<code>LM</code> large where <code>z</code> is small): the cross effect of <code>eta2</code> on <code>eta1</code>, and the diffusion of <code>eta2</code>. That is expected rather than further findings. A drift that varies between subjects, left out of the model, changes how each subject’s data relate to their starting point and to their intercepts, and the other parameters’ scores carry some of that. The test says that the subjects differ, and roughly where; it cannot always say which of several related parameters is the source. The way to find out is to relax the strongest candidate and test again.</p>
-<p>The line under the table tests every direction at once: whether the subjects vary along some combination of these parameters, which no single row would isolate when the variation is spread over several of them, its covariances with what already varies held at zero. Here one parameter carries the variation, and its own row is the sharper test. On a model whose population covariance has reduced rank (<code>poprank</code>) the rows test variation outside the shared dimensions, and the line is not given: in simulation the rows found a missing dimension far more often.</p>
+<p>Each row tests whether that parameter varies over subjects, in the way <code>ctFit()</code> would fit it if it were made individually varying. That means its variance together with its covariances with the effects already in the model, here each subject’s initial state and measurement intercepts (named in the line under the table). A variance cannot be negative, so that part of the test is one sided, and <code>LM</code> is compared with an equal mixture of chi-square distributions on <code>df - 1</code> and <code>df</code> degrees of freedom. The covariances matter most for an intercept. An intercept that varies independently of where each subject starts makes subjects drift apart from a common start, while the same intercept correlated with the initial state is a random intercept. <code>z</code> tests the variance alone, and <code>p</code> is the smaller of the two tests’ p-values.</p>
+<p>The drift of <code>eta1</code> is flagged on its variance alone (<code>z</code>). Other rows are flagged too, mostly through their covariances (<code>LM</code> large where <code>z</code> is small): the cross effect of <code>eta2</code> on <code>eta1</code>, and the diffusion of <code>eta2</code>. This is expected. When a drift varies between subjects but is fixed in the model, how each subject’s data relate to their starting point and intercepts changes, and the scores of other parameters pick up some of that. The test shows that the subjects differ and roughly where, but cannot always say which of several related parameters is the source. To find out, free the strongest candidate and test again.</p>
+<p>The line under the table tests all directions at once, for subjects varying along some combination of these parameters, with the covariances with existing effects held at zero. This can find variation spread over several parameters, which no single row isolates. Here one parameter carries the variation, and its own row is the sharper test. When the population covariance has reduced rank (<code>poprank</code>), the rows test variation outside the shared dimensions and the line is not given, because in simulations the rows found a missing dimension far more often.</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>model1b <span class="ot">&lt;-</span> model</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>model1b<span class="sc">$</span>pars<span class="sc">$</span>indvarying[model1b<span class="sc">$</span>pars<span class="sc">$</span>param <span class="sc">%in%</span> <span class="st">&quot;drift_eta1&quot;</span>] <span class="ot">&lt;-</span> <span class="cn">TRUE</span></span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>fit1b <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(d1, model1b, <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>, <span class="at">cores =</span> <span class="dv">2</span>)</span>
 <span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="fu">c</span>(<span class="at">loglik_without =</span> fit1<span class="sc">$</span>estimate<span class="sc">$</span>loglik, <span class="at">loglik_with =</span> fit1b<span class="sc">$</span>estimate<span class="sc">$</span>loglik)</span>
 <span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; loglik_without    loglik_with </span></span>
-<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      -11177.43      -11166.31</span></span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      -11177.43      -11165.35</span></span>
 <span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a><span class="fu">ctScoreTest</span>(fit1b, <span class="at">tests =</span> <span class="st">&quot;heterogeneity&quot;</span>)</span>
 <span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Score tests at the fitted model (laplace route, 150 subjects)</span></span>
 <span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
@@ -220,21 +220,21 @@ border-radius: 0 4px 4px 0;
 <span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; equal mixture of chi-square on df - 1 and df; z: the variance alone, one sided;</span></span>
 <span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; p: the stronger of the two; sd: the one-step estimate, raw scale):</span></span>
 <span id="cb6-13"><a href="#cb6-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        parameter    LM df      z      p p_adj     sd sd_natural</span></span>
-<span id="cb6-14"><a href="#cb6-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        diff_eta2 14.60  6 -0.127 0.0295 0.236     NA         NA</span></span>
-<span id="cb6-15"><a href="#cb6-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           mvarY2 11.90  6  1.610 0.0950 0.259 0.0581     0.0569</span></span>
-<span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  drift_eta1_eta2 11.70  6  0.528 0.0970 0.259 0.1010     0.1010</span></span>
-<span id="cb6-17"><a href="#cb6-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        diff_eta1  7.85  6  1.280 0.1660 0.331 0.0495     0.0757</span></span>
-<span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   diff_eta2_eta1  6.03  6  0.921 0.3020 0.484 0.1250     0.1250</span></span>
-<span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           mvarY1  5.85  6  0.385 0.5880 0.784     NA         NA</span></span>
-<span id="cb6-20"><a href="#cb6-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  drift_eta2_eta1  1.52  6 -0.527 0.9020 0.961     NA         NA</span></span>
-<span id="cb6-21"><a href="#cb6-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       drift_eta2  2.40  6 -1.410 0.9610 0.961     NA         NA</span></span>
+<span id="cb6-14"><a href="#cb6-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        diff_eta2 14.30  6 -0.133 0.0345 0.276     NA         NA</span></span>
+<span id="cb6-15"><a href="#cb6-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  drift_eta1_eta2 12.00  6  0.420 0.0915 0.277 0.1130     0.1130</span></span>
+<span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           mvarY2 11.70  6  1.610 0.1040 0.277 0.0580     0.0568</span></span>
+<span id="cb6-17"><a href="#cb6-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   diff_eta2_eta1  6.93  6  0.902 0.3120 0.623 0.1250     0.1250</span></span>
+<span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        diff_eta1  2.59  6  0.660 0.4100 0.657 0.0356     0.0548</span></span>
+<span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           mvarY1  4.93  6  0.309 0.6220 0.829 0.0200     0.0191</span></span>
+<span id="cb6-20"><a href="#cb6-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  drift_eta2_eta1  1.28  6 -0.561 0.9080 0.960     NA         NA</span></span>
+<span id="cb6-21"><a href="#cb6-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       drift_eta2  2.40  6 -1.410 0.9600 0.960     NA         NA</span></span>
 <span id="cb6-22"><a href="#cb6-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Covariances with: T0m_eta1, T0m_eta2, drift_eta1, mm_Y1, mm_Y2</span></span>
 <span id="cb6-23"><a href="#cb6-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb6-24"><a href="#cb6-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; A new dimension of variation: largest eigenvalue 2.67, p = 0.8; direction diff_eta2_eta1 1, drift_eta1_eta2 0.61, mvarY2 -0.39, mvarY1 0.34, drift_eta2_eta1 0.3</span></span></code></pre></div>
+<span id="cb6-24"><a href="#cb6-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; A new dimension of variation: largest eigenvalue 2.57, p = 0.828; direction diff_eta2_eta1 1, mvarY2 -0.46, drift_eta1_eta2 0.28, mvarY1 0.21, drift_eta2_eta1 0.21</span></span></code></pre></div>
 </div>
-<p>With the drift free to vary the log likelihood rises by about 11, and nothing else stands out once the tests are adjusted for their number (<code>p_adj</code>): the other rows’ signals were the drift’s. (A drift that varies between subjects enters the filter nonlinearly, so <code>ctFit()</code> chose the Laplace route for the refit; the tests work on either.)</p>
+<p>With the drift free to vary, the log likelihood rises by about 12. Once the tests are adjusted for their number (<code>p_adj</code>) nothing else stands out, so the other rows’ signals came from the drift. (A drift that varies between subjects enters the filter nonlinearly, so <code>ctFit()</code> used the Laplace approximation for the refit. The tests work with either.)</p>
 <h2 id="a-covariate-the-model-does-not-contain">2. A covariate the model does not contain</h2>
-<p>Now each subject has an <code>age</code> (standardised), and age matters twice: older subjects have a higher intercept on <code>Y1</code>, and in older subjects <code>eta1</code> pushes <code>eta2</code> harder (the cross effect <code>DRIFT[2,1]</code> rises by 0.3 per standard deviation of age). A second covariate, <code>w</code>, is unrelated to anything.</p>
+<p>Now each subject has a standardised <code>age</code>, which matters in two ways. Older subjects have a higher intercept on <code>Y1</code>, and in older subjects <code>eta1</code> pushes <code>eta2</code> harder (the cross effect <code>DRIFT[2,1]</code> rises by 0.3 per standard deviation of age). A second covariate, <code>w</code>, is unrelated to anything.</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>gen2 <span class="ot">&lt;-</span> <span class="fu">generator</span>(<span class="at">DRIFT =</span> <span class="fu">matrix</span>(<span class="fu">c</span>(<span class="sc">-</span><span class="fl">0.6</span>, <span class="st">&quot;drift21||||age=0.3&quot;</span>, <span class="dv">0</span>, <span class="sc">-</span><span class="fl">0.4</span>), <span class="dv">2</span>, <span class="dv">2</span>),</span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">MANIFESTMEANS =</span> <span class="fu">c</span>(<span class="st">&quot;mm1|param|TRUE|1|age=0.6&quot;</span>, <span class="st">&quot;mm2|param|TRUE|1&quot;</span>),</span>
@@ -243,50 +243,50 @@ border-radius: 0 4px 4px 0;
 <span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">logdtsd =</span> <span class="fl">0.5</span>, <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>, <span class="at">values =</span> <span class="fu">c</span>(<span class="at">drift21 =</span> <span class="fl">0.25</span>, <span class="at">mm1 =</span> <span class="dv">0</span>, <span class="at">mm2 =</span> <span class="dv">0</span>)))</span>
 <span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>covariates <span class="ot">&lt;-</span> <span class="fu">unique</span>(d2[, <span class="fu">c</span>(<span class="st">&quot;id&quot;</span>, <span class="st">&quot;age&quot;</span>, <span class="st">&quot;w&quot;</span>)])</span>
 <span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a><span class="fu">head</span>(covariates)</span>
-<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     id        age          w</span></span>
-<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 1    1 -1.3292073  0.4373329</span></span>
-<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 31   2 -0.8696768  1.4133750</span></span>
-<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 61   3 -0.8854495  0.1094298</span></span>
-<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 91   4  1.6697247  1.0385711</span></span>
-<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 121  5  2.0697549 -0.8508909</span></span>
-<span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 151  6  0.9137555  0.6517414</span></span></code></pre></div>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     id        age           w</span></span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 1    1  0.9272212  0.03814355</span></span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 31   2 -0.4992809 -1.77576431</span></span>
+<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 61   3 -1.6353253  0.67181018</span></span>
+<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 91   4 -0.9785608 -0.03100340</span></span>
+<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 121  5 -0.0775675  2.76565752</span></span>
+<span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 151  6 -1.1776122  0.72924918</span></span></code></pre></div>
 </div>
-<p>The model is fitted without either covariate, and the covariates are handed to <code>ctScoreTest()</code> afterwards, one row per subject.</p>
+<p>The model is fitted without either covariate, and the covariates are given to <code>ctScoreTest()</code> afterwards, one row per subject.</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>fit2 <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(d2[, <span class="fu">c</span>(<span class="st">&quot;id&quot;</span>, <span class="st">&quot;time&quot;</span>, <span class="st">&quot;Y1&quot;</span>, <span class="st">&quot;Y2&quot;</span>)], model, <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>, <span class="at">cores =</span> <span class="dv">2</span>)</span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>st2 <span class="ot">&lt;-</span> <span class="fu">ctScoreTest</span>(fit2, <span class="at">covariates =</span> covariates, <span class="at">tests =</span> <span class="st">&quot;covariates&quot;</span>)</span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>st2</span>
 <span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Score tests at the fitted model (laplace route, 150 subjects)</span></span>
 <span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Covariate age (linear): joint LM = 128, df = 17, p = 5e-04</span></span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Covariate age (linear): joint LM = 65.2, df = 17, p = 0.009</span></span>
 <span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        parameter estimate      se estimate_natural      p   p_adj class</span></span>
-<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;            mm_Y1   0.0725 0.00833           0.7250 &lt;5e-04 0.00425  &lt;NA&gt;</span></span>
-<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  drift_eta2_eta1   0.3550 0.06990           0.3550 &lt;5e-04 0.00425  &lt;NA&gt;</span></span>
-<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;            mm_Y2   0.0133 0.00773           0.1330 0.0925 0.39300  &lt;NA&gt;</span></span>
-<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       drift_eta1   0.1420 0.09120           0.1350 0.1320 0.39300     A</span></span>
-<span id="cb8-12"><a href="#cb8-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   popsd_T0m_eta1   0.0634 0.04260               NA 0.1520 0.39300  &lt;NA&gt;</span></span>
-<span id="cb8-13"><a href="#cb8-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           mvarY1   0.0792 0.05570           0.0765 0.1550 0.39300     A</span></span>
-<span id="cb8-14"><a href="#cb8-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        diff_eta1  -0.0928 0.06870          -0.1340 0.1740 0.39300     A</span></span>
-<span id="cb8-15"><a href="#cb8-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         T0m_eta2   0.0101 0.00749           0.1010 0.1850 0.39300  &lt;NA&gt;</span></span>
-<span id="cb8-16"><a href="#cb8-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      popsd_mm_Y1   0.0271 0.02090               NA 0.2080 0.39400  &lt;NA&gt;</span></span>
-<span id="cb8-17"><a href="#cb8-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   diff_eta2_eta1   0.0474 0.04890           0.0474 0.3380 0.56900  &lt;NA&gt;</span></span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  drift_eta2_eta1  0.36900 0.06440           0.3690 &lt;5e-04 0.00425  &lt;NA&gt;</span></span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;            mm_Y1  0.05240 0.00958           0.5240 &lt;5e-04 0.00425  &lt;NA&gt;</span></span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        diff_eta2 -0.06790 0.03770          -0.0888 0.0785 0.44500     B</span></span>
+<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           mvarY2  0.04780 0.03130           0.0426 0.1240 0.44500     B</span></span>
+<span id="cb8-12"><a href="#cb8-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   popsd_T0m_eta2 -0.05730 0.03700               NA 0.1310 0.44500  &lt;NA&gt;</span></span>
+<span id="cb8-13"><a href="#cb8-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           mvarY1 -0.05450 0.04070          -0.0483 0.2040 0.53300     A</span></span>
+<span id="cb8-14"><a href="#cb8-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       drift_eta1 -0.06970 0.05610          -0.0734 0.2310 0.53300  &lt;NA&gt;</span></span>
+<span id="cb8-15"><a href="#cb8-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         T0m_eta2  0.00982 0.00882           0.0982 0.2720 0.53300  &lt;NA&gt;</span></span>
+<span id="cb8-16"><a href="#cb8-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        diff_eta1  0.04200 0.03730           0.0666 0.2820 0.53300     A</span></span>
+<span id="cb8-17"><a href="#cb8-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       drift_eta2  0.05050 0.05110           0.0394 0.3310 0.55600  &lt;NA&gt;</span></span>
 <span id="cb8-18"><a href="#cb8-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb8-19"><a href="#cb8-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Covariate w (linear): joint LM = 18.2, df = 17, p = 0.624</span></span>
-<span id="cb8-20"><a href="#cb8-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        parameter estimate      se estimate_natural     p p_adj class</span></span>
-<span id="cb8-21"><a href="#cb8-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         T0m_eta1   0.0137 0.00861           0.1370 0.118 0.904  &lt;NA&gt;</span></span>
-<span id="cb8-22"><a href="#cb8-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         T0m_eta2  -0.0119 0.00851          -0.1190 0.164 0.904  &lt;NA&gt;</span></span>
-<span id="cb8-23"><a href="#cb8-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        diff_eta1   0.1190 0.10100           0.1720 0.238 0.904     A</span></span>
-<span id="cb8-24"><a href="#cb8-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       drift_eta1  -0.1770 0.16500          -0.1690 0.276 0.904     A</span></span>
-<span id="cb8-25"><a href="#cb8-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           mvarY1  -0.0731 0.06630          -0.0706 0.278 0.904     A</span></span>
-<span id="cb8-26"><a href="#cb8-26" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      popsd_mm_Y1  -0.0190 0.02340               NA 0.426 0.904  &lt;NA&gt;</span></span>
-<span id="cb8-27"><a href="#cb8-27" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  drift_eta2_eta1  -0.0420 0.05740          -0.0420 0.460 0.904  &lt;NA&gt;</span></span>
-<span id="cb8-28"><a href="#cb8-28" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   popsd_T0m_eta1   0.0364 0.04840               NA 0.477 0.904  &lt;NA&gt;</span></span>
-<span id="cb8-29"><a href="#cb8-29" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           mvarY2   0.0122 0.01770           0.0114 0.492 0.904  &lt;NA&gt;</span></span>
-<span id="cb8-30"><a href="#cb8-30" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  drift_eta1_eta2   0.0220 0.04890           0.0220 0.664 0.904  &lt;NA&gt;</span></span></code></pre></div>
+<span id="cb8-19"><a href="#cb8-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Covariate w (linear): joint LM = 27.6, df = 17, p = 0.246</span></span>
+<span id="cb8-20"><a href="#cb8-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        parameter estimate      se estimate_natural      p p_adj</span></span>
+<span id="cb8-21"><a href="#cb8-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;            mm_Y2   0.0149 0.00768           0.1490 0.0585 0.544</span></span>
+<span id="cb8-22"><a href="#cb8-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           mvarY1   0.0437 0.02310           0.0387 0.0640 0.544</span></span>
+<span id="cb8-23"><a href="#cb8-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        diff_eta1  -0.0338 0.02350          -0.0537 0.1620 0.680</span></span>
+<span id="cb8-24"><a href="#cb8-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;            mm_Y1   0.0127 0.00971           0.1270 0.1860 0.680</span></span>
+<span id="cb8-25"><a href="#cb8-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  drift_eta2_eta1   0.0540 0.04500           0.0540 0.2340 0.680</span></span>
+<span id="cb8-26"><a href="#cb8-26" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   popsd_T0m_eta2   0.0406 0.04030               NA 0.3060 0.680</span></span>
+<span id="cb8-27"><a href="#cb8-27" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   diff_eta2_eta1  -0.0396 0.03970          -0.0396 0.3120 0.680</span></span>
+<span id="cb8-28"><a href="#cb8-28" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  drift_eta1_eta2   0.0290 0.02890           0.0290 0.3200 0.680</span></span>
+<span id="cb8-29"><a href="#cb8-29" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       drift_eta2   0.0429 0.04940           0.0335 0.3950 0.688</span></span>
+<span id="cb8-30"><a href="#cb8-30" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   popsd_T0m_eta1  -0.0361 0.04200               NA 0.4050 0.688</span></span></code></pre></div>
 </div>
-<p>For each covariate, the joint test asks whether it matters anywhere; then each parameter’s row gives the effect a refit with that covariate would be expected to estimate, per unit of the covariate. <code>age</code> is found, on the intercept of <code>Y1</code> and on the cross effect, at about the sizes it was generated with; <code>w</code> is not. Two things make that attribution work. The effects are estimated jointly, so a covariate that moves one parameter is not read off another that happens to be correlated with it. And they are estimated with the fitted model’s parameters held where the fit left them: the model without <code>age</code> has already absorbed some of its effect – the intercepts’ standard deviation has grown to take in the age differences – and an estimate that lets those parameters move too extrapolates the model’s curvature across that whole change.</p>
-<p>The tests also cover the random effects’ standard deviations (the <code>popsd_</code> rows): whether subjects differ more at some ages than others. A covariate can also be tested as a step at an unknown threshold, <code>form = &quot;threshold&quot;</code>, which scans the cuts and accounts for having chosen the best one: an effect that switches on above some age, say.</p>
-<p>The refit puts <code>age</code> into the model as a time independent predictor, with effects on every parameter:</p>
+<p>For each covariate, the joint test asks whether it matters for any parameter. Each parameter’s row then gives the effect a refit with that covariate would be expected to estimate, per unit of the covariate. <code>age</code> is found, on the intercept of <code>Y1</code> and on the cross effect, at about the sizes it was generated with, and <code>w</code> is not. The effects are estimated jointly, so a covariate that moves one parameter is not attributed to another parameter correlated with it. They are also estimated with the other parameters held at their fitted values. The model without <code>age</code> has already absorbed some of its effect, as the intercepts’ standard deviation has grown to take in the age differences, and letting those parameters move as well would extrapolate the model’s curvature over that whole change.</p>
+<p>The tests also cover the standard deviations of the random effects (the <code>popsd_</code> rows), that is, whether subjects differ more at some ages than others. A covariate can also be tested as a step at an unknown threshold with <code>form = &quot;threshold&quot;</code>, for an effect that switches on above some age, for example. This scans the possible cuts and allows for having chosen the best one.</p>
+<p>The refit includes <code>age</code> as a time independent predictor, with effects on every parameter:</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>model2b <span class="ot">&lt;-</span> <span class="fu">ctModel</span>(<span class="at">type =</span> <span class="st">&quot;ct&quot;</span>, <span class="at">silent =</span> <span class="cn">TRUE</span>,</span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">manifestNames =</span> <span class="fu">c</span>(<span class="st">&quot;Y1&quot;</span>, <span class="st">&quot;Y2&quot;</span>), <span class="at">latentNames =</span> <span class="fu">c</span>(<span class="st">&quot;eta1&quot;</span>, <span class="st">&quot;eta2&quot;</span>),</span>
@@ -295,17 +295,17 @@ border-radius: 0 4px 4px 0;
 <span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>effects <span class="ot">&lt;-</span> <span class="fu">summary</span>(fit2b)<span class="sc">$</span>tipreds</span>
 <span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>effects[<span class="fu">grepl</span>(<span class="st">&quot;mm_Y1|drift_eta2_eta1&quot;</span>, <span class="fu">rownames</span>(effects)), ]</span>
 <span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                          mean    sd  2.5%   50% 97.5%  mode     z</span></span>
-<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; tip_age_drift_eta2_eta1 0.320 0.037 0.249 0.318 0.396 0.319 8.562</span></span>
-<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; tip_age_mm_Y1           0.712 0.088 0.541 0.707 0.893 0.715 8.088</span></span></code></pre></div>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; tip_age_drift_eta2_eta1 0.340 0.038 0.267 0.341 0.414 0.342 9.014</span></span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; tip_age_mm_Y1           0.503 0.086 0.345 0.500 0.676 0.507 5.831</span></span></code></pre></div>
 </div>
 <h2 id="dynamics-that-depend-on-the-state">3. Dynamics that depend on the state</h2>
-<p>Last, <code>eta2</code> moderates how <code>eta1</code> regulates: when <code>eta2</code> is high, <code>eta1</code> returns to baseline more slowly. The drift of <code>eta1</code> is <code>-0.6 + 0.3 * tanh(eta2)</code>, so it ranges between -0.9 and -0.3, and near <code>eta2 = 0</code> it rises by about 0.3 per unit of <code>eta2</code>.</p>
+<p>In the last example <code>eta2</code> moderates how <code>eta1</code> returns to baseline. When <code>eta2</code> is high, <code>eta1</code> returns more slowly. The drift of <code>eta1</code> is <code>-0.6 + 0.3 * tanh(eta2)</code>, so it ranges between -0.9 and -0.3, and near <code>eta2 = 0</code> it rises by about 0.3 per unit of <code>eta2</code>.</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>gen3 <span class="ot">&lt;-</span> <span class="fu">generator</span>(<span class="at">DRIFT =</span> <span class="fu">matrix</span>(<span class="fu">c</span>(<span class="st">&quot;-0.6 + 0.3 * tanh(eta2)&quot;</span>, <span class="fl">0.25</span>, <span class="dv">0</span>, <span class="sc">-</span><span class="fl">0.4</span>), <span class="dv">2</span>, <span class="dv">2</span>))</span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>d3 <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(gen3, <span class="at">n =</span> <span class="dv">150</span>, <span class="at">Tpoints =</span> <span class="dv">30</span>, <span class="at">dtmean =</span> <span class="dv">1</span>,</span>
 <span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">logdtsd =</span> <span class="fl">0.5</span>, <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>, <span class="at">values =</span> <span class="fu">c</span>(<span class="at">mm1 =</span> <span class="dv">0</span>, <span class="at">mm2 =</span> <span class="dv">0</span>)))</span></code></pre></div>
 </div>
-<p>The fitted model is linear: each drift coefficient is a constant.</p>
+<p>The fitted model is linear, with each drift coefficient a constant.</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb11"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>fit3 <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(d3, model, <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>, <span class="at">cores =</span> <span class="dv">2</span>)</span>
 <span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>st3 <span class="ot">&lt;-</span> <span class="fu">ctScoreTest</span>(fit3, <span class="at">tests =</span> <span class="st">&quot;statedependence&quot;</span>)</span>
@@ -313,27 +313,27 @@ border-radius: 0 4px 4px 0;
 <span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Score tests at the fitted model (laplace route, 150 subjects)</span></span>
 <span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; State dependence of the drift:</span></span>
-<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  equation     LM df      p</span></span>
-<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      eta1 27.300  3 &lt;5e-04</span></span>
-<span id="cb11-9"><a href="#cb11-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      eta2  0.529  3 0.8990</span></span>
-<span id="cb11-10"><a href="#cb11-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       all 29.900  6 &lt;5e-04</span></span>
+<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  equation    LM df      p</span></span>
+<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      eta1 31.60  3 &lt;5e-04</span></span>
+<span id="cb11-9"><a href="#cb11-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      eta2  4.39  3 0.2360</span></span>
+<span id="cb11-10"><a href="#cb11-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       all 39.50  6 &lt;5e-04</span></span>
 <span id="cb11-11"><a href="#cb11-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb11-12"><a href="#cb11-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       term equation      LM        p    p_adj estimate     se</span></span>
-<span id="cb11-13"><a href="#cb11-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta2     eta1 25.7000   &lt;5e-04 2.39e-06  0.19400 0.0383</span></span>
-<span id="cb11-14"><a href="#cb11-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta1     eta1  9.0300 2.66e-03 7.97e-03  0.06970 0.0232</span></span>
-<span id="cb11-15"><a href="#cb11-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta2*eta2     eta1  1.1100 2.91e-01 5.82e-01  0.03550 0.0336</span></span>
-<span id="cb11-16"><a href="#cb11-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta2     eta2  0.2750 6.00e-01 8.44e-01 -0.01420 0.0271</span></span>
-<span id="cb11-17"><a href="#cb11-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta2*eta2     eta2  0.1450 7.03e-01 8.44e-01 -0.00663 0.0174</span></span>
-<span id="cb11-18"><a href="#cb11-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta1     eta2  0.0242 8.76e-01 8.76e-01       NA     NA</span></span>
+<span id="cb11-12"><a href="#cb11-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       term equation     LM        p    p_adj estimate     se</span></span>
+<span id="cb11-13"><a href="#cb11-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta2     eta1 25.700   &lt;5e-04 2.38e-06   0.2550 0.0504</span></span>
+<span id="cb11-14"><a href="#cb11-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta1     eta1 18.100   &lt;5e-04 6.31e-05   0.1020 0.0240</span></span>
+<span id="cb11-15"><a href="#cb11-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta2*eta2     eta1  5.590 1.81e-02 3.62e-02   0.0874 0.0370</span></span>
+<span id="cb11-16"><a href="#cb11-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta2*eta2     eta2  3.180 7.46e-02 1.12e-01  -0.0346 0.0194</span></span>
+<span id="cb11-17"><a href="#cb11-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta1     eta2  0.302 5.83e-01 6.17e-01   0.0123 0.0225</span></span>
+<span id="cb11-18"><a href="#cb11-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta2     eta2  0.251 6.17e-01 6.17e-01       NA     NA</span></span>
 <span id="cb11-19"><a href="#cb11-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                                             reads</span></span>
 <span id="cb11-20"><a href="#cb11-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  DRIFT[eta1,eta1] varies with eta2, or DRIFT[eta1,eta2] with eta1</span></span>
 <span id="cb11-21"><a href="#cb11-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta1,eta1] varies with eta1</span></span>
 <span id="cb11-22"><a href="#cb11-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta1,eta2] varies with eta2</span></span>
-<span id="cb11-23"><a href="#cb11-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  DRIFT[eta2,eta1] varies with eta2, or DRIFT[eta2,eta2] with eta1</span></span>
-<span id="cb11-24"><a href="#cb11-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta2,eta2] varies with eta2</span></span>
-<span id="cb11-25"><a href="#cb11-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta2,eta1] varies with eta1</span></span></code></pre></div>
+<span id="cb11-23"><a href="#cb11-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta2,eta2] varies with eta2</span></span>
+<span id="cb11-24"><a href="#cb11-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta2,eta1] varies with eta1</span></span>
+<span id="cb11-25"><a href="#cb11-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  DRIFT[eta2,eta1] varies with eta2, or DRIFT[eta2,eta2] with eta1</span></span></code></pre></div>
 </div>
-<p>Each term is one drift coefficient varying linearly with one state. The term <code>eta1*eta2</code> in the equation of <code>eta1</code> stands out: either the drift of <code>eta1</code> changes with <code>eta2</code> – which is what generated the data – or the effect of <code>eta2</code> on <code>eta1</code> changes with <code>eta1</code>. At this order the two are the same term, so the table names both, and which reading to fit is a substantive choice. The estimate is the change in the drift coefficient per unit of the state. Writing the dependence into the model:</p>
+<p>Each term is one drift coefficient changing linearly with one state. The term <code>eta1*eta2</code> in the equation for <code>eta1</code> stands out. Either the drift of <code>eta1</code> changes with <code>eta2</code>, which is how the data were generated, or the effect of <code>eta2</code> on <code>eta1</code> changes with <code>eta1</code>. To first order these are the same term, so the table names both, and which to fit is a substantive choice. The estimate is the change in the drift coefficient per unit of the state. With the dependence written into the model:</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>model3b <span class="ot">&lt;-</span> <span class="fu">ctModel</span>(<span class="at">type =</span> <span class="st">&quot;ct&quot;</span>, <span class="at">silent =</span> <span class="cn">TRUE</span>,</span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">manifestNames =</span> <span class="fu">c</span>(<span class="st">&quot;Y1&quot;</span>, <span class="st">&quot;Y2&quot;</span>), <span class="at">latentNames =</span> <span class="fu">c</span>(<span class="st">&quot;eta1&quot;</span>, <span class="st">&quot;eta2&quot;</span>),</span>
@@ -343,66 +343,66 @@ border-radius: 0 4px 4px 0;
 <span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a>fit3b <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(d3, model3b, <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>, <span class="at">cores =</span> <span class="dv">2</span>)</span>
 <span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a><span class="fu">c</span>(<span class="at">loglik_without =</span> fit3<span class="sc">$</span>estimate<span class="sc">$</span>loglik, <span class="at">loglik_with =</span> fit3b<span class="sc">$</span>estimate<span class="sc">$</span>loglik)</span>
 <span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; loglik_without    loglik_with </span></span>
-<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      -11175.02      -11161.14</span></span>
+<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      -11224.14      -11202.13</span></span>
 <span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a><span class="fu">summary</span>(fit3b)<span class="sc">$</span>popmeans[<span class="fu">c</span>(<span class="st">&quot;dr11&quot;</span>, <span class="st">&quot;dstate&quot;</span>), ]</span>
-<span id="cb12-11"><a href="#cb12-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;          mean    sd   2.5%    50%  97.5%   mode</span></span>
-<span id="cb12-12"><a href="#cb12-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; dr11   -0.588 0.052 -0.692 -0.586 -0.494 -0.587</span></span>
-<span id="cb12-13"><a href="#cb12-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; dstate  0.175 0.034  0.110  0.174  0.242  0.176</span></span></code></pre></div>
+<span id="cb12-11"><a href="#cb12-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;          mean    sd  2.5%    50%  97.5%   mode</span></span>
+<span id="cb12-12"><a href="#cb12-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; dr11   -0.585 0.055 -0.70 -0.583 -0.485 -0.584</span></span>
+<span id="cb12-13"><a href="#cb12-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; dstate  0.220 0.035  0.15  0.220  0.287  0.220</span></span></code></pre></div>
 </div>
-<p>The refit’s <code>dstate</code> is a little smaller than the one-step estimate: the generating <code>tanh</code> flattens away from zero, and a term linear in <code>eta2</code> averages over its whole range. The first screen also flagged a second, weaker term, <code>eta1*eta1</code> in the equation of <code>eta2</code>. That one was an echo – the misfit in <code>eta1</code>’s dynamics reaches <code>eta2</code> through the cross effect – and testing the refitted model shows nothing left:</p>
+<p>The refit’s <code>dstate</code> is a little smaller than the screen’s estimate, because the generating <code>tanh</code> flattens away from zero and a linear term averages over the whole range of <code>eta2</code>. The first screen also flagged two weaker terms in the equation for <code>eta1</code>, <code>eta1*eta1</code> and <code>eta2*eta2</code>. These are probably echoes of the same moderation, since <code>eta1</code> and <code>eta2</code> are correlated through the cross effect. Testing the refitted model shows nothing left once the tests are adjusted for their number:</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb13"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ctScoreTest</span>(fit3b, <span class="at">tests =</span> <span class="st">&quot;statedependence&quot;</span>)</span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Score tests at the fitted model (laplace route, 150 subjects)</span></span>
 <span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; State dependence of the drift:</span></span>
-<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  equation   LM df     p</span></span>
-<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      eta1 1.90  3 0.609</span></span>
-<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      eta2 4.96  3 0.184</span></span>
-<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       all 6.07  6 0.440</span></span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  equation   LM df      p</span></span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      eta1 2.34  3 0.5180</span></span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      eta2 8.70  3 0.0395</span></span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       all 9.74  6 0.1930</span></span>
 <span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       term equation       LM      p p_adj estimate     se</span></span>
-<span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta1     eta2 4.57e+00 0.0325 0.195  -0.0519 0.0243</span></span>
-<span id="cb13-12"><a href="#cb13-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta2     eta2 2.70e+00 0.1000 0.301  -0.0438 0.0267</span></span>
-<span id="cb13-13"><a href="#cb13-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta1     eta1 1.08e+00 0.2990 0.399   0.0249 0.0240</span></span>
-<span id="cb13-14"><a href="#cb13-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta2*eta2     eta2 9.77e-01 0.3230 0.399  -0.0176 0.0178</span></span>
-<span id="cb13-15"><a href="#cb13-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta2*eta2     eta1 9.40e-01 0.3320 0.399  -0.0331 0.0341</span></span>
-<span id="cb13-16"><a href="#cb13-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta2     eta1 1.10e-10 1.0000 1.000       NA     NA</span></span>
+<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       term equation       LM      p  p_adj estimate     se</span></span>
+<span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta2*eta2     eta2 6.45e+00 0.0111 0.0665 -0.04690 0.0185</span></span>
+<span id="cb13-12"><a href="#cb13-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta1     eta2 3.77e+00 0.0520 0.1560 -0.04390 0.0226</span></span>
+<span id="cb13-13"><a href="#cb13-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta2     eta2 3.01e+00 0.0829 0.1660 -0.05210 0.0300</span></span>
+<span id="cb13-14"><a href="#cb13-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta1     eta1 2.16e+00 0.1420 0.2130  0.03480 0.0237</span></span>
+<span id="cb13-15"><a href="#cb13-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta2*eta2     eta1 1.90e-02 0.8900 1.0000 -0.00504 0.0365</span></span>
+<span id="cb13-16"><a href="#cb13-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta2     eta1 4.02e-08 1.0000 1.0000       NA     NA</span></span>
 <span id="cb13-17"><a href="#cb13-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                                             reads</span></span>
-<span id="cb13-18"><a href="#cb13-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta2,eta1] varies with eta1</span></span>
-<span id="cb13-19"><a href="#cb13-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  DRIFT[eta2,eta1] varies with eta2, or DRIFT[eta2,eta2] with eta1</span></span>
-<span id="cb13-20"><a href="#cb13-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta1,eta1] varies with eta1</span></span>
-<span id="cb13-21"><a href="#cb13-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta2,eta2] varies with eta2</span></span>
+<span id="cb13-18"><a href="#cb13-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta2,eta2] varies with eta2</span></span>
+<span id="cb13-19"><a href="#cb13-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta2,eta1] varies with eta1</span></span>
+<span id="cb13-20"><a href="#cb13-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  DRIFT[eta2,eta1] varies with eta2, or DRIFT[eta2,eta2] with eta1</span></span>
+<span id="cb13-21"><a href="#cb13-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta1,eta1] varies with eta1</span></span>
 <span id="cb13-22"><a href="#cb13-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta1,eta2] varies with eta2</span></span>
 <span id="cb13-23"><a href="#cb13-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  DRIFT[eta1,eta1] varies with eta2, or DRIFT[eta1,eta2] with eta1</span></span></code></pre></div>
 </div>
-<p>The term already in the model now has no score left at all, and no other term stands out.</p>
-<p>The test works because the filter evaluates each candidate term at the state it predicts from earlier observations. A weight that has not seen the observation being scored keeps that observation’s contribution to the score at mean zero when the model is right. Using smoothed or updated state estimates as covariates instead – regressing something on the estimated states after the fit – does not have that property, and rejects correct models: in simulation, nearly always.</p>
-<p>The polynomial terms assume the dependence is smooth enough to show in a linear term. <code>tests = &quot;instability&quot;</code> asks without assuming a form. It takes each observation’s score – how much that observation pulls each parameter – and orders the observations by time, and by each latent’s state as predicted from earlier observations. Under the model the running sum of those scores wanders like a Brownian bridge whatever the order; a parameter that changes over the study, or differs between low and high levels of a state, bends it.</p>
+<p>The term now in the model has no score left, and no other term stands out.</p>
+<p>The test evaluates each candidate term at the state predicted from earlier observations. Because that prediction has not seen the observation being scored, the observation’s contribution to the score has mean zero when the model is right. Smoothed or updated state estimates do not have this property, and in simulations, tests using them as covariates rejected correct models nearly every time.</p>
+<p>The polynomial terms assume the dependence is smooth enough to show in a linear term. <code>tests = &quot;instability&quot;</code> makes no assumption about its form. It takes each observation’s score, which says how much that observation pulls on each parameter, and orders the observations by time and by each latent’s state as predicted from earlier observations. Under the model, the running sum of the scores behaves like a Brownian bridge in any order. A parameter that changes over the study, or differs between low and high levels of a state, bends it.</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb14"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ctScoreTest</span>(fit3, <span class="at">tests =</span> <span class="st">&quot;instability&quot;</span>)</span>
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Score tests at the fitted model (laplace route, 150 subjects)</span></span>
 <span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Stability across the data (Nyblom), by ordering:</span></span>
-<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    ordering    L df      p</span></span>
-<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        time 1.72 11 0.2040</span></span>
-<span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  state eta1 1.84 11 0.2860</span></span>
-<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  state eta2 4.28 11 &lt;5e-04</span></span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    ordering    L df     p</span></span>
+<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        time 1.56 11 0.368</span></span>
+<span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  state eta1 2.29 11 0.104</span></span>
+<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  state eta2 3.25 11 0.006</span></span>
 <span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb14-10"><a href="#cb14-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    ordering       parameter     L      p   p_adj</span></span>
-<span id="cb14-11"><a href="#cb14-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  state eta2       diff_eta1 1.850 &lt;5e-04 0.00550</span></span>
-<span id="cb14-12"><a href="#cb14-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  state eta2          mvarY2 1.120 0.0015 0.00825</span></span>
-<span id="cb14-13"><a href="#cb14-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  state eta2      drift_eta1 0.977 0.0045 0.01650</span></span>
-<span id="cb14-14"><a href="#cb14-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        time  diff_eta2_eta1 0.782 0.0045 0.04950</span></span>
-<span id="cb14-15"><a href="#cb14-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  state eta2          mvarY1 0.786 0.0065 0.01790</span></span>
-<span id="cb14-16"><a href="#cb14-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  state eta2       diff_eta2 0.852 0.0115 0.02530</span></span>
-<span id="cb14-17"><a href="#cb14-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        time drift_eta2_eta1 0.329 0.0720 0.28000</span></span>
-<span id="cb14-18"><a href="#cb14-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        time           mm_Y1 0.104 0.0765 0.28000</span></span>
-<span id="cb14-19"><a href="#cb14-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  state eta1 drift_eta2_eta1 0.394 0.0825 0.46500</span></span>
-<span id="cb14-20"><a href="#cb14-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  state eta1       diff_eta1 0.369 0.0845 0.46500</span></span></code></pre></div>
+<span id="cb14-11"><a href="#cb14-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  state eta2      drift_eta1 1.880 &lt;5e-04 0.00275</span></span>
+<span id="cb14-12"><a href="#cb14-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  state eta2       diff_eta1 1.800 &lt;5e-04 0.00275</span></span>
+<span id="cb14-13"><a href="#cb14-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  state eta1           mm_Y1 0.156 0.0135 0.12600</span></span>
+<span id="cb14-14"><a href="#cb14-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  state eta1      drift_eta1 0.645 0.0275 0.12600</span></span>
+<span id="cb14-15"><a href="#cb14-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  state eta1       diff_eta1 0.508 0.0345 0.12600</span></span>
+<span id="cb14-16"><a href="#cb14-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  state eta1 drift_eta1_eta2 0.447 0.0610 0.16200</span></span>
+<span id="cb14-17"><a href="#cb14-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  state eta2           mm_Y1 0.101 0.0685 0.21100</span></span>
+<span id="cb14-18"><a href="#cb14-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  state eta1           mm_Y2 0.116 0.0735 0.16200</span></span>
+<span id="cb14-19"><a href="#cb14-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  state eta2          mvarY1 0.374 0.0905 0.21100</span></span>
+<span id="cb14-20"><a href="#cb14-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  state eta2       diff_eta2 0.356 0.0960 0.21100</span></span></code></pre></div>
 </div>
-<p>Ordered by <code>eta2</code>’s predicted state, the drift of <code>eta1</code> stands out, which is the moderation that generated the data, found without being told its form. Ordered by time nothing changes. The test needs each observation’s score, a pass of the filter per eight parameters, so it is not run unless asked for.</p>
+<p>Ordered by the predicted state of <code>eta2</code>, the drift and the diffusion of <code>eta1</code> stand out. The moderation that generated the data is found without specifying its form. Ordered by time, nothing stands out. The test needs each observation’s score, which takes a pass of the filter for every eight parameters, so it only runs when asked for.</p>
 <h2 id="everything-at-once">Everything at once</h2>
-<p>By default <code>ctScoreTest()</code> runs every family: the three above (covariates when given) and a fourth, the cells the model fixes at zero – here the measurement error covariance and the cross loadings – each tested as though freed. On the last dataset:</p>
+<p>By default <code>ctScoreTest()</code> runs every family: the three above (covariates only when given) and a fourth, which tests each cell the model fixes at zero as if it were free, here the measurement error covariance and the cross loadings. On the last data set:</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ctScoreTest</span>(fit3)</span>
 <span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Score tests at the fitted model (laplace route, 150 subjects)</span></span>
@@ -410,120 +410,120 @@ border-radius: 0 4px 4px 0;
 <span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Unmodelled heterogeneity (LM: the variance with its covariances, against an</span></span>
 <span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; equal mixture of chi-square on df - 1 and df; z: the variance alone, one sided;</span></span>
 <span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; p: the stronger of the two; sd: the one-step estimate, raw scale):</span></span>
-<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        parameter    LM df      z      p p_adj     sd sd_natural</span></span>
-<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        diff_eta2 10.90  5  2.300 0.0185 0.159 0.1010     0.1070</span></span>
-<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  drift_eta1_eta2  5.62  5  1.770 0.0535 0.159 0.1830     0.1830</span></span>
-<span id="cb15-10"><a href="#cb15-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        diff_eta1  6.47  5  1.720 0.0615 0.159 0.0598     0.0921</span></span>
-<span id="cb15-11"><a href="#cb15-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       drift_eta2 11.10  5  0.393 0.0705 0.159 0.0846     0.0517</span></span>
-<span id="cb15-12"><a href="#cb15-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           mvarY1  9.85  5  0.858 0.1020 0.181 0.0528     0.0502</span></span>
-<span id="cb15-13"><a href="#cb15-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           mvarY2  8.36  5  1.420 0.1200 0.181 0.0527     0.0525</span></span>
-<span id="cb15-14"><a href="#cb15-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   diff_eta2_eta1  6.42  5  0.674 0.3540 0.456 0.0943     0.0943</span></span>
-<span id="cb15-15"><a href="#cb15-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  drift_eta2_eta1  5.53  5 -0.519 0.4550 0.512     NA         NA</span></span>
-<span id="cb15-16"><a href="#cb15-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       drift_eta1  3.69  5 -0.209 0.7340 0.734     NA         NA</span></span>
+<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        parameter    LM df      z     p p_adj     sd sd_natural</span></span>
+<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  drift_eta1_eta2 11.00  5  2.080 0.032 0.212 0.1990     0.1990</span></span>
+<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        diff_eta2  4.42  5  1.870 0.047 0.212 0.0859     0.0957</span></span>
+<span id="cb15-10"><a href="#cb15-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   diff_eta2_eta1 10.70  5  0.604 0.073 0.219 0.0913     0.0913</span></span>
+<span id="cb15-11"><a href="#cb15-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       drift_eta1  3.95  5  1.610 0.104 0.229 0.1240     0.1120</span></span>
+<span id="cb15-12"><a href="#cb15-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       drift_eta2  4.04  5  1.390 0.142 0.229 0.1230     0.0819</span></span>
+<span id="cb15-13"><a href="#cb15-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        diff_eta1  3.73  5  1.340 0.153 0.229 0.0515     0.0782</span></span>
+<span id="cb15-14"><a href="#cb15-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  drift_eta2_eta1  6.62  5 -0.144 0.333 0.426     NA         NA</span></span>
+<span id="cb15-15"><a href="#cb15-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           mvarY2  4.18  5  0.738 0.379 0.426 0.0390     0.0377</span></span>
+<span id="cb15-16"><a href="#cb15-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           mvarY1  2.91  5  0.273 0.602 0.602 0.0274     0.0269</span></span>
 <span id="cb15-17"><a href="#cb15-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Covariances with: T0m_eta1, T0m_eta2, mm_Y1, mm_Y2</span></span>
 <span id="cb15-18"><a href="#cb15-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb15-19"><a href="#cb15-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; A new dimension of variation: largest eigenvalue 6.3, p = 0.097; direction drift_eta2 1, diff_eta2_eta1 -0.87, diff_eta2 0.85, drift_eta1 0.82, mvarY1 0.63</span></span>
+<span id="cb15-19"><a href="#cb15-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; A new dimension of variation: largest eigenvalue 6.6, p = 0.083; direction drift_eta2 1, drift_eta1_eta2 0.94, diff_eta2_eta1 0.72, diff_eta2 0.51, drift_eta2_eta1 0.48</span></span>
 <span id="cb15-20"><a href="#cb15-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb15-21"><a href="#cb15-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; State dependence of the drift:</span></span>
-<span id="cb15-22"><a href="#cb15-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  equation     LM df      p</span></span>
-<span id="cb15-23"><a href="#cb15-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      eta1 27.300  3 &lt;5e-04</span></span>
-<span id="cb15-24"><a href="#cb15-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      eta2  0.529  3 0.9210</span></span>
-<span id="cb15-25"><a href="#cb15-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       all 29.900  6 &lt;5e-04</span></span>
+<span id="cb15-22"><a href="#cb15-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  equation    LM df      p</span></span>
+<span id="cb15-23"><a href="#cb15-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      eta1 31.60  3 &lt;5e-04</span></span>
+<span id="cb15-24"><a href="#cb15-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      eta2  4.39  3 0.2340</span></span>
+<span id="cb15-25"><a href="#cb15-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       all 39.50  6 &lt;5e-04</span></span>
 <span id="cb15-26"><a href="#cb15-26" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb15-27"><a href="#cb15-27" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       term equation      LM        p    p_adj estimate     se</span></span>
-<span id="cb15-28"><a href="#cb15-28" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta2     eta1 25.7000   &lt;5e-04 2.39e-06  0.19400 0.0383</span></span>
-<span id="cb15-29"><a href="#cb15-29" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta1     eta1  9.0300 2.66e-03 7.97e-03  0.06970 0.0232</span></span>
-<span id="cb15-30"><a href="#cb15-30" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta2*eta2     eta1  1.1100 2.91e-01 5.82e-01  0.03550 0.0336</span></span>
-<span id="cb15-31"><a href="#cb15-31" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta2     eta2  0.2750 6.00e-01 8.44e-01 -0.01420 0.0271</span></span>
-<span id="cb15-32"><a href="#cb15-32" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta2*eta2     eta2  0.1450 7.03e-01 8.44e-01 -0.00663 0.0174</span></span>
-<span id="cb15-33"><a href="#cb15-33" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta1     eta2  0.0242 8.76e-01 8.76e-01       NA     NA</span></span>
+<span id="cb15-27"><a href="#cb15-27" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       term equation     LM        p    p_adj estimate     se</span></span>
+<span id="cb15-28"><a href="#cb15-28" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta2     eta1 25.700   &lt;5e-04 2.38e-06   0.2550 0.0504</span></span>
+<span id="cb15-29"><a href="#cb15-29" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta1     eta1 18.100   &lt;5e-04 6.31e-05   0.1020 0.0240</span></span>
+<span id="cb15-30"><a href="#cb15-30" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta2*eta2     eta1  5.590 1.81e-02 3.62e-02   0.0874 0.0370</span></span>
+<span id="cb15-31"><a href="#cb15-31" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta2*eta2     eta2  3.180 7.46e-02 1.12e-01  -0.0346 0.0194</span></span>
+<span id="cb15-32"><a href="#cb15-32" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta1     eta2  0.302 5.83e-01 6.17e-01   0.0123 0.0225</span></span>
+<span id="cb15-33"><a href="#cb15-33" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  eta1*eta2     eta2  0.251 6.17e-01 6.17e-01       NA     NA</span></span>
 <span id="cb15-34"><a href="#cb15-34" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                                             reads</span></span>
 <span id="cb15-35"><a href="#cb15-35" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  DRIFT[eta1,eta1] varies with eta2, or DRIFT[eta1,eta2] with eta1</span></span>
 <span id="cb15-36"><a href="#cb15-36" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta1,eta1] varies with eta1</span></span>
 <span id="cb15-37"><a href="#cb15-37" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta1,eta2] varies with eta2</span></span>
-<span id="cb15-38"><a href="#cb15-38" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  DRIFT[eta2,eta1] varies with eta2, or DRIFT[eta2,eta2] with eta1</span></span>
-<span id="cb15-39"><a href="#cb15-39" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta2,eta2] varies with eta2</span></span>
-<span id="cb15-40"><a href="#cb15-40" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta2,eta1] varies with eta1</span></span>
+<span id="cb15-38"><a href="#cb15-38" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta2,eta2] varies with eta2</span></span>
+<span id="cb15-39"><a href="#cb15-39" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta2,eta1] varies with eta1</span></span>
+<span id="cb15-40"><a href="#cb15-40" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  DRIFT[eta2,eta1] varies with eta2, or DRIFT[eta2,eta2] with eta1</span></span>
 <span id="cb15-41"><a href="#cb15-41" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb15-42"><a href="#cb15-42" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; State dependence of the innovation sds:</span></span>
 <span id="cb15-43"><a href="#cb15-43" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  equation    LM df      p</span></span>
-<span id="cb15-44"><a href="#cb15-44" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      eta1 25.20  2 &lt;5e-04</span></span>
-<span id="cb15-45"><a href="#cb15-45" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      eta2  5.13  2 0.0875</span></span>
-<span id="cb15-46"><a href="#cb15-46" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       all 31.30  4 &lt;5e-04</span></span>
+<span id="cb15-44"><a href="#cb15-44" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      eta1 30.80  2 &lt;5e-04</span></span>
+<span id="cb15-45"><a href="#cb15-45" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      eta2  5.99  2 0.0580</span></span>
+<span id="cb15-46"><a href="#cb15-46" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       all 39.50  4 &lt;5e-04</span></span>
 <span id="cb15-47"><a href="#cb15-47" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb15-48"><a href="#cb15-48" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                      term     LM        p    p_adj estimate     se</span></span>
-<span id="cb15-49"><a href="#cb15-49" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  sd(eta1) x exp(v * eta2) 22.400   &lt;5e-04 8.95e-06   0.1710 0.0362</span></span>
-<span id="cb15-50"><a href="#cb15-50" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  sd(eta1) x exp(v * eta1)  7.490 6.22e-03 1.24e-02   0.0945 0.0345</span></span>
-<span id="cb15-51"><a href="#cb15-51" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  sd(eta2) x exp(v * eta2)  5.030 2.49e-02 3.32e-02  -0.1090 0.0486</span></span>
-<span id="cb15-52"><a href="#cb15-52" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  sd(eta2) x exp(v * eta1)  0.577 4.48e-01 4.48e-01  -0.0302 0.0397</span></span>
+<span id="cb15-49"><a href="#cb15-49" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  sd(eta1) x exp(v * eta2) 28.500   &lt;5e-04 3.77e-07   0.1900 0.0356</span></span>
+<span id="cb15-50"><a href="#cb15-50" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  sd(eta1) x exp(v * eta1)  9.610 1.93e-03 3.87e-03   0.1120 0.0361</span></span>
+<span id="cb15-51"><a href="#cb15-51" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  sd(eta2) x exp(v * eta2)  5.900 1.52e-02 2.02e-02  -0.0973 0.0401</span></span>
+<span id="cb15-52"><a href="#cb15-52" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  sd(eta2) x exp(v * eta1)  0.722 3.95e-01 3.95e-01  -0.0315 0.0371</span></span>
 <span id="cb15-53"><a href="#cb15-53" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb15-54"><a href="#cb15-54" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Fixed cells, freed: joint LM = 2.77, df = 1, p = 0.1</span></span>
-<span id="cb15-55"><a href="#cb15-55" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                cell   LM     p p_adj estimate     se</span></span>
-<span id="cb15-56"><a href="#cb15-56" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  MANIFESTVAR[Y2,Y1] 2.77 0.096 0.096    0.087 0.0523</span></span>
+<span id="cb15-54"><a href="#cb15-54" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Fixed cells, freed: joint LM = 12.8, df = 1, p = 0.002</span></span>
+<span id="cb15-55"><a href="#cb15-55" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                cell   LM      p    p_adj estimate     se</span></span>
+<span id="cb15-56"><a href="#cb15-56" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  MANIFESTVAR[Y2,Y1] 12.8 &lt;5e-04 0.000339    0.196 0.0548</span></span>
 <span id="cb15-57"><a href="#cb15-57" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb15-58"><a href="#cb15-58" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Parameters depending on a subject&#39;s level (a random intercept):</span></span>
 <span id="cb15-59"><a href="#cb15-59" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  level    LM df     p</span></span>
-<span id="cb15-60"><a href="#cb15-60" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  mm_Y1 14.30  9 0.205</span></span>
-<span id="cb15-61"><a href="#cb15-61" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  mm_Y2  9.75  9 0.468</span></span>
-<span id="cb15-62"><a href="#cb15-62" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    all 24.90 18 0.358</span></span>
+<span id="cb15-60"><a href="#cb15-60" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  mm_Y1  8.82  9 0.514</span></span>
+<span id="cb15-61"><a href="#cb15-61" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  mm_Y2  9.89  9 0.458</span></span>
+<span id="cb15-62"><a href="#cb15-62" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    all 24.00 18 0.371</span></span>
 <span id="cb15-63"><a href="#cb15-63" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb15-64"><a href="#cb15-64" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                     term   LM       p p_adj estimate     se</span></span>
-<span id="cb15-65"><a href="#cb15-65" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        diff_eta2 ~ mm_Y1 7.87 0.00502 0.075  -0.0413 0.0147</span></span>
-<span id="cb15-66"><a href="#cb15-66" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           mvarY1 ~ mm_Y1 6.54 0.01050 0.075  -0.0280 0.0109</span></span>
-<span id="cb15-67"><a href="#cb15-67" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       drift_eta2 ~ mm_Y1 6.24 0.01250 0.075  -0.0385 0.0154</span></span>
-<span id="cb15-68"><a href="#cb15-68" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           mvarY2 ~ mm_Y1 4.30 0.03810 0.171  -0.0218 0.0105</span></span>
-<span id="cb15-69"><a href="#cb15-69" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       drift_eta1 ~ mm_Y2 2.80 0.09450 0.294   0.0384 0.0230</span></span>
-<span id="cb15-70"><a href="#cb15-70" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   diff_eta2_eta1 ~ mm_Y1 2.55 0.11000 0.294       NA     NA</span></span>
-<span id="cb15-71"><a href="#cb15-71" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        diff_eta1 ~ mm_Y1 2.49 0.11400 0.294       NA     NA</span></span>
-<span id="cb15-72"><a href="#cb15-72" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  drift_eta1_eta2 ~ mm_Y1 1.60 0.20700 0.465       NA     NA</span></span>
-<span id="cb15-73"><a href="#cb15-73" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        diff_eta1 ~ mm_Y2 1.41 0.23400 0.469       NA     NA</span></span>
-<span id="cb15-74"><a href="#cb15-74" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   diff_eta2_eta1 ~ mm_Y2 1.26 0.26200 0.472       NA     NA</span></span></code></pre></div>
+<span id="cb15-64"><a href="#cb15-64" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                     term    LM      p p_adj estimate     se</span></span>
+<span id="cb15-65"><a href="#cb15-65" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  drift_eta1_eta2 ~ mm_Y2 2.730 0.0982 0.873   0.0480 0.0290</span></span>
+<span id="cb15-66"><a href="#cb15-66" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           mvarY2 ~ mm_Y2 2.020 0.1550 0.873   0.0153 0.0108</span></span>
+<span id="cb15-67"><a href="#cb15-67" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       drift_eta2 ~ mm_Y2 1.480 0.2230 0.873  -0.0181 0.0148</span></span>
+<span id="cb15-68"><a href="#cb15-68" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  drift_eta1_eta2 ~ mm_Y1 1.400 0.2370 0.873  -0.0343 0.0290</span></span>
+<span id="cb15-69"><a href="#cb15-69" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       drift_eta1 ~ mm_Y2 1.060 0.3030 0.873   0.0270 0.0262</span></span>
+<span id="cb15-70"><a href="#cb15-70" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           mvarY2 ~ mm_Y1 0.813 0.3670 0.873       NA     NA</span></span>
+<span id="cb15-71"><a href="#cb15-71" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   diff_eta2_eta1 ~ mm_Y2 0.744 0.3880 0.873       NA     NA</span></span>
+<span id="cb15-72"><a href="#cb15-72" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        diff_eta1 ~ mm_Y2 0.721 0.3960 0.873       NA     NA</span></span>
+<span id="cb15-73"><a href="#cb15-73" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  drift_eta2_eta1 ~ mm_Y1 0.527 0.4680 0.873       NA     NA</span></span>
+<span id="cb15-74"><a href="#cb15-74" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   diff_eta2_eta1 ~ mm_Y1 0.487 0.4850 0.873       NA     NA</span></span></code></pre></div>
 </div>
-<p>The state dependence stands out. The heterogeneity tests stay quiet here, but they need not: a drift that changes with the state can also look, subject by subject, like a drift that differs between subjects, and in simulations a missing nonlinearity did move them. A badly misspecified model can light up several tests at once, so read them as a map: relax what stands out most, refit, and test again.</p>
+<p>The state dependence stands out, in the drift of <code>eta1</code> and in the size of its innovations. So does the measurement error covariance between <code>Y1</code> and <code>Y2</code>, although the data were generated without one, probably as another effect of the missing moderation. The heterogeneity tests stay quiet here, but need not. A drift that changes with the state can also look like a drift that differs between subjects, and in simulations a missing nonlinearity did affect them. A badly misspecified model can show up in several tests at once, so free what stands out most, refit, and test again.</p>
 <h2 id="do-the-models-predictions-look-like-the-data">Do the model’s predictions look like the data?</h2>
-<p>The usual check of a dynamic model compares the data with data the fitted model generates: the autocorrelations and cross-correlations (ACF and CCF), how much subjects differ from each other, and so on. <code>ctFitAdequacy()</code> makes those comparisons tests, in families aimed at different departures.</p>
-<p>Most of the families work on the one-step-ahead prediction errors, which under the model are independent and standard normal however the observations are spaced, so they need no generated data. Each variable’s error is taken given the others observed at the same time, so a result names a variable.</p>
+<p>The usual check of a dynamic model compares the data with data generated from the fitted model: the autocorrelations and cross-correlations (ACF and CCF), how much subjects differ from each other, and so on. <code>ctFitAdequacy()</code> turns these comparisons into tests, grouped in families aimed at different kinds of misfit.</p>
+<p>Most families use the one-step-ahead prediction errors. Under the model these are independent and standard normal however the observations are spaced, so no generated data are needed. Each variable’s error is taken given the other variables observed at the same time, so a result points to a variable.</p>
 <ul>
-<li><code>residuals</code>: the errors’ correlations within subjects, for every pair of a subject’s observations, binned by the time between them. This is the residual ACF and CCF in continuous time, and a slow process the model lacks shows as correlation over the gaps it spans.</li>
-<li><code>latent</code>: the same for each latent process: how much each observation moves the predicted state, standardised, correlated with the same subject’s moves at other times. A model with many indicators per process can leave each item’s errors nearly uncorrelated while the processes themselves are misspecified, a cross effect missing, say; one statistic per process rather than per item does not dilute that.</li>
+<li><code>residuals</code>: correlations of the errors within subjects, over every pair of a subject’s observations, binned by the time between them. This is the residual ACF and CCF in continuous time. A slow process missing from the model shows as correlation over the time gaps it spans.</li>
+<li><code>latent</code>: the same for each latent process, using the standardised change in the predicted state at each observation, correlated with the same subject’s changes at other times. With many indicators per process, each item’s errors can be nearly uncorrelated while the processes themselves are misspecified, for example with a cross effect missing. One statistic per process detects this more easily than one per item.</li>
 <li><code>volatility</code>: the same for the squared errors, for variance that clusters in time.</li>
 <li><code>pairs</code>: whether two variables’ errors at the same time correlate as the model says, for a wrong measurement error covariance or loading.</li>
-<li><code>periodic</code>: a cycle the model lacks, such as a daily rhythm: the periodogram of each variable’s errors and each process’s updates at a period. It depends only on the time between observations, so it finds a rhythm whatever its phase in each subject. Name the periods that matter (<code>periods = 24</code> with time in hours), or by default it scans.</li>
-<li><code>tvcovariates</code>, given <code>tvcovariates</code>: whether time varying variables the model does not use predict its errors, at the same and the previous observation.</li>
+<li><code>periodic</code>: a cycle the model lacks, such as a daily rhythm, from the periodogram of each variable’s errors and each process’s updates. It depends only on the time between observations, so it finds a rhythm whatever its phase in each subject. Give the periods that matter (<code>periods = 24</code> with time in hours), or by default it scans a range.</li>
+<li><code>tvcovariates</code> (when <code>tvcovariates</code> are given): whether time varying variables the model does not use predict its errors, at the same and the previous observation.</li>
 <li><code>distribution</code>: skewness, kurtosis and outlying occasions.</li>
-<li><code>fit</code>: whether some subjects are fitted much worse than the model allows.</li>
-<li><code>dependence</code>: whether an error or its size depends, in any form, on what came before it: the predicted states, the previous errors, the time since the last observation.</li>
-<li><code>effects</code>: on a model whose random effects are integrated by <code>intoverpop = &quot;laplace&quot;</code>, whether their normal distribution fits. Each subject’s posterior probability that its effect lies below a cut, at cuts along each axis, is averaged over subjects; under the model that average is the normal’s, and a skewed or bimodal distribution of the subjects moves it.</li>
-<li><code>scores</code>, when asked for: whether each observation’s score is uncorrelated with the scores of the same subject’s other observations, which holds under the model whatever is being looked for. That makes it a check for dynamic misspecification of any kind, but a weak one, spread over many statistics; the targeted tests above find what they cover far more often.</li>
+<li><code>fit</code>: whether some subjects fit much worse than the model allows.</li>
+<li><code>dependence</code>: whether an error or its size depends in any way on what came before: the predicted states, the previous errors, or the time since the last observation.</li>
+<li><code>effects</code>: for random effects integrated with <code>intoverpop = &quot;laplace&quot;</code>, whether their normal distribution fits. At cuts along each axis, each subject’s posterior probability that its effect lies below the cut is averaged over subjects. Under the model this average matches the normal distribution, and a skewed or bimodal distribution of subjects moves it.</li>
+<li><code>scores</code> (when asked for): whether each observation’s score is uncorrelated with the scores of the same subject’s other observations, which holds under the model. This checks for any kind of dynamic misspecification, but is weak because it is spread over many statistics. The targeted tests above detect what they cover far more often.</li>
 </ul>
-<p>The error statistics account for the parameters having been estimated from the same data. Each subject’s contribution is projected on its scores, which removes what estimation did to the statistic, as the score tests do. Three more families compare statistics of the data with generated data: the spread over subjects of their own means, standard deviations and lag-one correlations; whether change depends on level nonlinearly; and, given covariates, whether subjects’ statistics depend on them. With many observations every misfit is significant, so the size of what remains is reported too, as root mean square residual correlations, of the items and of the latent processes, with intervals and a test that each is at most <code>close</code> (0.05 by default).</p>
-<p>On the second example’s fit, which lacks <code>age</code>, the checks fail, through the subjects’ spread and their relation to age:</p>
+<p>The error statistics allow for the parameters having been estimated from the same data, by projecting each subject’s contribution on its scores, as the score tests do. Three further families compare statistics of the data with generated data: the spread over subjects of their own means, standard deviations and lag one correlations, whether change depends nonlinearly on level, and, when covariates are given, whether the subjects’ statistics depend on them. With many observations every misfit becomes significant, so the size of the remaining misfit is also reported, as the root mean square residual correlation of the items and of the latent processes, with intervals and a test of whether each is at most <code>close</code> (0.05 by default).</p>
+<p>On the fit from the second example, which lacks <code>age</code>, the checks fail through the subjects’ spread and its relation to age:</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb16"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ctFitAdequacy</span>(fit2, <span class="at">covariates =</span> covariates)</span>
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Adequacy: misfit detected by 2 of 12 families at alpha = 0.05</span></span>
 <span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; (estimation removed by: derivative; 100 generated datasets)</span></span>
 <span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        family statistics                worst worst_z        p    p_adj</span></span>
-<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     residuals         16 Y2~Y1 gap 4.87-10.20   1.610 8.06e-01 1.00e+00</span></span>
-<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        latent         16  eta2~eta2 gap &gt;10.2  -1.360 9.10e-01 1.00e+00</span></span>
-<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    volatility          8  Y1^2 gap 2.54- 4.87   0.990 9.35e-01 1.00e+00</span></span>
-<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         pairs          1                Y1:Y2   0.369 7.01e-01 1.00e+00</span></span>
-<span id="cb16-10"><a href="#cb16-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      periodic         60       Y2 period 4.05   2.440 5.46e-01 1.00e+00</span></span>
-<span id="cb16-11"><a href="#cb16-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  distribution          8      distance spread   1.530 3.94e-01 1.00e+00</span></span>
-<span id="cb16-12"><a href="#cb16-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           fit          2   spread of unit fit   2.580 3.10e-02 3.10e-01</span></span>
-<span id="cb16-13"><a href="#cb16-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       effects         20          P(u4 &lt; 1.5)  -1.730 6.56e-01 1.00e+00</span></span>
-<span id="cb16-14"><a href="#cb16-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    dependence          4       dcor(Y2, past)   1.110 6.50e-01 1.00e+00</span></span>
-<span id="cb16-15"><a href="#cb16-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      subjects          8       sd(lag1_Y1_Y2)   5.990 2.95e-07 3.25e-06</span></span>
-<span id="cb16-16"><a href="#cb16-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     nonlinear         10        cor(dY1^2,Y2)   2.760 7.57e-02 6.81e-01</span></span>
-<span id="cb16-17"><a href="#cb16-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    covariates         16  cor(age,lag1_Y1_Y2)   7.860 8.64e-11 1.04e-09</span></span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        family statistics                   worst worst_z        p    p_adj</span></span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     residuals         16         Y2~Y1 gap &gt;10.2   1.620 8.49e-01 1.00e+00</span></span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        latent         16     eta2~eta1 gap &gt;10.2   1.630 8.30e-01 1.00e+00</span></span>
+<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    volatility          8     Y2^2 gap 4.88-10.20   1.790 6.75e-01 1.00e+00</span></span>
+<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         pairs          1                   Y1:Y2  -0.027 9.63e-01 1.00e+00</span></span>
+<span id="cb16-10"><a href="#cb16-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      periodic         60 latent eta1 period 16.5   2.470 3.48e-01 1.00e+00</span></span>
+<span id="cb16-11"><a href="#cb16-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  distribution          8            kurtosis(Y1)  -1.160 9.17e-01 1.00e+00</span></span>
+<span id="cb16-12"><a href="#cb16-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           fit          2      spread of unit fit   2.410 3.20e-02 3.20e-01</span></span>
+<span id="cb16-13"><a href="#cb16-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       effects         20             P(u3 &lt; 1.5)  -3.110 1.64e-01 1.00e+00</span></span>
+<span id="cb16-14"><a href="#cb16-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    dependence          4          dcor(Y2, past)   1.120 7.07e-01 1.00e+00</span></span>
+<span id="cb16-15"><a href="#cb16-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      subjects          8          sd(lag1_Y1_Y2)   5.510 2.57e-06 2.83e-05</span></span>
+<span id="cb16-16"><a href="#cb16-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     nonlinear         10           cor(dY1^2,Y2)   1.310 7.23e-01 1.00e+00</span></span>
+<span id="cb16-17"><a href="#cb16-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    covariates         16     cor(age,lag1_Y1_Y2)   7.850 9.94e-11 1.19e-09</span></span>
 <span id="cb16-18"><a href="#cb16-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb16-19"><a href="#cb16-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Size of what remains (root mean square, bias-corrected; p_close tests that it is at least close):</span></span>
 <span id="cb16-20"><a href="#cb16-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                     measure estimate lower   upper close</span></span>
-<span id="cb16-21"><a href="#cb16-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;              residual correlation, all gaps        0     0 0.00424  0.05</span></span>
-<span id="cb16-22"><a href="#cb16-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         residual correlation, shortest gaps        0     0 0.00525  0.05</span></span>
-<span id="cb16-23"><a href="#cb16-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       latent residual correlation, all gaps        0     0 0.00217  0.05</span></span>
-<span id="cb16-24"><a href="#cb16-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  latent residual correlation, shortest gaps        0     0 0.00311  0.05</span></span>
-<span id="cb16-25"><a href="#cb16-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                      within-row correlation        0     0 0.00375  0.05</span></span>
+<span id="cb16-21"><a href="#cb16-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;              residual correlation, all gaps        0     0 0.00355  0.05</span></span>
+<span id="cb16-22"><a href="#cb16-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         residual correlation, shortest gaps        0     0 0.00654  0.05</span></span>
+<span id="cb16-23"><a href="#cb16-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       latent residual correlation, all gaps        0     0 0.00277  0.05</span></span>
+<span id="cb16-24"><a href="#cb16-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  latent residual correlation, shortest gaps        0     0 0.00675  0.05</span></span>
+<span id="cb16-25"><a href="#cb16-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                      within-row correlation        0     0 0.00000  0.05</span></span>
 <span id="cb16-26"><a href="#cb16-26" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  p_close</span></span>
 <span id="cb16-27"><a href="#cb16-27" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        0</span></span>
 <span id="cb16-28"><a href="#cb16-28" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        0</span></span>
@@ -531,43 +531,43 @@ border-radius: 0 4px 4px 0;
 <span id="cb16-30"><a href="#cb16-30" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        0</span></span>
 <span id="cb16-31"><a href="#cb16-31" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        0</span></span></code></pre></div>
 </div>
-<p>On the linear fit to the state-dependent data:</p>
+<p>On the linear fit to the state dependent data:</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb17"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ctFitAdequacy</span>(fit3)</span>
-<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Adequacy: no family detects misfit at alpha = 0.05</span></span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Adequacy: misfit detected by 1 of 11 families at alpha = 0.05, each shown within the close-fit bound (remaining correlations below 0.05)</span></span>
 <span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; (estimation removed by: derivative; 100 generated datasets)</span></span>
 <span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        family statistics                worst worst_z     p p_adj</span></span>
-<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     residuals         16 Y1~Y2 gap 2.58- 4.91    1.59 0.710 1.000</span></span>
-<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        latent         16 eta1~eta2 gap &lt;=2.58   -1.41 0.800 1.000</span></span>
-<span id="cb17-8"><a href="#cb17-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    volatility          8  Y2^2 gap 2.58- 4.91    1.91 0.326 1.000</span></span>
-<span id="cb17-9"><a href="#cb17-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         pairs          1                Y1:Y2    1.27 0.109 1.000</span></span>
-<span id="cb17-10"><a href="#cb17-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      periodic         60       Y1 period 2.35    2.28 0.816 1.000</span></span>
-<span id="cb17-11"><a href="#cb17-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  distribution          8             skew(Y2)   -2.13 0.831 1.000</span></span>
-<span id="cb17-12"><a href="#cb17-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           fit          2   spread of unit fit    2.06 0.064 0.704</span></span>
-<span id="cb17-13"><a href="#cb17-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       effects         20          P(u1 &lt; 1.5)   -1.48 0.857 1.000</span></span>
-<span id="cb17-14"><a href="#cb17-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    dependence          4     dcor(Y1^2, past)    1.46 0.427 1.000</span></span>
-<span id="cb17-15"><a href="#cb17-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      subjects          8       sd(lag1_Y2_Y1)    2.13 0.996 1.000</span></span>
-<span id="cb17-16"><a href="#cb17-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     nonlinear         10        cor(dY2^2,Y2)   -2.25 0.100 1.000</span></span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        family statistics                    worst worst_z        p   p_adj</span></span>
+<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     residuals         16     Y2~Y2 gap 2.59- 4.93   -3.11 0.042300 0.42300</span></span>
+<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        latent         16 eta2~eta2 gap 2.59- 4.93   -2.70 0.158000 0.82000</span></span>
+<span id="cb17-8"><a href="#cb17-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    volatility          8          Y2^2 gap &lt;=2.59    1.77 0.552000 1.00000</span></span>
+<span id="cb17-9"><a href="#cb17-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         pairs          1                    Y1:Y2    3.80 0.000415 0.00457</span></span>
+<span id="cb17-10"><a href="#cb17-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      periodic         60           Y2 period 2.52    2.41 0.204000 0.82000</span></span>
+<span id="cb17-11"><a href="#cb17-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  distribution          8                 skew(Y1)    1.89 0.779000 1.00000</span></span>
+<span id="cb17-12"><a href="#cb17-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           fit          2       spread of unit fit    1.31 0.228000 0.82000</span></span>
+<span id="cb17-13"><a href="#cb17-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       effects         20             P(u2 &lt; -1.5)    3.09 0.079400 0.63600</span></span>
+<span id="cb17-14"><a href="#cb17-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    dependence          4         dcor(Y1^2, past)    2.09 0.137000 0.82000</span></span>
+<span id="cb17-15"><a href="#cb17-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      subjects          8           sd(lag1_Y2_Y1)    2.73 0.117000 0.81800</span></span>
+<span id="cb17-16"><a href="#cb17-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     nonlinear         10            cor(dY1^2,Y2)    2.77 0.059000 0.53100</span></span>
 <span id="cb17-17"><a href="#cb17-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb17-18"><a href="#cb17-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Size of what remains (root mean square, bias-corrected; p_close tests that it is at least close):</span></span>
 <span id="cb17-19"><a href="#cb17-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                     measure estimate lower   upper close</span></span>
-<span id="cb17-20"><a href="#cb17-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;              residual correlation, all gaps  0.00000     0 0.00890  0.05</span></span>
-<span id="cb17-21"><a href="#cb17-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         residual correlation, shortest gaps  0.00000     0 0.00726  0.05</span></span>
-<span id="cb17-22"><a href="#cb17-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       latent residual correlation, all gaps  0.00000     0 0.00759  0.05</span></span>
-<span id="cb17-23"><a href="#cb17-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  latent residual correlation, shortest gaps  0.00000     0 0.00888  0.05</span></span>
-<span id="cb17-24"><a href="#cb17-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                      within-row correlation  0.00457     0 0.01400  0.05</span></span>
-<span id="cb17-25"><a href="#cb17-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    p_close</span></span>
-<span id="cb17-26"><a href="#cb17-26" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   0.00e+00</span></span>
-<span id="cb17-27"><a href="#cb17-27" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   0.00e+00</span></span>
-<span id="cb17-28"><a href="#cb17-28" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   0.00e+00</span></span>
-<span id="cb17-29"><a href="#cb17-29" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   0.00e+00</span></span>
-<span id="cb17-30"><a href="#cb17-30" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  1.07e-171</span></span></code></pre></div>
+<span id="cb17-20"><a href="#cb17-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;              residual correlation, all gaps  0.00666     0 0.01220  0.05</span></span>
+<span id="cb17-21"><a href="#cb17-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         residual correlation, shortest gaps  0.00332     0 0.01040  0.05</span></span>
+<span id="cb17-22"><a href="#cb17-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       latent residual correlation, all gaps  0.00347     0 0.00887  0.05</span></span>
+<span id="cb17-23"><a href="#cb17-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  latent residual correlation, shortest gaps  0.00000     0 0.00725  0.05</span></span>
+<span id="cb17-24"><a href="#cb17-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                      within-row correlation  0.01530     0 0.02230  0.05</span></span>
+<span id="cb17-25"><a href="#cb17-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  p_close</span></span>
+<span id="cb17-26"><a href="#cb17-26" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  0.0e+00</span></span>
+<span id="cb17-27"><a href="#cb17-27" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  0.0e+00</span></span>
+<span id="cb17-28"><a href="#cb17-28" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  0.0e+00</span></span>
+<span id="cb17-29"><a href="#cb17-29" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  0.0e+00</span></span>
+<span id="cb17-30"><a href="#cb17-30" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  1.2e-64</span></span></code></pre></div>
 </div>
-<p>Every family passes, though this model is missing the state dependence the score test found at p = 5e-6. A moderated drift, averaged over the data, still decays much like a single exponential, so the errors it leaves are nearly uncorrelated: the root mean square residual correlation is indistinguishable from zero. The checks are worth having for what lies outside every score test’s reach: a slow process the model lacks, variance that clusters, errors with heavy tails, a process of the wrong order. In simulation the residual correlations over time gaps found a missing slow process (a time constant ten times the fast one’s) in 65 of 100 datasets, where correlations at a few lags of the observations found it in 5. But passing the checks is necessary rather than sufficient, which is why the next section screens with the score tests and stops on the checks.</p>
+<p>Only the <code>pairs</code> family fails, on the same measurement error covariance the score tests flagged, and the remaining correlations are within the close-fit bound. The state dependence that the score test found (adjusted p of 2e-6) does not show. A moderated drift, averaged over the data, still decays much like a single exponential, so the errors it leaves are nearly uncorrelated and the root mean square residual correlation is close to zero. The checks are useful for things no score test covers: a missing slow process, variance that clusters, errors with heavy tails, or a process of the wrong order. In simulations the residual correlations over time gaps found a missing slow process (with a time constant ten times the fast one’s) in 65 of 100 data sets, where correlations at a few lags found it in 5. Passing the checks does not show that the model is right, which is why the search in the next section screens with the score tests and stops on the checks.</p>
 <h2 id="automating-the-search">Automating the search</h2>
-<p><code>ctModelImprove()</code> puts the tests into a loop. It screens the fit, refits with the most strongly indicated relaxations one at a time (warm started from the current estimates), and keeps the best if the refit’s likelihood confirms it. It repeats until nothing more is indicated, then checks the model with <code>ctFitAdequacy()</code>. If a check fails, it tries structural changes the score tests cannot reach: a slow process driving a latent (<code>ctModelSlowComponent()</code>), tried first for a latent whose updates stay correlated over long gaps; a daily or other cycle at the period the <code>periodic</code> family points to (<code>ctModelPeriodicComponent()</code>); a process of its own for an item whose errors stay correlated with its own (<code>ctModelUniqueProcess()</code>); making a process second order (<code>ctModelHigherOrder()</code>); or models you supply. Finally it tries dropping each change it kept, in case a later one made it redundant.</p>
-<p>Here the data contain two of the departures above at once: <code>age</code> acts on the intercept of <code>Y1</code> and on the cross effect, <code>eta2</code> moderates how <code>eta1</code> regulates, and <code>w</code> is unrelated.</p>
+<p><code>ctModelImprove()</code> runs the tests in a loop. It screens the fit, refits with the most strongly indicated changes one at a time (starting from the current estimates), and keeps the best if the refit’s likelihood confirms it. It repeats this until nothing more is indicated, and then checks the model with <code>ctFitAdequacy()</code>. If a check fails, it tries structural changes the score tests cannot propose: a slow process driving a latent (<code>ctModelSlowComponent()</code>), tried first for a latent whose updates stay correlated over long gaps; a daily or other cycle at the period the <code>periodic</code> family points to (<code>ctModelPeriodicComponent()</code>); a separate process for an item whose errors stay correlated over time (<code>ctModelUniqueProcess()</code>); a second order process (<code>ctModelHigherOrder()</code>); or models you supply. Finally it tries removing each change it kept, in case a later change made it unnecessary.</p>
+<p>Here the data have two of the problems above. <code>age</code> affects the intercept of <code>Y1</code> and the cross effect, <code>eta2</code> moderates how <code>eta1</code> returns to baseline, and <code>w</code> is unrelated.</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb18"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>gen4 <span class="ot">&lt;-</span> <span class="fu">generator</span>(<span class="at">DRIFT =</span> <span class="fu">matrix</span>(<span class="fu">c</span>(<span class="st">&quot;-0.6 + 0.3 * tanh(eta2)&quot;</span>, <span class="st">&quot;drift21||||age=0.3&quot;</span>,</span>
 <span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>  <span class="dv">0</span>, <span class="sc">-</span><span class="fl">0.4</span>), <span class="dv">2</span>, <span class="dv">2</span>),</span>
@@ -581,71 +581,73 @@ border-radius: 0 4px 4px 0;
 <div class="sourceCode cell-code" id="cb19"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a>imp <span class="ot">&lt;-</span> <span class="fu">ctModelImprove</span>(fit4, <span class="at">covariates =</span> <span class="fu">unique</span>(d4[, <span class="fu">c</span>(<span class="st">&quot;id&quot;</span>, <span class="st">&quot;age&quot;</span>, <span class="st">&quot;w&quot;</span>)]))</span>
 <span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>imp</span>
 <span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Model improvement: stopped because adequate</span></span>
-<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Log likelihood -11322.58 -&gt; -11146.26 (23 -&gt; 26 parameters)</span></span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Log likelihood -11294.2 -&gt; -11226.75 (23 -&gt; 30 parameters)</span></span>
 <span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  round                                            change screen_p dloglik dpar</span></span>
-<span id="cb19-7"><a href="#cb19-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      1      age as a predictor of mm_Y1, drift_eta2_eta1 1.00e-03   162.0    2</span></span>
-<span id="cb19-8"><a href="#cb19-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      2                    eta1*eta2 in the drift of eta1 1.78e-06    13.2    1</span></span>
-<span id="cb19-9"><a href="#cb19-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  prune drop age as a predictor of mm_Y1, drift_eta2_eta1       NA  -159.0   -2</span></span>
-<span id="cb19-10"><a href="#cb19-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  prune               drop eta1*eta2 in the drift of eta1       NA      NA   -1</span></span>
-<span id="cb19-11"><a href="#cb19-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   done                                         note</span></span>
-<span id="cb19-12"><a href="#cb19-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   TRUE               LR p = 2.91e-71 against 0.0167</span></span>
-<span id="cb19-13"><a href="#cb19-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   TRUE                LR p = 2.71e-07 against 0.025</span></span>
-<span id="cb19-14"><a href="#cb19-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  FALSE                 LR p = 1.42e-69 against 0.05</span></span>
-<span id="cb19-15"><a href="#cb19-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  FALSE kept without a refit: Wald 26.4 against 7.68</span></span>
-<span id="cb19-16"><a href="#cb19-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb19-17"><a href="#cb19-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Adequacy: no family detects misfit at alpha = 0.05</span></span>
-<span id="cb19-18"><a href="#cb19-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; (estimation removed by: plugin; 100 generated datasets)</span></span>
-<span id="cb19-19"><a href="#cb19-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb19-20"><a href="#cb19-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        family statistics               worst worst_z     p p_adj</span></span>
-<span id="cb19-21"><a href="#cb19-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     residuals         16     Y2~Y1 gap &gt;10.1  -1.980 0.614     1</span></span>
-<span id="cb19-22"><a href="#cb19-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        latent         16 eta2~eta1 gap &gt;10.1  -1.780 0.671     1</span></span>
-<span id="cb19-23"><a href="#cb19-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    volatility          8     Y2^2 gap &lt;=2.56  -1.470 0.775     1</span></span>
-<span id="cb19-24"><a href="#cb19-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         pairs          1               Y1:Y2  -1.220 0.173     1</span></span>
-<span id="cb19-25"><a href="#cb19-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      periodic         56      Y1 period 5.36   2.590 0.299     1</span></span>
-<span id="cb19-26"><a href="#cb19-26" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  distribution          9            distance   0.892 0.945     1</span></span>
-<span id="cb19-27"><a href="#cb19-27" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           fit          2  spread of unit fit  -0.560 0.697     1</span></span>
-<span id="cb19-28"><a href="#cb19-28" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       effects         20         P(u1 &lt; 1.5)  -1.410 0.874     1</span></span>
-<span id="cb19-29"><a href="#cb19-29" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    dependence          4      dcor(Y2, past)   1.080 0.687     1</span></span>
-<span id="cb19-30"><a href="#cb19-30" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      subjects          8      sd(lag1_Y2_Y2)   2.260 0.876     1</span></span>
-<span id="cb19-31"><a href="#cb19-31" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     nonlinear         10      cor(dY2,Y1*Y1)  -0.984 0.425     1</span></span>
-<span id="cb19-32"><a href="#cb19-32" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    covariates          8   cor(w,lag1_Y2_Y1)   1.320 0.894     1</span></span>
-<span id="cb19-33"><a href="#cb19-33" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb19-34"><a href="#cb19-34" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Size of what remains (root mean square, bias-corrected; p_close tests that it is at least close):</span></span>
-<span id="cb19-35"><a href="#cb19-35" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                     measure estimate lower   upper close</span></span>
-<span id="cb19-36"><a href="#cb19-36" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;              residual correlation, all gaps  0.00000     0 0.00521  0.05</span></span>
-<span id="cb19-37"><a href="#cb19-37" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         residual correlation, shortest gaps  0.00000     0 0.01260  0.05</span></span>
-<span id="cb19-38"><a href="#cb19-38" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       latent residual correlation, all gaps  0.00000     0 0.00562  0.05</span></span>
-<span id="cb19-39"><a href="#cb19-39" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  latent residual correlation, shortest gaps  0.00389     0 0.01390  0.05</span></span>
-<span id="cb19-40"><a href="#cb19-40" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                      within-row correlation  0.00488     0 0.01600  0.05</span></span>
-<span id="cb19-41"><a href="#cb19-41" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    p_close</span></span>
-<span id="cb19-42"><a href="#cb19-42" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   0.00e+00</span></span>
-<span id="cb19-43"><a href="#cb19-43" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  2.94e-212</span></span>
-<span id="cb19-44"><a href="#cb19-44" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   0.00e+00</span></span>
-<span id="cb19-45"><a href="#cb19-45" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  2.37e-166</span></span>
-<span id="cb19-46"><a href="#cb19-46" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   1.34e-97</span></span></code></pre></div>
+<span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  round                                                             change</span></span>
+<span id="cb19-7"><a href="#cb19-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      1                                        age as a predictor of mm_Y1</span></span>
+<span id="cb19-8"><a href="#cb19-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      2                                     eta1*eta2 in the drift of eta1</span></span>
+<span id="cb19-9"><a href="#cb19-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      3      drift_eta2_eta1 individually varying, with T0m_eta1, T0m_eta2</span></span>
+<span id="cb19-10"><a href="#cb19-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  prune                                   drop age as a predictor of mm_Y1</span></span>
+<span id="cb19-11"><a href="#cb19-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  prune                                drop eta1*eta2 in the drift of eta1</span></span>
+<span id="cb19-12"><a href="#cb19-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  prune drop drift_eta2_eta1 individually varying, with T0m_eta1, T0m_eta2</span></span>
+<span id="cb19-13"><a href="#cb19-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  screen_p dloglik dpar  done                                         note</span></span>
+<span id="cb19-14"><a href="#cb19-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  5.50e-03   20.90    1  TRUE               LR p = 1.03e-10 against 0.0167</span></span>
+<span id="cb19-15"><a href="#cb19-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  2.17e-06   11.70    1  TRUE               LR p = 1.25e-06 against 0.0167</span></span>
+<span id="cb19-16"><a href="#cb19-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  5.00e-04   33.30    5  TRUE               LR p = 5.36e-13 against 0.0167</span></span>
+<span id="cb19-17"><a href="#cb19-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        NA   -4.86   -1 FALSE                  LR p = 0.00181 against 0.05</span></span>
+<span id="cb19-18"><a href="#cb19-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        NA      NA   -1 FALSE kept without a refit: Wald 21.8 against 7.68</span></span>
+<span id="cb19-19"><a href="#cb19-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        NA      NA   -5 FALSE   kept without a refit: Wald 69 against 22.1</span></span>
+<span id="cb19-20"><a href="#cb19-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb19-21"><a href="#cb19-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Adequacy: no family detects misfit at alpha = 0.05</span></span>
+<span id="cb19-22"><a href="#cb19-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; (estimation removed by: plugin (unit-level families); 100 generated datasets)</span></span>
+<span id="cb19-23"><a href="#cb19-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb19-24"><a href="#cb19-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        family statistics                    worst worst_z      p p_adj</span></span>
+<span id="cb19-25"><a href="#cb19-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     residuals         16     Y1~Y2 gap 2.54- 4.85  -1.900 0.6910 1.000</span></span>
+<span id="cb19-26"><a href="#cb19-26" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        latent         16 eta1~eta2 gap 2.54- 4.85  -2.080 0.5450 1.000</span></span>
+<span id="cb19-27"><a href="#cb19-27" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    volatility          8      Y1^2 gap 4.85-10.10  -1.940 0.2080 1.000</span></span>
+<span id="cb19-28"><a href="#cb19-28" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         pairs          1                    Y1:Y2  -0.583 0.5370 1.000</span></span>
+<span id="cb19-29"><a href="#cb19-29" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      periodic         60           Y2 period 2.29   2.490 0.8550 1.000</span></span>
+<span id="cb19-30"><a href="#cb19-30" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  distribution          9                 skew(Y2)   0.612 0.9840 1.000</span></span>
+<span id="cb19-31"><a href="#cb19-31" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           fit          2       spread of unit fit  -2.320 0.0407 0.407</span></span>
+<span id="cb19-32"><a href="#cb19-32" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    dependence          4         dcor(Y2^2, past)   2.940 0.0300 0.330</span></span>
+<span id="cb19-33"><a href="#cb19-33" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      subjects          8           sd(lag1_Y1_Y2)  -1.290 0.8570 1.000</span></span>
+<span id="cb19-34"><a href="#cb19-34" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     nonlinear         10           cor(dY2,Y1*Y2)  -0.789 0.7990 1.000</span></span>
+<span id="cb19-35"><a href="#cb19-35" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    covariates          8             cor(w,sd_Y2)  -0.755 0.7990 1.000</span></span>
+<span id="cb19-36"><a href="#cb19-36" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb19-37"><a href="#cb19-37" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Size of what remains (root mean square, bias-corrected; p_close tests that it is at least close):</span></span>
+<span id="cb19-38"><a href="#cb19-38" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                     measure estimate lower   upper close</span></span>
+<span id="cb19-39"><a href="#cb19-39" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;              residual correlation, all gaps  0.00000     0 0.00903  0.05</span></span>
+<span id="cb19-40"><a href="#cb19-40" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         residual correlation, shortest gaps  0.00463     0 0.01620  0.05</span></span>
+<span id="cb19-41"><a href="#cb19-41" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       latent residual correlation, all gaps  0.00000     0 0.00965  0.05</span></span>
+<span id="cb19-42"><a href="#cb19-42" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  latent residual correlation, shortest gaps  0.00000     0 0.01330  0.05</span></span>
+<span id="cb19-43"><a href="#cb19-43" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                      within-row correlation  0.00000     0 0.01930  0.05</span></span>
+<span id="cb19-44"><a href="#cb19-44" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    p_close</span></span>
+<span id="cb19-45"><a href="#cb19-45" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   0.00e+00</span></span>
+<span id="cb19-46"><a href="#cb19-46" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   5.17e-90</span></span>
+<span id="cb19-47"><a href="#cb19-47" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   0.00e+00</span></span>
+<span id="cb19-48"><a href="#cb19-48" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  1.74e-136</span></span>
+<span id="cb19-49"><a href="#cb19-49" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   7.51e-24</span></span></code></pre></div>
 </div>
-<p>Each round shows what was tried, the score test that proposed it, and what the refit’s likelihood said. The first round kept <code>age</code>, with effects on the cross effect, the intercept of <code>Y1</code> and the initial level of <code>eta1</code>; it also tried a random effect on the cross effect, which the score tests had flagged because subjects of different ages differ in it – a covariate that explains the variation beats a random effect that only describes it. The second round kept the moderation, and turned down the dimension test’s suggestion that three dynamic parameters vary together, whose refit gained 8 log likelihood units for 18 parameters. Then nothing more was indicated, every adequacy check passed, and trying each kept change out again showed both were still needed. The effects found are near those that generated the data (0.3 on the cross effect, 0.6 on the intercept of <code>Y1</code>). The effect on the initial level of <code>eta1</code> was not generated: it is small, and only just significant – a search that decides at <code>alpha = 0.05</code> keeps such things about one time in twenty, and <code>alpha = 0.01</code> is the stricter choice.</p>
+<p>Each round shows what was tried, the score test that proposed it, and the result of the refit. The first round added <code>age</code> as a predictor of the intercept of <code>Y1</code>, the second the moderation, and the third a random effect on the cross effect, with its covariances with the initial states. Removing each kept change again showed all three were still needed, and every adequacy check passed. The moderation is found, and the age effect on the intercept of <code>Y1</code> is estimated at 0.42, against 0.6 in the generating model. The age effect on the cross effect was not added as an effect of age. Once <code>age</code> is in the model the search does not test it on further parameters, so its effect on the cross effect could only appear as variation between subjects, which the random effect describes without explaining. A search that decides at <code>alpha = 0.05</code> will sometimes keep effects that are not there, and <code>alpha = 0.01</code> is stricter.</p>
 <p>The final fit is an ordinary fit:</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb20"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>s <span class="ot">&lt;-</span> <span class="fu">summary</span>(imp<span class="sc">$</span>fit)</span>
 <span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>s<span class="sc">$</span>tipreds</span>
-<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                          mean    sd  2.5%   50% 97.5%  mode      z</span></span>
-<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; tip_age_drift_eta2_eta1 0.310 0.023 0.267 0.311 0.355 0.312 13.333</span></span>
-<span id="cb20-5"><a href="#cb20-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; tip_age_mm_Y1           0.611 0.074 0.462 0.613 0.751 0.611  8.308</span></span>
-<span id="cb20-6"><a href="#cb20-6" aria-hidden="true" tabindex="-1"></a>s<span class="sc">$</span>popmeans[<span class="fu">grepl</span>(<span class="st">&quot;^sdep&quot;</span>, <span class="fu">rownames</span>(s<span class="sc">$</span>popmeans)), ]</span>
-<span id="cb20-7"><a href="#cb20-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                     mean    sd  2.5%   50% 97.5%  mode</span></span>
-<span id="cb20-8"><a href="#cb20-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; sdep_eta1_eta1_eta2 0.12 0.024 0.073 0.119 0.171 0.121</span></span></code></pre></div>
+<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                mean    sd  2.5%   50% 97.5%  mode     z</span></span>
+<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; tip_age_mm_Y1 0.418 0.134 0.171 0.418 0.696 0.426 3.124</span></span>
+<span id="cb20-5"><a href="#cb20-5" aria-hidden="true" tabindex="-1"></a>s<span class="sc">$</span>popmeans[<span class="fu">grepl</span>(<span class="st">&quot;^sdep&quot;</span>, <span class="fu">rownames</span>(s<span class="sc">$</span>popmeans)), ]</span>
+<span id="cb20-6"><a href="#cb20-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                      mean    sd  2.5%   50% 97.5%  mode</span></span>
+<span id="cb20-7"><a href="#cb20-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; sdep_eta1_eta1_eta2 0.134 0.028 0.078 0.135 0.189 0.132</span></span></code></pre></div>
 </div>
-<p>The model was chosen by the data it is fitted to, so its standard errors and tests are too optimistic about the structure the search added. Treat that structure as a hypothesis, and confirm it on other data. Within one dataset, <code>holdout = 0.3</code> sets aside 30 per cent of the subjects: the search runs on the rest, and each change it keeps is then tested on the held-out subjects alone. With a large dataset, <code>close = 0.05</code> also stops the search once the residual correlations that remain are not significantly larger than that, where every small misfit would otherwise be significant.</p>
+<p>The model was chosen using the data it is fitted to, so its standard errors and tests are too optimistic about the structure the search added. Treat that structure as a hypothesis to confirm on other data. Within one data set, <code>holdout = 0.3</code> sets aside 30 per cent of the subjects. The search runs on the rest, and each change it keeps is then tested on the held-out subjects alone. With a large data set, <code>close = 0.05</code> also stops the search once the remaining residual correlations are not significantly larger than 0.05, since otherwise every small misfit would be significant.</p>
 <h2 id="how-the-tests-work-briefly">How the tests work, briefly</h2>
 <ul>
-<li>The scores are those of the objective the model was fitted with, so they integrate over random effects exactly as the fit did. A covariate’s effect adds to a parameter’s raw value, so its score is the covariate times each subject’s score in that parameter – any number of covariates costs a few matrix products after one set of per-subject scores and Hessians.</li>
-<li>A random effect’s variance has, at zero, the score <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mfrac><mn>1</mn><mn>2</mn></mfrac><msub><mo>∑</mo><mi>i</mi></msub><mo stretchy="false" form="prefix">(</mo><msubsup><mi>s</mi><mrow><mi>i</mi><mi>j</mi></mrow><mn>2</mn></msubsup><mo>+</mo><msub><mi>H</mi><mrow><mi>i</mi><mo>,</mo><mi>j</mi><mi>j</mi></mrow></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\frac{1}{2}\sum_i (s_{ij}^2 + H_{i,jj})</annotation></semantics></math>, and its covariance with an effect already there <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mo>∑</mo><mi>i</mi></msub><mo stretchy="false" form="prefix">(</mo><msub><mi>s</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><msub><mi>s</mi><mrow><mi>i</mi><mi>r</mi></mrow></msub><mo>+</mo><msub><mi>H</mi><mrow><mi>i</mi><mo>,</mo><mi>j</mi><mi>r</mi></mrow></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\sum_i (s_{ij} s_{ir} + H_{i,jr})</annotation></semantics></math>: the information matrix test in those parameters, which is the score test for neglected heterogeneity. Every subject already has one such effect, their initial state, so the covariances are tested even in a model with no random effects.</li>
-<li>State dependence is tested on the fitted model extended with the drift terms at zero, which reproduces the fit exactly there.</li>
-<li>The fitted model’s curvature projects the fitted parameters out of each test and sizes the one-step estimates; each test’s variance is the spread of the subjects’ contributions, and its p-value comes from resampling subjects. That keeps a test valid when the model is wrong in some other way – the case a screen is for – where a variance from the model’s own curvature would make unrelated tests reject too.</li>
+<li>The scores are those of the objective the model was fitted with, so they integrate over random effects in the same way as the fit. A covariate’s effect adds to a parameter’s raw value, so its score is the covariate times each subject’s score for that parameter. Any number of covariates therefore costs a few matrix products after one set of per-subject scores and Hessians.</li>
+<li>At zero, a random effect’s variance has the score <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mfrac><mn>1</mn><mn>2</mn></mfrac><msub><mo>∑</mo><mi>i</mi></msub><mo stretchy="false" form="prefix">(</mo><msubsup><mi>s</mi><mrow><mi>i</mi><mi>j</mi></mrow><mn>2</mn></msubsup><mo>+</mo><msub><mi>H</mi><mrow><mi>i</mi><mo>,</mo><mi>j</mi><mi>j</mi></mrow></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\frac{1}{2}\sum_i (s_{ij}^2 + H_{i,jj})</annotation></semantics></math>, and its covariance with an existing effect has the score <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mo>∑</mo><mi>i</mi></msub><mo stretchy="false" form="prefix">(</mo><msub><mi>s</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><msub><mi>s</mi><mrow><mi>i</mi><mi>r</mi></mrow></msub><mo>+</mo><msub><mi>H</mi><mrow><mi>i</mi><mo>,</mo><mi>j</mi><mi>r</mi></mrow></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\sum_i (s_{ij} s_{ir} + H_{i,jr})</annotation></semantics></math>. This is the information matrix test in those parameters, which is the score test for neglected heterogeneity. Every subject already has one such effect, their initial state, so the covariances are tested even in a model with no random effects.</li>
+<li>State dependence is tested on the fitted model extended with the drift terms at zero, which gives exactly the same fit.</li>
+<li>The fitted model’s curvature is used to project the fitted parameters out of each test and to size the one-step estimates. Each test’s variance comes from the spread of the subjects’ contributions, and its p-value from resampling subjects. This keeps a test valid when the model is wrong in some other way, which is when a screen is used. A variance based on the model’s curvature would make unrelated tests reject too.</li>
 </ul>
-<p>The tests need subjects as independent units, so a model with levels above the subject can be tested for state dependence only. See <code>?ctScoreTest</code> for the details.</p>
+<p>The tests need subjects to be independent units, so a model with levels above the subject can only be tested for state dependence. See <code>?ctScoreTest</code> for details.</p>
 
 
 

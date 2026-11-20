@@ -182,7 +182,7 @@ boundary:
 summary(ordinalfit)$thresholds
 ```
 
-Those are recovered against generating values of −2.8, −1, 1 and 2.8.
+The generating values were −2.8, −1, 1 and 2.8.
 
 # Fitting it as continuous
 
@@ -305,8 +305,8 @@ units, and it is worth checking first.
 
 In both fits, every interval in the table that should cover its generating
 value does. The bands mostly agree too. The Gaussian band covers the true
-curve throughout, while beyond an interval of about three the true curve runs
-along the upper edge of the ordinal band. Both estimated curves are below the
+curve throughout, while from an interval of about one and a half the true
+curve runs along the upper edge of the ordinal band. Both estimated curves are below the
 truth by similar amounts, which is what sampling error shared by two fits of
 the same sample looks like.
 

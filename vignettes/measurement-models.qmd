@@ -335,12 +335,12 @@ data.frame(
 ```
 
 Every row of the table estimates the same two generating values, $-0.4$ and
-$1$, from the same latent trajectory, and every row is within about one
-standard error of them. The instruments differ in how much information about
+$1$, from the same latent trajectory, and every row is within one and a half
+standard errors of them. The instruments differ in how much information about
 the trajectory they carry, which shows in the standard errors. Two binary items
 per occasion carry little information about a continuous state, and their
 standard errors are about twice as large, while the continuous, censored and
-count pairs each estimate `DRIFT` with a standard error of about 0.05.
+count pairs each estimate `DRIFT` with a standard error of 0.05 to 0.06.
 
 The parameters specific to each type are in the same summary. An ordinal
 indicator's location is in `MANIFESTMEANS`. `THRESHOLDS` holds the first

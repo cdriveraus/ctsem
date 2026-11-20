@@ -316,9 +316,9 @@ initial_eb_raw_cor <- stats::cor(eb_fit$initialraw[, raw_param_names])
 final_eb_raw_cor <- stats::cor(
   eb_fit$passoriginalraw[[length(eb_fit$passoriginalraw)]][, raw_param_names])
 
-re_raw_names <- ctsem:::getparnames(re_fit, reonly = TRUE)
-re_rawpopcorr <- re_fit$stanfit$transformedparsfull$rawpopcorr[1, , ]
-dimnames(re_rawpopcorr) <- list(re_raw_names, re_raw_names)
+# The population correlations of the raw parameters, as the median over the
+# fit's draws.
+re_rawpopcorr <- apply(ctExtract(re_fit)$rawpopcorr, c(2, 3), stats::median)
 re_rawpopcorr <- re_rawpopcorr[raw_param_names, raw_param_names]
 
 raw_cor_recovery <- lower_cor_table(true_raw_cor, list(
