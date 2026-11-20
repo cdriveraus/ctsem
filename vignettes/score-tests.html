@@ -581,63 +581,69 @@ border-radius: 0 4px 4px 0;
 <div class="sourceCode cell-code" id="cb19"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a>imp <span class="ot">&lt;-</span> <span class="fu">ctModelImprove</span>(fit4, <span class="at">covariates =</span> <span class="fu">unique</span>(d4[, <span class="fu">c</span>(<span class="st">&quot;id&quot;</span>, <span class="st">&quot;age&quot;</span>, <span class="st">&quot;w&quot;</span>)]))</span>
 <span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>imp</span>
 <span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Model improvement: stopped because adequate</span></span>
-<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Log likelihood -11294.2 -&gt; -11226.75 (23 -&gt; 30 parameters)</span></span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Log likelihood -11294.2 -&gt; -11161.75 (23 -&gt; 26 parameters)</span></span>
 <span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  round                                                             change</span></span>
 <span id="cb19-7"><a href="#cb19-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      1                                        age as a predictor of mm_Y1</span></span>
 <span id="cb19-8"><a href="#cb19-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      2                                     eta1*eta2 in the drift of eta1</span></span>
 <span id="cb19-9"><a href="#cb19-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      3      drift_eta2_eta1 individually varying, with T0m_eta1, T0m_eta2</span></span>
-<span id="cb19-10"><a href="#cb19-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  prune                                   drop age as a predictor of mm_Y1</span></span>
-<span id="cb19-11"><a href="#cb19-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  prune                                drop eta1*eta2 in the drift of eta1</span></span>
-<span id="cb19-12"><a href="#cb19-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  prune drop drift_eta2_eta1 individually varying, with T0m_eta1, T0m_eta2</span></span>
-<span id="cb19-13"><a href="#cb19-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  screen_p dloglik dpar  done                                         note</span></span>
-<span id="cb19-14"><a href="#cb19-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  5.50e-03   20.90    1  TRUE               LR p = 1.03e-10 against 0.0167</span></span>
-<span id="cb19-15"><a href="#cb19-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  2.17e-06   11.70    1  TRUE               LR p = 1.25e-06 against 0.0167</span></span>
-<span id="cb19-16"><a href="#cb19-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  5.00e-04   33.30    5  TRUE               LR p = 5.36e-13 against 0.0167</span></span>
-<span id="cb19-17"><a href="#cb19-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        NA   -4.86   -1 FALSE                  LR p = 0.00181 against 0.05</span></span>
-<span id="cb19-18"><a href="#cb19-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        NA      NA   -1 FALSE kept without a refit: Wald 21.8 against 7.68</span></span>
-<span id="cb19-19"><a href="#cb19-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        NA      NA   -5 FALSE   kept without a refit: Wald 69 against 22.1</span></span>
-<span id="cb19-20"><a href="#cb19-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb19-21"><a href="#cb19-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Adequacy: no family detects misfit at alpha = 0.05</span></span>
-<span id="cb19-22"><a href="#cb19-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; (estimation removed by: plugin (unit-level families); 100 generated datasets)</span></span>
-<span id="cb19-23"><a href="#cb19-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb19-24"><a href="#cb19-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        family statistics                    worst worst_z      p p_adj</span></span>
-<span id="cb19-25"><a href="#cb19-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     residuals         16     Y1~Y2 gap 2.54- 4.85  -1.900 0.6910 1.000</span></span>
-<span id="cb19-26"><a href="#cb19-26" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        latent         16 eta1~eta2 gap 2.54- 4.85  -2.080 0.5450 1.000</span></span>
-<span id="cb19-27"><a href="#cb19-27" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    volatility          8      Y1^2 gap 4.85-10.10  -1.940 0.2080 1.000</span></span>
-<span id="cb19-28"><a href="#cb19-28" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         pairs          1                    Y1:Y2  -0.583 0.5370 1.000</span></span>
-<span id="cb19-29"><a href="#cb19-29" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      periodic         60           Y2 period 2.29   2.490 0.8550 1.000</span></span>
-<span id="cb19-30"><a href="#cb19-30" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  distribution          9                 skew(Y2)   0.612 0.9840 1.000</span></span>
-<span id="cb19-31"><a href="#cb19-31" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           fit          2       spread of unit fit  -2.320 0.0407 0.407</span></span>
-<span id="cb19-32"><a href="#cb19-32" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    dependence          4         dcor(Y2^2, past)   2.940 0.0300 0.330</span></span>
-<span id="cb19-33"><a href="#cb19-33" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      subjects          8           sd(lag1_Y1_Y2)  -1.290 0.8570 1.000</span></span>
-<span id="cb19-34"><a href="#cb19-34" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     nonlinear         10           cor(dY2,Y1*Y2)  -0.789 0.7990 1.000</span></span>
-<span id="cb19-35"><a href="#cb19-35" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    covariates          8             cor(w,sd_Y2)  -0.755 0.7990 1.000</span></span>
-<span id="cb19-36"><a href="#cb19-36" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb19-37"><a href="#cb19-37" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Size of what remains (root mean square, bias-corrected; p_close tests that it is at least close):</span></span>
-<span id="cb19-38"><a href="#cb19-38" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                     measure estimate lower   upper close</span></span>
-<span id="cb19-39"><a href="#cb19-39" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;              residual correlation, all gaps  0.00000     0 0.00903  0.05</span></span>
-<span id="cb19-40"><a href="#cb19-40" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         residual correlation, shortest gaps  0.00463     0 0.01620  0.05</span></span>
-<span id="cb19-41"><a href="#cb19-41" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       latent residual correlation, all gaps  0.00000     0 0.00965  0.05</span></span>
-<span id="cb19-42"><a href="#cb19-42" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  latent residual correlation, shortest gaps  0.00000     0 0.01330  0.05</span></span>
-<span id="cb19-43"><a href="#cb19-43" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                      within-row correlation  0.00000     0 0.01930  0.05</span></span>
-<span id="cb19-44"><a href="#cb19-44" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    p_close</span></span>
-<span id="cb19-45"><a href="#cb19-45" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   0.00e+00</span></span>
-<span id="cb19-46"><a href="#cb19-46" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   5.17e-90</span></span>
-<span id="cb19-47"><a href="#cb19-47" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   0.00e+00</span></span>
-<span id="cb19-48"><a href="#cb19-48" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  1.74e-136</span></span>
-<span id="cb19-49"><a href="#cb19-49" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   7.51e-24</span></span></code></pre></div>
+<span id="cb19-10"><a href="#cb19-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      4                         age also as a predictor of drift_eta2_eta1</span></span>
+<span id="cb19-11"><a href="#cb19-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  prune                                   drop age as a predictor of mm_Y1</span></span>
+<span id="cb19-12"><a href="#cb19-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  prune                                drop eta1*eta2 in the drift of eta1</span></span>
+<span id="cb19-13"><a href="#cb19-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  prune drop drift_eta2_eta1 individually varying, with T0m_eta1, T0m_eta2</span></span>
+<span id="cb19-14"><a href="#cb19-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  prune                    drop age also as a predictor of drift_eta2_eta1</span></span>
+<span id="cb19-15"><a href="#cb19-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  screen_p dloglik dpar  done                                         note</span></span>
+<span id="cb19-16"><a href="#cb19-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  5.50e-03   20.90    1  TRUE               LR p = 1.03e-10 against 0.0167</span></span>
+<span id="cb19-17"><a href="#cb19-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  2.17e-06   11.70    1  TRUE               LR p = 1.25e-06 against 0.0167</span></span>
+<span id="cb19-18"><a href="#cb19-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  5.00e-04   33.30    5  TRUE               LR p = 5.36e-13 against 0.0167</span></span>
+<span id="cb19-19"><a href="#cb19-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  5.00e-04   67.10    1  TRUE                 LR p = 4.93e-31 against 0.05</span></span>
+<span id="cb19-20"><a href="#cb19-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        NA  -20.30   -1 FALSE                 LR p = 1.78e-10 against 0.05</span></span>
+<span id="cb19-21"><a href="#cb19-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        NA      NA   -1 FALSE kept without a refit: Wald 21.4 against 7.68</span></span>
+<span id="cb19-22"><a href="#cb19-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        NA   -1.12   -5  TRUE                    LR p = 0.815 against 0.05</span></span>
+<span id="cb19-23"><a href="#cb19-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        NA  -99.30   -1 FALSE                 LR p = 4.42e-45 against 0.05</span></span>
+<span id="cb19-24"><a href="#cb19-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb19-25"><a href="#cb19-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Adequacy: no family detects misfit at alpha = 0.05</span></span>
+<span id="cb19-26"><a href="#cb19-26" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; (estimation removed by: plugin; 100 generated datasets)</span></span>
+<span id="cb19-27"><a href="#cb19-27" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb19-28"><a href="#cb19-28" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        family statistics                worst worst_z      p p_adj</span></span>
+<span id="cb19-29"><a href="#cb19-29" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     residuals         16     Y2~Y2 gap &lt;=2.54   2.960 0.0728 0.728</span></span>
+<span id="cb19-30"><a href="#cb19-30" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        latent         16 eta2~eta2 gap &lt;=2.54   2.870 0.0635 0.699</span></span>
+<span id="cb19-31"><a href="#cb19-31" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    volatility          8       Y2^2 gap &gt;10.1  -1.870 0.2340 1.000</span></span>
+<span id="cb19-32"><a href="#cb19-32" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         pairs          1                Y1:Y2  -0.991 0.2270 1.000</span></span>
+<span id="cb19-33"><a href="#cb19-33" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      periodic         60       Y2 period 2.29   2.390 0.8900 1.000</span></span>
+<span id="cb19-34"><a href="#cb19-34" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  distribution          9         kurtosis(Y2)  -0.988 0.8860 1.000</span></span>
+<span id="cb19-35"><a href="#cb19-35" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           fit          2   spread of unit fit  -2.500 0.0238 0.286</span></span>
+<span id="cb19-36"><a href="#cb19-36" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       effects         20        P(u4 &lt; -0.75)   2.820 0.1240 1.000</span></span>
+<span id="cb19-37"><a href="#cb19-37" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    dependence          4     dcor(Y2^2, past)   1.910 0.1770 1.000</span></span>
+<span id="cb19-38"><a href="#cb19-38" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      subjects          8       sd(lag1_Y1_Y2)  -1.830 0.8080 1.000</span></span>
+<span id="cb19-39"><a href="#cb19-39" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     nonlinear         10        cor(dY2^2,Y1)   0.873 0.5650 1.000</span></span>
+<span id="cb19-40"><a href="#cb19-40" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    covariates          8    cor(w,lag1_Y2_Y1)   0.588 0.8690 1.000</span></span>
+<span id="cb19-41"><a href="#cb19-41" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb19-42"><a href="#cb19-42" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Size of what remains (root mean square, bias-corrected; p_close tests that it is at least close):</span></span>
+<span id="cb19-43"><a href="#cb19-43" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                     measure estimate lower  upper close</span></span>
+<span id="cb19-44"><a href="#cb19-44" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;              residual correlation, all gaps  0.00524     0 0.0104  0.05</span></span>
+<span id="cb19-45"><a href="#cb19-45" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         residual correlation, shortest gaps  0.01030     0 0.0171  0.05</span></span>
+<span id="cb19-46"><a href="#cb19-46" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       latent residual correlation, all gaps  0.00691     0 0.0127  0.05</span></span>
+<span id="cb19-47"><a href="#cb19-47" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  latent residual correlation, shortest gaps  0.01060     0 0.0181  0.05</span></span>
+<span id="cb19-48"><a href="#cb19-48" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                      within-row correlation  0.00000     0 0.0144  0.05</span></span>
+<span id="cb19-49"><a href="#cb19-49" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    p_close</span></span>
+<span id="cb19-50"><a href="#cb19-50" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   0.00e+00</span></span>
+<span id="cb19-51"><a href="#cb19-51" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  1.31e-139</span></span>
+<span id="cb19-52"><a href="#cb19-52" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   0.00e+00</span></span>
+<span id="cb19-53"><a href="#cb19-53" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  1.87e-104</span></span>
+<span id="cb19-54"><a href="#cb19-54" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  1.26e-122</span></span></code></pre></div>
 </div>
-<p>Each round shows what was tried, the score test that proposed it, and the result of the refit. The first round added <code>age</code> as a predictor of the intercept of <code>Y1</code>, the second the moderation, and the third a random effect on the cross effect, with its covariances with the initial states. Removing each kept change again showed all three were still needed, and every adequacy check passed. The moderation is found, and the age effect on the intercept of <code>Y1</code> is estimated at 0.42, against 0.6 in the generating model. The age effect on the cross effect was not added as an effect of age. Once <code>age</code> is in the model the search does not test it on further parameters, so its effect on the cross effect could only appear as variation between subjects, which the random effect describes without explaining. A search that decides at <code>alpha = 0.05</code> will sometimes keep effects that are not there, and <code>alpha = 0.01</code> is stricter.</p>
+<p>Each round shows what was tried, the score test that proposed it, and the result of the refit. The first round added <code>age</code> as a predictor of the intercept of <code>Y1</code>, and the second the moderation. The third let the cross effect vary between subjects, together with its covariances with the initial states. Once <code>age</code> is in the model, its effects on the other parameters are tested too, and the fourth round added its effect on the cross effect. When the search then tried removing each kept change, the random effect on the cross effect was no longer needed, because age explains how subjects differ in it, and it was dropped. The other changes were kept, and every adequacy check passed. The final model includes each effect that generated the data, with age effects of 0.58 on the intercept of <code>Y1</code> and 0.32 on the cross effect, against 0.6 and 0.3 in the generating model. A search that decides at <code>alpha = 0.05</code> will sometimes keep effects that are not there, and <code>alpha = 0.01</code> is stricter.</p>
 <p>The final fit is an ordinary fit:</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb20"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>s <span class="ot">&lt;-</span> <span class="fu">summary</span>(imp<span class="sc">$</span>fit)</span>
 <span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>s<span class="sc">$</span>tipreds</span>
-<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                mean    sd  2.5%   50% 97.5%  mode     z</span></span>
-<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; tip_age_mm_Y1 0.418 0.134 0.171 0.418 0.696 0.426 3.124</span></span>
-<span id="cb20-5"><a href="#cb20-5" aria-hidden="true" tabindex="-1"></a>s<span class="sc">$</span>popmeans[<span class="fu">grepl</span>(<span class="st">&quot;^sdep&quot;</span>, <span class="fu">rownames</span>(s<span class="sc">$</span>popmeans)), ]</span>
-<span id="cb20-6"><a href="#cb20-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                      mean    sd  2.5%   50% 97.5%  mode</span></span>
-<span id="cb20-7"><a href="#cb20-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; sdep_eta1_eta1_eta2 0.134 0.028 0.078 0.135 0.189 0.132</span></span></code></pre></div>
+<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                          mean    sd  2.5%   50% 97.5%  mode      z</span></span>
+<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; tip_age_drift_eta2_eta1 0.324 0.027 0.269 0.324 0.375 0.323 12.026</span></span>
+<span id="cb20-5"><a href="#cb20-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; tip_age_mm_Y1           0.577 0.083 0.416 0.572 0.741 0.578  6.986</span></span>
+<span id="cb20-6"><a href="#cb20-6" aria-hidden="true" tabindex="-1"></a>s<span class="sc">$</span>popmeans[<span class="fu">grepl</span>(<span class="st">&quot;^sdep&quot;</span>, <span class="fu">rownames</span>(s<span class="sc">$</span>popmeans)), ]</span>
+<span id="cb20-7"><a href="#cb20-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                      mean    sd  2.5%   50% 97.5%  mode</span></span>
+<span id="cb20-8"><a href="#cb20-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; sdep_eta1_eta1_eta2 0.131 0.028 0.077 0.131 0.183 0.131</span></span></code></pre></div>
 </div>
 <p>The model was chosen using the data it is fitted to, so its standard errors and tests are too optimistic about the structure the search added. Treat that structure as a hypothesis to confirm on other data. Within one data set, <code>holdout = 0.3</code> sets aside 30 per cent of the subjects. The search runs on the rest, and each change it keeps is then tested on the held-out subjects alone. With a large data set, <code>close = 0.05</code> also stops the search once the remaining residual correlations are not significantly larger than 0.05, since otherwise every small misfit would be significant.</p>
 <h2 id="how-the-tests-work-briefly">How the tests work, briefly</h2>

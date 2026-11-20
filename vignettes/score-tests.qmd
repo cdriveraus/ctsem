@@ -439,17 +439,18 @@ imp
 
 Each round shows what was tried, the score test that proposed it, and the
 result of the refit. The first round added `age` as a predictor of the
-intercept of `Y1`, the second the moderation, and the third a random effect on
-the cross effect, with its covariances with the initial states. Removing each
-kept change again showed all three were still needed, and every adequacy check
-passed. The moderation is found, and the age effect on the intercept of `Y1`
-is estimated at 0.42, against 0.6 in the generating model. The age effect on
-the cross effect was not added as an effect of age. Once `age` is in the model
-the search does not test it on further parameters, so its effect on the cross
-effect could only appear as variation between subjects, which the random
-effect describes without explaining. A search that decides at
-`alpha = 0.05` will sometimes keep effects that are not there, and
-`alpha = 0.01` is stricter.
+intercept of `Y1`, and the second the moderation. The third let the cross
+effect vary between subjects, together with its covariances with the initial
+states. Once `age` is in the model, its effects on the other parameters are
+tested too, and the fourth round added its effect on the cross effect. When
+the search then tried removing each kept change, the random effect on the
+cross effect was no longer needed, because age explains how subjects differ in
+it, and it was dropped. The other changes were kept, and every adequacy check
+passed. The final model includes each effect that generated the data, with age
+effects of 0.58 on the intercept of `Y1` and 0.32 on the cross effect, against
+0.6 and 0.3 in the generating model. A search that decides at `alpha = 0.05`
+will sometimes keep effects that are not there, and `alpha = 0.01` is
+stricter.
 
 The final fit is an ordinary fit:
 
