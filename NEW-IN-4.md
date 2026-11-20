@@ -104,6 +104,10 @@ splits variance into between subject, process and measurement parts, and
 
 ## Model specification
 
+- A model can be written in lavaan, Mplus or brms style syntax with
+  `ctModelLavaan()`, `ctModelMplus()` and `ctModelFormula()`, and
+  `ctModelSyntax()` translates between them
+  ([vignette](https://cdriveraus.github.io/ctsem/articles/model-syntax.html)).
 - Parameter options can be named, as in
   `'cint, indvarying=TRUE, tipreds=c(age)'`. `ctPar()` writes these, and
   `ctCov()` writes covariance matrices.

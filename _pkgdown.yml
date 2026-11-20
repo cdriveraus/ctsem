@@ -40,6 +40,7 @@ articles:
 - title: Specifying models
   navbar: Specifying models
   contents:
+  - model-syntax
   - measurement-models
   - laplace-multilevel
   - irt-items
@@ -63,6 +64,7 @@ reference:
   - ctModelMatrices
   - ctPar
   - ctCov
+  - ctModelSyntax
   - ctModelHigherOrder
   - ctModelSlowComponent
   - ctModelPeriodicComponent
