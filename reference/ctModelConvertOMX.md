@@ -1,0 +1,72 @@
+# Convert an old OpenMx-style ctsem model to the modern ctsem model format.
+
+Convert an old OpenMx-style ctsem model to the modern ctsem model
+format. `ctStanModel` is maintained as a backward-compatible alias.
+
+## Usage
+
+``` r
+ctModelConvertOMX(ctmodelobj, type = "ct", tipredDefault = TRUE)
+```
+
+## Arguments
+
+- ctmodelobj:
+
+  ctsem model object created by
+  [`ctModel`](https://cdriveraus.github.io/ctsem/reference/ctModel.md)
+  with `type='omx'`.
+
+- type:
+
+  Either `'ct'` for continuous time, or `'dt'` for discrete time.
+
+- tipredDefault:
+
+  Logical. TRUE sets any parameters with unspecified time independent
+  predictor effects to have effects estimated, FALSE fixes the effect to
+  zero unless individually specified.
+
+## Value
+
+List object of class ctStanModel in the modern ctsem model format, with
+a `pars` data frame used by
+[`ctFit`](https://cdriveraus.github.io/ctsem/reference/ctFit.md). Random
+effects are specified for any intercept type parameters (T0MEANS,
+MANIFESTMEANS, and or CINT), and time independent predictor effects are
+specified for all parameters. Adjust these after initial specification
+by directly editing the `pars` subobject, so `model$pars`, or by editing
+the pars-backed matrix view, so `model$matrices`.
+
+## Details
+
+`ctStanModel` is maintained as a backward-compatible alias.
+
+Call this when you have a matrix-list model built with
+`ctModel(type='omx')` and want to fit it:
+[`ctFit()`](https://cdriveraus.github.io/ctsem/reference/ctFit.md) takes
+a built model, and an `omx` object is not one until it comes through
+here. That conversion is the reason the function is exported.
+
+New models need it only implicitly. `ctModel(type='ct')` and
+`ctModel(type='dt')` call it for you and return a model that is already
+built, so there is nothing left to convert.
+
+## Examples
+
+``` r
+model <- ctModel(type='omx', Tpoints=50,
+n.latent=2, n.manifest=1, 
+manifestNames='sunspots', 
+latentNames=c('ss_level', 'ss_velocity'),
+LAMBDA=matrix(c( 1, 'ma1' ), nrow=1, ncol=2),
+DRIFT=matrix(c(0, 1,   'a21', 'a22'), nrow=2, ncol=2, byrow=TRUE),
+MANIFESTMEANS=matrix(c('m1'), nrow=1, ncol=1),
+# MANIFESTVAR=matrix(0, nrow=1, ncol=1),
+CINT=matrix(c(0, 0), nrow=2, ncol=1),
+DIFFUSION=matrix(c(
+  0, 0,
+  0, "diffusion"), ncol=2, nrow=2, byrow=TRUE))
+
+modernmodel=ctModelConvertOMX(model)
+```

@@ -1,0 +1,132 @@
+# Get time independent predictor effect estimates
+
+Computes and plots combined effects and quantiles for effects of time
+independent predictors on subject level parameters of a ctStanFit
+object. `ctStanTIpredeffects` is maintained as a backward-compatible
+alias.
+
+## Usage
+
+``` r
+ctTIpredEffects(
+  fit,
+  returndifference = FALSE,
+  probs = c(0.025, 0.5, 0.975),
+  includeMeanUncertainty = FALSE,
+  whichTIpreds = 1,
+  parmatrices = TRUE,
+  whichpars = "all",
+  nsamples = 100,
+  timeinterval = 1,
+  nsubjects = 20,
+  filter = NA,
+  plot = FALSE
+)
+```
+
+## Arguments
+
+- fit:
+
+  fit object from
+  [`ctFit`](https://cdriveraus.github.io/ctsem/reference/ctFit.md)
+
+- returndifference:
+
+  logical. If FALSE, absolute parameter values are returned. If TRUE,
+  only the effect of the covariate (i.e. without the average value of
+  the parameter) are returned. The former can be easier to interpret,
+  but the latter are more likely to fit multiple plots together. Not
+  used if `parmatrices=TRUE`.
+
+- probs:
+
+  numeric vector of quantile probabilities from 0 to 1. Specify 3 values
+  if plotting, the 2nd will be drawn as a line with uncertainty polygon
+  based on 1st and 3rd.
+
+- includeMeanUncertainty:
+
+  if TRUE, output includes sampling variation in the mean parameters. If
+  FALSE, mean parameters are fixed at their median, only uncertainty in
+  time independent predictor effects is included.
+
+- whichTIpreds:
+
+  Which of the model's time independent predictors to calculate effects
+  for: their names, as given in `TIpredNames` in
+  [`ctModel`](https://cdriveraus.github.io/ctsem/reference/ctModel.md)
+  (`whichTIpreds = 'TI2'`), or their positions in that list
+  (`whichTIpreds = 2`). Unless quadratic / higher order versions of
+  predictors have been included, selecting more than one probably
+  doesn't make sense. If for instance a squared predictor has been
+  included, then you can specify both the linear and squared version.
+  The x axis of the plot (if generated) is based on the first predictor
+  selected. A smooth term (`s(age)` in
+  [`ctModel`](https://cdriveraus.github.io/ctsem/reference/ctModel.md)'s
+  `TIpredNames`) is selected by its covariate's name,
+  `whichTIpreds = 'age'`, and is drawn over that covariate, with each
+  person's own value at their covariate value as a point (returned as
+  `$persons`): the spread of the points about the curve is what the
+  smooth leaves to the person differences.
+
+- parmatrices:
+
+  Logical. If TRUE (default), system matrices rather than specific
+  parameters are referenced – e.g. 'DRIFT' instead of a parameter name
+  like drift12.
+
+- whichpars:
+
+  if parmatrices==TRUE, character vector specifying which matrices, and
+  potentially which indices of the matrices, to plot.
+  c('dtDRIFT\[2,1\]', 'DRIFT') would output for row 2 and column 1 of
+  the discrete time drift matrix, as well as all indices of the
+  continuous time drift matrix. If parmatrices==FALSE, integer vector
+  specifying which of the subject level parameters to compute effects
+  on. The integers corresponding to certain parameters can be found in
+  the `param` column of the `fit$setup$matsetup` object. In either case
+  'all' uses all available parameters.
+
+- nsamples:
+
+  Positive integer specifying the maximum number of saved iterations to
+  use. Character string 'all' can also be used.
+
+- timeinterval:
+
+  positive numeric indicating time interval to use for discrete time
+  parameter matrices, if `parmatrices=TRUE`.
+
+- nsubjects:
+
+  Positive integer specifying the number of subjects to compute values
+  for. When only one TIpred is used, this specifies the number of points
+  along the curve. Character string 'all' can also be used. Time taken
+  for plotting is a function of nsubjects\*niterations.
+
+- filter:
+
+  either NA, or a length 2 vector, where the first element contains the
+  time independent predictor index to filter by, and the second contains
+  the comparison operator in string form (e.g. "\< 3", to only calculate
+  effects for subjects where the tipreds of the denoted index are less
+  than 3).
+
+- plot:
+
+  Logical. If TRUE, nothing is returned but instead
+  [`ctPlotArray`](https://cdriveraus.github.io/ctsem/reference/ctPlotArray.md)
+  is used to plot the output instead.
+
+## Value
+
+Either a three dimensional array of predictor effects, or nothing with a
+plot generated.
+
+## Examples
+
+``` r
+ctTIpredEffects(ctstantestfit,
+ whichpars=c('CINT','dtDIFFUSION[2,2]'), plot=TRUE)
+```
