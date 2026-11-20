@@ -166,6 +166,10 @@ test_that("the defaults a sampled or reduced-rank fit resolves to combine", {
   sampled <- prep(optimize = FALSE)
   expect_identical(sampled$args$resolved$intoverpop, "laplace")
   expect_identical(sampled$ti_imputed$predictor, 1L)
+  # The missing TD1 value is zero in the frame the specification keeps, which
+  # a prediction over a time grid rebuilds from, as in the prepared data.
+  expect_true(anyNA(ctstantestdat[, "TD1"]))
+  expect_false(anyNA(sampled$data$TD1))
   # Sampling keeps the priors it is given, the default included -- it is not
   # switched to TRUE -- and a scope that leaves parameters flat warns before
   # the run. priors = TRUE is the way out, and says nothing.

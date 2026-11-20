@@ -4227,6 +4227,14 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   }
   dat <- data.frame(datalong)
   dat <- dat[order(dat[[model$subjectIDname]], dat[[model$timeName]]), , drop = FALSE]
+  # A missing TD predictor is zero, as `.ctPrepareData()` makes it (with a
+  # warning), in the frame the specification keeps too: a prediction over a
+  # time grid rebuilds from that frame, and a missing value there reached the
+  # filter as one and stopped ctPredict()'s default call.
+  if (model$n.TDpred) {
+    td <- model$TDpredNames
+    dat[td][is.na(dat[td])] <- 0
+  }
   .ctJuliaValidateTIConstancy(dat, model)
   subject_starts <- .ctJuliaSubjectStarts(dat[[model$subjectIDname]])
   tdpred_data <- if (is.null(prepared_data)) {
