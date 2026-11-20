@@ -87,8 +87,9 @@ An object of class \code{ctScoreTest}: a list with
   \code{MANIFESTMEANS} cell),
   \code{dimension} (the largest eigenvalue, its p-value and the direction,
   when two or more parameters are tested), \code{blocks} (on a reduced-rank
-  level, \code{dimension}, a row per block, and \code{covariance}, a row
-  per pair of blocks),
+  level, \code{dimension}, a row per block, with the one-step \code{sd}
+  along its direction, \code{covariance}, a row per pair of blocks, and
+  \code{directions}, each tested block's whole direction),
   \code{covariates} (one element per covariate, each a list of its
   \code{joint} test and a data frame \code{parameters}),
   \code{statedependence} (a list of \code{terms}, a data frame, and
@@ -201,9 +202,12 @@ before interpreting their sizes.
   style shared by an item's thresholds covaries with the dynamic level. A
   pair in which one block loads on every effect of the other is not tested,
   since those covariances are in the model already, and is listed with a
-  note. Both are calibrated by resampling subjects. An effect whose population
-  mean is stated has no coordinate to differentiate along and is left out
-  of both.
+  note. Both are calibrated by resampling subjects, and adjusted together
+  (\code{p_adj}). An effect whose population mean is stated is tested
+  through the model with that mean estimated at its stated value, the
+  projection on the fit's own parameters alone. \code{\link{ctModelImprove}}
+  acts on both: a further dimension for a block, and blocks sharing
+  dimensions.
 }
 
 \section{Covariates}{
@@ -287,9 +291,10 @@ before interpreting their sizes.
   dynamics or of the error variances depends on a subject's level, where
   that level is a random intercept: for each free \code{DRIFT},
   \code{DIFFUSION} and \code{MANIFESTVAR} parameter that does not vary over
-  subjects, and each \code{MANIFESTMEANS} or \code{CINT} intercept that
+  subjects, including a \code{PARS} parameter those matrices read in an
+  expression, and each \code{MANIFESTMEANS} or \code{CINT} intercept that
   does, the score test of a term \code{g * intercept} added to the
-  parameter, at \code{g = 0}. When subjects' levels sit in the intercepts,
+  parameter, at \code{g = 0}, wherever the model reads it. When subjects' levels sit in the intercepts,
   the latent states are deviations from them, so the state dependence and
   volatility tests, which read the states, see dependence on the deviation
   only; a parameter that depends on where a subject sits -- persistence or

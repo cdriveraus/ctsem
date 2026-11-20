@@ -194,6 +194,17 @@ significant \code{dimension} test makes the parameters its direction
 loads on vary together. Relaxations the score tests cannot tell apart (the same
 \code{class}) are not refitted in the same round.
 
+Where the shared dimensions come in blocks (\code{popblocks} in
+\code{\link{ctFit}}), \code{\link{ctScoreTest}}'s block tests act on
+them: a block that needs a further dimension is given one (without blocks,
+the level's rank goes up by one), started along the direction the test
+found; two blocks whose dimensions covary share them, the block whose
+dimensions then reach the other's effects with fewer loadings extended to
+those effects. A parameter a change lets vary joins the block of the
+effects it is to covary with -- the initial means for a heterogeneity
+result, the intercept for a level result -- unless a block already takes
+it, and a block of full rank gains a dimension with it.
+
 Each random effect the search adds brings its correlations with the others,
 and with many effects for few subjects the data no longer determine them.
 When a kept change leaves the fit's curvature weak or negative along the
