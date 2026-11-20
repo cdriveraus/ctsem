@@ -19,7 +19,7 @@ prepared without fitting by \code{ctFit(..., backend = 'julia', fit =
 FALSE)} (class \code{ctJuliaModel}).}
 
 \item{pars}{Raw (unconstrained) parameters, in the order of
-\code{coef(fit)}; defaults to a fit's estimate, and must be given for a
+\code{coef(fit)}. Defaults to the fit's estimate, and must be given for a
 prepared model.}
 
 \item{gradient}{Also return the gradient with respect to \code{pars}.}
@@ -27,26 +27,24 @@ prepared model.}
 \item{contributions}{Return subject and row contribution details when available.}
 
 \item{gradient_method}{Either "adjoint" (reverse mode, the default) or
-"forward" (ForwardDiff). Both compute the same gradient. "adjoint" costs
-the same regardless of how many free parameters a model has, and is
-faster than "forward" at every model size measured, by a margin that
-grows with the parameter count. See \code{optimcontrol$gradient} in
-\code{ctFit}.}
+"forward" (ForwardDiff). Both compute the same gradient. The cost of
+"adjoint" does not grow with the number of parameters, so it is faster,
+and more so for larger models. See \code{optimcontrol$gradient} in
+\code{\link{ctOptimControl}}.}
 
-\item{cores}{The most engine threads this evaluation uses, restored
-afterwards. \code{NA} leaves the ceiling already in force, for a caller
-that has set one around a run of evaluations.}
+\item{cores}{The most engine threads this evaluation uses. \code{NA} keeps
+the limit already set.}
 }
 \value{
 A list containing the log likelihood and, when requested, the
   gradient and the contributions.
 }
 \description{
-Evaluates the objective the julia backend optimises -- the log likelihood,
-with the random effects integrated as the model's \code{intoverpop} route
-integrates them -- at a vector of raw (unconstrained) parameters, and its
-gradient. For checking a fit, profiling by hand, or handing ctsem's
-likelihood to an optimiser or sampler of your own.
+Evaluates the objective that the julia backend optimises, the log
+likelihood with the random effects integrated out as \code{intoverpop}
+specifies, and its gradient, at a vector of raw (unconstrained)
+parameters. Useful for checking a fit, profiling by hand, or passing
+ctsem's likelihood to another optimiser or sampler.
 }
 \examples{
 \donttest{

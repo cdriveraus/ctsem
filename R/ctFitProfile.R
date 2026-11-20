@@ -56,53 +56,49 @@
 #' Profile likelihood for a ctsem julia fit
 #'
 #' Fixes one raw parameter at a sequence of values, re-optimising all the
-#' others at each, and reports what the likelihood does. This answers the
-#' identification question directly rather than through the curvature at the
-#' estimate, which on a flat direction measures the transform rather than the
-#' data -- see the note in \code{\link{ctFitUncertainty}} on flat directions.
+#' others at each, and reports how the likelihood changes. This shows whether
+#' the data determine the parameter, and gives likelihood based intervals. The
+#' curvature at the estimate can mislead about this along a flat direction
+#' (see Directions with no curvature in \code{\link{ctFitUncertainty}}).
 #'
-#' Each point is a constrained optimisation, so a profile can discover that the
+#' Each point is a constrained optimisation, so a profile can find that the
 #' fit was not at a maximum. When that happens the run stops and the better
-#' point is returned in \code{$better}; refit from there and profile again.
+#' point is returned in \code{$better}. Refit from there and profile again.
 #'
 #' @param fit a \code{ctJuliaFit}.
-#' @param parameters which parameters to profile: raw parameter names, indices,
-#'   \code{NULL} for all of them, or \code{"flagged"} for only those the fit's
-#'   own diagnostics already doubt -- the saturated coordinates, the
-#'   unidentified directions, and the intervals wider than the curvature
-#'   supports. \code{"flagged"} is the cheap internal use; naming parameters is
-#'   the usual one. Profiling every parameter of a large model is a great many
-#'   optimisations.
+#' @param parameters which parameters to profile: raw parameter names,
+#'   indices, \code{NULL} for all of them, or \code{"flagged"} for only those
+#'   the fit's own diagnostics question (parameters at the edge of their
+#'   transform, unidentified directions, and intervals wider than the
+#'   curvature supports). Profiling every parameter of a large model takes
+#'   many optimisations.
 #' @param points maximum points per side.
-#' @param step first displacement, in raw units. \code{NULL} takes half of each
-#'   parameter's own standard error where the fit has one, so an identified
-#'   parameter gets several points inside its interval instead of crossing the
-#'   bar on the first step; it falls back to 0.5 raw, which is a small move in
-#'   ctsem's standardised raw coordinates, when there is no curvature to ask.
-#' @param growth factor the step is multiplied by after a point that moved the
-#'   likelihood by less than the target, so a flat direction is walked out
-#'   quickly rather than in a hundred equal steps.
+#' @param step first displacement, in raw units. \code{NULL} takes half of
+#'   each parameter's standard error where the fit has one, so an identified
+#'   parameter gets several points inside its interval, and 0.5 otherwise.
+#' @param growth factor the step is multiplied by after a point that changed
+#'   the likelihood by less than the target, so a flat direction is walked out
+#'   quickly.
 #' @param level confidence level setting the likelihood-ratio bar.
 #' @param maxiter iteration cap for each constrained optimisation.
 #' @param verbose 0 for silence, 1 to report each point as it is computed.
-#' @param cores The most CPU cores the profile uses at once. The walks -- each
-#'   parameter's two sides -- run one after another in this session, on that
-#'   many engine threads. Only when the fit itself took more than five minutes
-#'   to optimise do they run up to \code{cores} at a time instead, each in a
-#'   background R session with a one-thread Julia (it needs the \pkg{future}
-#'   package; the sessions persist for the next call, and
-#'   \code{\link{ctJuliaKill}('workers')} releases them): a session costs up to
-#'   a minute to start. The walks are independent, so the profile is the same
-#'   either way, except that with several sessions every walk finishes before
+#' @param cores The most CPU cores the profile uses at once. By default the
+#'   two sides of each parameter's profile run one after another in this
+#'   session, on that many engine threads. When the fit itself took more than
+#'   five minutes to optimise, they run up to \code{cores} at a time instead,
+#'   each in a background R session with its own Julia session. This needs
+#'   the \pkg{future} package. The sessions stay open for the next call, and
+#'   \code{\link{ctJuliaKill}('workers')} ends them. The profile is the same
+#'   either way, except that with several sessions every side finishes before
 #'   \code{$better} is reported.
 #'
-#' @return An object of class \code{ctFitProfile}, which
-#'   \code{print} and \code{plot} both understand. \code{$profile} is one row
-#'   per point (parameter, raw value, transformed value where the coordinate
-#'   has one, log likelihood, drop from the estimate); \code{$summary} is one
-#'   row per parameter (verdict, limits, how far each side was walked); and
-#'   \code{$better} is \code{NULL} unless a constrained fit beat the estimate,
-#'   in which case it holds that point and the run stopped there.
+#' @return An object of class \code{ctFitProfile}, with \code{print} and
+#'   \code{plot} methods. \code{$profile} has one row per point (parameter,
+#'   raw value, transformed value where there is one, log likelihood, and
+#'   drop from the estimate). \code{$summary} has one row per parameter
+#'   (verdict, limits, and how far each side was walked). \code{$better} is
+#'   \code{NULL} unless a constrained fit beat the estimate, in which case it
+#'   holds that point and the run stopped there.
 #'
 #' @examples
 #' \donttest{
@@ -638,10 +634,11 @@ print.ctFitProfile <- function(x, digits = 3, ...) {
 
 #' Plot a profile likelihood
 #'
-#' One panel per parameter: the drop in log likelihood against the value the
-#' parameter was held at, with the likelihood-ratio bar drawn across. A curve
-#' that crosses the bar on both sides has a confidence interval; one that runs
-#' along the bottom is a direction the data does not determine.
+#' One panel per parameter, showing the drop in log likelihood against the
+#' value the parameter was held at, with the likelihood-ratio bar drawn
+#' across. A curve that crosses the bar on both sides gives a confidence
+#' interval, and one that stays near zero shows a direction the data do not
+#' determine.
 #'
 #' @param x a \code{ctFitProfile}.
 #' @param parameters which to draw; defaults to all that were profiled.

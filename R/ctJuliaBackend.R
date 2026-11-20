@@ -459,66 +459,55 @@
 
 #' Configure the Julia engine used by ctsem
 #'
-#' Prepares the copy of ContinuousTimeSEM.jl that ships inside this ctsem
-#' installation. The engine source itself is vendored in \code{inst/julia/} --
-#' no repository credentials and no network access are involved in getting
-#' that -- but its Julia package dependencies still have to be instantiated,
-#' which reaches the network on a machine where they are not already cached.
-#' That step is consent-gated exactly as in \code{\link{ctJuliaInstall}}: asked
-#' for interactively, skipped with a message when the environment is already
-#' instantiated, and declined by default in a non-interactive session unless
-#' \code{agree = TRUE} or \code{CTSEM_JULIA_AGREE=yes} said otherwise in
-#' advance.
+#' Prepares the Julia engine (ContinuousTimeSEM.jl) that ships with ctsem.
+#' The engine's Julia package dependencies have to be installed, which needs
+#' the network on a machine where they are not already present. As with
+#' \code{\link{ctJuliaInstall}}, ctsem asks before downloading in an
+#' interactive session, skips the step with a message when the dependencies
+#' are already installed, and declines in a non-interactive session unless
+#' \code{agree = TRUE} or the environment variable
+#' \code{CTSEM_JULIA_AGREE=yes} is set.
 #'
-#' The first call downloads and precompiles those dependencies (roughly 120 MB)
-#' and compiles the engine, which takes several minutes; later calls in new
-#' sessions reuse both.
-#'
-#' The engine is compiled in advance, by fitting a small model on each route,
-#' and every model of a route runs that same compiled code: a model's sizes,
-#' parameters and state-dependent cells are data to the engine rather than part
-#' of its types. So the first fit of a new model in a session compiles little,
-#' and takes seconds more than later fits rather than minutes. A model with a
-#' categorical indicator, or a Laplace unit with more than four random effects,
-#' compiles a little more the first time. \code{ctFit(forcerecompile = TRUE)}
-#' compiles a heavily state-dependent model's expressions for faster gradients,
-#' at a minute or more of compile.
+#' The first call downloads and precompiles the dependencies (roughly 120 MB)
+#' and compiles the engine, which takes several minutes. Later sessions reuse
+#' both, and the first fit of a new model in a session then takes only
+#' seconds longer than later fits. Models with a categorical indicator, or
+#' with more than four random effects per subject under the Laplace
+#' approximation, compile a little more the first time.
+#' \code{ctFit(forcerecompile = TRUE)} compiles a heavily state-dependent
+#' model for faster gradients, at the cost of a minute or more of compiling.
 #'
 #' Pressing Escape (or Ctrl-C) during a julia fit returns to the R prompt at
 #' once, and keeps the Julia session and everything it has compiled. Julia
-#' stops the interrupted work at its next iteration; work that has no
-#' iterations, such as compiling for a new model shape, finishes in the
-#' background. If it is still running when the next julia call starts, that
-#' call says so and waits, and Escape during that wait stops Julia outright.
+#' stops the interrupted work at its next iteration. Work without iterations,
+#' such as compiling for a new model, finishes in the background, and if it
+#' is still running when the next julia call starts, that call says so and
+#' waits. Escape during that wait stops Julia completely.
 #' \code{\link{ctJuliaProcesses}} lists the Julia processes ctsem has running,
 #' including any left by R sessions that have ended, and
 #' \code{\link{ctJuliaKill}} stops them.
 #'
-#' If \pkg{JuliaConnectoR} or Julia itself is missing, this offers to install it
-#' rather than failing -- the same thing \code{\link{ctJuliaInstall}} does, which
-#' is the function to reach for when setting the backend up deliberately, or
-#' from a script.
-#' @param project Optional local ContinuousTimeSEM.jl checkout to use instead of
-#'   the copy that ships with ctsem. Rarely needed: the engine is part of ctsem
-#'   and is edited in place under \code{inst/julia/}.
+#' If \pkg{JuliaConnectoR} or Julia itself is missing, this offers to install
+#' it, as \code{\link{ctJuliaInstall}} does. Use \code{ctJuliaInstall} to set
+#' up the backend deliberately, or from a script.
+#' @param project Optional local ContinuousTimeSEM.jl checkout to use instead
+#'   of the copy that ships with ctsem. Rarely needed, mainly for development.
 #' @param julia_bin Optional Julia binary directory.
-#' @param threads Number of Julia threads, fixed for the life of the session.
-#'   The engine splits its subject loop across them, and \code{ctFit}'s
-#'   \code{cores} cannot exceed this count: Julia fixes it at process start, so
-#'   setting it here takes effect only if no Julia session is running yet --
-#'   pass \code{force = TRUE} to restart one. \code{NULL}, the default, starts
-#'   a session at \code{getOption("mc.cores", 2)} threads unless
-#'   \code{JULIA_NUM_THREADS} is set; a session started by a call with a
-#'   \code{cores} argument -- a fit, \code{ctFitUncertainty}, \code{ctLOO} and
-#'   the rest -- is instead as wide as that call's \code{cores}, if more. A
-#'   number given here is also the ceiling for any call that sets none. A fit
-#'   that asks for more cores than
-#'   the session has threads says so; see \code{\link{ctFit}}.
+#' @param threads Number of Julia threads. Julia fixes this when the session
+#'   starts, so it takes effect only if no Julia session is running yet, or
+#'   with \code{force = TRUE}, which restarts the session. \code{ctFit}'s
+#'   \code{cores} cannot exceed it. \code{NULL}, the default, starts a session
+#'   with \code{getOption("mc.cores", 2)} threads unless
+#'   \code{JULIA_NUM_THREADS} is set, or with the \code{cores} of the call
+#'   that starts the session if that is more. A number given here is also the
+#'   most threads used by calls that do not set \code{cores}. A fit that asks
+#'   for more cores than the session has threads says so (see
+#'   \code{\link{ctFit}}).
 #' @param force Reconfigure an existing Julia session.
-#' @param agree \code{TRUE} to consent to instantiating the engine's Julia
+#' @param agree \code{TRUE} to consent to installing the engine's Julia
 #'   package dependencies without being asked, \code{FALSE} to refuse.
 #'   \code{NULL}, the default, asks in an interactive session and refuses
-#'   otherwise; see \code{\link{ctJuliaInstall}}.
+#'   otherwise (see \code{\link{ctJuliaInstall}}).
 #' @return A Julia-engine status list, invisibly.
 #' @seealso \code{\link{ctJuliaInstall}}, \code{\link{ctJuliaStatus}}
 #' @examples
@@ -724,25 +713,27 @@ ctJuliaSetup <- function(project = NULL, julia_bin = NULL,
 
 #' Report Julia backend availability
 #'
-#' Reports what \code{backend='julia'} would find, and installs nothing: it is
-#' safe to call on a machine with no Julia and no \pkg{JuliaConnectoR}, where it
-#' says so rather than erroring. \code{\link{ctJuliaInstall}} supplies whatever
-#' it reports as missing.
+#' Reports what \code{backend='julia'} would find, without installing
+#' anything or starting a Julia session. It is safe to call on a machine
+#' without Julia or \pkg{JuliaConnectoR}. \code{\link{ctJuliaInstall}}
+#' installs anything it reports as missing.
 #'
 #' @inheritParams ctJuliaSetup
-#' @return A list describing the selected Julia engine: whether it is
-#'   \code{available} -- a julia fit could run now without asking anything,
-#'   which needs a Julia that starts and the engine's Julia packages installed,
-#'   or consent to install them given in advance with
-#'   \code{CTSEM_JULIA_AGREE=yes} (checked by a short \code{julia} process,
-#'   once per session, never a session) -- whether the \code{connectoR} bridge
-#'   package is installed at a version the backend runs on,
-#'   the \code{julia_bin} directory in use and the \code{julia} version there,
-#'   the \code{engine} version (a hash of the engine source shipped with this
-#'   ctsem, which is also what its cached project directory is keyed on), and
-#'   the number of \code{threads} in a running session (\code{NA} when none is
-#'   running: this never starts one, so it leaves the session's width to the
-#'   first call that needs it).
+#' @return A list describing the Julia engine:
+#' \describe{
+#'   \item{\code{available}}{TRUE if a julia fit could run now without asking
+#'   for anything: Julia starts and the engine's Julia packages are
+#'   installed, or consent to install them was given with
+#'   \code{CTSEM_JULIA_AGREE=yes}.}
+#'   \item{\code{connectoR}}{Whether \pkg{JuliaConnectoR} is installed at a
+#'   suitable version.}
+#'   \item{\code{julia_bin}, \code{julia}}{The Julia directory in use, and the
+#'   Julia version there.}
+#'   \item{\code{project}}{The engine's project directory.}
+#'   \item{\code{engine}}{The version of the engine shipped with this ctsem.}
+#'   \item{\code{threads}}{The number of threads of a running Julia session,
+#'   or \code{NA} if none is running.}
+#' }
 #' @examples
 #' status <- ctJuliaStatus()
 #' status$available
@@ -5098,29 +5089,27 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 
 #' Evaluate a julia model's likelihood and gradient at given parameters
 #'
-#' Evaluates the objective the julia backend optimises -- the log likelihood,
-#' with the random effects integrated as the model's \code{intoverpop} route
-#' integrates them -- at a vector of raw (unconstrained) parameters, and its
-#' gradient. For checking a fit, profiling by hand, or handing ctsem's
-#' likelihood to an optimiser or sampler of your own.
+#' Evaluates the objective that the julia backend optimises, the log
+#' likelihood with the random effects integrated out as \code{intoverpop}
+#' specifies, and its gradient, at a vector of raw (unconstrained)
+#' parameters. Useful for checking a fit, profiling by hand, or passing
+#' ctsem's likelihood to another optimiser or sampler.
 #'
 #' @param object A fit from \code{ctFit(..., backend = 'julia')}, or a model
 #'   prepared without fitting by \code{ctFit(..., backend = 'julia', fit =
 #'   FALSE)} (class \code{ctJuliaModel}).
 #' @param pars Raw (unconstrained) parameters, in the order of
-#'   \code{coef(fit)}; defaults to a fit's estimate, and must be given for a
+#'   \code{coef(fit)}. Defaults to the fit's estimate, and must be given for a
 #'   prepared model.
 #' @param gradient Also return the gradient with respect to \code{pars}.
 #' @param contributions Return subject and row contribution details when available.
 #' @param gradient_method Either "adjoint" (reverse mode, the default) or
-#'   "forward" (ForwardDiff). Both compute the same gradient. "adjoint" costs
-#'   the same regardless of how many free parameters a model has, and is
-#'   faster than "forward" at every model size measured, by a margin that
-#'   grows with the parameter count. See \code{optimcontrol$gradient} in
-#'   \code{ctFit}.
-#' @param cores The most engine threads this evaluation uses, restored
-#'   afterwards. \code{NA} leaves the ceiling already in force, for a caller
-#'   that has set one around a run of evaluations.
+#'   "forward" (ForwardDiff). Both compute the same gradient. The cost of
+#'   "adjoint" does not grow with the number of parameters, so it is faster,
+#'   and more so for larger models. See \code{optimcontrol$gradient} in
+#'   \code{\link{ctOptimControl}}.
+#' @param cores The most engine threads this evaluation uses. \code{NA} keeps
+#'   the limit already set.
 #' @return A list containing the log likelihood and, when requested, the
 #'   gradient and the contributions.
 #' @examples
@@ -8216,16 +8205,16 @@ print.ctJuliaFit <- function(x, ...) {
 
 #' Plots for ctJuliaFit objects
 #'
-#' The \code{backend='julia'} counterpart of \code{\link{plot.ctStanFit}}.
-#' \code{'regression'} plots model implied regression coefficients against the
-#' time interval via \code{\link{ctDiscretePars}}, \code{'kalman'} plots
-#' expectations via \code{\link{ctPredict}}, \code{'priorcheck'} plots each
-#' population parameter's prior against its posterior via
-#' \code{\link{ctPlotPosterior}}, and \code{'trace'} plots how the fit reached
-#' its estimate via \code{\link{ctTracePlot}}: the optimiser's trace, or each
-#' chain's draws for a sampled fit. Stan's own density and interval plots of a
-#' sampled fit (\code{'density'}, \code{'intervals'}) have no julia
-#' counterpart; \code{'priorcheck'} shows the posterior densities.
+#' Plots for a fit from \code{backend='julia'}, as \code{\link{plot.ctStanFit}}
+#' gives for stan fits. \code{'regression'} plots the model implied
+#' regression coefficients against the time interval
+#' (\code{\link{ctDiscretePars}}), \code{'kalman'} plots expectations
+#' (\code{\link{ctPredict}}), \code{'priorcheck'} plots each population
+#' parameter's prior and posterior (\code{\link{ctPlotPosterior}}), and
+#' \code{'trace'} plots the optimiser's path to the estimate, or the chains
+#' of a sampled fit (\code{\link{ctTracePlot}}). The stan plot types
+#' \code{'density'} and \code{'intervals'} are not available, and
+#' \code{'priorcheck'} shows the posterior densities instead.
 #'
 #' @param x Fit object from \code{ctFit(..., backend='julia')}.
 #' @param types Vector of plot types: 'all', 'regression', 'kalman',

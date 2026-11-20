@@ -23,97 +23,72 @@
 
 #' Measure, and optionally correct, the Laplace approximation error in a fit
 #'
-#' Recomputes a \code{backend='julia'}, \code{intoverpop='laplace'} fit's log
-#' marginal likelihood by adaptive Gauss-Hermite quadrature over the same
-#' random-effect integral the Laplace approximation approximates, and reports
-#' how far the estimate would move if that integral were taken exactly.
+#' Recomputes the log marginal likelihood of a \code{backend='julia'},
+#' \code{intoverpop='laplace'} fit by adaptive Gauss-Hermite quadrature over
+#' the random effects, and reports how far the estimate would move if the
+#' random effects were integrated exactly.
 #'
-#' The quadrature is adaptive in the usual sense: it is centred at each
-#' subject's inner mode and scaled by the inverse of the inner curvature there,
-#' both of which the fit has already computed. The curvature's eigenvalues are
-#' clipped from below at one, the prior's own curvature, before scaling: where
-#' the likelihood has gone convex in the random effects an unclipped rule puts
-#' its nodes far outside the prior and misses the mass it is meant to measure
-#' (1.8 nats too high on average on near-singular units in simulation, 0.06
-#' clipped). Where every eigenvalue is at least one nothing changes.
+#' The quadrature is centred at each subject's random-effect mode and scaled
+#' by the curvature there, both taken from the fit. The curvature's
+#' eigenvalues are floored at one, the curvature of the prior, so that the
+#' quadrature nodes stay within the prior where the likelihood is flat in some
+#' direction.
 #'
-#' The gap is quadrature minus the fit's own Laplace term, the quantity the fit
-#' maximised. With \code{nodes = 1} that gap is zero wherever the curvature is
-#' at least the prior's, which is what makes the comparison meaningful -- the
-#' two are integrating the same thing by different rules. On a unit with an
-#' eigenvalue below one it is not zero even at one node: the one-point clipped
-#' rule is the eigenwise-floored term, below the fit's.
+#' The gap is the quadrature log likelihood minus the Laplace log likelihood
+#' that the fit maximised. With \code{nodes = 1} the gap is zero wherever the
+#' curvature is at least the prior's.
 #'
 #' The correction is a single Newton step, \code{delta = solve(-hessian,
-#' gradient of (quadrature - laplace))}, evaluated at the estimate. Read it
-#' against the standard errors: \code{delta / se} well below one says the
-#' approximation is not what limits the answer, and near or above one says the
-#' point estimate is approximation-limited and the interval will not cover
-#' whatever width it has.
+#' gradient of (quadrature - laplace))}, at the estimate. Compare it with the
+#' standard errors. \code{delta / se} well below one means the approximation
+#' does not limit the estimate. Near or above one, it does, and the interval
+#' may not cover the true value.
 #'
-#' A fit can be refined, with its units' random effects integrated by
-#' quadrature, when it is fitted
-#' (\code{ctFit(intoverpop = 'quadrature')}) or after
-#' (\code{ctFitUncertainty(fit, intoverpop = 'quadrature')}); by default it
-#' only runs the random-effects check, which warns where integrating would
-#' move an estimate. On a corrected fit this check is made at the corrected estimate,
-#' which is not a Laplace optimum: the correction reported is then the
-#' \emph{further} Newton step on the quadrature objective from there, with the
-#' Laplace gradient included, and \code{at} on the result is
-#' \code{'corrected'}. A small further step says the correction got there; a
-#' large one says it did not. On any other fit it is the first step.
+#' To refine the fit with the random effects integrated by quadrature, use
+#' \code{ctFit(intoverpop = 'quadrature')}, or
+#' \code{ctFitUncertainty(fit, intoverpop = 'quadrature')} after fitting. On
+#' a refined fit the correction reported here is the further Newton step from
+#' the refined estimate, and \code{at} in the result is \code{'corrected'}. A
+#' small further step means the refinement converged.
 #'
-#' Nested groupings are handled. A group's integral does not factor over its
-#' members, but it does factor \emph{conditionally} -- given the group effect
-#' the members are independent -- so the rule recurses over the same block tree
-#' the fit already builds, at a cost linear in the number of groups at each
-#' level rather than exponential in the number of members.
+#' Nested grouping levels are supported. The quadrature runs over each level
+#' given the levels above it, so the cost grows linearly with the number of
+#' groups.
 #'
 #' @param fit A \code{ctJuliaFit} fitted with \code{intoverpop='laplace'}.
-#' @param nodes Quadrature nodes per random effect. Cost is
-#'   \code{nodes^k} process log likelihoods per block, where \code{k} is that
-#'   level's number of random effects; 5 is enough to locate the maximum in the
-#'   cases tested, 9 to settle the value.
+#' @param nodes Quadrature nodes per random effect. The cost is
+#'   \code{nodes^k} likelihood evaluations per subject or group, where
+#'   \code{k} is the number of random effects at that level. 5 is usually
+#'   enough to locate the maximum, and 9 to settle the value.
 #' @param correction Compute the first-order correction to the estimate. Costs
-#'   \code{2 * npar} quadrature evaluations, and needs the fit's Hessian, so it
-#'   is skipped when uncertainty was not computed.
+#'   \code{2 * npar} quadrature evaluations and needs the fit's Hessian, so it
+#'   is skipped when the fit has no uncertainty computed.
 #' @param step Finite-difference step for the gap gradient, on the raw scale.
-#' @param refine Continue the fit on the quadrature objective rather than
-#'   correcting linearly: the refined fit \code{intoverpop =
-#'   'quadrature'} runs at fit time (see \code{\link{ctFit}}), from this fit's
-#'   estimate, with the quadrature rules placed at every point. Its gradient
-#'   is exact, so it costs a quadrature gradient per step rather than the
-#'   \code{2 * npar} quadrature evaluations per gradient the finite-difference
-#'   refinement this replaced cost, and it reports the point it reaches in
-#'   \code{refined}.
-#' @param maxiter Iteration cap for the climb of \code{refine}.
+#' @param refine Continue the fit on the quadrature objective instead of
+#'   correcting linearly. This runs the refined fit of
+#'   \code{intoverpop = 'quadrature'} (see \code{\link{ctFit}}) from this
+#'   fit's estimate, and reports the point it reaches in \code{refined}.
+#' @param maxiter Iteration limit for \code{refine}.
 #' @param cores Engine threads for the quadrature.
-#' @param verbose Integer; 1 or more prints progress.
+#' @param verbose Integer. 1 or more prints progress.
 #'
-#' @return A list with \code{gap} (quadrature minus Laplace log marginal at the
-#'   estimate), \code{gap_per_subject}, \code{nodes}, and, when
-#'   \code{correction} is \code{TRUE}, a \code{parameters} data frame with one
-#'   row per raw parameter giving \code{estimate}, \code{delta},
-#'   \code{corrected}, \code{se} and \code{delta_se}. With \code{refine} it also
-#'   carries \code{refined}. \code{at} says whether the estimate checked was the
-#'   Laplace optimum (\code{'laplace'}) or already quadrature-corrected
+#' @return A list with \code{gap} (quadrature minus Laplace log marginal
+#'   likelihood at the estimate), \code{gap_per_subject}, \code{nodes}, and,
+#'   when \code{correction} is \code{TRUE}, a \code{parameters} data frame
+#'   with one row per raw parameter giving \code{estimate}, \code{delta},
+#'   \code{corrected}, \code{se} and \code{delta_se}. With \code{refine} it
+#'   also contains \code{refined}. \code{at} says whether the estimate checked
+#'   was the Laplace optimum (\code{'laplace'}) or a refined estimate
 #'   (\code{'corrected'}).
 #'
-#'   \code{dropped_directions} counts the directions of the information matrix
-#'   the correction does not step along, whose correction is reported as zero
-#'   rather than as the arbitrarily large step an unguarded solve would
-#'   produce: exactly the directions \code{fit$identifiability} names, those
-#'   whose curvature is negligible or not positive and those the likelihood was
-#'   measured flat along. On a model where the Laplace approximation is
-#'   already exact the gap gradient is floating-point noise, and dividing that
-#'   by a near-singular curvature is how a meaningless correction gets a
-#'   plausible-looking number.
+#'   \code{dropped_directions} counts the directions in which the data give
+#'   little or no information, those named in \code{fit$identifiability}. The
+#'   correction is not computed along them, and is reported as zero there.
 #'
-#' @seealso \code{\link{ctFitUncertainty}} with \code{method = 'sample'}
-#'   and \code{intoverpop = 'none'} removes the approximation
-#'   instead of measuring it, by sampling the joint posterior; much slower,
-#'   and the right answer when \code{delta_se} says a linear correction is not
-#'   credible.
+#' @seealso \code{\link{ctFitUncertainty}} with \code{method = 'sample'} and
+#'   \code{intoverpop = 'none'} samples the joint posterior of parameters and
+#'   random effects, which avoids the approximation. It is much slower, and
+#'   the better choice when \code{delta_se} is large.
 #'
 #' @examples
 #' \dontrun{

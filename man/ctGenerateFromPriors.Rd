@@ -20,24 +20,17 @@ ctGenerateFromPriors(
 )
 }
 \arguments{
-\item{cts}{A model -- \code{\link{ctModel}} or
-\code{\link{ctModelConvertOMX}} -- or a fit from either backend, which is
-simply a model that arrives with a design attached. Nothing here needs a fit:
-generating from the prior needs the model and a set of subjects and times to
-generate over, and a fit is one way to supply both.}
+\item{cts}{A model from \code{\link{ctModel}} or
+\code{\link{ctModelConvertOMX}}, or a fit from either backend, which
+supplies its model and design.}
 
 \item{datastruct}{Long format data structure as used by ctsem, giving the
-subjects, times and missingness to generate for. Ignored when \code{cts} is
-a fit, which carries its own. Left at NA for a model, a balanced design of
-\code{n.subjects} subjects observed at \code{Tpoints} occasions
-\code{dtmean} apart is built instead.}
+subjects, times and missing observations to generate. Ignored when
+\code{cts} is a fit, which uses its own data. If NA and \code{cts} is a
+model, a balanced design of \code{n.subjects} subjects observed at
+\code{Tpoints} occasions \code{dtmean} apart is used.}
 
-\item{is}{Deprecated and ignored, with a warning if set. Importance
-sampling reweights draws taken from a gaussian approximation onto a target
-that cannot be sampled directly. Fitted to an empty dataset there is no
-such target: the likelihood contributes nothing and what remains is the
-prior, which ctsem holds as independent univariate densities in the raw
-space these draws are taken in. There is no approximation to correct.}
+\item{is}{Deprecated and ignored, with a warning if set.}
 
 \item{fullposterior}{Generate from the full prior, or from its mode (the raw
 origin)?}
@@ -48,30 +41,26 @@ origin)?}
 
 \item{cores}{Number of cpu cores to use.}
 
-\item{backend}{Which engine turns a parameter draw into data: \code{'auto'}
-(the default -- \code{'julia'} when a julia session is available,
-\code{'stan'} otherwise), \code{'julia'} or \code{'stan'}. The draws
-themselves do not depend on this: they come from the model's prior, which is
-the same object either way. \code{parsonly=TRUE} returns those draws and
-generates nothing, so it does not use this argument.}
+\item{backend}{Which engine generates data from each parameter draw:
+\code{'auto'} (the default) uses \code{'julia'} when a julia session is
+available and \code{'stan'} otherwise, or \code{'julia'} or \code{'stan'}.
+The parameter draws come from the model's prior and are the same either
+way. Not used with \code{parsonly=TRUE}.}
 
-\item{n.subjects, Tpoints, dtmean}{The design to build when \code{cts} is a
-model and no \code{datastruct} is given, and unused otherwise.
-\code{Tpoints} falls back to the model's own when it carries one.
-\code{n.subjects} is deliberately smaller than \code{\link{ctGenerate}}'s:
-this returns \code{nsamples} datasets rather than one.}
+\item{n.subjects, Tpoints, dtmean}{The design used when \code{cts} is a model
+and no \code{datastruct} is given. \code{Tpoints} defaults to the model's
+own when it has one. The default \code{n.subjects} is smaller than
+\code{\link{ctGenerate}}'s because \code{nsamples} datasets are returned.}
 }
 \value{
 List containing Y, an array of nsamples by data rows by manifest
 variables, and llrow, an array of nsamples by data rows log likelihoods.
-With \code{parsonly=TRUE}, the prepared model carrying the prior draws
-under \code{$stanfit$rawposterior} and \code{$stanfit$transformedpars}.
+With \code{parsonly=TRUE}, the prepared model with the prior draws in
+\code{$stanfit$rawposterior} and \code{$stanfit$transformedpars}.
 }
 \description{
-Deprecated. Use \code{\link{ctGenerate}(fromPriors = TRUE)}, which is the
-same computation reached through the function that generates data from a
-ctsem model generally. \code{ctStanGenerate} is a backward-compatible alias
-and is deprecated with it.
+Deprecated. Use \code{\link{ctGenerate}(fromPriors = TRUE)}, which does the
+same. \code{ctStanGenerate} is an alias and is also deprecated.
 }
 \examples{
 \donttest{

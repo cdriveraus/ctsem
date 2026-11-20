@@ -24,20 +24,22 @@ ctFitAdequacy(
 )
 }
 \arguments{
-\item{fit}{A fit from \code{\link{ctFit}}, either backend. The projection
-and the scores it needs require \code{backend = 'julia'}.}
+\item{fit}{A fit from \code{\link{ctFit}}, either backend. The
+\code{projection} needs \code{backend = 'julia'}.}
 
-\item{covariates}{Optional subject-level covariates, as for
+\item{covariates}{Optional subject level covariates, as for
 \code{\link{ctScoreTest}}, for the \code{covariates} family.}
 
-\item{families}{Which families to run; see Details.}
+\item{families}{Which families to run; see Details. \code{scores} and
+\code{lagged} run only when named here.}
 
-\item{gaps}{Break points, in the data's time units, for the residual
-correlations' gap bins. By default the eighth, quarter and half quantiles
-of the time between every pair of a unit's rows.}
+\item{gaps}{Break points, in the data's time units, for the time gap bins
+of the residual correlations. By default the eighth, quarter and half
+quantiles of the time between every pair of a subject's rows.}
 
 \item{periods}{Periods, in the data's time units, for the \code{periodic}
-family: 24 for a daily cycle with time in hours. By default a scan.}
+family, such as 24 for a daily cycle with time in hours. By default a
+range of periods is scanned.}
 
 \item{tvcovariates}{Optional time varying covariates for the
 \code{tvcovariates} family: a data frame with the model's subject id and
@@ -49,231 +51,192 @@ fit.}
 
 \item{alpha}{Level for \code{adequate} and \code{close_fit}.}
 
-\item{projection}{How the error-based statistics account for estimation:
-\code{'derivative'} differences the statistics along every parameter (two
-passes of the filter per parameter) and projects with the fit's Hessian;
-\code{'plugin'}, on a Laplace fit, takes those differences from plug-in
-passes, which filter each subject at effects solved once from the whole
-record rather than row by row -- several times cheaper, and approximate
-(on a pilot-shaped model it recovered the distribution family's misfit,
-z 5.3 against 5.6 exact and 1.8 uncorrected). Where random effects reach
-the dynamics or the variances, either projects only the unit-level
-families (distribution, fit, effects, scores) and leaves the error-based
-ones unprojected: there their projected variance was unreliable, while
-unprojected they held their level on data generated from the model;
-\code{'opg'} uses the outer product of the scores, valid when
-units outnumber parameters many times; \code{'none'} ignores estimation,
-which is conservative, and for the distribution family can hide a strong
-misfit. \code{'auto'} takes the first that is affordable:
-\code{'derivative'} when the fit's Hessian is stored and the passes take
-under \code{getOption('ctsem.adequacy.budget', 120)} seconds, then
-\code{'plugin'} on the same terms, \code{'opg'} with at least ten units
-a parameter, else \code{'none'}.}
+\item{projection}{How the tests based on the errors account for the
+estimation of the parameters. \code{'derivative'} differentiates the
+statistics with respect to every parameter (two passes of the filter per
+parameter) and uses the fit's Hessian. \code{'plugin'}, on a Laplace fit,
+does the same more cheaply, with each subject's random effects estimated
+once from the whole record, and is approximate. \code{'opg'} uses the
+outer product of the scores, which needs many more subjects than
+parameters. \code{'none'} ignores estimation, which is conservative and
+can hide a strong misfit in the \code{distribution} family. When random
+effects affect the dynamics or the variances, \code{'derivative'} and
+\code{'plugin'} correct only the \code{distribution}, \code{fit},
+\code{effects} and \code{scores} families. \code{'auto'} (the default)
+takes the first that is affordable: \code{'derivative'} when the fit has
+a Hessian and the passes take under
+\code{getOption('ctsem.adequacy.budget', 120)} seconds, then
+\code{'plugin'} on the same terms, \code{'opg'} with at least ten
+subjects per parameter, and otherwise \code{'none'}.}
 
 \item{parameters}{For the \code{scores} family, the raw parameters whose
-row scores are used: by default up to 16 of the dynamic and measurement
+row scores are used. By default up to 16 of the dynamic and measurement
 parameters, those in DRIFT, DIFFUSION and CINT first.}
 
 \item{nsamples}{Number of generated datasets, for the families that need
-them. Reused from \code{fit} when it already carries at least as many.}
+them. Generated data already on \code{fit} are reused if there are
+enough.}
 
 \item{lags}{Observation lags for the \code{lagged} family.}
 
 \item{nboot}{Bootstrap draws for each family's calibration.}
 
-\item{cores}{Cores for the engine and for generating.}
+\item{cores}{Cores for the engine and for generating data.}
 }
 \value{
-An object of class \code{ctFitAdequacy}: \code{families} (one row
-  per family: the number of statistics, the worst, its z, the family's
-  p-value and the Holm-adjusted one), \code{statistics} (every statistic:
-  what it is about -- \code{variable}, \code{with} (the other variable of
-  a pair, or what the variable is correlated with), \code{gap} (the gap
-  bin of a pair of rows, or a lag), \code{period} and \code{covariate},
-  each NA where it does not apply -- and its observed value, z and
-  two-sided p), \code{size} (the root mean square residual correlations,
-  their intervals and close-fit tests), \code{errors} (the rows the
-  error-based families are computed from, in long form: \code{Subject},
-  \code{Time}, \code{Element} -- \code{'error'}, each variable's
-  standardised one-step-ahead error given the row's other observed
-  values; \code{'update'}, each latent's standardised update;
-  \code{'etaprior'}, its predicted mean -- \code{Row}, the variable, and
-  \code{value}; NULL when no such family ran), \code{adequate},
-  \code{close_fit}, \code{informative} (with \code{tvcovariates}, whether
-  they predict the errors at \code{alpha}; NA without), \code{projection}
-  (the method used), \code{degenerate} (the effects family's axes left out,
-  their posterior the prior in every unit), and \code{fit}
-  (with any generated data, for reuse). \code{plot()} draws the families,
-  or one family's statistics.
+An object of class \code{ctFitAdequacy}, containing:
+  \code{families}, one row per family with the number of statistics, the
+  worst one, its z, the family's p-value and the Holm adjusted p-value;
+  \code{statistics}, every statistic, with what it is about in the columns
+  \code{variable}, \code{with} (the other variable of a pair, or what the
+  variable is correlated with), \code{gap} (the time gap bin or lag),
+  \code{period} and \code{covariate}, each NA where it does not apply, and
+  its observed value, z and two-sided p; \code{size}, the root mean square
+  residual correlations with their intervals and close fit tests;
+  \code{errors}, the rows the error based families use, in long form, with
+  \code{Subject}, \code{Time}, \code{Element} (\code{'error'} for each
+  variable's standardised one-step-ahead error, \code{'update'} for each
+  latent's standardised update, \code{'etaprior'} for its predicted mean),
+  \code{Row}, the variable and \code{value}, or NULL when no such family
+  ran; \code{adequate}; \code{close_fit}; \code{informative}, whether the
+  \code{tvcovariates} predict the errors at \code{alpha} (NA without
+  them); \code{projection}, the method used; \code{degenerate}, the axes
+  the \code{effects} family left out; and \code{fit}, with any generated
+  data, for reuse. \code{plot()} draws the families, or one family's
+  statistics.
 }
 \description{
 Tests a fitted model in families, each aimed at one way a continuous time
 model can fall short, and gives each family a p-value. Most families use the
 one-step-ahead prediction errors, which under the model are independent and
-standard normal whatever the spacing of the observations; each variable's
-error is taken given the others observed at the same time, so a result names
-a variable.
+standard normal however the observations are spaced. Each variable's error
+is taken given the others observed at the same time, so a result can be
+tied to a variable.
 }
 \details{
 \describe{
-  \item{residuals}{Correlations of the errors within units, for every pair
-    of rows, by time gap (\code{gaps}): the residual autocorrelation and
-    cross-correlation in continuous time. Slow structure the model lacks
-    shows as correlation over the gaps it spans.}
-  \item{latent}{The same for each latent process: the update each row makes
-    to the predicted state, standardised, correlated with the same subject's
-    updates at other times. One per process rather than one per item, so a
-    misfit in the dynamics is not diluted by item-specific structure.}
-  \item{volatility}{The same for the squared errors, per variable: variance
-    that clusters in time.}
-  \item{pairs}{Each pair of variables' errors in the same row against the
-    correlation the model implies: a wrong measurement error covariance or
-    loading.}
-  \item{periodic}{A cycle the model lacks, such as a daily rhythm: each
-    variable's errors, and each latent's updates, correlated with the same
-    unit's at other times weighted by the cosine of the time between them
-    over a period -- the periodogram of the errors at that period. It
-    depends only on the time between rows, so it finds a cycle whatever its
-    phase in each unit and needs no clock. At the named \code{periods}, or
-    by default scanning the periods a typical record resolves, from half its
-    length to twice the typical interval between rows. The estimate is the
-    errors' autocorrelation at the period: a cycle of amplitude a, in error
-    standard deviations, gives a^2 / 2.}
+  \item{residuals}{Correlations between the errors of a subject's rows, for
+    every pair of rows, by time gap (\code{gaps}): the residual
+    autocorrelation and cross-correlation in continuous time. Slow structure
+    missing from the model shows as correlation over the gaps it spans.}
+  \item{latent}{The same for each latent process, using the standardised
+    update each row makes to the predicted state. There is one set per
+    process, so misfit in the dynamics is not diluted by item specific
+    structure.}
+  \item{volatility}{The same for the squared errors of each variable:
+    variance that clusters in time.}
+  \item{pairs}{The correlation of each pair of variables' errors in the same
+    row, against the correlation the model implies. This detects a wrong
+    measurement error covariance or loading.}
+  \item{periodic}{A cycle missing from the model, such as a daily rhythm.
+    Each variable's errors, and each latent's updates, are correlated with
+    the same subject's at other times, weighted by the cosine of the time
+    between them over the period. This is the periodogram of the errors at
+    that period. It depends only on the time between rows, so it finds a
+    cycle whatever its phase in each subject. It uses the given
+    \code{periods}, or by default scans from twice the typical interval
+    between rows to half the typical record length. The estimate is the
+    errors' autocorrelation at the period, and a cycle with amplitude a, in
+    error standard deviations, gives a^2 / 2.}
   \item{distribution}{Skewness and kurtosis of each variable's errors, and
-    each row's squared whitened distance against its chi-square mean and
-    variance, together with Anderson-Darling tests against the normal and
-    chi-square.}
-  \item{fit}{How unevenly units are fitted: the spread of each unit's
-    summed distance against the chi-square's, and the worst unit.}
+    each row's squared standardised distance against the mean and variance
+    of its chi-square distribution, with Anderson-Darling tests against the
+    normal and chi-square.}
+  \item{fit}{How unevenly subjects are fitted: the spread of each subject's
+    summed distance against the chi-square's, and the worst subject.}
   \item{dependence}{The distance correlation of each variable's error, and
-    of its square, with what came before -- the predicted latent states, the
-    previous errors, the time interval -- by permutation: a conditional mean
-    or variance the model gets wrong, in any form.}
-  \item{effects}{On a single-level Laplace fit, whether the random effects'
-    normal distribution is adequate: each subject's posterior probability,
-    smoothed, that its standardised effect lies below a cut, at cuts along
-    each axis, against the normal's. Under the model the posterior averages
-    to the prior, so the differences have mean zero; a skewed or bimodal
-    distribution, or a subgroup, moves them. These integrate the gradient
-    function (Verbeke & Molenberghs, 2013; Drikvandi, Verbeke & Molenberghs,
-    2017), which is too heavy tailed to test directly. An effect the data
-    leave at its prior in every unit has nothing to compare and is left out
-    (\code{degenerate}); a fit whose units carry more than four effects is
-    not tested, and says so.}
+    of its square, with the predicted latent states, the previous errors and
+    the time interval, tested by permutation. This detects a conditional
+    mean or variance the model gets wrong, in any form.}
+  \item{effects}{On a single level Laplace fit, whether a normal
+    distribution suits the random effects. At cuts along each axis, each
+    subject's smoothed posterior probability that its standardised effect
+    lies below the cut is compared with the normal's. Under the model these
+    differences have mean zero, and a skewed or bimodal distribution, or a
+    subgroup, moves them (based on the gradient function of Verbeke &
+    Molenberghs, 2013, and Drikvandi, Verbeke & Molenberghs, 2017). An
+    effect the data leave at its prior in every subject is left out
+    (\code{degenerate}). Fits with more than four random effects per subject
+    are not tested, with a message.}
   \item{tvcovariates}{With \code{tvcovariates}, whether time varying
-    variables the model does not use carry information about what it
-    predicts: each variable's error, and each latent's update, against each
-    covariate at the same row and at the unit's previous row, the covariate
-    standardised. The estimate is the regression of the standardised error
-    on the covariate. The previous row's value is a test of prediction
-    (Granger's sense); the same row's is an association, which a covariate
-    the outcome itself moves would show as well. Its null is larger than
-    the other families': the errors have mean zero given what the model
-    conditions on, the outcomes' own past, and need not be uncorrelated
-    with anything else. A correct model of the outcomes fails it when a
-    covariate is another measure of the same states, since that measure's
-    previous value sharpens the estimate of the state and so predicts the
-    next error. So it says whether a model using these variables would
-    predict better, not that the model of the outcomes is wrong, and it is
-    not counted in \code{adequate}.}
-  \item{scores}{Not run unless asked for. White's (1987) dynamic information
-    matrix test: each data row's score, the derivative of its one-step
-    log likelihood, for the dynamic and measurement parameters
+    variables not in the model predict its errors. Each variable's error,
+    and each latent's update, is regressed on each standardised covariate at
+    the same row and at the subject's previous row. The previous row tests
+    prediction, in Granger's sense. The same row tests association, which
+    also shows when the outcome itself moves the covariate. A correct model
+    of the outcomes fails this test when a covariate is another measure of
+    the same latent states, since it sharpens the estimate of the state. So
+    a failure says that a model using these variables would predict better,
+    and not that the model of the outcomes is wrong. This family is not
+    counted in \code{adequate}.}
+  \item{scores}{Run only when named in \code{families}. White's (1987)
+    dynamic information matrix test: the score of each row's one-step log
+    likelihood for the dynamic and measurement parameters
     (\code{parameters}), correlated with the scores of the same subject's
-    other rows, by time gap. Under the model a subject's row scores are
-    uncorrelated whatever the departure, so this is a check for dynamic
-    misspecification of any kind; being that broad, over many statistics,
-    it is the least powerful of the families, and the targeted tests of
-    \code{\link{ctScoreTest}} (stability, state dependence) find what they
-    cover far more often. It costs a dual pass of the filter per eight
-    parameters, and on the Laplace route one per truncated record, which is
-    hours on large data.}
+    other rows, by time gap. Under the model these are uncorrelated, so
+    this checks for dynamic misspecification of any kind. Because it is so
+    broad, it is the least powerful family, and \code{\link{ctScoreTest}}
+    detects the departures it covers far more often. It can take hours on
+    large data.}
   \item{subjects, nonlinear, covariates, lagged}{Statistics of the data
-    against datasets generated from the fit: how much subjects differ in
-    mean, standard deviation and lag-one correlations; whether change
-    depends on level nonlinearly; with \code{covariates}, whether subjects'
-    statistics depend on them; and the data's own lagged correlations
-    (\code{lags}). These use the data twice and are conservative; the
-    lagged correlations especially, as the fit reproduces them, so they are
-    not run unless asked for.}
+    compared with datasets generated from the fit: how much subjects differ
+    in mean, standard deviation and lag one correlations, whether change
+    depends nonlinearly on level, with \code{covariates} whether subjects'
+    statistics depend on them, and the data's own lagged correlations
+    (\code{lags}). These use the data twice and are conservative. The lagged
+    correlations are usually reproduced by the fit, so \code{lagged} runs
+    only when named in \code{families}.}
 }
 
-The error-based statistics are moment tests: each unit's contribution is
-projected on its scores, which removes what estimating the parameters did
-to the statistic (\code{projection}), and the variance is the errors' own:
-they are independent over rows under the model, so a sum of products over
-pairs of rows has the sum of the products' squares as its variance, which
-holds with heavy tails or a changing variance; estimating the parameters
-takes a known part of it away. That is the variance of the residual,
-latent, volatility, within-row, periodic and covariate families. A periodic
-statistic is in each unit a quadratic form of rank two in its errors, the
-periodogram, skewed to the right however many units there are; its z is
-read through a chi-square of the skewness that form has under the model,
-worked out exactly from the unit's times. The distribution and fit
-families, whose statistics are sums of high powers, use the spread of the
-units' contributions and a studentised bootstrap over units. Within a family the
-largest standardised statistic is calibrated with the statistics'
-correlation over units, and the sum of their squares, where the variances
-are the model's, by its terms between units, whose mean is zero under the
-model (Chen & Qin, 2010), and otherwise by the bootstrap; the two are
-combined, with any exact p-values the family has, by the Cauchy
-combination; families are combined by Holm. \code{adequate} is \code{TRUE}
-when no family's adjusted p-value is below \code{alpha}. The
-\code{tvcovariates} family tests a larger information set than the model's
-and is held out of both: its p-value is its own, and \code{informative}
-reports it.
+The tests based on the errors account for the estimation of the parameters
+(\code{projection}), and take their variance from the errors themselves, so
+they hold with heavy tails or changing variance. The \code{periodic}
+statistics are skewed, and are referred to a chi-square matched to their
+skewness. The \code{distribution} and \code{fit} families use a
+studentised bootstrap over subjects. Within a family, the largest
+statistic and the sum of the squared statistics are each tested, taking
+the statistics' correlation into account, and combined with the Cauchy
+combination test. Families are combined by Holm's method, and
+\code{adequate} is \code{TRUE} when no family's adjusted p-value is below
+\code{alpha}. The \code{tvcovariates} family is left out of this, and its
+p-value is reported in \code{informative}.
 
-On a Laplace fit (\code{intoverpop = 'laplace'}) whose random effects reach
-the dynamics or the variances, the errors come from the model's own
-predictive distribution: each row predicted from the subject's earlier rows
-with the random effects integrated against their posterior given those rows
-by importance sampling (\code{getOption('ctsem.sequential.particles', 512)}
-quasi-random draws a subject), the own variances integrated in the filter
-exactly. The draws are fixed by \code{getOption('ctsem.sequential.seed')},
-so a call repeats; another seed, or more draws, shows how much of a result
-is the sampling's. The approximation the fit itself uses there -- the posterior's
-mode on each truncated record, its uncertainty added by the delta method --
-is exact only for effects that enter linearly; elsewhere it put a 1.5 per
-cent bias into the predictive variance, and correct models were rejected
-through it. Where that predictive cannot be had -- random effects at more
-than one level -- the row distances are left out and the latent family's
-p-values are approximate, and the call says so.
+On a Laplace fit (\code{intoverpop = 'laplace'}) whose random effects
+affect the dynamics or the variances, each row's error comes from the
+model's predictive distribution given the subject's earlier rows, with the
+random effects integrated by importance sampling
+(\code{getOption('ctsem.sequential.particles', 512)} quasi-random draws per
+subject). The draws are fixed by
+\code{getOption('ctsem.sequential.seed')}, so a call can be repeated, and
+another seed or more draws shows how much of a result is due to the
+sampling. With random effects at more than one level this is not
+available, so the row distances are left out and the latent family's
+p-values are approximate, with a message.
 
-A binary, ordinal, count or censored item's error is not normal, so its
-place is taken by its randomised probability integral transform through
-the normal quantile: the item's predictive distribution function at what was
-observed, given the subject's earlier rows and the items the filter had
-already applied in the row (non-Gaussian items one at a time, in item
-order), with a fixed uniform between its values just below and at the
-observation where that has probability mass. Under the model these are
-standard normal and independent, so every family reads them as it reads
-Gaussian errors; on the Laplace route they come from the exact predictive.
-The latent family's updates on such rows rest on the filter's Gaussian
-projection of each item, so its p-values are approximate there, and the
-call says so.
-Within a row, a non-Gaussian item's transform and a Gaussian item's error
-have no model-implied correlation the pairs family could test against, and
-are not paired.
+For a binary, ordinal, count or censored item, the error is replaced by
+its randomised probability integral transform, mapped through the normal
+quantile function. Under the model these are independent standard normal,
+so every family uses them as it uses Gaussian errors. The latent family's
+updates on such rows rest on the filter's Gaussian approximation for the
+item, so its p-values are approximate there, with a message. The
+\code{pairs} family does not pair a non-Gaussian item with a Gaussian one.
 
-With many observations every misfit is significant, so the sizes of the
-residual, latent and within-row correlations the model leaves are reported
-too, as
-root mean squares, each squared correlation less its sampling variance (as
-for the SRMR, Maydeu-Olivares 2017): the mean square is unbiased, its root,
-truncated at zero, bias-corrected. Each has a 95 per cent interval and
-\code{p_close}, the p-value of the test that it is at least \code{close}.
-\code{close_fit} is \code{TRUE} when every family that fails is one of those
-three and that test rejects at \code{alpha} -- the size is shown to be
-below \code{close}, its one-sided upper bound under it. A size whose
-interval reaches \code{close} is not a close fit: not showing that a misfit
-is large does not show that it is small. A close fit is about these
-averages over many correlations; one large discrepancy among them, or a
-biased estimate of a quantity of interest, can sit under a small average.
+With many observations every misfit becomes significant, so the size of
+the residual, latent and within row correlations the model leaves is
+reported too, as a bias corrected root mean square (as for the SRMR,
+Maydeu-Olivares 2017), with a 95 per cent interval and \code{p_close}, the
+p-value for the test that it is at least \code{close}. \code{close_fit} is
+\code{TRUE} when every failing family is one of these three, and each of
+their sizes is shown to be below \code{close} at \code{alpha}. A size
+whose interval reaches \code{close} is not a close fit. A close fit refers
+to these averages over many correlations, and one large discrepancy, or a
+biased estimate of a quantity of interest, can still hide under a small
+average.
 
-Detection is not localization: a failure in one variable's equation reaches
-the others' errors through the fitted covariance. \code{\link{ctScoreTest}}
-is the more sensitive check for the departures it covers, and
-\code{\link{ctModelImprove}} uses both.
+A failure in one variable's equation also shows in the other variables'
+errors, so a failing statistic does not always point to where the problem
+is. \code{\link{ctScoreTest}} is more sensitive to the departures it
+covers, and \code{\link{ctModelImprove}} uses both.
 }
 \references{
 Newey, W. K. (1985). Maximum likelihood specification testing

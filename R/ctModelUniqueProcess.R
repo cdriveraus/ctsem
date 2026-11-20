@@ -1,42 +1,41 @@
 #' Give indicators processes of their own
 #'
-#' Each manifest variable in \code{items} gains a latent, named \code{u_} and
-#' the variable's name, that loads on it alone with a fixed unit loading and
-#' has its own persistence and innovations. The variable then carries, beside
-#' what it shares through the model's other latents and its measurement error,
-#' a part that is specific to it and carried over time: an item whose wording
-#' picks up something besides the construct, and picks it up persistently.
+#' Each manifest variable in \code{items} gets a latent, named \code{u_} and
+#' the variable's name, that loads only on that variable with a fixed loading
+#' of one, and has its own persistence and innovations. The variable then has,
+#' besides what it shares with others through the model's latents and its
+#' measurement error, a specific part that persists over time. This suits an
+#' item whose wording picks up something besides the construct, consistently
+#' over time.
 #'
-#' Without it, that part can only go to the measurement error, which is
-#' independent over time, so the item's prediction errors stay correlated
-#' with its own at nearby times -- what the \code{residuals} family of
-#' \code{\link{ctFitAdequacy}} shows for that item alone -- or to the shared
-#' latents, whose dynamics it then distorts. The specific process and the
-#' measurement error are told apart by persistence: the one carries over
-#' time, the other does not.
+#' Without such a process, the specific part can only go into the measurement
+#' error, which is independent over time, or into the shared latents, whose
+#' dynamics it then distorts. In the first case the item's prediction errors
+#' stay correlated over nearby times, which the \code{residuals} family of
+#' \code{\link{ctFitAdequacy}} shows. The specific process and the measurement
+#' error are distinguished by persistence over time.
 #'
-#' The process has no intercept (the item's own carries its level), ctsem's
-#' default drift transform, so it is mean reverting, and innovations
-#' independent of every other latent's. It starts from its stationary
-#' distribution: mean zero and the variance its persistence and innovations
-#' imply (the \code{T0VAR} diagonal \code{'stationary'}, see
+#' The process has no intercept (the item's own intercept carries its level),
+#' ctsem's default drift transform, so it is mean reverting, and innovations
+#' independent of the other latents. It starts from its stationary
+#' distribution, with mean zero and the variance its persistence and
+#' innovations imply (the \code{T0VAR} diagonal \code{'stationary'}, see
 #' \code{\link{ctFit}}).
 #'
-#' With \code{shared = TRUE} the items share one process instead, loading on
-#' the first at one and on the others freely: what moves them together beyond
-#' the model's other latents. Measurement errors that are correlated within an
-#' occasion are usually better read this way -- an error is meant to be
-#' random, and co-movement it does not carry over to the next occasion is a
-#' process faster than the occasions -- unless the design gives a reason for
+#' With \code{shared = TRUE} the items share one process, with a loading of one
+#' on the first item and free loadings on the others, representing what moves
+#' them together beyond the model's other latents. Measurement errors that are
+#' correlated within an occasion are often better modelled this way, as a
+#' process faster than the occasions, unless the design gives a reason for
 #' correlated error, such as a method shared by the items.
 #'
 #' @param ctm A model from \code{ctModel(type = 'ct')}.
 #' @param items Which manifest variables, by name or position.
-#' @param shared One process for all of \code{items}, named \code{u_} and
-#'   their names joined by \code{_}, rather than one each.
-#' @param name The new latents' names, in place of those: one for a shared
-#'   process, one per item otherwise. For a second process on the same items,
-#'   at another time scale.
+#' @param shared If TRUE, one process for all of \code{items}, named \code{u_}
+#'   and their names joined by \code{_}, instead of one each.
+#' @param name Names for the new latents, replacing the defaults: one for a
+#'   shared process, otherwise one per item. Useful for adding a second process
+#'   on the same items at another time scale.
 #' @return The extended model.
 #' @seealso \code{\link{ctModelImprove}}, which adds one for the items the
 #'   adequacy check points to.

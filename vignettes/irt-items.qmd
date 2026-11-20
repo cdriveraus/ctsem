@@ -37,11 +37,11 @@ model:
 | guessing $c$ | `ASYMPTOTES[, 'lower']` | lower asymptote |
 | upper asymptote $d$ | `ASYMPTOTES[, 'upper']` | ceiling |
 
-So the two parameter model needs no special argument at all. `ASYMPTOTES` has
-a row per binary item and a column for each asymptote. A cell left `NA` is no
-asymptote on that side, a number between 0 and 1 fixes it, and a name
-estimates it. Ordinal items are in the measurement models vignette; this
-one is about binary items and what has to be held fixed to estimate them.
+The two parameter model therefore needs no special arguments. `ASYMPTOTES`
+has a row per binary item and a column for each asymptote. A cell left `NA`
+means no asymptote on that side, a number between 0 and 1 fixes it, and a name
+estimates it. Ordinal items are covered in the measurement models vignette.
+This one is about binary items and what has to be fixed to estimate them.
 
 # The response curves
 
@@ -76,21 +76,22 @@ model, and the logistic link supplies neither. Multiply the process by $k$ and
 divide every discrimination by $k$ and the linear predictor is unchanged, so
 the likelihood cannot tell them apart.
 
-There are two ways to pin the scale and they are the same model:
+There are two equivalent ways to set the scale:
 
 * **fix one loading** at 1 and let `DIFFUSION` be free, or
 * **fix `DIFFUSION`** at 1 and let every loading be free.
 
-What you cannot do is fix the latent *variance*, because in continuous time it
-is not a parameter: the stationary variance is $\text{DIFFUSION}^2/(2|\text{DRIFT}|)$,
-so constraining it would mean constraining a function of two things the model
-is estimating. Pick one of the two above instead.
+The latent *variance* cannot be fixed directly, because in continuous time it
+is not a parameter. The stationary variance is
+$\text{DIFFUSION}^2/(2|\text{DRIFT}|)$, a function of two estimated
+parameters.
 
 For the location, leave `CINT` and `T0MEANS` at zero and let `MANIFESTMEANS`
-carry the difficulties. Freeing both ends is the same redundancy again.
+hold the difficulties. Freeing both would not be identified, for the same
+reason.
 
-`MANIFESTVAR` must be zero: the logistic link already supplies the
-randomness, and `ctFit()` fixes it for you if you leave it free.
+`MANIFESTVAR` must be zero, because the logistic link already supplies the
+randomness. `ctFit()` fixes it to zero if it is left free.
 
 # Simulating and fitting
 
@@ -137,11 +138,11 @@ ggplot(data.frame(p = c(mean(hardest), guess +
   theme_bw() + labs(x = NULL, y = 'P(correct), hardest item')
 ```
 
-Fitting needs one argument changed between the models — `ASYMPTOTES`. A name
-in place of a number estimates that asymptote, and the same name on every item
-estimates one guessing parameter for the whole test. Per item is possible
-(`cbind(paste0('guess_', items), NA)`) and much harder to estimate; sharing is
-the usual starting point.
+The models differ only in `ASYMPTOTES`. A name in place of a number estimates
+that asymptote, and the same name on every item estimates one guessing
+parameter for the whole test. A guessing parameter per item is possible
+(`cbind(paste0('guess_', items), NA)`) but much harder to estimate, so a
+shared one is the usual starting point.
 
 ```{r fit}
 irtmodel <- function(ASYMPTOTES = NA) {
@@ -176,8 +177,8 @@ three parameter model fits better for the one extra parameter.
 
 # Reading the dynamics
 
-The point of fitting these over time is the process, not the items.
-`ctDiscretePars()` gives the autoregression of ability across intervals:
+The reason to fit these models over time is usually the process.
+`ctDiscretePars()` gives the autoregression of ability across time intervals:
 
 ```{r dynamics, fig.height = 3.6}
 ctDiscretePars(fit3, times = seq(0, 8, .1), plot = TRUE, indices = 'AR',
@@ -186,10 +187,10 @@ ctDiscretePars(fit3, times = seq(0, 8, .1), plot = TRUE, indices = 'AR',
 
 # Four parameters, and when to stop
 
-Naming the second column frees the ceiling as well. Both are reported as the
-probabilities they are, and either can be estimated without the other — a
-ceiling alone, `c(NA, 'ceiling')`, is the model for items that able people
-sometimes slip on but nobody guesses.
+Naming the second column estimates the ceiling as well. Both are reported as
+probabilities, and either can be estimated without the other. A ceiling alone,
+`c(NA, 'ceiling')`, suits items that able people sometimes get wrong but
+nobody can guess.
 
 ```{r fourpl}
 fit4 <- ctFit(d[, c('id', 'time', items)], irtmodel(c('guess', 'ceiling')),
@@ -197,29 +198,29 @@ fit4 <- ctFit(d[, c('id', 'time', items)], irtmodel(c('guess', 'ceiling')),
 round(summary(fit4)$popmeans[c('guess', 'ceiling'), ], 3)
 ```
 
-These data were generated with no ceiling, so the four parameter model is
-fitting one that is not there — worth seeing, because it is the usual
-situation. Asymptotes are weakly informed even in cross-sectional item
-response modelling with large samples, and here the dynamics compete for the
-same information. Three practical points:
+These data were generated without a ceiling, so the four parameter model
+estimates one that is not there, which is a common situation. Asymptotes are
+weakly informed even in cross-sectional item response models with large
+samples, and here the dynamics compete for the same information. Three
+practical points:
 
 * **Share the asymptote across items** unless you have a reason and the data
   to do otherwise.
 * **Use `priors = TRUE`.** The default prior puts the guessing probability
   near 0.18 and the ceiling near 0.95, which is where they belong when the data
   are quiet about them.
-* **Check the fit converged** rather than reading the estimate. A guessing
-  parameter reported without a standard error, or alongside a warning about
-  curvature, is a stopping point rather than an answer.
+* **Check that the fit converged** before reading the estimate. A guessing
+  parameter reported without a standard error, or with a warning about the
+  curvature, has not been estimated.
 
 # Summary
 
-* A free loading on a binary indicator is already a 2PL; naming cells of
+* A binary indicator with a free loading is a 2PL model. Naming cells of
   `ASYMPTOTES` adds a guessing parameter, a ceiling, or both.
 * Fix either one loading or `DIFFUSION` to set the latent scale. The
-  stationary variance cannot be fixed directly, being
+  stationary variance cannot be fixed directly, since it is
   $\text{DIFFUSION}^2/(2|\text{DRIFT}|)$.
 * Keep `CINT` and `T0MEANS` at zero so `MANIFESTMEANS` are the difficulties,
   and leave `MANIFESTVAR` at zero.
-* Share asymptotes across items and fit with priors; treat an asymptote
+* Share asymptotes across items and fit with priors. Treat an asymptote
   without a standard error as not estimated.

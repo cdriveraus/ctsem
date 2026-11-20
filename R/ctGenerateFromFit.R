@@ -10,34 +10,33 @@
 #' @param verboseErrors if TRUE, print verbose output when errors in generation encountered.
 #' @param cores Number of cpu cores to use: R worker processes for a stan fit,
 #' and for a julia fit the engine threads its draws are generated on.
-#' @param intoverstates For \code{backend='julia'} fits: which route generates
-#' the latent states. \code{'fit'} (the default) mirrors the fit, so a
-#' state-explicit fit gets a state-explicit predictive and every other fit
-#' generates through the filter's one-step-ahead predictive: the density the
-#' fit worked with, and the identity that a generated dataset's \code{llrow}
-#' is the likelihood reported while generating it.
+#' @param intoverstates For \code{backend='julia'} fits, how the latent states
+#' are generated. \code{'fit'} (the default) follows the fit. A fit with
+#' explicit states (\code{intoverstates=FALSE}) then generates states
+#' explicitly, and every other fit generates each observation from the Kalman
+#' filter's one-step-ahead prediction, the density the fit used. A generated
+#' dataset's \code{llrow} is then the likelihood under which it was
+#' generated.
 #'
-#' \code{FALSE} simulates the model exactly whatever the fit did: the
-#' trajectory from the process at each subject's own parameters, then each
-#' observation from its measurement model given the state at its row, as
-#' \code{\link{ctGenerate}} does. The two differ for a non-Gaussian indicator
-#' -- where the filter's measurement update is an assumed-density projection
-#' -- or for state-dependent dynamics. Comparing data generated each way, with
-#' the same \code{effects}, separates the fitting approximation from model
-#' misspecification, which comparing either with the observed data tests.
-#' \code{TRUE} forces the filter route.
+#' \code{FALSE} simulates the model directly, whatever the fit used: each
+#' subject's trajectory from the process at its own parameters, and then each
+#' observation from its measurement model given the state, as
+#' \code{\link{ctGenerate}} does. The two differ for non-Gaussian indicators
+#' and for state dependent dynamics, where the filter is an approximation.
+#' Comparing data generated each way, with the same \code{effects}, shows the
+#' effect of that approximation, separately from any misfit of the model to
+#' the observed data. \code{TRUE} always generates through the filter.
 #'
-#' Either way the states are regenerated rather than reused.
-#' @param effects For \code{backend='julia'} fits with random effects:
-#' \code{'population'} (the default) draws new subjects -- and groups, at every
-#' level -- from the fitted population distribution at each parameter draw, so
-#' the generated data are the model's prediction for a new sample from the same
-#' design. \code{'fitted'} keeps the fitted subjects: each at its sampled
-#' effects when the fit sampled them and saved the draws, otherwise at its
-#' conditional mode. A fit that integrates the random effects as states
-#' (\code{intoverpop='augmented'}) carries no per-subject effects, so only
-#' \code{'population'} applies there. Stan fits generate as the fit was
-#' made and refuse the argument.
+#' In all cases the states are generated anew.
+#' @param effects For \code{backend='julia'} fits with random effects.
+#' \code{'population'} (the default) draws new subjects, and groups at every
+#' level, from the fitted population distribution at each parameter draw, so
+#' the generated data are the model's prediction for a new sample with the
+#' same design. \code{'fitted'} keeps the fitted subjects, each at its sampled
+#' effects when the fit sampled and saved them, and otherwise at its
+#' conditional mode. A fit with \code{intoverpop='augmented'} has no
+#' per-subject effects, so only \code{'population'} applies. Stan fits
+#' generate as the fit was made, and give an error if the argument is set.
 #' @return The fit, with a \code{$generated} element: \code{Y}, the generated
 #' data as an array of sample by data row by manifest variable, on the
 #' original time and missingness structure, and \code{llrow}, each generated

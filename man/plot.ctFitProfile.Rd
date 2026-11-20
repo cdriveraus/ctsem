@@ -17,8 +17,9 @@
 \code{x}, invisibly.
 }
 \description{
-One panel per parameter: the drop in log likelihood against the value the
-parameter was held at, with the likelihood-ratio bar drawn across. A curve
-that crosses the bar on both sides has a confidence interval; one that runs
-along the bottom is a direction the data does not determine.
+One panel per parameter, showing the drop in log likelihood against the
+value the parameter was held at, with the likelihood-ratio bar drawn
+across. A curve that crosses the bar on both sides gives a confidence
+interval, and one that stays near zero shows a direction the data do not
+determine.
 }

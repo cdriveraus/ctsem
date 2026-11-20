@@ -1,32 +1,27 @@
-#' Put subjects' levels in the latent processes rather than in the indicators
+#' Put subjects' levels in the latent processes instead of the indicators
 #'
-#' In the usual model a subject's level sits in random manifest intercepts
-#' (\code{MANIFESTMEANS}), so the latent state is the subject's deviation from
-#' it. That is the same model, for linear dynamics, as one whose latent
-#' process carries the level itself through a random latent intercept
-#' (\code{CINT}) -- but not once the dynamics depend on the state: a term that
-#' reads the state reads the deviation in the first, the level in the second.
-#' Persistence that differs near the bottom of a scale, or innovations that
-#' grow with how high a subject usually is, are dependence on the level, which
-#' state dependence written into the first model cannot express and its tests
-#' (\code{\link{ctScoreTest}}) cannot see; \code{ctScoreTest(tests = 'level')}
-#' asks about it between subjects.
+#' In the usual model a subject's level is in random manifest intercepts
+#' (\code{MANIFESTMEANS}), and the latent state is the subject's deviation from
+#' it. For linear dynamics this is the same model as one where the latent
+#' process holds the level itself, through a random latent intercept
+#' (\code{CINT}). The two differ once the dynamics depend on the state, since
+#' a term that uses the state then uses the deviation in the first model and
+#' the level in the second. Persistence that differs near the bottom of a
+#' scale, or innovations that grow with a subject's usual level, depend on the
+#' level, and can only be expressed in the second model.
+#' \code{ctScoreTest(tests = 'level')} tests for such dependence between
+#' subjects.
 #'
-#' For each latent in \code{latents} with a marker -- an indicator whose loading
-#' on it is fixed at 1 and on every other latent at 0 -- whose
-#' \code{MANIFESTMEANS} intercept varies over subjects, the intercept's
-#' variation moves into the latent: \code{CINT} becomes a free parameter,
-#' \code{cint_} and the latent's name, with the intercept's random effect and
-#' predictor effects; the marker's intercept is fixed at 0; and the latent's
-#' initial mean is its stationary one (\code{T0MEANS} \code{'stationary'}), so
-#' a subject starts at their own level. The other indicators' intercepts are
-#' left as they are, fixed or varying. A latent without such a marker, or
-#' whose \code{CINT} is already free, is left as it is, with a message.
-#'
-#' The level then rides on the dynamics: \code{CINT} is the level times the
-#' rate of return to it, so a level's random effect is no longer one an
-#' indicator's filter can integrate on its own, and a fit on the Laplace route
-#' carries it as a coordinate.
+#' The function changes each latent in \code{latents} that has a marker (an
+#' indicator with loading fixed at 1 on that latent and 0 on all others) whose
+#' \code{MANIFESTMEANS} intercept varies over subjects. \code{CINT} becomes a
+#' free parameter, named \code{cint_} and the latent's name, with the
+#' intercept's random effect and predictor effects. The marker's intercept is
+#' fixed at 0, and the latent's initial mean is set to its stationary value
+#' (\code{T0MEANS} \code{'stationary'}), so each subject starts at their own
+#' level. The intercepts of other indicators are left as they are. A latent
+#' without such a marker, or whose \code{CINT} is already free, is left
+#' unchanged, with a message.
 #'
 #' @param ctm A model from \code{ctModel(type = 'ct')}.
 #' @param latents Which latents, by name or position; by default every one.

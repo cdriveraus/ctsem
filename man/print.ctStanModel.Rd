@@ -18,11 +18,10 @@ models small enough to read.}
 \code{x}, invisibly.
 }
 \description{
-Summarises what the model is, what it will estimate, and what its
-individually varying parameters imply, rather than printing the underlying
-list.
+Prints a summary of the model: its type, the parameters it will estimate,
+and its individually varying parameters.
 }
 \details{
-\code{x$pars} remains the canonical specification and can be
-  printed directly; \code{\link{ctModelMatrices}} gives the matrix view.
+The full specification is in \code{x$pars}, which can be printed
+  directly. \code{\link{ctModelMatrices}} gives it as matrices.
 }

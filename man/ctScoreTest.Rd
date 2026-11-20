@@ -22,23 +22,24 @@ ctScoreTest(
 )
 }
 \arguments{
-\item{fit}{A fit from \code{\link{ctFit}} with \code{backend = 'julia'},
-optimised.}
+\item{fit}{An optimised fit from \code{\link{ctFit}} with
+\code{backend = 'julia'}.}
 
-\item{covariates}{Optional data frame of subject-level covariates to test:
-a column named as the fit's subject id (or \code{id}) and one column per
-covariate. Long data with repeated rows per subject is accepted when each
-covariate is constant within subject. Without an id column, one row per
-subject in the fit's subject order.}
+\item{covariates}{Optional data frame of subject level covariates to test,
+with a column named as the fit's subject id (or \code{id}) and one column
+per covariate. Long data with repeated rows per subject can be used if
+each covariate is constant within subject. Without an id column, give one
+row per subject in the fit's subject order.}
 
 \item{tests}{Which families to run: any of \code{'heterogeneity'},
 \code{'covariates'}, \code{'statedependence'}, \code{'volatility'},
-\code{'fixed'}, \code{'level'}, \code{'instability'}. By default all but
-\code{'instability'}; covariates are tested only when \code{covariates} is
-given, and levels only where the model has a random intercept.}
+\code{'fixed'}, \code{'level'} and \code{'instability'}. By default all
+but \code{'instability'}. Covariates are tested only when
+\code{covariates} is given, and levels only where the model has a random
+intercept.}
 
 \item{form}{How a covariate enters: \code{'auto'} (indicators for a factor,
-character or logical covariate; linear otherwise), \code{'linear'},
+character or logical covariate, linear otherwise), \code{'linear'},
 \code{'spline'}, \code{'factor'} or \code{'threshold'} (a step at an
 unknown cut). One value, or one per covariate.}
 
@@ -47,11 +48,10 @@ unknown cut). One value, or one per covariate.}
 \item{parameters}{Optional parameter names to restrict the heterogeneity and
 covariate tests to.}
 
-\item{order}{Highest degree of the state-dependence terms: 2, each drift
-coefficient varying linearly with each state; 3 adds variation with
-products and squares of states, which is what a symmetric dependence --
-regulation that strengthens at both extremes, say -- shows up as, and
-which degree 2 cannot see.}
+\item{order}{Highest degree of the state dependence terms. 2 tests each
+drift coefficient varying linearly with each state. 3 adds variation with
+products and squares of states, which is needed to see a symmetric
+dependence, such as regulation that strengthens at both extremes.}
 
 \item{variance}{\code{'robust'} (the default) or \code{'model'}; see the
 section on variance.}
@@ -60,332 +60,295 @@ section on variance.}
 
 \item{exact}{For \code{statedependence}, \code{volatility} and
 \code{fixed} with the robust variance: how many of each family's terms
-have the fit's estimation removed exactly, which takes two evaluations of
-the extended model per term. Every term is first tested on its scores
-without that correction, which is conservative, and the strongest
-\code{exact} by that test are then corrected (\code{projected} in the
-tables). \code{Inf} corrects every term.}
+are corrected exactly for the estimation of the fitted parameters, which
+takes two evaluations of the extended model per term. Every term is first
+tested without that correction, which is conservative, and the strongest
+\code{exact} terms are then corrected (\code{projected} in the tables).
+\code{Inf} corrects every term.}
 
 \item{intoverpop}{How the extended families (\code{statedependence},
 \code{volatility}, \code{fixed}, \code{level}) integrate the random
-effects on the Laplace route. \code{'laplace'} (the default) takes the
-Laplace term, a fast screen. \code{'quadrature'} integrates every
-subject's random effects by quadrature rules placed at their mode and
-curvature, as the refined fit does (\code{ctFit(intoverpop =
-'quadrature')}), for the scores, their spread and the curvature: no
-Laplace error left in them, at the cost of placing a rule for every
-subject and the extended model's whole Hessian on it. The other families
-read the fit's own objective either way.}
+effects on a Laplace fit. \code{'laplace'} (the default) uses the
+Laplace approximation, a fast screen. \code{'quadrature'} integrates
+every subject's random effects by quadrature, as
+\code{ctFit(intoverpop = 'quadrature')} does, which removes the Laplace
+error from these families and takes longer. The other families use the
+fit's own objective either way.}
 
 \item{cores}{Engine cores for the evaluations.}
 
 \item{verbose}{Report progress.}
 }
 \value{
-An object of class \code{ctScoreTest}: a list with
+An object of class \code{ctScoreTest}, a list with
   \code{heterogeneity} (a data frame, one row per parameter or fixed
-  \code{MANIFESTMEANS} cell),
-  \code{dimension} (the largest eigenvalue, its p-value and the direction,
-  when two or more parameters are tested), \code{blocks} (on a reduced-rank
-  level, \code{dimension}, a row per block, and \code{covariance}, a row
-  per pair of blocks),
+  \code{MANIFESTMEANS} cell), \code{dimension} (the largest eigenvalue, its
+  p-value and the direction, when two or more parameters are tested),
+  \code{blocks} (on a reduced rank level, \code{dimension}, a row per
+  block, and \code{covariance}, a row per pair of blocks),
   \code{covariates} (one element per covariate, each a list of its
   \code{joint} test and a data frame \code{parameters}),
   \code{statedependence} (a list of \code{terms}, a data frame, and
   \code{joint}, the tests per equation and overall), \code{volatility}
-  (the same, for the innovation sds), \code{fixed} (a list
-  of \code{cells} and their \code{joint} test), \code{instability} (a list
-  of \code{parameters}, one row per ordering and parameter, and
-  \code{joint}, per ordering), and \code{info} (the
-  route, the number of subjects and parameters, the variance used, and
-  \code{errors}, why any family was not tested). Tables carry \code{class}
-  where relaxations are alike, and the extended families' \code{projected},
-  whether a term's estimation was removed exactly (see \code{exact}).
+  (the same, for the innovation sds), \code{fixed} (a list of \code{cells}
+  and their \code{joint} test), \code{instability} (a list of
+  \code{parameters}, one row per ordering and parameter, and \code{joint},
+  per ordering), and \code{info} (how the fit integrated its random
+  effects, the number of subjects and parameters, the variance used, and
+  \code{errors}, why any family was not tested). Tables have a
+  \code{class} column where relaxations are alike, and the extended
+  families a \code{projected} column, whether a term was corrected exactly
+  (see \code{exact}).
 }
 \description{
 Tests, from one fitted model and without refitting it, whether the model
-would fit better with a relaxation it does not contain: parameters that
-differ between subjects (an unmodelled random effect), parameters that
-depend on a time independent covariate the model does not include, or
-dynamics that depend on the latent state (a missing nonlinearity). Each test
-is a score (Lagrange multiplier) test: the slope of the log likelihood in
-the direction of the relaxation, at the fitted model, with the fitted
-parameters projected out. Each also gives a one-step estimate of the
-relaxation's size, for screening: refit with the relaxations that matter
-before interpreting their sizes.
+would fit better if it were relaxed: parameters that differ between
+subjects (a missing random effect), parameters that depend on a time
+independent covariate the model does not include, or dynamics that depend
+on the latent state (a missing nonlinearity). Each test is a score
+(Lagrange multiplier) test: the slope of the log likelihood in the
+direction of the relaxation, at the fitted model, with the fitted
+parameters projected out. Each also gives a one-step estimate of the size
+of the relaxation. These estimates are for screening, so refit with the
+relaxations that matter before interpreting their sizes.
 }
 \section{Heterogeneity}{
- For each parameter that is free, does not already
-  vary over subjects, and is not an initial condition (T0MEANS and T0VAR,
-  whose variation T0VAR already carries), the score test of letting it vary
-  as \code{ctFit} would fit it: its variance over subjects together with
-  its covariances with what already varies -- each subject's initial state
-  (the free \code{T0MEANS} parameters) and the parameters with random
-  effects, named in \code{with}. Every subject has an initial state, so
-  even a model without random effects has those covariances to test. They
-  matter: an intercept in \code{CINT} that varies while the initial means
-  are shared makes subjects drift apart from a common start, which data
-  whose subjects differ stably from the first occasion reject, whereas the
-  same intercept correlated with where each subject starts is a random
-  intercept. The covariances are tested as ordinary score tests and the
-  variance, given them, one sided (Stram & Lee, 1994): \code{LM} is
-  referred to an equal mixture of chi-square on \code{df - 1} and
-  \code{df}. Where the new effect is independent of what varies, those
-  covariances only cost power, so \code{p} is the stronger of that test
-  and of the variance alone (\code{z}, one sided, its covariances held at
-  zero), by their smaller p-value, calibrated by resampling subjects. A
-  negative \code{z} beside a large \code{LM} says the parameter varies only
-  together with what already varies, as an intercept does with where each
-  subject starts. Nothing is assumed about how the initial states relate
-  to the dynamics: neither that subjects start at their own equilibrium
-  nor that they share a start. The statistic is the information matrix
-  test in those coordinates, which is the score test for neglected
-  heterogeneity (Chesher, 1984). It responds to any failure of the
-  information equality there, of which subject differences are the usual
-  cause but not the only one: a subject-varying drift also moves the
-  diffusion's test, because both change how much a subject varies, and a
-  missing nonlinearity moves several. \code{sd} is the one-step estimate of
-  the subjects' standard deviation on the raw scale, with the covariances
-  estimated beside it, and \code{sd_natural} approximately on the
-  parameter's own; \code{NA} where the covariances carry the test and the
-  variance given them reads zero, which happens for an intercept, and
-  which only a refit can size. To act on a result, set \code{indvarying = TRUE} for the
-  parameter and the \code{T0MEANS} parameters, refit, and test again;
-  \code{\link{ctModelImprove}} does that.
+ Tests letting each parameter vary over subjects,
+  as \code{ctFit} would fit it, for each free parameter that does not vary
+  already and is not an initial condition (\code{T0MEANS} and
+  \code{T0VAR}). The test covers the parameter's variance over subjects
+  together with its covariances with what already varies: each subject's
+  initial state (the free \code{T0MEANS} parameters) and the parameters
+  with random effects, listed in \code{with}. Even a model without random
+  effects has initial states, so these covariances are tested there too.
+  They matter because a varying \code{CINT} intercept that is unrelated to
+  the initial means makes subjects drift apart from a common start, while
+  the same intercept correlated with each subject's start is a random
+  intercept.
 
-  Each \code{MANIFESTMEANS} cell the model fixes is tested too, as a
-  random intercept on that indicator about its fixed value (rows named
-  \code{MANIFESTMEANS[...]}), from the model with those cells written as
-  parameters. With one indicator per latent such an intercept is a
-  direction the \code{CINT} rows' covariances also reach; with more
-  indicators it is the indicator's own; for a latent with no free
-  intercept at all it is the only test of its level. To act on it, give
-  the cell a parameter with the fixed value as its stated mean
-  (\code{ctPar(mean=)}) and \code{indvarying = TRUE}.
+  The covariances are tested as ordinary score tests, and the variance,
+  given them, as a one sided test (Stram & Lee, 1994), so \code{LM} is
+  referred to an equal mixture of chi-square distributions on
+  \code{df - 1} and \code{df} degrees of freedom. \code{z} is the one sided
+  test of the variance alone, with its covariances held at zero, which has
+  more power when the new effect is independent of what already varies.
+  \code{p} is the smaller of the two tests' p-values, calibrated by
+  resampling subjects. A negative \code{z} beside a large \code{LM} means
+  the parameter varies only together with what already varies, as an
+  intercept does with each subject's start. No assumption is made about how
+  the initial states relate to the dynamics.
 
-  On a reduced-rank level (\code{poprank}), a parameter that varies
-  only through the shared dimensions, without a variance of its own, is
-  tested too: for variation outside those dimensions. There the shared
-  dimensions carry the covariances, and each test is of the variance
-  alone. A parameter whose test the fitted model already determines --
-  under one per cent of its spread left once estimation is taken out, as
-  for an intercept that loads on the shared dimensions -- is not tested
+  The statistic is the information matrix test, which is the score test
+  for neglected heterogeneity (Chesher, 1984). Other misspecification can
+  also move it. A drift that varies over subjects also moves the
+  diffusion's test, for example, and a missing nonlinearity moves several.
+  \code{sd} is the one-step estimate of the subjects' standard deviation on
+  the raw scale, with the covariances estimated alongside, and
+  \code{sd_natural} approximately the same on the parameter's own scale.
+  They are \code{NA} where the test comes from the covariances and the
+  variance alone is estimated as zero, as often happens for an intercept,
+  and then only a refit can give the size. To act on a result, set
+  \code{indvarying = TRUE} for the parameter and the \code{T0MEANS}
+  parameters, refit, and test again. \code{\link{ctModelImprove}} does this.
+
+  Each \code{MANIFESTMEANS} cell the model fixes is also tested, as a
+  random intercept on that indicator around its fixed value (rows named
+  \code{MANIFESTMEANS[...]}). With one indicator per latent this overlaps
+  with the covariances of the \code{CINT} rows, with more indicators it is
+  the indicator's own intercept, and for a latent with no free intercept it
+  is the only test of its level. To act on it, give the cell a parameter
+  with the fixed value as its stated mean (\code{ctPar(mean=)}) and
+  \code{indvarying = TRUE}.
+
+  On a reduced rank level (\code{poprank}), a parameter that varies only
+  through the shared dimensions, without a variance of its own, is tested
+  for variation outside those dimensions. Each such test is of the variance
+  alone. A parameter whose test is already determined by the fitted model,
+  as for an intercept that loads on the shared dimensions, is not tested
   (\code{NA}) and is left out of \code{dimension}.
 
-  \code{dimension} tests every direction at once: whether subjects vary
-  along some combination of the tested parameters, a new dimension of
-  person variation, its covariances with what already varies held at
-  zero. It is not computed over a reduced-rank level's parameters, where
-  in simulation it found a dimension the rank lacked 10 per cent of the
-  time and the per-parameter tests of variation outside the shared
-  dimensions 58 per cent; the level's blocks are tested instead (below).
-  Adding
-  variance along a direction \code{u} changes a subject's log likelihood,
-  at zero, by \code{(u's_i)^2/2 + u'H_iu/2}, so the variances are
-  the diagonal of one score matrix; its largest eigenvalue, scaled by each
-  diagonal's spread, is the statistic, against a bootstrap over subjects,
-  and its eigenvector is the direction, read as relative loadings (raw
-  scale). It can detect variation spread over parameters that no single
-  test singles out, and is less sensitive than the best single test when
-  one parameter carries it.
+  \code{dimension} tests whether subjects vary along some combination of
+  the tested parameters, a new dimension of variation, with its
+  covariances with what already varies held at zero. The statistic is the
+  largest eigenvalue of the standardised score matrix of the variances,
+  tested against a bootstrap over subjects, and its eigenvector gives the
+  direction, as relative loadings on the raw scale. It can detect variation
+  spread over several parameters that no single test picks up, and is less
+  sensitive than the best single test when one parameter carries it. It is
+  not computed over a reduced rank level's parameters, whose blocks are
+  tested instead.
 
-  On a reduced-rank level, \code{blocks} tests what its blocks of shared
-  dimensions (\code{popblocks}; without them, the level as one block) leave
-  out, beside those own variances. \code{blocks$dimension}: within each
-  block with more effects than dimensions, the dimension test over its
-  effects, with the block's fitted loadings projected out -- whether the
-  block needs another shared dimension, which the per-parameter rows, own
-  variances, cannot say. \code{blocks$covariance}: for each pair of blocks,
-  the joint score test, two sided, of the covariances between their
-  dimensions, which the blocks hold at zero -- whether, say, a response
-  style shared by an item's thresholds covaries with the dynamic level. A
-  pair in which one block loads on every effect of the other is not tested,
-  since those covariances are in the model already, and is listed with a
-  note. Both are calibrated by resampling subjects. An effect whose population
-  mean is stated has no coordinate to differentiate along and is left out
-  of both.
+  On a reduced rank level, \code{blocks} tests what its blocks of shared
+  dimensions (\code{popblocks}, or without them the whole level as one
+  block) leave out. \code{blocks$dimension} tests, within each block with
+  more effects than dimensions, whether the block needs another shared
+  dimension, with the block's fitted loadings projected out.
+  \code{blocks$covariance} tests, for each pair of blocks, the covariances
+  between their dimensions, which the model holds at zero. An example is
+  whether a response style shared by an item's thresholds covaries with
+  the dynamic level. A pair in which one block loads on every effect of the
+  other already has these covariances in the model, and is listed with a
+  note but not tested. Both are calibrated by resampling subjects. Effects
+  whose population mean is stated are left out of both.
 }
 
 \section{Covariates}{
- For each covariate, the effects it would have on every
-  tested parameter if added as a time independent predictor (on the raw
-  scale, as a predictor effect acts), including on the population standard
-  deviations of the parameters that vary: a covariate moderating
-  heterogeneity. The \code{joint} test of all of a covariate's effects is the
-  screen. Per parameter, \code{estimate} is the one-step effect per unit of
-  the covariate with the fitted parameters held at their estimates, jointly
-  over the parameters, so a covariate that shifts one parameter is not read
-  off another correlated with it; \code{estimate_natural} puts it
-  approximately on the parameter's own scale, and \code{p} tests it. Holding
-  the fit's parameters is what keeps the size near a refit's: a covariate
-  the model lacks is absorbed by the parameters it has -- a random effect's
-  standard deviation grows to take in a covariate that shifts its mean --
-  and letting them move in a one-step extrapolates the likelihood across
-  that whole change. A covariate enters linearly (centred), as treatment
-  indicators for a factor, or as a natural spline with \code{df} degrees of
-  freedom, for which only \code{p} is given; subjects missing it contribute
-  at the mean. To act on a result, add the covariate to the data and to
-  \code{TIpredNames} and refit.
+ For each covariate, tests the effects it would have on
+  every tested parameter if it were added as a time independent predictor
+  (on the raw scale), including effects on the population standard
+  deviations of the parameters that vary. The \code{joint} test of all of a
+  covariate's effects is the screen. For each parameter, \code{estimate} is
+  the one-step effect per unit of the covariate, estimated jointly over the
+  parameters with the other fitted parameters held at their estimates, so
+  that a covariate that shifts one parameter is not attributed to another
+  that is correlated with it. Holding the other parameters keeps the
+  estimate close to what a refit would give. \code{estimate_natural} gives
+  it approximately on the parameter's own scale, and \code{p} tests it. A
+  covariate enters linearly (centred), as treatment indicators for a
+  factor, or as a natural spline with \code{df} degrees of freedom, for
+  which only \code{p} is given. Subjects with a missing value contribute at
+  the mean. To act on a result, add the covariate to the data and to
+  \code{TIpredNames}, and refit.
 
-  \code{form = 'threshold'} tests a step at an unknown cut instead: the
-  joint test at each cut from the 15th to the 85th percentile, and the
-  largest of them (Andrews, 1993) -- the split a score-guided tree makes --
-  against the same scan with the covariate permuted over subjects (Hothorn
-  & Lausen, 2003), which takes the search into account exactly and refits
-  nothing. The effects reported are those of being above the best cut,
-  \code{cut} in the joint row.
+  \code{form = 'threshold'} tests for a step at an unknown cut instead. The
+  joint test is computed at each cut from the 15th to the 85th percentile,
+  and the largest (Andrews, 1993), which is the split a score based tree
+  makes, is compared with the same scan with the covariate permuted over
+  subjects (Hothorn & Lausen, 2003). This accounts for the search and needs
+  no refitting. The effects reported are those of being above the best
+  cut, given as \code{cut} in the joint row.
 
-  On a reduced-rank level the spread of a varying parameter has no
-  \code{popsd_} coordinate, so a covariate's effect on it is tested along
-  the direction that scales that parameter's row of the loadings and its own
-  sd together, reported as \code{scale(<parameter>)}: the effect on its log
-  standard deviation per unit of the covariate, the correlations held. In
-  simulation (rank 1) these rows rejected 6.5 to 8 per cent of correct
-  models at .05 with 100 subjects and 5 to 6 with 300, where the
-  covariate's joint test held its level: with few subjects the projection
-  on the fitted parameters leaves a variance a little too small. Read them
-  as attribution once the joint test has screened.
+  On a reduced rank level, a covariate's effect on the spread of a varying
+  parameter is tested as a scaling of that parameter's loadings and own sd
+  together, reported as \code{scale(<parameter>)}: the effect on its log
+  standard deviation per unit of the covariate, with the correlations held
+  fixed. With about 100 subjects these rows reject a correct model somewhat
+  too often (6.5 to 8 per cent at .05), so read them only once the
+  covariate's joint test has picked it out.
 }
 
 \section{State dependence}{
  For each latent equation and each pair of
-  latent states \code{k <= m}, the score test of a term \code{d * eta_k *
-  eta_m} in that equation's drift: a drift coefficient that varies linearly
-  with a state, the second-order expansion of a drift that depends on the
-  state (Luukkonen, Saikkonen & Terasvirta, 1988). A term \code{eta_k *
-  eta_m} in the equation of \code{eta_i} is \code{DRIFT[i,k]} varying with
-  \code{eta_m} -- and, when \code{k != m}, equally \code{DRIFT[i,m]} varying
-  with \code{eta_k}; at this order the data cannot tell those apart, and
-  \code{reads} says both. \code{estimate} is the one-step change in that
-  drift coefficient per unit of the state. It is \code{NA} when the fitted model's
-  curvature cannot size the term, which happens when the departure is
-  strong; the test itself is unaffected. \code{order = 3} adds the terms
-  of degree three. The terms are evaluated by the model's own filter at the
-  state predicted from earlier observations, which keeps the test valid; a
-  state estimate that has seen the observation being scored -- the updated
-  or smoothed state -- would not. To act on a result, write the dependence
-  into the drift cell (\code{DRIFT[1,1] = 'dr11 + d * eta2'} with
-  \code{PARS = c('dr11|-log1p_exp(-param)', 'd')}) and refit.
+  latent states \code{k <= m}, tests a term \code{d * eta_k * eta_m} in that
+  equation's drift, that is, a drift coefficient that varies linearly with
+  a state (Luukkonen, Saikkonen & Terasvirta, 1988). A term
+  \code{eta_k * eta_m} in the equation of \code{eta_i} is
+  \code{DRIFT[i,k]} varying with \code{eta_m}, or when \code{k != m}
+  equally \code{DRIFT[i,m]} varying with \code{eta_k}. The data cannot tell
+  these apart, and \code{reads} gives both. \code{estimate} is the one-step
+  change in that drift coefficient per unit of the state. It is \code{NA}
+  when the fitted model cannot size the term, which happens when the
+  departure is strong, and the test itself is still valid.
+  \code{order = 3} adds the terms of degree three. The terms use the state
+  predicted from earlier observations, as the filter does. To act on a
+  result, write the dependence into the drift cell, for example
+  \code{DRIFT[1,1] = 'dr11 + d * eta2'} with
+  \code{PARS = c('dr11|-log1p_exp(-param)', 'd')}, and refit.
 }
 
 \section{Volatility}{
- \code{tests = 'volatility'} asks whether the size of
-  each latent's innovations depends on a state: the score test of
-  \code{DIFFUSION[i, i]}, the innovation sd, scaled by \code{exp(v *
-  eta_m)}, at \code{v = 0}, for every latent with innovations and every
-  state. Variance that rises with a process's own level, as when negative
-  affect is more variable when high, is the diagonal term. Evaluated by the
-  filter at the predicted state, as for state dependence. To act on a
-  result, write the scaling into the cell (\code{DIFFUSION[2,2] = 'sd2 *
-  exp(v * eta2)'} with \code{PARS = c('sd2|log1p_exp(param)', 'v')}) and
-  refit; \code{\link{ctModelImprove}} does that. The terms make the model
-  nonlinear, so the test, and a refit, run the extended Kalman filter.
+ \code{tests = 'volatility'} tests whether the size of
+  each latent's innovations depends on a state, by scaling
+  \code{DIFFUSION[i, i]}, the innovation sd, by \code{exp(v * eta_m)} and
+  testing \code{v = 0}, for every latent with innovations and every state.
+  Variance that rises with a process's own level, as when negative affect
+  is more variable when high, is the diagonal term. As for state
+  dependence, the predicted state is used. To act on a result, write the
+  scaling into the cell, for example
+  \code{DIFFUSION[2,2] = 'sd2 * exp(v * eta2)'} with
+  \code{PARS = c('sd2|log1p_exp(param)', 'v')}, and refit.
+  \code{\link{ctModelImprove}} does this. These terms make the model
+  nonlinear, so the test and a refit use the extended Kalman filter.
 }
 
 \section{Level}{
- \code{tests = 'level'} asks whether a parameter of the
+ \code{tests = 'level'} tests whether a parameter of the
   dynamics or of the error variances depends on a subject's level, where
-  that level is a random intercept: for each free \code{DRIFT},
+  the level is a random intercept. For each free \code{DRIFT},
   \code{DIFFUSION} and \code{MANIFESTVAR} parameter that does not vary over
   subjects, and each \code{MANIFESTMEANS} or \code{CINT} intercept that
-  does, the score test of a term \code{g * intercept} added to the
-  parameter, at \code{g = 0}. When subjects' levels sit in the intercepts,
-  the latent states are deviations from them, so the state dependence and
-  volatility tests, which read the states, see dependence on the deviation
-  only; a parameter that depends on where a subject sits -- persistence or
-  innovation size that differs between people who are usually high and
-  people who are usually low -- shows there only as heterogeneity, in no
-  particular direction. These terms ask about that direction. The score
-  is taken over each subject's posterior for the intercept, from the
-  extended model's own gradient, which the product of a subject's score
-  and estimated level is not. \code{estimate} is the one-step change in the
-  parameter, on its own scale, per unit of the intercept. To act on a
-  result, let the parameter vary over subjects, so its random effect is
-  estimated with its correlation with the intercept;
-  \code{\link{ctModelImprove}} does that. A model with no random intercept
-  has nothing to test.
+  does, it tests a term \code{g * intercept} added to the parameter, at
+  \code{g = 0}. When subjects' levels are in the intercepts, the latent
+  states are deviations from them, so the state dependence and volatility
+  tests only see dependence on the deviation. A parameter that depends on a
+  subject's usual level, such as persistence that differs between people
+  who are usually high and those usually low, otherwise shows only as
+  heterogeneity. \code{estimate} is the one-step change in the parameter,
+  on its own scale, per unit of the intercept. To act on a result, let the
+  parameter vary over subjects, so its correlation with the intercept is
+  estimated. \code{\link{ctModelImprove}} does this. A model with no random
+  intercept has nothing to test.
 }
 
 \section{Fixed cells}{
  For each cell the model fixes at zero that could
-  sensibly be freed -- a \code{DRIFT} cross effect, a \code{DIFFUSION} or
+  sensibly be freed (a \code{DRIFT} cross effect, a \code{DIFFUSION} or
   \code{MANIFESTVAR} covariance between two that have a variance, a
-  \code{LAMBDA} cross loading, a
-  \code{TDPREDEFFECT} -- the score test of freeing it: the modification
-  index (Sorbom, 1989), with \code{estimate} the expected parameter change.
-  \code{CINT} and \code{MANIFESTMEANS} are not offered, since with the
-  other free either is identified only through the initial transient.
-  State dependence, volatility and fixed cells are tested on one extended
-  model, so asking for several costs one preparation.
+  \code{LAMBDA} cross loading, a \code{TDPREDEFFECT}), tests freeing it.
+  This is the modification index (Sorbom, 1989), and \code{estimate} is
+  the expected parameter change. \code{CINT} and \code{MANIFESTMEANS} are
+  not offered, since with the other one free, either is identified only
+  through the initial transient. State dependence, volatility and fixed
+  cells are tested on one extended model, so asking for several costs one
+  preparation.
 }
 
 \section{Stability}{
- \code{tests = 'instability'}, not run unless asked
-  for, tests whether each parameter is stable across the data: ordered by
-  time, and by each latent's state as predicted from earlier observations.
-  It uses each data row's score -- the derivative of its one-step log
-  likelihood -- whose partial sums, under the model, behave as a Brownian
-  bridge in any order fixed in advance (Nyblom, 1989). A parameter that
+ \code{tests = 'instability'}, run only when asked for,
+  tests whether each parameter is stable across the data, with the data
+  ordered by time, and by each latent's state as predicted from earlier
+  observations. It uses each data row's score, whose partial sums behave as
+  a Brownian bridge under the model (Nyblom, 1989). A parameter that
   changes over the study, or differs at high and low levels of a state,
-  bends them. Ordered by a state, that is a test of state dependence of
-  unknown form, beside the polynomial terms of \code{statedependence}. The
-  estimation effect is removed with the information accumulated along the
-  ordering, and the p-values are from a wild bootstrap over rows. It costs a
-  dual pass of the filter per eight parameters, and on the Laplace route one
-  per truncated record of every subject.
+  bends them. Ordered by a state, this is a test of state dependence of any
+  form. The p-values come from a wild bootstrap over rows. It can take a
+  long time on large data.
 }
 
 \section{Alike relaxations}{
- Two relaxations whose per-subject projected
-  contributions are nearly collinear (correlation of 0.9 or more) would
-  each explain the same signal, and the data cannot tell them apart at this
-  order (MacCallum et al., 1993). They share a letter in \code{class};
-  \code{NA} means alike to none. Refit with the most plausible, then test
-  again.
+ Two relaxations whose contributions from each
+  subject are nearly collinear (correlation of 0.9 or more) would explain
+  the same signal, and the data cannot tell them apart (MacCallum et al.,
+  1993). They share a letter in \code{class}, and \code{NA} means alike to
+  none. Refit with the most plausible one, then test again.
 }
 
 \section{Variance and p-values}{
- The fitted model's curvature projects the
-  fitted parameters out of each test and sets the one-step sizes; the
-  variance of each test is, by default (\code{variance = 'robust'}), the
-  spread over subjects of their projected contributions, and its p-value a
-  bootstrap over subjects of the studentised statistic (\code{nboot}
-  resamples, from a fixed stream, so a call is reproducible and leaves the
-  session's random numbers alone). That keeps each test valid when the model
-  is wrong in some other way, which is when a screen is used, and corrects
-  for the skewness of a variance score. \code{variance = 'model'} uses the
-  curvature for the variance and chi-square and normal references instead;
-  it is what is used below 20 subjects, where a spread over subjects is too
-  thin to estimate.
+ By default (\code{variance = 'robust'}) the
+  variance of each test is the spread over subjects of their projected
+  contributions, and its p-value comes from a bootstrap over subjects of
+  the studentised statistic (\code{nboot} resamples, from a fixed random
+  stream, so a call is reproducible and leaves the session's random
+  numbers alone). This keeps each test valid when the model is wrong in
+  other ways. \code{variance = 'model'} uses the fitted model's curvature
+  for the variance and chi-square and normal reference distributions. It
+  is always used with fewer than 20 subjects.
 }
 
 \section{Reading the results}{
  The tests are screens. A badly misspecified
-  model lights up many at once, and their one-step sizes are local
-  approximations -- especially for drift parameters, which act through the
-  matrix exponential. Relax what stands out most, refit, and test again.
-  Within each family \code{p_adj} is the Benjamini-Hochberg adjustment over
-  the tests shown. The tests use the fit's own objective, so they apply to
-  the route it was fitted on (\code{intoverpop}); they are made at an
-  optimum, and refuse a sampled fit. Heterogeneity and covariate tests need
-  subjects as the independent units, so a model with a level above the
-  subject can only be tested for state dependence. A family that cannot be
-  tested on a model says why, as a warning and in \code{info$errors}, and
-  the other families' results stand. With \code{priors = TRUE} the new terms
-  of the extended model would carry the normal(0, 1) prior every parameter
-  has; they are tested on the likelihood, without it.
+  model shows many significant tests at once, and the one-step sizes are
+  local approximations, especially for drift parameters. Relax what stands
+  out most, refit, and test again. Within each family \code{p_adj} is the
+  Benjamini-Hochberg adjustment over the tests shown.
 
-  On the Laplace route the filter integrates a fit's intercept-type random
-  effects exactly where it can, and Laplace approximates only the others
-  (the two-step term; \code{optimcontrol$laplace_onestep} in
-  \code{\link{ctFit}}). The state dependence and volatility families extend
-  the model with terms that read the state, which that filter cannot take;
-  where the fit has random dynamics beside such effects, those families are
-  then computed with the fit and its extension both on the one-step term, a
+  The tests use the fit's own objective, so they are for the
+  \code{intoverpop} it was fitted with. They need an optimised fit, and
+  refuse a sampled one. Heterogeneity and covariate tests need subjects as
+  the independent units, so a model with a level above the subject can
+  only be tested for state dependence. If a family cannot be tested on a
+  model, the reason is given as a warning and in \code{info$errors}, and
+  the other families' results stand. With \code{priors = TRUE}, the new
+  terms are tested on the likelihood, without a prior.
+
+  On a Laplace fit with random dynamics beside random intercepts, the
+  state dependence and volatility families use the one-step Laplace
+  approximation for both the fit and its extension (see
+  \code{optimcontrol$laplace_onestep} in \code{\link{ctFit}}). This is a
   fast screen whose approximation error stays in the scores, and
-  \code{info$onestep} names them. \code{intoverpop = 'quadrature'}
-  integrates every subject's random effects for these families instead,
-  leaving no Laplace error in them (\code{info$quadrature}).
+  \code{info$onestep} names the families concerned.
+  \code{intoverpop = 'quadrature'} integrates every subject's random
+  effects for these families instead (\code{info$quadrature}).
 }
 
 \examples{

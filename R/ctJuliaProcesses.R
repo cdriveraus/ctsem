@@ -173,33 +173,39 @@
 
 #' Julia processes started for ctsem
 #'
-#' Lists the Julia processes on this machine that ctsem started or that
-#' belong to them: this R session's engine, the engines of its sampling
-#' workers, those of other R sessions, and any left running by an R session
-#' that has ended. A Julia process can outlive what it was started for --
-#' Escape leaves one finishing an uninterruptible step in the background, and a
-#' crashed R session leaves its engine running until the engine notices -- so
-#' this is where to look when a machine is busier than it should be.
+#' Lists the Julia processes on this machine that ctsem started: this R
+#' session's engine, the engines of its sampling workers, those of other R
+#' sessions, and any left running by an R session that has ended. A Julia
+#' process can keep running after it is no longer needed, for example after
+#' Escape interrupts a step that cannot be interrupted, or after R crashes.
+#' Look here when the machine is busier than it should be.
 #' \code{\link{ctJuliaKill}} stops them.
 #'
-#' ctsem records each Julia session it starts, which is how its processes are
-#' told from any other Julia. A JuliaConnectoR session it has no record of --
-#' one started by other code, or by a ctsem too old to record it -- is listed
-#' too, as is a Julia process started by one of these (precompiling the engine,
-#' typically). CPU, memory, thread and parent details need the \pkg{ps}
-#' package; without it, only which processes exist and whose they are.
+#' ctsem records each Julia session it starts. Unrecorded JuliaConnectoR
+#' sessions, such as one started by other code or by an older ctsem, are
+#' listed too, as are Julia processes they started (usually to precompile
+#' the engine). CPU, memory, thread and parent details need the \pkg{ps}
+#' package. Without it, only the processes and their owners are listed.
 #'
-#' @param interval Seconds over which to measure CPU use, which is what the
-#'   \code{busy} column reports; \code{0} skips the measurement.
-#' @return A data frame, one row per process, with columns \code{pid};
-#'   \code{role} (\code{"this session"}, \code{"worker of this session"},
-#'   \code{"another R session"}, \code{"orphaned"} for one whose R session has
-#'   ended, \code{"JuliaConnectoR, unrecorded"}, or \code{"child of <pid>"});
-#'   \code{busy} and \code{cpu_percent} over \code{interval};
-#'   \code{cpu_seconds}; \code{memory_mb}; \code{julia_threads}, the Julia
-#'   thread count ctsem started it with; \code{os_threads}; \code{r_pid}, the
-#'   R process it serves; \code{started}; and \code{note}, which says when
-#'   this session's engine is still finishing an interrupted call.
+#' @param interval Seconds over which to measure CPU use, reported in the
+#'   \code{busy} column. \code{0} skips the measurement.
+#' @return A data frame with one row per process, and columns:
+#' \describe{
+#'   \item{\code{pid}}{The process id.}
+#'   \item{\code{role}}{\code{"this session"}, \code{"worker of this
+#'   session"}, \code{"another R session"}, \code{"orphaned"} (its R session
+#'   has ended), \code{"JuliaConnectoR, unrecorded"}, or
+#'   \code{"child of <pid>"}.}
+#'   \item{\code{busy}, \code{cpu_percent}}{CPU use over \code{interval}.}
+#'   \item{\code{cpu_seconds}, \code{memory_mb}}{CPU time and memory used.}
+#'   \item{\code{julia_threads}}{The number of Julia threads ctsem started it
+#'   with.}
+#'   \item{\code{os_threads}}{The number of operating system threads.}
+#'   \item{\code{r_pid}}{The R process it serves.}
+#'   \item{\code{started}}{When it started.}
+#'   \item{\code{note}}{Says when this session's engine is still finishing an
+#'   interrupted call.}
+#' }
 #' @seealso \code{\link{ctJuliaKill}}, \code{\link{ctJuliaStatus}}
 #' @examples
 #' \donttest{
@@ -295,14 +301,14 @@ ctJuliaProcesses <- function(interval = 0.5) {
 #' Stops the Julia processes \code{\link{ctJuliaProcesses}} lists. By default
 #' only those left by R sessions that have ended, which nothing can be using.
 #'
-#' @param which Which to stop: \code{"orphaned"} (the default) for processes
-#'   whose R session has ended; \code{"session"} for this R session's engine,
-#'   which the next julia call replaces with a new one (losing what it had
-#'   compiled); \code{"workers"} for this session's sampling workers --
-#'   the pool of background R sessions that sampling with
-#'   \code{processes = TRUE} warms and keeps for the next call, released
-#'   here with their Julia processes; \code{"mine"} for all three; \code{"all"} for every process listed,
-#'   including the engines of other running R sessions, which then fail.
+#' @param which Which to stop. \code{"orphaned"} (the default) stops processes
+#'   whose R session has ended. \code{"session"} stops this R session's
+#'   engine, which the next julia call replaces with a new one that has to
+#'   compile again. \code{"workers"} stops this session's sampling workers,
+#'   the background R sessions that sampling with \code{processes = TRUE}
+#'   keeps for the next call, with their Julia processes. \code{"mine"} stops
+#'   all three, and \code{"all"} every process listed, including the engines
+#'   of other running R sessions, which then fail.
 #' @param pid Process ids to stop instead of choosing by \code{which}. Only
 #'   processes \code{ctJuliaProcesses()} lists can be stopped this way.
 #' @param ask Whether to ask before stopping another R session's engine, as

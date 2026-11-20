@@ -13,76 +13,65 @@ ctJuliaSetup(
 )
 }
 \arguments{
-\item{project}{Optional local ContinuousTimeSEM.jl checkout to use instead of
-the copy that ships with ctsem. Rarely needed: the engine is part of ctsem
-and is edited in place under \code{inst/julia/}.}
+\item{project}{Optional local ContinuousTimeSEM.jl checkout to use instead
+of the copy that ships with ctsem. Rarely needed, mainly for development.}
 
 \item{julia_bin}{Optional Julia binary directory.}
 
-\item{threads}{Number of Julia threads, fixed for the life of the session.
-The engine splits its subject loop across them, and \code{ctFit}'s
-\code{cores} cannot exceed this count: Julia fixes it at process start, so
-setting it here takes effect only if no Julia session is running yet --
-pass \code{force = TRUE} to restart one. \code{NULL}, the default, starts
-a session at \code{getOption("mc.cores", 2)} threads unless
-\code{JULIA_NUM_THREADS} is set; a session started by a call with a
-\code{cores} argument -- a fit, \code{ctFitUncertainty}, \code{ctLOO} and
-the rest -- is instead as wide as that call's \code{cores}, if more. A
-number given here is also the ceiling for any call that sets none. A fit
-that asks for more cores than
-the session has threads says so; see \code{\link{ctFit}}.}
+\item{threads}{Number of Julia threads. Julia fixes this when the session
+starts, so it takes effect only if no Julia session is running yet, or
+with \code{force = TRUE}, which restarts the session. \code{ctFit}'s
+\code{cores} cannot exceed it. \code{NULL}, the default, starts a session
+with \code{getOption("mc.cores", 2)} threads unless
+\code{JULIA_NUM_THREADS} is set, or with the \code{cores} of the call
+that starts the session if that is more. A number given here is also the
+most threads used by calls that do not set \code{cores}. A fit that asks
+for more cores than the session has threads says so (see
+\code{\link{ctFit}}).}
 
 \item{force}{Reconfigure an existing Julia session.}
 
-\item{agree}{\code{TRUE} to consent to instantiating the engine's Julia
+\item{agree}{\code{TRUE} to consent to installing the engine's Julia
 package dependencies without being asked, \code{FALSE} to refuse.
 \code{NULL}, the default, asks in an interactive session and refuses
-otherwise; see \code{\link{ctJuliaInstall}}.}
+otherwise (see \code{\link{ctJuliaInstall}}).}
 }
 \value{
 A Julia-engine status list, invisibly.
 }
 \description{
-Prepares the copy of ContinuousTimeSEM.jl that ships inside this ctsem
-installation. The engine source itself is vendored in \code{inst/julia/} --
-no repository credentials and no network access are involved in getting
-that -- but its Julia package dependencies still have to be instantiated,
-which reaches the network on a machine where they are not already cached.
-That step is consent-gated exactly as in \code{\link{ctJuliaInstall}}: asked
-for interactively, skipped with a message when the environment is already
-instantiated, and declined by default in a non-interactive session unless
-\code{agree = TRUE} or \code{CTSEM_JULIA_AGREE=yes} said otherwise in
-advance.
+Prepares the Julia engine (ContinuousTimeSEM.jl) that ships with ctsem.
+The engine's Julia package dependencies have to be installed, which needs
+the network on a machine where they are not already present. As with
+\code{\link{ctJuliaInstall}}, ctsem asks before downloading in an
+interactive session, skips the step with a message when the dependencies
+are already installed, and declines in a non-interactive session unless
+\code{agree = TRUE} or the environment variable
+\code{CTSEM_JULIA_AGREE=yes} is set.
 }
 \details{
-The first call downloads and precompiles those dependencies (roughly 120 MB)
-and compiles the engine, which takes several minutes; later calls in new
-sessions reuse both.
-
-The engine is compiled in advance, by fitting a small model on each route,
-and every model of a route runs that same compiled code: a model's sizes,
-parameters and state-dependent cells are data to the engine rather than part
-of its types. So the first fit of a new model in a session compiles little,
-and takes seconds more than later fits rather than minutes. A model with a
-categorical indicator, or a Laplace unit with more than four random effects,
-compiles a little more the first time. \code{ctFit(forcerecompile = TRUE)}
-compiles a heavily state-dependent model's expressions for faster gradients,
-at a minute or more of compile.
+The first call downloads and precompiles the dependencies (roughly 120 MB)
+and compiles the engine, which takes several minutes. Later sessions reuse
+both, and the first fit of a new model in a session then takes only
+seconds longer than later fits. Models with a categorical indicator, or
+with more than four random effects per subject under the Laplace
+approximation, compile a little more the first time.
+\code{ctFit(forcerecompile = TRUE)} compiles a heavily state-dependent
+model for faster gradients, at the cost of a minute or more of compiling.
 
 Pressing Escape (or Ctrl-C) during a julia fit returns to the R prompt at
 once, and keeps the Julia session and everything it has compiled. Julia
-stops the interrupted work at its next iteration; work that has no
-iterations, such as compiling for a new model shape, finishes in the
-background. If it is still running when the next julia call starts, that
-call says so and waits, and Escape during that wait stops Julia outright.
+stops the interrupted work at its next iteration. Work without iterations,
+such as compiling for a new model, finishes in the background, and if it
+is still running when the next julia call starts, that call says so and
+waits. Escape during that wait stops Julia completely.
 \code{\link{ctJuliaProcesses}} lists the Julia processes ctsem has running,
 including any left by R sessions that have ended, and
 \code{\link{ctJuliaKill}} stops them.
 
-If \pkg{JuliaConnectoR} or Julia itself is missing, this offers to install it
-rather than failing -- the same thing \code{\link{ctJuliaInstall}} does, which
-is the function to reach for when setting the backend up deliberately, or
-from a script.
+If \pkg{JuliaConnectoR} or Julia itself is missing, this offers to install
+it, as \code{\link{ctJuliaInstall}} does. Use \code{ctJuliaInstall} to set
+up the backend deliberately, or from a script.
 }
 \examples{
 \dontrun{

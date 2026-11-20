@@ -5,53 +5,53 @@
 ## 14/10/2026
 ### 4.0.0
 
-A major release: ctsem gains a second estimation engine, written in Julia, which most of what is new below needs. It is now `ctFit()`'s default; use `backend='stan'` for the previous behaviour.
+A major release. ctsem has a second estimation engine, written in Julia, which most of the new features below need and which is now the default for `ctFit()`. Use `backend='stan'` for the previous behaviour.
 
-- New `backend='julia'` for `ctFit()`: an extended Kalman filter engine with an exact gradient and Hessian, threaded over subjects. `ctJuliaInstall()` sets up whatever is missing, asking before it downloads anything, and `ctJuliaStatus()`, `ctJuliaSetup()`, `ctJuliaProcesses()` and `ctJuliaKill()` manage its sessions.
-- Random effects on any parameter -- variances, nonlinear dynamics and non-Gaussian indicators included -- are integrated by a Laplace approximation (`intoverpop='laplace'`, the default when optimising), exactly where they shift a mean in a linear Gaussian model, and corrected by adaptive quadrature when fitted. Julia backend only.
-- Nested grouping levels, as `id=c('person','couple')`, with each parameter's `indvarying` naming the levels it varies at and `poprank` set per level. Julia backend only.
-- Ordinal, count and censored indicators, and lower and upper asymptotes for binary ones (`ASYMPTOTES` in `ctModel()`). Julia backend only.
-- Posterior sampling with `ctFit(backend='julia', optimize=FALSE)`, or after an optimised fit with `ctFitUncertainty(fit, 'sample')`, running until target effective sample sizes and R-hat are reached.
-- Smooth effects of time independent predictors, `ctModel(TIpredNames = ~ s(age) + sex)`, with their smoothness estimated from the data; `ctTIpredEffects(fit, whichTIpreds = 'age')` draws them with each person's own values. Julia backend only.
-- Sampling weights, one per subject, with `ctFit(weights=)`: a weighted pseudo-likelihood with robust standard errors, described in the new sampling weights vignette. Julia backend only.
-- `ctFitUncertainty()` is the new name of `ctOptimUncertainty()`, which remains, and adds `'sample'`, `'stored'` to redraw from the covariance a fit carries, and importance sampling against the quadrature or particle filter likelihood (`intoverpop='quadrature'`, `filter='particle'`).
-- New `uncertainty='checked'`: the Hessian's normal approximation, checked, and importance sampled where it is wrong. `uncertainty='surrogate'` is removed; use `'checked'`.
-- On the julia backend, missing values of time independent predictors are imputed when optimising and sampled when sampling, and `nlcontrol$nsubsteps='auto'` sets a nonlinear model's integration steps from its own error.
+- New `backend='julia'` for `ctFit()`, with exact gradients and Hessians, using multiple cores. `ctJuliaInstall()` installs Julia and the engine, asking before each download, and `ctJuliaStatus()`, `ctJuliaSetup()`, `ctJuliaProcesses()` and `ctJuliaKill()` manage Julia sessions.
+- Random effects on any parameter, including variances, nonlinear dynamics and non-Gaussian indicators, are integrated with a Laplace approximation (`intoverpop='laplace'`, the default when optimising). Each fit checks the approximation, and `intoverpop='quadrature'` refines the fit where needed. Julia backend only.
+- Nested grouping levels, such as `id=c('person','couple')`. Each parameter's `indvarying` names the levels it varies at, and `poprank` can be set per level. Julia backend only.
+- Ordinal, count and censored indicators, and lower and upper asymptotes for binary indicators (`ASYMPTOTES` in `ctModel()`). Julia backend only.
+- Posterior sampling with `ctFit(backend='julia', optimize=FALSE)`, or with `ctFitUncertainty(fit, 'sample')` after an optimised fit. Sampling continues until the target effective sample size is reached.
+- Smooth effects of time independent predictors, such as `ctModel(TIpredNames = ~ s(age) + sex)`, with the smoothness estimated from the data. `ctTIpredEffects(fit, whichTIpreds = 'age')` shows the estimated effect. Julia backend only.
+- Sampling weights, one per subject, with `ctFit(weights=)`. Fits maximise the weighted pseudo-likelihood and report robust standard errors. See the sampling weights vignette. Julia backend only.
+- `ctOptimUncertainty()` is renamed `ctFitUncertainty()`, and the old name still works. New methods include `'sample'`, `'stored'` to draw again from the covariance stored with a fit, and importance sampling against the quadrature or particle filter likelihood (`intoverpop='quadrature'`, `filter='particle'`).
+- New `uncertainty='checked'`, which checks the Hessian's normal approximation and uses importance sampling where it does not hold. `uncertainty='surrogate'` is removed. Use `'checked'` instead.
+- On the julia backend, missing values of time independent predictors are imputed when optimising and sampled when sampling, and `nlcontrol$nsubsteps='auto'` chooses the number of integration steps for a nonlinear model.
 - `ctFit(stationary=TRUE)` works again, with `backend='julia'`.
-- Model matrix cells accept a named form, `'mm, indvarying=TRUE, sdscale=0.5'`, as well as `'mm||TRUE|0.5'`; `ctPar()` builds either, and `ctCov()` writes a covariance matrix as cells.
-- Covariance matrices are parameterised by a matrix logarithm, so every positive definite matrix is reachable; `model$covmattransform='rawcorr'` for the previous parameterisation.
-- A parameter named in cells whose default transforms differ, such as a DRIFT diagonal and an off-diagonal, is now refused rather than transformed differently in each.
-- New checks: `ctReport()` runs the reporting and checking functions over a fit and writes a folder; `ctIdentify()` and `ctFitProfile()` for identification, on the julia backend; `ctLaplaceCheck()` and `ctParticleLik()` for the approximations a julia fit makes; `ctTracePlot()` for a julia fit's optimisation or chains.
-- New views of the dynamics: `ctNetwork()` and `ctNetworkPlot()`, `ctPhasePortrait()`, `ctStateDependencePlot()` and `ctVarianceDecomposition()`.
-- Posterior predictive checking is consolidated in `ctPostPredPlots()`, with panels for the mean trajectory and the lagged covariance; `ctFitCovCheck()` is renamed `ctFitCheckCov()`, the old name still available, and splits by group.
+- Model matrix cells accept a named form, `'mm, indvarying=TRUE, sdscale=0.5'`, as well as `'mm||TRUE|0.5'`. `ctPar()` writes either form, and `ctCov()` writes a covariance matrix as cells.
+- Covariance matrices are parameterised by a matrix logarithm, so any positive definite matrix can be reached. Use `model$covmattransform='rawcorr'` for the previous parameterisation.
+- A parameter used in cells with different default transforms, such as a DRIFT diagonal and an off-diagonal, now gives an error. Previously each cell transformed it differently.
+- New checks: `ctReport()` runs the reporting and checking functions on a fit and saves the results to a folder. `ctIdentify()` and `ctFitProfile()` check identification on the julia backend, `ctLaplaceCheck()` and `ctParticleLik()` check the approximations a julia fit makes, and `ctTracePlot()` plots a julia fit's optimisation or chains.
+- New plots of the dynamics: `ctNetwork()`, `ctNetworkPlot()`, `ctPhasePortrait()`, `ctStateDependencePlot()` and `ctVarianceDecomposition()`.
+- Posterior predictive checks are combined in `ctPostPredPlots()`, with panels for the mean trajectory and the lagged covariance. `ctFitCovCheck()` is renamed `ctFitCheckCov()` and can split by group. The old name still works.
 - `ctLOO(method='psis')` cross-validates a Laplace fit without refitting.
-- `coef()`, `vcov()`, `logLik()`, `print()` and `anova()`, a likelihood-ratio test table for nested fits, for fits from either backend; `summary()`, `plot()` and `ctPlotPosterior()` for julia fits.
-- `ctChisqTest()` compares log likelihoods, not log posteriors, for fits made with `priors=TRUE`.
-- `ctGenerate(fromPriors=TRUE)` draws datasets from a model's prior predictive, without a fit or data, and `ctGenerateFromPriors()` is deprecated in its favour; `ctGenerate(backend='julia')` generates random effects at every level, nonlinear dynamics and non-Gaussian indicators, fills in a given design with `datastruct=`, and takes population values on the scales `summary()` reports with `values=`.
-- `ctGenerate()`'s `n.subjects` is now `n`, one count per id level; `n.subjects` still works, with a warning.
-- ACF plots fit a precision weighted spline by default, `method='weighted'`; `method='quantile'` for the previous plot.
-- Functions that run fits or engine loops default to `cores=getOption('mc.cores', 2)`, as `ctFit()` does. For `ctOptimUncertainty()`, `ctFitCovCheck()` and `ctKalmanArray()` that is up from one; `cores=1` for the previous behaviour.
-- When sampling, `ctFit()` uses `getOption('mc.cores', 2)` cores by default rather than one per chain; `cores='maxneeded'` for the previous behaviour.
-- `uncertainty='is'` samples adaptively, finding skewed and curved tails the curvature misses, and warns when the Pareto k of its weights exceeds 0.7; its effective sample target is now 200, `optimcontrol$isESS=100` for the previous.
-- `ctDiscretePars()`, `ctPredictTIP()`, `ctExtract()` and `ctKalmanArray()` take subjects as the ids in the data, as `ctPredict()` does; `realid=FALSE` for the previous behaviour.
-- `ctDiscretePars()`'s `observational` is deprecated in favour of `impulseType`: `'unit'` replaces `observational=FALSE` and `'observed'` replaces `observational=TRUE`.
-- For a model whose dynamics depend on the state, `ctDiscretePars()` on a julia fit exponentiates the drift's Jacobian at the evaluation point, the model linearised there, rather than DRIFT's value there; `ctSummaryMatrices(fit, state=)$DRIFT` is the latter.
-- `ctFit()`'s `iter`, `chains` and `control` are deprecated in favour of entries of `sampleControl`, and still honoured with a warning.
-- `ctModelCoverage_check()` is renamed `ctCoverageCheck()`, with camelCase arguments; the old name is defunct.
-- `ctCheckFit()` is defunct; `ctPostPredPlots()` and `ctFitCheckCov()` replace it.
-- `ctFitUpdateModel()` and `ctStanUpdModel()` are defunct; use `ctFitUpdate()`.
+- `coef()`, `vcov()`, `logLik()`, `print()` and `anova()`, a likelihood ratio test table for nested fits, work for fits from either backend, and `summary()`, `plot()` and `ctPlotPosterior()` for julia fits.
+- For fits made with `priors=TRUE`, `ctChisqTest()` now compares log likelihoods. It compared log posteriors before.
+- `ctGenerate(fromPriors=TRUE)` generates data sets from a model's prior predictive distribution, without a fit or data, and `ctGenerateFromPriors()` is deprecated. `ctGenerate(backend='julia')` generates random effects at every level, nonlinear dynamics and non-Gaussian indicators. It fills in a given design with `datastruct=`, and takes population values with `values=`, on the scales `summary()` reports.
+- `ctGenerate()`'s `n.subjects` is now `n`, one count per id level. `n.subjects` still works, with a warning.
+- ACF plots fit a precision weighted spline by default, `method='weighted'`. Use `method='quantile'` for the previous plot.
+- Functions that run fits or engine loops use `cores=getOption('mc.cores', 2)` by default, as `ctFit()` does. For `ctOptimUncertainty()`, `ctFitCovCheck()` and `ctKalmanArray()` this is up from one. Use `cores=1` for the previous behaviour.
+- When sampling, `ctFit()` uses `getOption('mc.cores', 2)` cores by default. It used one per chain before. Use `cores='maxneeded'` for the previous behaviour.
+- `uncertainty='is'` samples adaptively, and warns when the Pareto k of its weights exceeds 0.7. Its effective sample size target is now 200. Use `optimcontrol$isESS=100` for the previous target.
+- `ctDiscretePars()`, `ctPredictTIP()`, `ctExtract()` and `ctKalmanArray()` select subjects by their ids in the data, as `ctPredict()` does. Use `realid=FALSE` for the previous behaviour.
+- `ctDiscretePars()`'s `observational` is deprecated in favour of `impulseType`. `'unit'` replaces `observational=FALSE` and `'observed'` replaces `observational=TRUE`.
+- For a model whose dynamics depend on the state, `ctDiscretePars()` on a julia fit now uses the drift's Jacobian at the evaluation point, which is the model linearised there. `ctSummaryMatrices(fit, state=)$DRIFT` gives DRIFT's value at that point.
+- `ctFit()`'s `iter`, `chains` and `control` are deprecated in favour of entries of `sampleControl`. They still work, with a warning.
+- `ctModelCoverage_check()` is renamed `ctCoverageCheck()`, with camelCase arguments. The old name is defunct.
+- `ctCheckFit()` is defunct, replaced by `ctPostPredPlots()` and `ctFitCheckCov()`.
+- `ctFitUpdateModel()` and `ctStanUpdModel()` are defunct. Use `ctFitUpdate()`.
 - The `vb` argument of `ctFit()` (Stan's variational inference) is removed.
-- Fixed: standard errors along a direction the data do not identify were set by rounding rather than by the data, and could inflate those of other parameters; such parameters are now reported as unidentified.
+- Fixed: standard errors for combinations of parameters the data do not identify came from numerical rounding, and could inflate the standard errors of other parameters. Such parameters are now reported as unidentified.
 - Fixed: computing quantities over several posterior draws with `cores > 1` could stop with a Stan exception, or return draws out of order, in `ctGenerateFromPriors()`, `ctKalman()`, `ctPredict()` and `plot()`.
 - Fixed: `backend='stan'` with `optimcontrol$estonly=TRUE` failed for models with time independent predictors, which also stopped `ctLOO()`.
-- Fixed: a time independent predictor effect fixed to a value, such as `age=0.5`, was ignored by `backend='stan'`; it is now refused there, and fitted by `backend='julia'`.
+- Fixed: a time independent predictor effect fixed to a value, such as `age=0.5`, was ignored by `backend='stan'`. Stan now gives an error for such effects, and `backend='julia'` fits them.
 - Fixed: with `backend='stan'`, a continuous time model whose DIFFUSION differed between subjects while DRIFT did not used the previous subject's diffusion for a subject whose first time interval equalled the previous subject's last.
 - Fixed: `ctACF()` and `ctACFresiduals()` dropped lag 0 from cross correlations.
-- Fixed: `ctACF()` and `ctACFresiduals()` counted pairs of observations at the wrong time lags unless every time fell on the time step's grid, which could show large spurious correlations; `ctDiscretiseData()` left such times off its grid, and shifted every time by an offset.
+- Fixed: `ctACF()` and `ctACFresiduals()` counted pairs of observations at the wrong time lags unless every time fell on the time step's grid, which could show large spurious correlations. `ctDiscretiseData()` left such times off its grid, and shifted every time by an offset.
 - Fixed: `ctDiscretePars()` given subjects out of ascending order labelled each subject's results with another's id.
-- Fixed: `ctIntervalise()` read columns by position, so wide data with ctsem's column names in another order had values moved to the wrong variable and occasion; such columns are now put in order by name. It also set observations at other occasions to missing where an occasion's time was missing.
+- Fixed: `ctIntervalise()` read columns by position, so wide data with ctsem's column names in another order had values moved to the wrong variable and occasion. Columns are now matched by name. It also set observations at other occasions to missing where an occasion's time was missing.
 - Fixed: `ctPredictTIP()`'s dynamics panels gave curves each other's labels when two or more moderator values were negative, as for a centred moderator, and with several predictors could show another predictor's curves.
-- Fixed: data values that do not read as numbers were treated as missing; `ctFit()` now stops and names them.
+- Fixed: data values that do not read as numbers were treated as missing. `ctFit()` now stops and names them.
 - Fixed: in a nonlinear model, a cell using `min()` or `max()` of a state was linearised as if it did not depend on that state.
 - Fixed: `ctGenerate()` stopped with an error for a model with a DRIFT diagonal of 0, such as a linear trend.
 

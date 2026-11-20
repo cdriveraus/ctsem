@@ -18,57 +18,57 @@ ctPar(
 parameter, which is how equality constraints are written.}
 
 \item{transform}{Transform expression in terms of \code{param}, e.g.
-\code{'exp(param)'}. Omitted leaves the default for that matrix, which
-depends on the cell -- a variance, a drift diagonal and a mean all differ.}
+\code{'exp(param)'}. If omitted, the default for that matrix and cell is
+used, which differs between, for example, variances, drift diagonals and
+means.}
 
 \item{indvarying}{Where the parameter varies: \code{TRUE} at every level of
 the model's \code{id} hierarchy, \code{FALSE} at none, or the names of the
 levels it varies at. With \code{id = c('person', 'couple')} in
 \code{\link{ctModel}}, \code{indvarying = 'couple'} gives a parameter
-that differs between couples but not between the persons within one, and
-\code{TRUE} is the same as \code{c('person', 'couple')}. With a single id
-the two forms mean the same thing. The model's \code{pars$indvarying}
-column holds the same values and may be edited directly.}
+that differs between couples but not between the persons within a couple,
+and \code{TRUE} is the same as \code{c('person', 'couple')}. With a
+single id the two forms mean the same thing. The model's
+\code{pars$indvarying} column holds the same values and may be edited
+directly.}
 
 \item{sdscale}{Multiplier on the population standard deviation's prior, at
 every level where the parameter varies. Only meaningful when it varies.}
 
-\item{tipreds}{Time-independent predictors acting on this parameter: a
+\item{tipreds}{Time independent predictors acting on this parameter, as a
 character vector of names for effects to estimate, e.g. \code{'age'} or
-\code{c('age', 'sex')}. Naming any predictor switches the rest off for
-this cell, so the list is the whole set of effects on it. A name must be
-one of the model's \code{TIpredNames}; anything else is an error when the
-model is built. \code{character(0)} (or \code{tipreds=} with nothing
-after it, in a cell) means no predictor acts on this cell, which is not
-the same as leaving the argument out -- that keeps the model's default.}
+\code{c('age', 'sex')}. Naming any predictor turns the others off for
+this cell, so the list is the full set of effects on it. Each name must be
+one of the model's \code{TIpredNames}, or building the model gives an
+error. \code{character(0)} (or \code{tipreds=} with nothing after it, in a
+cell) means no predictor acts on this cell. Leaving the argument out keeps
+the model's default.}
 
-\item{mean}{A population mean stated rather than estimated, for a parameter
-that varies (\code{indvarying}): a number on the scale
-\code{summary()} reports population means on. Only the random effects
-about it are then fitted, as for a person-level intercept with mean zero.
-Written into the cell as \code{'name=value|...'}, and held by the model
-in \code{fixedpopmeans}, a named vector that may also be set directly.
-Fits with \code{backend = 'julia'}.}
+\item{mean}{A fixed population mean for a parameter that varies
+(\code{indvarying}), on the scale \code{summary()} reports population
+means on. Only the random effects around it are then estimated, as for a
+person-level intercept with mean zero. Written into the cell as
+\code{'name=value|...'}, and stored on the model in
+\code{fixedpopmeans}, a named vector that may also be set directly. Needs
+\code{backend = 'julia'}.}
 }
 \value{
 A single character string, suitable for a model matrix cell.
 }
 \description{
-Builds the \code{|}-separated cell specification ctsem's model matrices use,
-from named arguments rather than positional fields.
+Builds the \code{|}-separated cell specification that ctsem's model
+matrices use, from named arguments.
 }
 \details{
-The output is the same string the \code{|} syntax produces, so this
-  is a way of writing one rather than an alternative to it. Fields left at
-  their default are emitted empty, which is what the parser reads as
-  "unspecified".
+The output is the same string the \code{|} syntax produces. Fields
+  left at their default are left empty, which the parser reads as
+  unspecified.
 
   The same named fields can also be written directly into a model matrix
-  cell, in which case nothing needs to be called. A cell containing
-  \code{|} is read as a \code{|}-separated specification; otherwise a cell
-  with a field of the form \code{name=value} is read as a named
-  specification, and anything else as a plain parameter name. All three of
-  these specify the same parameter:
+  cell. A cell containing \code{|} is read as a \code{|}-separated
+  specification. Otherwise a cell with a field of the form
+  \code{name=value} is read as a named specification, and anything else as
+  a plain parameter name. These three specify the same parameter:
 
   \preformatted{
   MANIFESTMEANS = matrix('mm||TRUE|0.5')
@@ -76,17 +76,16 @@ The output is the same string the \code{|} syntax produces, so this
   MANIFESTMEANS = matrix('mm, indvarying=TRUE, sdscale=0.5')
   }
 
-  In the named form, fields are separated by commas (commas inside brackets
-  belong to the value, so \code{transform=pnorm(param, 0, 1)} is one field),
-  the parameter name comes first, and several predictors or levels are given
-  as \code{tipreds=c(age, sex)} or \code{indvarying=c(person, couple)}; in
-  the \code{|} form they are separated by commas, as in
-  \code{'cross||person,couple'}. A field name that is not one of the above is
-  an error naming the nearest valid field, so a misspelling such as
-  \code{topreds=age} is refused rather than becoming part of a parameter
-  name. Comparisons are unaffected: a state-dependent cell may contain
-  \code{==}, \code{>=}, \code{<=} or \code{!=}, and a named argument
-  inside a call belongs to the value it appears in.
+  In the named form, fields are separated by commas, the parameter name
+  comes first, and several predictors or levels are given as
+  \code{tipreds=c(age, sex)} or \code{indvarying=c(person, couple)}. Commas
+  inside brackets belong to the value, so \code{transform=pnorm(param, 0,
+  1)} is one field. In the \code{|} form, several values are separated by
+  commas, as in \code{'cross||person,couple'}. An unknown field name is an
+  error that names the nearest valid field, so a misspelling such as
+  \code{topreds=age} is caught. Comparisons in a state dependent cell
+  (\code{==}, \code{>=}, \code{<=}, \code{!=}) and named arguments inside a
+  function call are read as part of the value.
 }
 \examples{
 ctPar('mm', indvarying = TRUE)

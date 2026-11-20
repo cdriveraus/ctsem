@@ -21,11 +21,10 @@ ctExtract(
 optimized with its approximate posterior draws.}
 
 \item{subjectMatrices}{Calculate subject specific system matrices? On a
-\code{backend='julia'} fit whose random effects are coordinates
-(\code{intoverpop='laplace'}, or a sampled fit), each draw's subject
-matrices are at that draw's plausible values -- the population draw with a
-draw of the subject's own effects from their posterior given its data -- so
-their spread over draws is the subject's whole uncertainty, as
+\code{backend='julia'} fit with \code{intoverpop='laplace'}, or a sampled
+fit, each draw's subject matrices combine the population draw with a draw
+of the subject's own effects from their posterior given its data. Their
+spread over draws then shows the subject's full uncertainty, as
 \code{\link{ctSubjectPars}} reports by default.}
 
 \item{cores}{Only used if subjectMatrices = TRUE . For faster computation use more cores.}
@@ -37,13 +36,11 @@ their spread over draws is the subject's whole uncertainty, as
 
 \item{state}{The latent state at which state dependent cells of the
 \code{pop_*} matrices are evaluated: \code{'T0MEANS'} (the default),
-\code{'mean'}, \code{'asymptotic'}, or a numeric state vector. Only
-\code{backend='julia'} can materialise the matrices anywhere other than the
-default, so anything else is an error on a stan fit rather than being
-silently ignored. Irrelevant to a linear model, whose matrices are the same
-everywhere. Note that it moves the \code{pop_*} arrays only: the subject
-matrices \code{subjectMatrices=TRUE} adds come from the filter, and are
-always at each subject's own last observed row.}
+\code{'mean'}, \code{'asymptotic'}, or a numeric state vector. Values other
+than the default need \code{backend='julia'} and are an error for a stan
+fit. No effect for a linear model. Only the \code{pop_*} arrays are
+affected. The subject matrices from \code{subjectMatrices=TRUE} come from
+the Kalman filter and are at each subject's last observed row.}
 
 \item{realid}{If TRUE (the default), subjects are read as the ids in the data,
 and integers that are not ids there are read as ctsem's numbering of the
@@ -52,20 +49,20 @@ subjects, 1 to N, with a message. If FALSE, they are read as that numbering.}
 \item{...}{not used.}
 }
 \value{
-A list of posterior sample arrays. The point the \code{pop_*}
-matrices were evaluated at is recorded in the \code{'evaluatedAt'} attribute;
-nothing is messaged, because the summaries call this repeatedly and say it
-once themselves. \code{\link{ctModelIsNonlinear}} answers whether the point
-matters for this model at all.
+A list of posterior sample arrays. The point at which the
+\code{pop_*} matrices were evaluated is recorded in the
+\code{'evaluatedAt'} attribute, without a message.
+\code{\link{ctModelIsNonlinear}} shows whether the point matters for the
+model.
 
-Where parameters vary over subjects, the population of them, per draw:
+Where parameters vary over subjects, the list also holds, per draw,
 \code{popsd} (draws by parameters), \code{rawpopcov} and \code{rawpopcorr}
-(the raw scale's covariance and correlations, draws by parameters by
+(the covariance and correlations on the raw scale, draws by parameters by
 parameters) and \code{popcov} (the covariance on the natural scale). On a
 \code{backend='julia'} fit they are named by parameter, and a model with
-several grouping levels gives each level's as \code{rawpopcov.<level>} and so
-on; its \code{popcov} combines \code{popsd} with the raw correlations, exact
-where a parameter's transform is affine.
+several grouping levels gives each level's as \code{rawpopcov.<level>} and
+so on. There, \code{popcov} combines \code{popsd} with the raw
+correlations, which is exact where a parameter's transform is affine.
 }
 \description{
 Returns the posterior (or approximate posterior) draws of a fit's

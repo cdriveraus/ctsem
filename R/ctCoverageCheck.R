@@ -14,8 +14,8 @@
 #' @param cores The most CPU cores the check uses at once. Iterations run
 #' \code{cores \%/\% fitCores} at a time, each fit on \code{fitCores}.
 #' @param fitCores Number of cores for each inner \code{\link{ctFit}} call,
-#' at most \code{cores}. This is enforced after merging each \code{fitArgs}
-#' entry so that worker fits cannot take more than their share.
+#' at most \code{cores}. It replaces any \code{cores} given in
+#' \code{fitArgs}.
 #' @param generateCores Number of cores for \code{\link{ctGenerateFromFit}}
 #' when generating replicated datasets, at most \code{cores}. Defaults to
 #' \code{fitCores}; set it explicitly to use more cores for generation.

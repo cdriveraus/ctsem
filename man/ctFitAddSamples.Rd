@@ -18,29 +18,21 @@ ctFitAddSamples(fit, nsamples, cores = 2)
 fit object with extra samples
 }
 \description{
-Appends normal draws from the fit's already-computed covariance to its
-raw posterior. Deprecated in favour of \code{\link{ctOptimUncertainty}} with
-\code{uncertainty = 'stored'}, which does the same on both backends.
+Appends normal draws from the fit's covariance to its raw posterior.
+Deprecated, use \code{\link{ctOptimUncertainty}} with
+\code{uncertainty = 'stored'}, which works on both backends.
 }
 \details{
-These are pseudo-posterior draws from the fitted covariance, not
-  posterior draws from a sampler. \code{\link{ctFitUncertainty}} with
-  \code{uncertainty = 'sample'} is the latter -- Hamiltonian Monte Carlo
-  from an optimized \code{ctJuliaFit} -- and is a different object, not
-  another route to this one.
+The draws come from the fitted covariance, not from a sampler. To
+  sample the posterior of a fit, use \code{ctFitUncertainty(fit, 'sample')}.
 
-  Deprecated in favour of \code{ctOptimUncertainty(fit, uncertainty =
-  'stored', finishsamples = n)}, which draws from the same covariance for
-  the same zero model evaluations, works on a \code{ctJuliaFit} as well as a
-  \code{ctStanFit}, and records the new sample count in
-  \code{$uncertainty$settings}. It also replaces the draws rather than
-  appending to them: appending normal draws to a posterior that came from
-  \code{uncertainty='is'} or \code{'bootstrap'} leaves part of each in one
-  matrix with nothing recording the mixture, which is what this function
-  does.
+  \code{ctOptimUncertainty(fit, uncertainty = 'stored', finishsamples = n)}
+  draws from the same covariance, records the number of draws in
+  \code{$uncertainty$settings}, and replaces the existing draws instead of
+  appending to them, so that draws from different methods are not mixed.
 
-  \code{ctAddSamples} is the same function under its pre-3.11 name; both are
-  deprecated together.
+  \code{ctAddSamples} is the older name of this function, and is also
+  deprecated.
 }
 \examples{
 \dontrun{

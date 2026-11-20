@@ -305,48 +305,37 @@ ctModeltoNumeric <- function(ctmodelobj){
 
 #' Generate data from a model's priors (deprecated)
 #'
-#' Deprecated. Use \code{\link{ctGenerate}(fromPriors = TRUE)}, which is the
-#' same computation reached through the function that generates data from a
-#' ctsem model generally. \code{ctStanGenerate} is a backward-compatible alias
-#' and is deprecated with it.
+#' Deprecated. Use \code{\link{ctGenerate}(fromPriors = TRUE)}, which does the
+#' same. \code{ctStanGenerate} is an alias and is also deprecated.
 #'
-#' @param cts A model -- \code{\link{ctModel}} or
-#' \code{\link{ctModelConvertOMX}} -- or a fit from either backend, which is
-#' simply a model that arrives with a design attached. Nothing here needs a fit:
-#' generating from the prior needs the model and a set of subjects and times to
-#' generate over, and a fit is one way to supply both.
+#' @param cts A model from \code{\link{ctModel}} or
+#' \code{\link{ctModelConvertOMX}}, or a fit from either backend, which
+#' supplies its model and design.
 #' @param datastruct Long format data structure as used by ctsem, giving the
-#' subjects, times and missingness to generate for. Ignored when \code{cts} is
-#' a fit, which carries its own. Left at NA for a model, a balanced design of
-#' \code{n.subjects} subjects observed at \code{Tpoints} occasions
-#' \code{dtmean} apart is built instead.
-#' @param n.subjects,Tpoints,dtmean The design to build when \code{cts} is a
-#' model and no \code{datastruct} is given, and unused otherwise.
-#' \code{Tpoints} falls back to the model's own when it carries one.
-#' \code{n.subjects} is deliberately smaller than \code{\link{ctGenerate}}'s:
-#' this returns \code{nsamples} datasets rather than one.
-#' @param is Deprecated and ignored, with a warning if set. Importance
-#' sampling reweights draws taken from a gaussian approximation onto a target
-#' that cannot be sampled directly. Fitted to an empty dataset there is no
-#' such target: the likelihood contributes nothing and what remains is the
-#' prior, which ctsem holds as independent univariate densities in the raw
-#' space these draws are taken in. There is no approximation to correct.
+#' subjects, times and missing observations to generate. Ignored when
+#' \code{cts} is a fit, which uses its own data. If NA and \code{cts} is a
+#' model, a balanced design of \code{n.subjects} subjects observed at
+#' \code{Tpoints} occasions \code{dtmean} apart is used.
+#' @param n.subjects,Tpoints,dtmean The design used when \code{cts} is a model
+#' and no \code{datastruct} is given. \code{Tpoints} defaults to the model's
+#' own when it has one. The default \code{n.subjects} is smaller than
+#' \code{\link{ctGenerate}}'s because \code{nsamples} datasets are returned.
+#' @param is Deprecated and ignored, with a warning if set.
 #' @param fullposterior Generate from the full prior, or from its mode (the raw
 #' origin)?
 #' @param nsamples How many samples to generate?
 #' @param parsonly If TRUE, only return samples of raw parameters, don't generate data.
 #' @param cores Number of cpu cores to use.
-#' @param backend Which engine turns a parameter draw into data: \code{'auto'}
-#' (the default -- \code{'julia'} when a julia session is available,
-#' \code{'stan'} otherwise), \code{'julia'} or \code{'stan'}. The draws
-#' themselves do not depend on this: they come from the model's prior, which is
-#' the same object either way. \code{parsonly=TRUE} returns those draws and
-#' generates nothing, so it does not use this argument.
+#' @param backend Which engine generates data from each parameter draw:
+#' \code{'auto'} (the default) uses \code{'julia'} when a julia session is
+#' available and \code{'stan'} otherwise, or \code{'julia'} or \code{'stan'}.
+#' The parameter draws come from the model's prior and are the same either
+#' way. Not used with \code{parsonly=TRUE}.
 #'
 #' @return List containing Y, an array of nsamples by data rows by manifest
 #' variables, and llrow, an array of nsamples by data rows log likelihoods.
-#' With \code{parsonly=TRUE}, the prepared model carrying the prior draws
-#' under \code{$stanfit$rawposterior} and \code{$stanfit$transformedpars}.
+#' With \code{parsonly=TRUE}, the prepared model with the prior draws in
+#' \code{$stanfit$rawposterior} and \code{$stanfit$transformedpars}.
 #' @aliases ctStanGenerate
 #' @export
 #'
@@ -393,21 +382,21 @@ ctStanGenerate <- ctGenerateFromPriors
 #' This function generates data according to the specified ctsem model object. 
 #' 
 #' @param ctmodelobj ctsem model object from \code{\link{ctModel}}.
-#' @param n Number of subjects to output. For a model with grouping
-#' levels above the subject (\code{ctModel(id = c('subject', 'study'))}), one
-#' count per level in the same order, innermost first: \code{c(100, 10)} is
-#' 100 subjects split evenly over 10 studies. A level not given has one group.
+#' @param n Number of subjects to output. For a model with grouping levels
+#' above the subject (\code{ctModel(id = c('subject', 'study'))}), one count
+#' per level in the same order, innermost first. For example \code{c(100, 10)}
+#' gives 100 subjects split evenly over 10 studies. A level not given has one
+#' group.
 #' @param n.subjects Deprecated; use \code{n}.
 #' @param burnin Number of initial time points to discard (to simulate stationary data)
 #' @param dtmean Positive numeric. Median time interval (delta T) to use.
-#' Intervals are drawn as \code{exp(rnorm(n, log(dtmean), logdtsd))}, so
-#' \code{dtmean} is the median rather than the mean whenever \code{logdtsd}
-#' is non-zero: the mean interval is \code{dtmean * exp(logdtsd^2/2)}, which
-#' at \code{logdtsd = 0.6} is about 20 percent longer than \code{dtmean}.
+#' Intervals are drawn as \code{exp(rnorm(n, log(dtmean), logdtsd))}, so the
+#' mean interval is \code{dtmean * exp(logdtsd^2/2)}, which is longer than
+#' \code{dtmean} when \code{logdtsd} is not zero.
 #' @param logdtsd Numeric. Standard deviation of the log time interval. Zero
 #' gives an equal-interval design.
-#' @param dtmat Either NA, or numeric matrix of n rows and Tpoints-1 columns, 
-#' containing positive numeric values for all time intervals between measurements. 
+#' @param dtmat Either NA, or numeric matrix of n rows and Tpoints-1 columns,
+#' containing positive numeric values for all time intervals between measurements.
 #' If not NA, dtmean and logdtsd are ignored.
 #' @param Tpoints Optional number of time points to generate. If supplied, this overrides
 #' any \code{Tpoints} stored in \code{ctmodelobj}. If not supplied, \code{ctGenerate}
@@ -415,93 +404,86 @@ ctStanGenerate <- ctGenerateFromPriors
 #' @param wide Logical. Output in wide format?
 #' @param backend Which generator to use: \code{'r'}, \code{'julia'}, or
 #' \code{'auto'} (the default). \code{'julia'} generates from the model
-#' itself: each subject's parameters are drawn from the population at every
-#' level, its latent trajectory is simulated from the process, and each
-#' observation is drawn from its measurement model, so nonlinear dynamics,
-#' random effects on any parameter and binary, ordinal or count indicators are
-#' all generated exactly. It needs \code{ctmodelobj} to be a
-#' \code{ctModel(type='ct'/'dt')} object rather than the matrix-list form.
-#' \code{'r'} integrates a linear Gaussian system with a matrix exponential at
-#' the values the model states, with individual differences only through
-#' \code{TRAITVAR} and \code{MANIFESTTRAITVAR}, and fills free parameters
-#' with fixed defaults; it refuses a nonlinear model and has no measurement
-#' link. \code{'auto'} uses \code{'r'}, as \code{ctGenerate} always has,
-#' unless the model or the call needs \code{'julia'}: a nonlinear model, a
-#' non-Gaussian indicator, more than one count in \code{n}, or
-#' \code{values}. On a model that declares random effects or TI predictor
-#' effects, \code{'r'} says what it leaves out.
-#' @param values For \code{backend='julia'}: the population values to
-#' generate from, named and scaled as \code{summary()} reports them, so a
-#' model written for fitting can generate data at chosen values. A named
+#' itself. Each subject's parameters are drawn from the population at every
+#' level, the latent trajectory is simulated from the process, and each
+#' observation is drawn from its measurement model. Nonlinear dynamics, random
+#' effects on any parameter, and binary, ordinal and count indicators are all
+#' supported. It needs a \code{ctModel(type='ct')} or \code{'dt'} model.
+#' \code{'r'} simulates a linear Gaussian system at the values the model
+#' states, with individual differences only through \code{TRAITVAR} and
+#' \code{MANIFESTTRAITVAR}, and fills free parameters with fixed defaults. It
+#' does not support nonlinear models or non-Gaussian indicators, and reports
+#' which random effects or TI predictor effects of the model it leaves out.
+#' \code{'auto'} uses \code{'r'} unless the model or the call needs
+#' \code{'julia'}: a nonlinear model, a non-Gaussian indicator, initial
+#' conditions set to \code{'stationary'}, stated population means
+#' (\code{ctPar(mean=)}), more than one count in \code{n}, \code{values}, or
+#' \code{datastruct}.
+#' @param values For \code{backend='julia'}, the population values to
+#' generate from, named and scaled as \code{summary()} reports them. A named
 #' numeric vector gives free parameters' values on their natural scale, e.g.
 #' \code{c(mm = 2, drift = -0.3)}. A list gives \code{summary()}'s sections:
-#' \code{popmeans} (the same), \code{popsd} (random-effect sds on the natural
-#' scale, named by parameter), \code{rawpopcorr} (correlations of the random
-#' effects, named \code{'a__b'}) and \code{tipreds} (linearised TI predictor
-#' effects, named \code{'tip_<predictor>_<parameter>'}), as in
+#' \code{popmeans} (as above), \code{popsd} (random effect sds on the natural
+#' scale, named by parameter), \code{rawpopcorr} (random effect correlations,
+#' named \code{'a__b'}) and \code{tipreds} (linearised TI predictor effects,
+#' named \code{'tip_<predictor>_<parameter>'}), as in
 #' \code{list(popmeans = c(mm = 2), popsd = c(mm = 0.5), tipreds =
-#' c(tip_TI1_mm = 1))}; with grouping levels, \code{popsd.<level>} and
-#' \code{rawpopcorr.<level>} name a level's. What is not given takes its
-#' prior's centre: raw zero for a mean, \code{sdscale} for a raw sd, zero for
-#' a correlation or a free effect. A value fixed in the model cannot also be
-#' given here.
-#' @param fromPriors Draw the parameters from the model's priors rather than
-#' using the values the model specifies, and return \code{nsamples} datasets
-#' instead of one. This is the prior predictive: what the model says the data
-#' could look like before it has seen any. It needs no fitted model and no
-#' data -- with no \code{datastruct}, a balanced design of \code{n}
-#' subjects at \code{Tpoints} occasions \code{dtmean} apart is used.
+#' c(tip_TI1_mm = 1))}. With grouping levels, \code{popsd.<level>} and
+#' \code{rawpopcorr.<level>} give a level's values. Values not given are set
+#' to their prior's centre: raw zero for a mean, \code{sdscale} for a raw sd,
+#' and zero for a correlation or a free effect. A value fixed in the model
+#' cannot also be given here.
+#' @param fromPriors Draw the parameters from the model's priors, and return
+#' \code{nsamples} datasets instead of one. This gives the prior predictive
+#' distribution and needs no fit or data. Without a \code{datastruct}, a
+#' balanced design of \code{n} subjects at \code{Tpoints} occasions
+#' \code{dtmean} apart is used.
 #' @param nsamples With \code{fromPriors=TRUE}, how many datasets to draw.
 #' @param datastruct A long format data frame giving the design to generate
-#' for, in place of the balanced one \code{n}, \code{Tpoints} and
-#' \code{dtmean} build: the subject (and any group) ids and times, TD and TI
-#' predictor values, and which observations exist -- a manifest cell that is
-#' NA stays missing, any other value or a manifest column left out is
-#' generated. A predictor the model names and \code{datastruct} lacks is zero
-#' (TD) or drawn standard normal per subject (TI). The same data frame is
-#' returned with the generated values filled in. Needs \code{backend='julia'},
-#' or \code{fromPriors=TRUE}, where a fit passed as \code{ctmodelobj} brings
-#' its own.
+#' for, in place of the balanced design from \code{n}, \code{Tpoints} and
+#' \code{dtmean}. It gives the subject and any group ids, the times, TD and TI
+#' predictor values, and which observations exist. A manifest value that is
+#' NA stays missing, and any other value, or a manifest column left out, is
+#' generated. A TD predictor the model names but \code{datastruct} lacks is
+#' set to zero, and a TI predictor it lacks is drawn standard normal per
+#' subject. The same data frame is returned with the generated values filled
+#' in. Needs \code{backend='julia'}, or \code{fromPriors=TRUE}, where a fit
+#' passed as \code{ctmodelobj} supplies its own design.
 #' @param cores With \code{fromPriors=TRUE}, cpu cores to use.
 #' @param intoverstates For \code{backend='julia'}: \code{'auto'} (the
-#' default, which is \code{FALSE}), \code{TRUE} or \code{FALSE}. A
-#' diagnostic handle rather than a modelling choice.
-#'
-#' \code{FALSE} samples the latent trajectory from the process and then each
-#' observation from its conditional distribution given the state at its row:
-#' a draw from the model. \code{TRUE} instead draws each row from the filter's
-#' one-step-ahead predictive, for the same subjects, which is the density a
-#' fit integrating over the states maximises. The two agree in distribution
-#' for linear dynamics with Gaussian indicators and differ otherwise, which is
-#' what makes the comparison useful.
-#'
-#' \code{backend='r'} already generates this way and ignores the argument.
+#' default, meaning \code{FALSE}), \code{TRUE} or \code{FALSE}. Mainly for
+#' checking the Kalman filter's approximation. \code{FALSE} simulates the
+#' latent trajectory and then each observation given the state at its row.
+#' \code{TRUE} draws each row from the filter's one-step-ahead prediction for
+#' the same subjects, the density that a fit integrating over the states
+#' maximises. The two agree in distribution for linear dynamics with Gaussian
+#' indicators. \code{backend='r'} always simulates the states and ignores the
+#' argument.
 #' @section Generating values:
-#' With \code{backend='julia'} every value the model leaves free is fixed by
-#' the scale of its prior, and all of them are named in a message:
+#' With \code{backend='julia'}, each value the model leaves free is set as
+#' follows, and all of them are listed in a message:
 #' \itemize{
 #'   \item a free parameter is at its prior's centre, raw zero, unless
 #'   \code{values} names it;
-#'   \item an individually varying parameter's population sd is its
-#'   \code{sdscale}, at every level it varies at, on the raw,
-#'   untransformed scale, unless \code{RAWPOPVAR} (\code{RAWPOPVAR_<level>})
-#'   states a number, and random effects are uncorrelated unless it states a
-#'   coordinate -- \code{\link{ctCov}} writes one from a covariance;
-#'   \item a time independent predictor is drawn standard normal per subject,
-#'   and an effect fixed in the model (\code{'mm||||TI1=0.5'}) shifts the raw
-#'   parameter by that much per unit of the predictor; an effect left free is
-#'   zero.
+#'   \item the population sd of an individually varying parameter is its
+#'   \code{sdscale} on the raw scale, at every level it varies at, unless
+#'   \code{RAWPOPVAR} (\code{RAWPOPVAR_<level>}) gives a number. Random effects
+#'   are uncorrelated unless \code{RAWPOPVAR} gives its off-diagonal values,
+#'   which \code{\link{ctCov}} writes from a covariance matrix;
+#'   \item a time independent predictor is drawn standard normal per subject.
+#'   An effect fixed in the model (\code{'mm||||TI1=0.5'}) shifts the raw
+#'   parameter by that much per unit of the predictor, and an effect left free
+#'   is zero.
 #' }
-#' \code{fromPriors=TRUE} draws all of these from the priors instead.
+#' \code{fromPriors=TRUE} draws all of these from the priors.
 #'
-#' The julia generator also returns what it generated from, as attributes:
+#' The julia generator also returns, as attributes, what it generated from:
 #' \code{attr(, 'subjectpars')}, each subject's parameters on their natural
 #' scale with its id and groups; \code{attr(, 'grouppars')}, for a model with
-#' grouping levels, each group's parameters at each level -- its own effects
-#' and those above it, as a subject of average deviation within it would have;
-#' and \code{attr(, 'states')}, the latent
-#' states at every row by id and time (not with \code{intoverstates=TRUE},
-#' which draws observations from the filter rather than states).
+#' grouping levels, each group's parameters at each level, as for a subject
+#' at the group's average; and \code{attr(, 'states')}, the latent states at
+#' every row by id and time (not with \code{intoverstates=TRUE}, which draws
+#' no states).
 #' @details Covariance related matrices are treated as Cholesky factors.
 #' TRAITTDPREDCOV and TIPREDCOV matrices are not accounted for, at present. 
 #' The first 1:n.TDpred rows and columns of TDPREDVAR are used for generating

@@ -13,12 +13,11 @@
 
 #' Optimiser settings for ctFit
 #'
-#' The names \code{\link{ctFit}} reads from \code{optimcontrol}. A name means
-#' the same thing on both backends. One a backend does not have is refused by
-#' name, unless its value asks for nothing that backend does not already do
-#' (\code{gradient = 'adjoint'} on stan, \code{nsubsets = 1} on julia), and a
-#' misspelled name is an error. Leaving a name unset keeps that backend's own
-#' default.
+#' The settings \code{\link{ctFit}} reads from \code{optimcontrol}. Each has
+#' the same meaning on both backends. A setting the backend does not have is
+#' an error, unless its value asks for what that backend does anyway
+#' (\code{gradient = 'adjoint'} on stan, \code{nsubsets = 1} on julia), and so
+#' is a misspelled name. Settings left unset take the backend's default.
 #'
 #' @section Stopping:
 #' \describe{
@@ -30,26 +29,23 @@
 #'  by default.}
 #'  \item{\code{maxiter}}{Both. Iteration cap. Default 1000 on julia, mize's on
 #'  stan.}
-#'  \item{\code{lbfgs_scores}}{Julia. Default TRUE. Runs beside L-BFGS a
-#'  second model of the curvature, the centred outer product of the per-unit
-#'  scores plus the prior's precision and a learned correction, and takes each
-#'  step on whichever model predicted the last step's gain better; while a
-#'  fit is batched, only on the whole data.}
-#'  \item{\code{lbfgs_local}}{Julia. Default TRUE. On the Laplace route,
-#'  where some parameters are read by few units (a study's, a group's, an item
-#'  few answered), starts L-BFGS's inverse Hessian from their exact Hessian
-#'  columns, differenced over those units alone, and the score model of the
-#'  rest; built once the optimisation has spent what it costs.}
+#'  \item{\code{lbfgs_scores}}{Julia. Default TRUE. Keeps a second model of the
+#'  curvature beside L-BFGS, built from the outer product of the subjects'
+#'  scores, and takes each step with whichever model predicted the last step
+#'  better.}
+#'  \item{\code{lbfgs_local}}{Julia. Default TRUE. With
+#'  \code{intoverpop = 'laplace'}, parameters that only a few subjects or
+#'  groups inform (a study's, a group's, or an item few answered) start
+#'  L-BFGS from their exact curvature, computed from those subjects alone.}
 #'  \item{\code{lbfgs_memory}}{Both. How many curvature pairs L-BFGS keeps.
-#'  Default on julia one per free parameter, at least 20 and at most 1000;
-#'  mize's on stan.}
-#'  \item{\code{stallretries}}{Both. Default 2. How often a fit that stopped
-#'  short of a maximum is tried again: stan restarts from fresh random values
-#'  when the gradient exceeds \code{stalltol} per data point; julia resumes
-#'  from the better point its probe found by pulling flat coordinates back,
-#'  or from where it stopped when the check finds the fit short, keeping a
-#'  resumed stage only if it improves the objective, and stopping one that
-#'  stops gaining. 0 turns it off.}
+#'  Default on julia one per free parameter, between 20 and 1000, and mize's
+#'  default on stan.}
+#'  \item{\code{stallretries}}{Both. Default 2. How many times a fit that
+#'  stopped short of a maximum is continued. Stan restarts from new random
+#'  values when the gradient exceeds \code{stalltol} per data point. Julia
+#'  resumes from a better point found by its end-of-fit checks, or from where
+#'  it stopped, and keeps the resumed run only if it improves the objective. 0
+#'  turns it off.}
 #' }
 #'
 #' @section Starting values:
@@ -57,273 +53,263 @@
 #'  \item{\code{initsd}}{Both. Default 0.01. The sd of the random start, on the
 #'  raw scale.}
 #'  \item{\code{datastart}}{Julia. Default TRUE. Starting values for the
-#'  diagonals of DRIFT, DIFFUSION, T0VAR and MANIFESTVAR are read off the
-#'  data's scale -- through the link, so a count is read through \code{log1p}
-#'  and a binary or ordinal indicator contributes none -- rather than from one
-#'  fixed point whatever the units. They are kept only where the objective can
-#'  be evaluated there; otherwise the fit starts from the default and says so.
-#'  Supplied \code{inits} are never overridden.}
-#'  \item{\code{carefulfit}}{Both. A rough first pass with ctsem's
-#'  \code{normal(0,1)} raw priors on every coordinate, for starting values; the
-#'  fit's own objective is then maximised from there. Skipped with
-#'  \code{priors = TRUE}, which already has those priors, and when \code{inits}
-#'  are supplied. Default TRUE on both backends. On julia it runs to its own
-#'  convergence, at most 200 iterations, and a number sets that cap; it keeps
-#'  the fit from starting where a boundary (a correlation at one, a variance at
-#'  zero) has already captured it. \code{fit$optim$carefulfit} records whether
-#'  it ran.}
+#'  diagonals of DRIFT, DIFFUSION, T0VAR and MANIFESTVAR are set from the scale
+#'  of the data, using \code{log(1 + y)} for counts, and without using binary or
+#'  ordinal indicators. If the objective cannot be evaluated there, the fit
+#'  starts from the default values and says so. Supplied \code{inits} are
+#'  always used as given.}
+#'  \item{\code{carefulfit}}{Both. Default TRUE. A first pass with ctsem's
+#'  \code{normal(0,1)} priors on every raw parameter, to find starting values,
+#'  after which the fit's own objective is maximised. Skipped with
+#'  \code{priors = TRUE}, which has those priors already, and when
+#'  \code{inits} are supplied. On julia it runs until it converges, for at
+#'  most 200 iterations, and a number sets that limit. It keeps a fit from
+#'  starting at a boundary, such as a correlation of one or a variance of
+#'  zero. \code{fit$optim$carefulfit} records whether it ran.}
 #' }
 #'
 #' @section The optimiser:
 #' \describe{
 #'  \item{\code{stochastic}}{Both. Start with ctsem's stochastic-gradient
-#'  optimiser and finish with L-BFGS; \code{'auto'} does so above 50
-#'  parameters. Default TRUE on stan, FALSE on julia. On large, poorly
-#'  conditioned models it can be much faster than L-BFGS alone, and it can
-#'  carry a fit further toward a degenerate limit, such as a variance running
-#'  to zero. \code{fit$optim$sgd_iterations} records the phase.}
+#'  optimiser and finish with L-BFGS. \code{'auto'} does so above 50
+#'  parameters. Default TRUE on stan, FALSE on julia. It can be much faster
+#'  than L-BFGS alone on large, poorly conditioned models, and can also take a
+#'  fit further toward a degenerate limit, such as a variance going to zero.
+#'  \code{fit$optim$sgd_iterations} records it.}
 #'  \item{\code{gradient}}{Julia. \code{'adjoint'} (reverse mode, the default)
-#'  or \code{'forward'}. The same gradient; the adjoint's cost does not grow
-#'  with the number of parameters.}
+#'  or \code{'forward'}. Both give the same gradient, and the cost of the
+#'  adjoint does not grow with the number of parameters.}
 #'  \item{\code{batch}}{Julia. Default TRUE, or FALSE when \code{inits} are
-#'  supplied. Start on a random subset of the subjects and grow it as the fit
-#'  needs more data; needs at least 80 subjects or top-level groups. A
-#'  supplied start is not batched from, since the subsets' gradients walk off a
-#'  point already chosen; \code{TRUE} asks for it anyway.}
-#'  \item{\code{coreset}}{Julia. Default \code{'auto'}. Run stretches of
-#'  L-BFGS on a weighted few of the units (subjects, or top-level groups where
-#'  random effects are integrated by Laplace), chosen so that
-#'  their changes in gradient and their spread reproduce all the units', each
-#'  stretch checked by a full gradient; the full objective finishes, so the
-#'  estimate and its standard errors are those of every unit. \code{'auto'}
-#'  runs them for data of at least 200 subjects or top-level groups and 10,000
-#'  data cells (rows times manifest variables), where they save time; on
-#'  smaller data they save none and can change which of several maxima a fit
-#'  reaches. \code{TRUE} runs them whenever a coreset is expected to save
-#'  gradients, \code{FALSE} never. \code{fit$optim$coreset_sizes} records the
-#'  stages.}
+#'  supplied. Start on a random subset of the subjects and add more as the fit
+#'  needs them. Needs at least 80 subjects or top-level groups. \code{TRUE}
+#'  also batches a fit started from supplied \code{inits}.}
+#'  \item{\code{coreset}}{Julia. Default \code{'auto'}. Run parts of the
+#'  optimisation on a weighted subset of the subjects (or of the top-level
+#'  groups, with \code{intoverpop = 'laplace'}), chosen to reproduce the full
+#'  gradient, and check each part against the full gradient. The fit finishes
+#'  on all the data, so the estimates and standard errors use every subject.
+#'  \code{'auto'} uses subsets for data with at least 200 subjects or top-level
+#'  groups and 10,000 data cells (rows times manifest variables). On smaller
+#'  data they save no time, and can change which of several maxima a fit
+#'  reaches. \code{TRUE} uses them whenever they are expected to save
+#'  gradients, \code{FALSE} never. \code{fit$optim$coreset_sizes} records
+#'  them.}
 #'  \item{\code{explosive_forward}}{Julia. Default FALSE. For a subject whose
 #'  predictions grow more than 100-fold between observations (explosive
-#'  dynamics over a long gap), take its gradient by forward mode instead of
-#'  the reverse pass, as a cross-check: the reverse pass is accurate there
-#'  too. The first such subject in a session compiles the filter again,
-#'  minutes on a large model. The fit counts such subjects either way
-#'  (\code{fit$optim$explosive_passes}) and warns when any is explosive at
-#'  the estimate.}
-#'  \item{\code{lbfgs_diagonal}}{Julia. Default TRUE. L-BFGS's initial inverse
-#'  Hessian takes a scale per parameter, learned from the curvature pairs
-#'  (Gilbert and Lemarechal); FALSE uses one scale for all, which can be much
-#'  slower on large models. Like \code{stochastic}, it can carry a fit further
-#'  toward a degenerate limit.}
-#'  \item{\code{lbfgs_gll}}{Julia. Default 0. A step is accepted against the
-#'  worst of the last \code{W} objective values (Grippo, Lampariello and
-#'  Lucidi), so it may cross a curved valley.}
+#'  dynamics over a long gap), compute its gradient in forward mode as a
+#'  cross-check. The default reverse mode is accurate there too. The first
+#'  such subject in a session compiles the filter again, which takes minutes
+#'  for a large model. \code{fit$optim$explosive_passes} counts such subjects,
+#'  and the fit warns when any is explosive at the estimate.}
+#'  \item{\code{lbfgs_diagonal}}{Julia. Default TRUE. L-BFGS learns a separate
+#'  scale for each parameter from the curvature (Gilbert and Lemarechal).
+#'  FALSE uses one scale for all, which can be much slower on large models.
+#'  Like \code{stochastic}, it can take a fit further toward a degenerate
+#'  limit.}
+#'  \item{\code{lbfgs_gll}}{Julia. Default 0. A window \code{W}: a step is
+#'  accepted if it improves on the worst of the last \code{W} objective values
+#'  (Grippo, Lampariello and Lucidi), which lets the fit cross a curved
+#'  valley.}
 #'  \item{\code{lbfgs_nonmonotone}}{Julia. Between 0 (the default) and 1. A step
 #'  is accepted against a running average of recent objective values (Zhang
 #'  and Hager).}
 #'  \item{\code{initial_alpha}}{Julia. Default 0.1. The length of the first
 #'  trial step, in raw units.}
-#'  \item{\code{precondition}}{Julia. Default FALSE. TRUE starts L-BFGS's
-#'  per-parameter scaling from the model's transforms rather than learning it
-#'  from the curvature alone. It made fits whose intercepts start far from the
-#'  data settle in worse optima.}
+#'  \item{\code{precondition}}{Julia. Default FALSE. TRUE sets L-BFGS's initial
+#'  scaling of each parameter from the model's transforms, instead of learning
+#'  it from the curvature. This can make fits whose intercepts start far from
+#'  the data end in worse optima.}
 #'  \item{\code{saem}}{Julia, \code{intoverpop = 'laplace'}. Default FALSE.
-#'  Start with SAEM: the random effects are sampled from their conditional
-#'  distribution rather than integrated by the Laplace approximation, heading
-#'  for the exact marginal posterior mode. The usual optimiser then polishes
-#'  and certifies its point on the Laplace objective, so the estimate usually
-#'  ends where a fit without SAEM does; what it can change is which maximum is
-#'  reached when the Laplace objective has more than one. Its point carries
-#'  Monte Carlo error, so where the posterior itself has several maxima --
-#'  weakly identified random-effect scales and correlations -- that error, not
-#'  the data, can decide which one is reached. So the fit also finishes from
-#'  its own start without SAEM, one more optimisation, and keeps whichever
-#'  maximum has the higher log posterior on the quadrature-corrected objective
-#'  (quadrature for each unit narrow enough, as the refined fit
-#'  screens), where a maximum the Laplace approximation over-credits loses;
-#'  \code{fit$optim$saem_guard} records both. Not a better
-#'  approximate estimate on its own -- for that, sample with
-#'  \code{optimize = FALSE}. A number caps its iterations (TRUE is 10000).
+#'  Start with SAEM, which samples the random effects from their conditional
+#'  distribution instead of integrating them with the Laplace approximation.
+#'  The usual optimiser then finishes on the Laplace objective, so the
+#'  estimate is usually the same as without SAEM, but SAEM can lead to a
+#'  different maximum when the objective has more than one. Because SAEM's
+#'  result has Monte Carlo error, the fit also runs once from its usual start
+#'  without SAEM, and keeps the maximum with the higher log posterior after
+#'  the Laplace approximation is corrected by quadrature.
+#'  \code{fit$optim$saem_guard} records both. For a more accurate estimate
+#'  than the Laplace approximation gives, sample with \code{optimize = FALSE}.
+#'  A number sets the maximum number of SAEM iterations (TRUE is 10000).
 #'  \code{fit$optim$saem_iterations}, \code{saem_settled}, \code{saem_trend},
-#'  \code{saem_chains}, \code{saem_acceptance} and \code{saem_trace} record the
-#'  phase.}
+#'  \code{saem_chains}, \code{saem_acceptance} and \code{saem_trace} record
+#'  the SAEM run.}
 #'  \item{\code{saem_proposal}}{Julia. SAEM's proposal, \code{'rw'} or
 #'  \code{'laplace'}.}
-#'  \item{\code{restarts}}{Julia. Default 0. Random restarts for a fit that has
-#'  still not converged after its corrections -- typically a likelihood with
-#'  more than one basin -- each from the fit's own start plus normal noise of sd
-#'  \code{restartsd} (default 1) on the raw scale, keeping the best if it is
-#'  better. They run in worker processes when \code{cores > 1} and the fit took
-#'  more than 30 seconds. Not when \code{inits} or \code{maxiter} were supplied.
+#'  \item{\code{restarts}}{Julia. Default 0. The number of random restarts for
+#'  a fit that has not converged after its other corrections, typically
+#'  because the likelihood has more than one maximum. Each starts from the
+#'  fit's own start plus normal noise with sd \code{restartsd} (default 1) on
+#'  the raw scale, and the best result is kept. Restarts run in worker
+#'  processes when \code{cores > 1} and the fit took more than 30 seconds. Not
+#'  used when \code{inits} or \code{maxiter} were supplied.
 #'  \code{fit$optim$restarts} records each start.}
 #' }
 #'
-#' @section The finish and its certification (julia):
+#' @section Newton steps and convergence checks (julia):
 #' \describe{
-#'  \item{\code{newton}}{Default TRUE. Newton steps once close, on an exact
-#'  Hessian updated after each step and formed again when its steps stop paying
-#'  for it, ending on the Hessian the certification and the standard errors
-#'  use; it tries the direction of negative curvature at a saddle and checks
-#'  what the directions with no curvature are worth. Under
-#'  \code{intoverpop = 'laplace'} it runs only when the fit is certified. May
-#'  name the curvature its steps use: \code{'chord'} (the default except as
-#'  below), \code{'exact'} (a fresh Hessian whenever a step contracts slowly),
-#'  \code{'subset'}, or \code{'krylov'}: the outer product of the units'
-#'  scores corrected by Hessian-vector products taken at each step, with the
-#'  exact Hessian formed where its steps converge. \code{'krylov'} is the
-#'  default under \code{intoverpop = 'laplace'} where the exact Hessian would
-#'  cost at least 200 gradients. \code{fit$optim$newton_steps} records the
-#'  steps, and \code{newton_krylov_products} the gradients the Krylov steps
-#'  took.}
-#'  \item{\code{certify}}{Default TRUE. The curvature check that certifies a
-#'  fit has converged. \code{estonly} skips it too.}
-#'  \item{\code{gaptol}}{Default \code{5e-5}. How much objective the curvature
-#'  may still predict at the estimate before the fit is continued. The gap is
-#'  half the squared distance from the maximum in standard errors, so the
-#'  default is 0.01 standard errors: close
-#'  enough that the estimate's Hessian is the maximum's. A smaller value, such
-#'  as \code{1e-6}, holds the estimate closer still.}
+#'  \item{\code{newton}}{Default TRUE. Take Newton steps near the maximum,
+#'  with the exact Hessian, updated after each step and computed again when
+#'  progress slows. The Hessian at the end is used for the convergence check
+#'  and the standard errors. The steps also move away from a saddle point
+#'  along the direction of negative curvature, and test directions with no
+#'  curvature. With \code{intoverpop = 'laplace'} they run only when the fit
+#'  is certified (\code{certify}). The value may name the curvature the steps
+#'  use: \code{'chord'} (the default except as below), \code{'exact'} (a new
+#'  Hessian whenever a step makes slow progress), \code{'subset'}, or
+#'  \code{'krylov'} (the outer product of the subjects' scores, corrected by
+#'  Hessian-vector products at each step, with the exact Hessian computed at
+#'  the end). \code{'krylov'} is the default with
+#'  \code{intoverpop = 'laplace'} when the exact Hessian would cost at least
+#'  200 gradients. \code{fit$optim$newton_steps} records the steps, and
+#'  \code{newton_krylov_products} the gradients the Krylov steps used.}
+#'  \item{\code{certify}}{Default TRUE. Check from the curvature that the fit
+#'  has converged. \code{estonly} also skips it.}
+#'  \item{\code{gaptol}}{Default \code{5e-5}. The fit continues while the
+#'  curvature at the estimate predicts more than this gain in the objective.
+#'  The default corresponds to 0.01 standard errors from the maximum, close
+#'  enough that the Hessian at the estimate is the Hessian at the maximum. A
+#'  smaller value, such as \code{1e-6}, holds the estimate closer still.}
 #'  \item{\code{hessianreuse}}{Default 0.3. How far, in standard errors, the
-#'  estimate may move from where a Hessian was formed for that Hessian still to
-#'  give the standard errors. A Wald standard error assumes the curvature is
-#'  constant over about a standard error around the estimate, and is in error by
-#'  however much it is not; a Hessian formed this far away adds about this
-#'  fraction to that error, where forming a fresh one costs a gradient per
-#'  parameter (two on the Laplace route). 0 forms one at the estimate.}
-#'  \item{\code{innergaptol}}{What a prediction of the remaining gain that
-#'  can be optimistic -- L-BFGS's, or a Newton step's on a Hessian taken at
-#'  another point -- has to fall below to stop; by default a hundredth of
-#'  \code{gaptol}. A gain read off the exact Hessian at the estimate is held to
+#'  estimate may be from where a Hessian was computed for that Hessian still
+#'  to give the standard errors. A Hessian from this far away adds roughly
+#'  this fraction to the error of the standard errors. Computing a new one
+#'  costs a gradient per parameter, or two with
+#'  \code{intoverpop = 'laplace'}. 0 always computes it at the estimate.}
+#'  \item{\code{innergaptol}}{The gain that a less reliable prediction (from
+#'  L-BFGS, or from a Newton step on a Hessian computed elsewhere) must fall
+#'  below for the fit to stop. By default a hundredth of \code{gaptol}. A gain
+#'  predicted by the exact Hessian at the estimate is compared with
 #'  \code{gaptol} itself.}
 #'  \item{\code{overshoot}}{\code{'magnitude'} (the default),
-#'  \code{'saturation'} or \code{'off'}: which directions are pulled back after
-#'  a fit, to test whether it stopped at a maximum.}
+#'  \code{'saturation'} or \code{'off'}. Which directions are pulled back
+#'  after a fit, to test whether it stopped at a maximum.}
 #'  \item{\code{stallwindow}, \code{stallratio}, \code{stallcooldown}}{The
-#'  stall check (defaults 80, 0.001, 30): over how many iterations a fit's gain
-#'  is read (half a nat or less starts a look for a transform gone flat), how
-#'  much of its responsiveness a transform must have lost to count as the
-#'  reason the fit stopped, and how long the check waits after finding a fit
-#'  slow rather than stuck.}
-#'  \item{\code{escapesaturated}}{Default FALSE. Refit a fit stalled on a
-#'  saturated transform from a zeroed boundary, keeping whichever wins.}
-#'  \item{\code{escapepin}}{Default FALSE. Hold the escaped coordinates still
-#'  while the rest re-optimises around them, then release them.}
+#'  stall check (defaults 80, 0.001 and 30). The number of iterations over
+#'  which a fit's gain is measured (a gain of half a unit of log likelihood or
+#'  less starts a search for a transform that has gone flat), how much of its
+#'  responsiveness a transform must have lost to count as the reason the fit
+#'  stopped, and how many iterations the check waits after finding a fit slow
+#'  but not stuck.}
+#'  \item{\code{escapesaturated}}{Default FALSE. Refit a fit that stalled on a
+#'  saturated transform, with that parameter reset to zero, and keep the
+#'  better result.}
+#'  \item{\code{escapepin}}{Default FALSE. Hold the reset parameters fixed
+#'  while the others are optimised, then free them.}
 #' }
 #'
-#' @section The Laplace route (julia, \code{intoverpop = 'laplace'}):
+#' @section Laplace approximation (julia, \code{intoverpop = 'laplace'}):
 #' \describe{
 #'  \item{\code{laplace_inner_maxiter}, \code{laplace_inner_tol}}{Defaults 200
-#'  and \code{1e-10}. The inner solve that finds each unit's random-effect mode.
-#'  Raise the first when the fit reports modes that did not converge; the
-#'  tolerance bounds the inner gradient, floored at
-#'  \code{1e-10 * (1 + abs(value))}.}
+#'  and \code{1e-10}. Iteration limit and tolerance for finding each subject's
+#'  (or group's) random-effect mode. Raise the first when the fit reports
+#'  modes that did not converge. The tolerance applies to the gradient, and is
+#'  at least \code{1e-10 * (1 + abs(value))}.}
 #'  \item{\code{laplace_onestep}}{\code{FALSE} (the default) or \code{TRUE}.
-#'  Where the filter can integrate a person's intercept-type effects (initial
-#'  means, intercepts, a predictor's effect) exactly, given their other random
-#'  effects, it does, and Laplace approximates only the integral over the
-#'  others: the two-step term. \code{TRUE} takes one Laplace approximation over
-#'  all of them together instead, as before version 4.0's change of default.
-#'  Beside random dynamics (a random drift or diffusion) the two-step term is
-#'  the more accurate; the one-step term is what a model whose filter cannot
-#'  integrate them (one whose dynamics read the state) takes in any case, and
-#'  \code{ctModelImprove()} and \code{ctScoreTest()} use it to compare such a
-#'  model with one that can.}
+#'  Where the Kalman filter can integrate a subject's random effects on
+#'  initial means, intercepts or predictor effects exactly, given the
+#'  subject's other random effects, it does, and the Laplace approximation
+#'  covers only the others. \code{TRUE} uses one Laplace approximation over
+#'  all of them instead. With random dynamics (a random drift or diffusion)
+#'  the default is more accurate. Models whose dynamics depend on the state
+#'  always use the single approximation, and \code{ctModelImprove()} and
+#'  \code{ctScoreTest()} use it too when comparing such a model with one that
+#'  does not.}
 #'  \item{\code{laplace_soft_directions}}{\code{'quadrature'} (the default) or
-#'  \code{'logdet_floor'}: how a unit is scored whose likelihood is convex in
-#'  some direction of its random effects, where plain Laplace would credit that
-#'  direction more width than the integrand has. \code{'quadrature'} integrates
-#'  the softest direction by a three-point quadrature where the unit's
+#'  \code{'logdet_floor'}. How to integrate a subject's random effects in a
+#'  direction where their posterior is flatter than the prior, where the plain
+#'  Laplace approximation overstates the likelihood. \code{'quadrature'}
+#'  integrates the flattest direction with a three-point quadrature when the
 #'  curvature has an eigenvalue below 0.7, blending into plain Laplace between
-#'  0.2 and 0.7; \code{'logdet_floor'} floors the log determinant at zero.
-#'  Recorded in \code{fit$laplace$soft_directions}, and used by every function
-#'  that rebuilds the objective; \code{fit$laplace$conditioning} counts such
-#'  units.
-#'  It applies too when sampling with \code{intoverpop = FALSE} and
-#'  \code{sampleControl$placement = 'fit'}.}
+#'  0.2 and 0.7. \code{'logdet_floor'} floors the log determinant at zero.
+#'  Recorded in \code{fit$laplace$soft_directions} and used by every function
+#'  that rebuilds the objective, and \code{fit$laplace$conditioning} counts
+#'  such subjects. Also applies when sampling with \code{intoverpop = FALSE}
+#'  and \code{sampleControl$placement = 'fit'}.}
 #' }
 #'
 #' @section Uncertainty:
 #' \describe{
 #'  \item{\code{uncertainty}}{Both. Default \code{'hessian'}
-#'  (\code{'sandwich'} with subject weights on julia). The method computed
-#'  when the optimiser ends, as in \code{\link{ctFitUncertainty}}. The
-#'  default is for building a model, with the checks below beside it; for
+#'  (\code{'sandwich'} with subject weights on julia). The uncertainty method
+#'  computed when the optimiser ends, as in \code{\link{ctFitUncertainty}}.
+#'  The default is meant for building a model, with the checks below. For
 #'  intervals to report, sample with \code{ctFitUncertainty(fit, 'sample')}.
-#'  \code{'sample'} is refused here: use \code{optimize = FALSE}, or
-#'  \code{ctFitUncertainty(fit, 'sample')} on the fit.}
-#'  \item{\code{checks}}{Julia. Default \code{TRUE}: the two checks
-#'  a fit makes last, of the approximations its numbers rest on, as
-#'  \code{\link{ctFitUncertainty}}'s \code{checks} makes them; \code{FALSE}
-#'  for neither, or one of \code{'randomeffects'} and \code{'intervals'}.
-#'  The random-effects check, on \code{intoverpop = 'laplace'}: every unit,
-#'  whatever its number of effects, scored at draws of its random effects,
-#'  and a warning where integrating them exactly would move an estimate by
-#'  0.1 standard errors or more, giving the move's size below one standard
-#'  error (past that the check's linear step is no guide to it) and how far
-#'  Laplace's log likelihood is from the integrated one, and naming
-#'  \code{ctFitUncertainty(fit, intoverpop = 'quadrature')} and joint
-#'  sampling. Wherever it runs, \code{fit$estimate$loglik} is Laplace's plus
-#'  the check's integral of every unit's error (\code{loglik_se} its standard
-#'  error, \code{loglik_laplace} the value the optimiser maximised,
-#'  \code{loglik_method} \code{'checked'}). Every model whose effects enter
-#'  linearly passes at once, and a fit whose optimiser stopped where a unit's
-#'  Laplace term jumps warns instead, naming the units;
-#'  \code{fit$laplace$correction} records it. The interval check, with
-#'  \code{uncertainty = 'hessian'}: \code{'checked'}'s check of the
-#'  curvature's normal against the posterior's gradients, on the density the
-#'  intervals come from, said in a message and in \code{summary()} where the
-#'  posterior departs from that normal. Under
-#'  \code{intoverpop = 'quadrature'} that density is the refined fit's, where
-#'  the check can cost more than the refinement (see \code{\link{ctFitUncertainty}}'s
-#'  \code{checks}); \code{checks = 'randomeffects'} leaves it out.
-#'  Neither runs with \code{estonly}.}
+#'  \code{'sample'} is not accepted here. Use \code{optimize = FALSE}, or
+#'  \code{ctFitUncertainty(fit, 'sample')} after the fit.}
+#'  \item{\code{checks}}{Julia. Default \code{TRUE}, which runs both checks
+#'  below, as the \code{checks} argument of \code{\link{ctFitUncertainty}}
+#'  does. \code{FALSE} runs neither, and \code{'randomeffects'} or
+#'  \code{'intervals'} runs one. Neither runs with \code{estonly}. The
+#'  random-effects check (with \code{intoverpop = 'laplace'}) scores the
+#'  Laplace approximation for every subject at draws of its random effects,
+#'  and warns if integrating them exactly would move an estimate by 0.1
+#'  standard errors or more. The warning gives the size of the move when it
+#'  is below one standard error, and how far the Laplace log likelihood is
+#'  from the integrated one, and points to
+#'  \code{ctFitUncertainty(fit, intoverpop = 'quadrature')} and to sampling.
+#'  When the check runs, \code{fit$estimate$loglik} is the Laplace log
+#'  likelihood corrected by the check, with \code{loglik_se} its standard
+#'  error, \code{loglik_laplace} the uncorrected value, and
+#'  \code{loglik_method} \code{'checked'}. Models whose random effects enter
+#'  linearly pass at once. If the optimiser stopped where the Laplace
+#'  approximation for some subjects jumps, the fit warns instead and names
+#'  them. \code{fit$laplace$correction} records the check. The interval check
+#'  (with \code{uncertainty = 'hessian'}) tests whether the normal
+#'  approximation from the Hessian matches the posterior, and says so in a
+#'  message and in \code{summary()} where it does not. With
+#'  \code{intoverpop = 'quadrature'} it uses the refined fit, and can then
+#'  take longer than the refinement. \code{checks = 'randomeffects'} leaves it
+#'  out.}
 #'  \item{\code{uncertaintyDraws}, \code{finishsamples},
-#'  \code{uncertaintyControl}}{Both. \code{ctOptimUncertainty}'s \code{draws}
-#'  (default \code{'auto'}), and \code{ctFitUncertainty}'s
-#'  \code{finishsamples} (1000) and \code{control}.}
-#'  \item{\code{accuracy}, \code{sampleControl}}{Julia. An accuracy in
-#'  posterior standard deviations, off by default: once \code{uncertainty}'s
-#'  method has run, its own account of its error is read against it, and
-#'  where the method falls short, or has none, the fit is sampled to that
-#'  accuracy (\code{ctFitUncertainty}'s \code{control$accuracy});
-#'  \code{sampleControl} holds the sampler's other settings for that run.}
-#'  \item{\code{estonly}}{Both. Default FALSE. Point estimates only: no Hessian,
-#'  so no standard errors and no certification; under
-#'  \code{intoverpop = 'laplace'} no Newton finish and no quadrature
-#'  correction either.}
+#'  \code{uncertaintyControl}}{Both. The \code{draws} argument of
+#'  \code{ctOptimUncertainty} (default \code{'auto'}), and the
+#'  \code{finishsamples} (1000) and \code{control} arguments of
+#'  \code{ctFitUncertainty}.}
+#'  \item{\code{accuracy}, \code{sampleControl}}{Julia. A target accuracy in
+#'  posterior standard deviations, off by default. After the uncertainty
+#'  method has run, its estimate of its own error is compared with this, and
+#'  if it falls short, or gives none, the fit is sampled to that accuracy
+#'  (\code{control$accuracy} in \code{ctFitUncertainty}).
+#'  \code{sampleControl} holds the other sampler settings for that run.}
+#'  \item{\code{estonly}}{Both. Default FALSE. Point estimates only, without a
+#'  Hessian, so there are no standard errors and no convergence check. With
+#'  \code{intoverpop = 'laplace'} there are also no Newton steps and no
+#'  random-effects check.}
 #' }
 #'
 #' @section Progress and output (julia):
 #' \describe{
 #'  \item{\code{callback}}{A function called while the fit runs, with
-#'  \code{(iteration, total, objective, gradient_norm, parameters)}, where
-#'  \code{parameters} is the raw vector the objective and gradient describe; one
-#'  declaring only the first four is called with four. It is called on a time
-#'  cadence and once more at the end, for live progress in a front end;
-#'  \code{checkpoint} below writes a resumable checkpoint itself. An error
-#'  inside it disables it with a warning. \code{fit$optim$trace} holds
-#'  every iteration after the fit, and \code{\link{ctTracePlot}} draws it.}
-#'  \item{\code{checkpoint}}{A file path. While the fit optimises, its point is
-#'  written there every \code{checkpoint_every} seconds (default 60) and at the
-#'  end of each run, with each subject's random-effect modes on the Laplace
-#'  route and the smoothing parameters of any smooth terms; each exact Hessian
-#'  the fit forms is kept beside it (\code{<checkpoint>.hessian}). Where the
-#'  file already exists, the fit starts from it: the same call again resumes an
-#'  interrupted fit, its modes, smoothing parameters and Hessian included,
-#'  which starting from \code{inits} alone does not keep. A file written for a
-#'  different model stops the fit rather than being overwritten.}
+#'  arguments \code{(iteration, total, objective, gradient_norm, parameters)},
+#'  where \code{parameters} is the raw parameter vector. A function with only
+#'  the first four arguments is called with four. It is called at regular time
+#'  intervals and once at the end, for example to show progress in a front
+#'  end. An error inside it disables it, with a warning.
+#'  \code{fit$optim$trace} holds every iteration after the fit, and
+#'  \code{\link{ctTracePlot}} plots it. To save a checkpoint to resume from,
+#'  use \code{checkpoint}.}
+#'  \item{\code{checkpoint}}{A file path. While the fit optimises, its current
+#'  point is saved there every \code{checkpoint_every} seconds (default 60)
+#'  and at the end of each stage, together with the random-effect modes (with
+#'  \code{intoverpop = 'laplace'}) and the smoothing parameters of any smooth
+#'  terms. Each exact Hessian the fit computes is saved beside it
+#'  (\code{<checkpoint>.hessian}). If the file already exists, the fit starts
+#'  from it, so running the same call again resumes an interrupted fit,
+#'  including its modes, smoothing parameters and Hessian. A file written for
+#'  a different model stops the fit instead of being overwritten.}
 #'  \item{\code{progress}}{Force the progress line on or off.}
-#'  \item{\code{tipredMissing}}{How missing TI predictor values are handled.
-#'  Each gets a normal distribution from a regression on the other variables;
-#'  \code{'impute'} holds the value at its mean, \code{'sample'} makes it a
-#'  parameter with that distribution as its prior, and \code{'auto'}, the
-#'  default, imputes when optimizing and samples when sampling. A sampled fit
-#'  is placed with the values imputed. \code{ctFitUncertainty(fit, 'sample')}
-#'  reads the fit's setting, and its \code{control$tipredMissing} overrides
-#'  it.}
+#'  \item{\code{tipredMissing}}{How missing values of time independent
+#'  predictors are handled. Each missing value gets a normal distribution from
+#'  a regression on the other variables. \code{'impute'} sets it to the mean
+#'  of that distribution, \code{'sample'} treats it as a parameter with that
+#'  distribution as its prior, and \code{'auto'}, the default, imputes when
+#'  optimizing and samples when sampling.
+#'  \code{ctFitUncertainty(fit, 'sample')} uses the fit's setting, and its
+#'  \code{control$tipredMissing} overrides it.}
 #'  \item{\code{tipredMissingIncludeOutcome}}{Default TRUE. Whether the outcome
 #'  informs the imputation of missing TI predictors.}
-#'  \item{\code{saveEffects}}{A sampling setting; read here for older scripts.
+#'  \item{\code{saveEffects}}{A sampling setting, read here for older scripts.
 #'  Use \code{sampleControl$saveEffects}.}
 #' }
 #'

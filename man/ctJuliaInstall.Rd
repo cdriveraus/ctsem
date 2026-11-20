@@ -13,13 +13,13 @@ ctJuliaInstall(
 )
 }
 \arguments{
-\item{threads}{Number of Julia threads for the engine's subject loop. Julia
-fixes this when its process starts, so it applies to the session this call
-creates; see \code{\link{ctJuliaSetup}}.}
+\item{threads}{Number of Julia threads. Julia fixes this when it starts,
+so it applies to the session this call starts (see
+\code{\link{ctJuliaSetup}}).}
 
-\item{version}{Julia version to install. Defaults to the version ctsem's
-vendored engine was resolved against. The download is checksum-verified
-only for that default.}
+\item{version}{Julia version to install. Defaults to the version the
+engine shipped with ctsem was tested with. The download is
+checksum-verified only for that default.}
 
 \item{agree}{\code{TRUE} to consent to the installs without being asked,
 \code{FALSE} to refuse them. \code{NULL}, the default, asks in an
@@ -35,23 +35,23 @@ A Julia-engine status list, invisibly; see \code{\link{ctJuliaStatus}}.
 }
 \description{
 Installs everything \code{ctFit(backend='julia')} needs, in one call and
-without restarting R: the \pkg{JuliaConnectoR} bridge package, a Julia
-installation, and the Julia dependencies of the engine that ships inside
-ctsem. Any step that is already satisfied is skipped, so on a machine that
-already has Julia this only prepares the engine.
+without restarting R: the \pkg{JuliaConnectoR} package, Julia, and the
+Julia packages that the engine shipped with ctsem depends on. Steps that
+are already done are skipped, so on a machine that already has Julia this
+only prepares the engine.
 }
 \details{
-Each step that installs something asks first, naming the download and its
-destination. A non-interactive session has nobody to ask, so nothing is
-installed there unless \code{agree = TRUE} or the environment variable
-\code{CTSEM_JULIA_AGREE=yes} gave permission in advance.
+Each step that installs something asks first, naming the download and
+where it goes. In a non-interactive session nothing is installed unless
+\code{agree = TRUE} or the environment variable
+\code{CTSEM_JULIA_AGREE=yes} is set.
 
 Julia is downloaded only if none can be found. ctsem looks in
 \code{JULIA_BINDIR}, then at a Julia it installed itself, then on the
-\code{PATH}, then among juliaup's installations. A Julia that ctsem installs
-goes under \code{tools::R_user_dir("ctsem", "data")} and later sessions find
-it automatically -- there is no environment variable to set, and no PATH or
-shell profile is modified. To use a different Julia afterwards, set
+\code{PATH}, then among juliaup's installations. A Julia that ctsem
+installs goes under \code{tools::R_user_dir("ctsem", "data")}, and later
+sessions find it without any environment variable. The \code{PATH} and
+shell profile are left unchanged. To use a different Julia afterwards, set
 \code{JULIA_BINDIR}.
 }
 \examples{

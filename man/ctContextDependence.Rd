@@ -4,16 +4,15 @@
 \alias{ctContextDependence}
 \title{Context dependence of reported model matrices}
 \description{
-A ctsem matrix cell may be written as an expression referencing a latent
-process or a time dependent predictor -- for instance
-\code{DRIFT[1,1] = '-log1p(exp(param)) * eta2'}. Such a cell has no single
-value. It has a value \emph{at} an evaluation context: a latent state, a set
-of time dependent predictor values, a time and an interval.
+A ctsem matrix cell may be an expression of a latent process or a time
+dependent predictor, such as
+\code{DRIFT[1,1] = '-log1p(exp(param)) * eta2'}. Such a cell has a value
+only at a given evaluation context: a latent state, a set of time dependent
+predictor values, a time and an interval.
 }
 \details{
-ctsem's summaries and plots report a number for every cell, so for a model
-like this they must pick a point. There are two, and which one you get
-depends on what you asked for:
+ctsem's summaries and plots report a number for every cell, so for such a
+model they evaluate it at one of two points, depending on the function:
 
 \itemize{
   \item \strong{Population matrices} (\code{summary}, \code{ctSummaryMatrices},
@@ -25,22 +24,19 @@ depends on what you asked for:
     observed row.
 }
 
-Only \code{\link{ctKalman}} and \code{\link{ctPredict}} avoid the choice
-entirely, because they run the filter and re-evaluate every cell at every
-step.
+\code{\link{ctKalman}} and \code{\link{ctPredict}} evaluate every cell at
+every step of the filter, so they report no single point.
 
-A reference to an \emph{individually varying} parameter is not affected by
-any of this. ctsem represents such a parameter as a carrier latent state
-with no drift and no diffusion, so a cell reading that state simply is the
-parameter, and the estimate at the subject's last row is the one that has
-seen all of that subject's data -- the best available, not an arbitrary
-point. Only references to real dynamic processes, and to time dependent
-predictors, make a reported value conditional.
+References to an \emph{individually varying} parameter are not affected,
+since the subject's estimate of such a parameter uses all of that
+subject's data. Only references to dynamic processes and to
+time dependent predictors make a reported value depend on the evaluation
+point.
 
-Functions affected by this attach the cells in question as
-\code{attr(x, 'contextDependent')}, and say so once in a message.
-\code{\link{ctModelIsNonlinear}} answers the question directly. With
-\code{backend='julia'} the evaluation point can be chosen; see the
+Functions affected by this attach the cells as
+\code{attr(x, 'contextDependent')}, and give a message once.
+\code{\link{ctModelIsNonlinear}} reports whether a model has such cells.
+With \code{backend='julia'} the evaluation point can be chosen with the
 \code{state} argument of \code{\link{ctBackendParMatrices}}.
 }
 \seealso{

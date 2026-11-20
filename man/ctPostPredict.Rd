@@ -17,8 +17,7 @@ A named list of ggplot objects, invisibly.
 }
 \description{
 \code{ctPostPredict} and \code{ctStanPostPredict} are aliases for
-\code{\link{ctPostPredPlots}}, which the two functions were merged into. They differ from
-it only in printing the panels by default rather than returning them.
+\code{\link{ctPostPredPlots}}, except that they print the panels by default.
 }
 \examples{
 \donttest{

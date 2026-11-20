@@ -7,9 +7,9 @@
 #' covariances or correlations are computed across subjects for each matching
 #' observation-index pair. By default (\code{x = "lag"}) they are then averaged
 #' over observation-index pairs, which hides misfit that differs between waves,
-#' such as a variance that changes at one wave; \code{x = "obs"} or a data
-#' column instead shows each wave, or each value or bin of the column, as a
-#' point of its own.
+#' such as a variance that changes at one wave. \code{x = "obs"}, or the name
+#' of a data column, shows each wave, or each value or bin of the column, as a
+#' separate point.
 #' \code{ctFitCovCheck} is maintained as a backward-compatible alias.
 #'
 #' @param fit A fitted object from \code{\link{ctFit}}, from either backend.
@@ -60,10 +60,9 @@
 #'   otherwise. A point with fewer is left out of the plot and of the share
 #'   outside the model's interval; raise it to drop bins that hold only a few
 #'   off-schedule observations.
-#' @param cores Cores for generating the data when \code{fit} carries none:
-#'   engine threads for a julia fit, and for a stan fit worker processes, which
-#'   start only for a job large enough to repay them. The summary of the
-#'   generated datasets is computed in this session.
+#' @param cores Cores for generating the data when \code{fit} has none. For a
+#'   julia fit these are engine threads, and for a stan fit worker processes,
+#'   which are only started for large jobs.
 #' @param keep If `"samples"`, draw-level model diagnostics are attached as the
 #'   `"samples"` attribute of the returned data.
 #' @return Either a plot/list of plots (default, given by `ctFitCovCheckPlot`) or

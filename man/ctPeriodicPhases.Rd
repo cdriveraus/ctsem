@@ -2,7 +2,7 @@
 % Please edit documentation in R/ctModelPeriodicComponent.R
 \name{ctPeriodicPhases}
 \alias{ctPeriodicPhases}
-\title{The phase predictors a cycle added by ctModelPeriodicComponent reads}
+\title{Add the phase predictors used by ctModelPeriodicComponent}
 \usage{
 ctPeriodicPhases(datalong, period, name = "cycle", id = "id", time = "time")
 }
@@ -21,9 +21,9 @@ ctPeriodicPhases(datalong, period, name = "cycle", id = "id", time = "time")
 }
 \description{
 Adds to long format data, for each subject, the cosine and sine of the
-time of its first row over \code{period}: the columns \code{<name>_cos0}
-and \code{<name>_sin0} that \code{\link{ctModelPeriodicComponent}} sets its
-cycle from.
+time of its first row over \code{period}, as the columns
+\code{<name>_cos0} and \code{<name>_sin0} that
+\code{\link{ctModelPeriodicComponent}} uses to set its cycle.
 }
 \examples{
 d <- data.frame(id = rep(1:2, each = 3), time = c(8, 12, 20, 33, 37, 45))

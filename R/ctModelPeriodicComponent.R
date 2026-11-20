@@ -1,33 +1,30 @@
 #' Add a cycle, such as a daily rhythm, that drives a model's latent processes
 #'
-#' Adds a pair of latents, \code{<name>_cos} and \code{<name>_sin}, that turn
-#' at a fixed \code{period} with no noise of their own -- \code{DRIFT[cos, sin]
-#' = -2 pi / period} and \code{DRIFT[sin, cos] = 2 pi / period} -- so they
-#' trace the cosine and sine of the time of day (or week, or whatever the
-#' period is). Each latent in \code{indices} is driven by both, through
-#' estimated effects \code{DRIFT[k, <name>_cos]} and \code{DRIFT[k,
-#' <name>_sin]}, so it is pushed through the cycle with an amplitude and phase
-#' the data decide, and responds with its own dynamics: a fast process follows
-#' the cycle closely, a slow one smooths and delays it.
+#' Adds a pair of latents, \code{<name>_cos} and \code{<name>_sin}, that rotate
+#' with a fixed \code{period} and have no noise of their own
+#' (\code{DRIFT[cos, sin] = -2 pi / period} and
+#' \code{DRIFT[sin, cos] = 2 pi / period}), so they follow the cosine and sine
+#' of the time of day, or of whatever the period is. Each latent in
+#' \code{indices} is driven by both, through estimated effects
+#' \code{DRIFT[k, <name>_cos]} and \code{DRIFT[k, <name>_sin]}, which set the
+#' amplitude and phase of the cycle's effect. Each driven process responds
+#' with its own dynamics, so a fast process follows the cycle closely and a
+#' slow one smooths and delays it.
 #'
-#' The cycle is set to the clock at each subject's first observation, from
+#' The cycle is set to the clock at each subject's first observation, using
 #' two time independent predictors, \code{<name>_cos0} and \code{<name>_sin0},
 #' the cosine and sine of that time over the period, which
-#' \code{\link{ctPeriodicPhases}} adds to the data. So the data's time must
-#' count from an origin shared by every subject -- hours since midnight of a
-#' common day, say -- for the cycle to mean the same clock time for all.
-#' With \code{individual = TRUE} each subject's cycle may also be shifted from
-#' the clock and differ in strength, by an initial deviation of the pair with
-#' an estimated standard deviation, which the filter learns from each
-#' subject's data: rhythms that differ between people, or a time origin that
-#' is not shared, are then still modelled.
+#' \code{\link{ctPeriodicPhases}} adds to the data. The time variable must
+#' therefore count from an origin shared by all subjects, such as hours since
+#' midnight of a common day. With \code{individual = TRUE} each subject's
+#' cycle may also be shifted from the clock and differ in strength, through an
+#' initial deviation of the pair with an estimated standard deviation. This
+#' allows rhythms that differ between people, or a time origin that is not
+#' shared.
 #'
-#' The effects start at zero, where they have a gradient: unlike a slow
-#' process, the cycle is known, so a refit from the model without it needs no
-#' particular start.
+#' The effects start at zero.
 #'
-#' Needs the julia backend, which reads time independent predictors in the
-#' initial means.
+#' Needs the julia backend.
 #'
 #' @param ctm A model from \code{ctModel(type = 'ct')}.
 #' @param period The cycle's period, in the data's time units: 24 for a daily
@@ -36,10 +33,10 @@
 #' @param name Prefix for the added latents, predictors and parameters.
 #' @param individual Let each subject's cycle deviate from the clock.
 #' @return The extended model.
-#' @seealso \code{\link{ctPeriodicPhases}} for the predictors it reads;
-#'   \code{\link{ctFitAdequacy}}'s \code{periodic} family, which finds cycles a
-#'   model lacks; \code{\link{ctModelImprove}}, which adds one where that
-#'   family points.
+#' @seealso \code{\link{ctPeriodicPhases}} for the predictors it uses,
+#'   \code{\link{ctFitAdequacy}}'s \code{periodic} family, which detects cycles
+#'   a model is missing, and \code{\link{ctModelImprove}}, which adds a cycle
+#'   where that family finds one.
 #' @export
 #' @examples
 #' m <- ctModel(type = 'ct', manifestNames = c('Y1', 'Y2'),
@@ -98,12 +95,12 @@ ctModelPeriodicComponent <- function(ctm, period, indices = seq_len(ctm$n.latent
   t0
 }
 
-#' The phase predictors a cycle added by ctModelPeriodicComponent reads
+#' Add the phase predictors used by ctModelPeriodicComponent
 #'
 #' Adds to long format data, for each subject, the cosine and sine of the
-#' time of its first row over \code{period}: the columns \code{<name>_cos0}
-#' and \code{<name>_sin0} that \code{\link{ctModelPeriodicComponent}} sets its
-#' cycle from.
+#' time of its first row over \code{period}, as the columns
+#' \code{<name>_cos0} and \code{<name>_sin0} that
+#' \code{\link{ctModelPeriodicComponent}} uses to set its cycle.
 #'
 #' @param datalong Long format data, one row per observation.
 #' @param period The cycle's period, in the data's time units.

@@ -28,23 +28,23 @@ library(ctsem)
 library(ggplot2)
 ```
 
-`intoverpop = 'laplace'` integrates individual differences in parameters out of
-the likelihood by a Laplace approximation, instead of carrying them as extra
-latent states. It accepts a *vector* of id columns, so subjects can be nested in
-studies, sites, or classrooms, with random effects declared at each level.
+`intoverpop = 'laplace'` integrates individual differences in parameters out
+of the likelihood with a Laplace approximation. The `id` argument can be a
+*vector* of id columns, so subjects can be nested in studies, sites or
+classrooms, with random effects at each level.
 
-This vignette covers what the approximation is, how to specify and fit such a
-model, and how to read, plot and extract from the result. It requires the Julia
+This vignette describes the approximation, how to specify and fit such a
+model, and how to read, plot and extract the results. It requires the Julia
 backend.
 
 # The model
 
 ## Where random effects live
 
-ctsem works internally on a raw, unconstrained parameter vector $\theta$; each
-model matrix cell is a function of one raw value through that parameter's
-transform. When parameters vary across individuals, subject $i$ gets its own
-raw vector rather than its own model:
+ctsem works internally with a vector of raw, unconstrained parameters
+$\theta$, and each model matrix cell is a function of one raw value through
+that parameter's transform. When parameters vary across individuals, each
+subject $i$ has its own raw vector:
 
 $$
 v_i \;=\; \theta \;+\; \sum_{l} L_l\, u_{b_l(i)}, \qquad u \sim N(0, I)
@@ -58,25 +58,24 @@ shifts are additive on the raw scale and are applied before the transforms, so
 a subject's parameter and the population parameter are always on the same
 scale.
 
-Because $u$ is standard normal by construction, everything about the spread of
-individual differences lives in $L_l$ — which is what `popsd` and `rawpopcorr`
-report.
+Because $u$ is standard normal, the spread of individual differences is
+described by $L_l$, which is what `popsd` and `rawpopcorr` report.
 
-## Two ways to remove $u$
+## Two ways to integrate over $u$
 
-The likelihood we want is the marginal one, with $u$ integrated out. ctsem has
-two ways to do that.
+The likelihood needed is the marginal one, with $u$ integrated out. ctsem has
+two ways to do this.
 
-**Augmentation** (`intoverpop = 'augmented'`) appends $u$ to the latent state with no
-drift and no diffusion, so the Kalman filter carries it along and integrates it
-as a by-product of filtering. It is exact for a linear-Gaussian model and needs
-no new machinery. The cost is that every subject's filtered system grows from
-$n$ latent processes to $n + k$, where $k$ is the number of varying parameters,
-and the filter's linear algebra is cubic in that dimension.
+**Augmentation** (`intoverpop = 'augmented'`) adds $u$ to the latent state with
+no drift and no diffusion, so the Kalman filter integrates over it as part of
+filtering. This is exact for random effects that shift a mean in a linear
+Gaussian model, and a linearisation otherwise. Every subject's filtered system
+grows from $n$ latent processes to $n + k$, where $k$ is the number of varying
+parameters, and the cost of the filter is cubic in that dimension.
 
-**Laplace** (`intoverpop = 'laplace'`) leaves every subject's system at $n$ and
-approximates the integral instead. For a group of members $U$ that share a
-random effect,
+**Laplace** (`intoverpop = 'laplace'`) keeps every subject's system at $n$
+latent processes and approximates the integral. For a group of members $U$
+that share a random effect,
 
 $$
 T(\theta) \;=\; \log \int \exp\Big( \textstyle\sum_{m \in U} \ell_m(v_m) - \tfrac{1}{2}u'u \Big)\, du
@@ -90,79 +89,77 @@ T(\theta) \;\approx\; \sum_{m \in U} \ell_m\big(v_m(\theta, \hat u)\big) \;-\; \
 \qquad M = I - A
 $$
 
-where $A$ is the Hessian of $\sum_m \ell_m$ with respect to $u$ at the mode.
-The identity in $M$ is the standard normal prior's own curvature.
+where $A$ is the Hessian of $\sum_m \ell_m$ with respect to $u$ at the mode,
+and the identity in $M$ is the curvature of the standard normal prior.
 
-The mode is found by an inner Newton solve, started from zero at every
-evaluation so that the objective depends on $\theta$ alone, and the outer gradient with respect to $\theta$ is **exact** — the
-approximation is in the integral, not in its derivatives.
+The mode is found by Newton's method within each evaluation, and the gradient
+with respect to $\theta$ is exact, so the only approximation is in the
+integral itself.
 
-## What is exact and what is not
+## When the approximation is exact
 
-When a random effect enters the state mean linearly through an identity
-transform in a linear-Gaussian model, the integrand is exactly Gaussian in $u$,
-and Laplace is not an approximation at all — it reproduces the closed-form
-integral. `T0MEANS`, `CINT` and `MANIFESTMEANS` are identity-transformed by
-default, so a model like the one below is in that regime.
+When a random effect enters the state mean linearly, through an identity
+transform, in a linear Gaussian model, the integrand is exactly Gaussian in
+$u$ and the Laplace approximation gives the exact integral. `T0MEANS`, `CINT`
+and `MANIFESTMEANS` have identity transforms by default, so the model below is
+of this kind.
 
-It is genuinely approximate when the effect enters through a nonlinear
-transform (`DRIFT`, `DIFFUSION`, and any state-dependent parameter), and the
-approximation is better the more informative each subject's data is about its
-own effects.
+The approximation is not exact when the effect enters through a nonlinear
+transform (`DRIFT`, `DIFFUSION`, and any state dependent parameter). It is
+better the more each subject's data say about that subject's own effects.
 
-`ctFit()` measures that error itself by default, with the random-effects
-check (`optimcontrol$checks`): it checks each unit's integral at draws
-from that unit's posterior, and warns where taking the integrals exactly
-would move an estimate by a tenth of a standard error or more.
-`ctFitUncertainty(fit, intoverpop = 'quadrature')` then refines the fit on
-the quadrature objective for the units that carry the move, reporting the
-quadrature log likelihood, and `ctFit(intoverpop = 'quadrature')` does the
-same at fit time; `print(fit)`
-says when the estimate moved, or should have. `ctLaplaceCheck()` reports the same
-measurement on any Laplace fit, as how far the estimate would move if the
-integral were taken exactly. Read `delta_se`: well below one says the
-approximation is not what limits the answer, and near or above one says it
-is. Read `dropped_directions` alongside it rather than on its own — a
-direction the data does not identify well enough to correct along is also
-reported as a zero correction, and the two look the same in `delta_se` even
-though one means "fine" and the other means "not estimable here".
-`ctFitUncertainty(fit, 'is', intoverpop = 'quadrature')`
-importance samples against the quadrature posterior, correcting the shape of
-the intervals as well as their centre.
+By default `ctFit()` checks the size of that error (the random-effects
+check, `optimcontrol$checks`). It evaluates the integral for each subject, or
+for each outermost group when levels are nested, at draws from its posterior,
+and warns if computing the integrals exactly would move an estimate by a tenth
+of a standard error or more. `ctFitUncertainty(fit, intoverpop = 'quadrature')`
+then refines the fit, integrating the flagged units by quadrature and
+reporting the quadrature log likelihood, and `ctFit(intoverpop = 'quadrature')`
+does the same when fitting. `print(fit)` says when the estimate moved, or
+should have.
 
-The correction moves the estimate and its curvature; the intervals are still
-a normal approximation at a mode, which understates the skew a population
-standard deviation estimated from few groups has. For the exact posterior,
-`ctFitUncertainty(fit, 'sample', intoverpop = 'none')`
-samples the parameters and every unit's random effects jointly, with the
-Laplace fit only as a starting point; on a fit made with `intoverpop =
-'laplace'`, as here, the plain call samples the Laplace marginal instead,
-which keeps its error. A short
-run is often enough to improve on the normal approximation
-(`vignette('uncertainty')`).
+`ctLaplaceCheck()` reports the same check for any Laplace fit, as how far the
+estimate would move if the integral were computed exactly. Values of
+`delta_se` well below one mean the approximation does not limit the result,
+and values near or above one mean it does. Read `dropped_directions` as well.
+A direction the data do not identify well enough to correct along is also
+reported as a zero correction in `delta_se`, which then means the correction
+could not be estimated. `ctFitUncertainty(fit, 'is', intoverpop =
+'quadrature')` importance samples against the quadrature posterior, which
+corrects the shape of the intervals as well as their centre.
+
+The refined fit has its own estimate and curvature, but its intervals are
+still a normal approximation at a mode, which understates the skew of a
+population standard deviation estimated from few groups.
+`ctFitUncertainty(fit, 'sample', intoverpop = 'none')` samples the parameters
+and every unit's random effects jointly, which avoids the approximation. On a
+fit made with `intoverpop = 'laplace'`, as here, `ctFitUncertainty(fit,
+'sample')` without `intoverpop` samples the Laplace approximation of the
+marginal likelihood instead, and keeps its error. A short run is often enough
+to improve on the normal approximation (`vignette('uncertainty')`).
 
 ## Nesting
 
 Subjects in the same study share that study's random effect, so their
-likelihood contributions do not factorise and they cannot be integrated
-separately. The unit of integration is therefore the **outermost group**: one
-study, with all of its subjects, is integrated jointly.
+likelihood contributions cannot be integrated separately. The unit of
+integration is therefore the **outermost group**, here a study with all of its
+subjects.
 
-That would be expensive done naively — the integral for a study of 100 subjects
-with 2 subject effects and 1 study effect is 201-dimensional. It is cheap
-because the curvature has an *arrow* structure: each subject's block couples to
-its study and to nothing else. ctsem assembles, factorises and inverts that
-structure block by block, so the cost is linear in the number of subjects
-rather than cubic.
+For a study of 100 subjects with 2 subject effects and 1 study effect, that
+integral is 201-dimensional. It is still cheap, because each subject's block of
+the curvature is linked only to its study's block (an *arrow* structure), and
+ctsem factorises it block by block. The cost therefore grows linearly with the
+number of subjects.
 
 # A worked example
 
 ## Simulating
 
-Thirty subjects in five studies, ten occasions each. A univariate
-Ornstein-Uhlenbeck process where subjects differ in their starting level
-(`T0MEANS`) and in their equilibrium (`CINT`), the two correlated $-0.4$, and
-where studies additionally differ in average equilibrium.
+Thirty subjects in five studies, with ten occasions each. The process is a
+univariate Ornstein-Uhlenbeck process in which subjects differ in their
+starting level (`T0MEANS`) and their equilibrium (`CINT`), with a correlation
+of $-0.4$ between the two, and studies also differ in their average
+equilibrium.
 
 ```{r simulate}
 set.seed(4)
@@ -195,12 +192,12 @@ dat <- data.frame(dat)
 head(dat)
 ```
 
-Note that `study` is an ordinary column of the long data frame, constant within
-subject. Nesting is read from the data, not declared separately.
+`study` is an ordinary column of the long data frame, constant within each
+subject. ctsem reads the nesting from the data.
 
 ## Specifying the hierarchy
 
-Pass `id` a vector, innermost first:
+Give `id` a vector of column names, innermost first:
 
 ```{r model}
 m <- ctModel(type = 'ct', id = c('id', 'study'),
@@ -209,20 +206,20 @@ m <- ctModel(type = 'ct', id = c('id', 'study'),
   MANIFESTMEANS = matrix(0))
 ```
 
-`CINT` is fixed to zero by default in ctsem, with the level carried by
-`MANIFESTMEANS`. Here it is freed and `MANIFESTMEANS` fixed instead, so that
-the process has a genuine equilibrium at $-\text{CINT}/\text{DRIFT}$ for
-individual differences to act on.
+By default ctsem fixes `CINT` to zero and estimates the level in
+`MANIFESTMEANS`. Here `CINT` is free and `MANIFESTMEANS` fixed instead, so that
+the process has an equilibrium at $-\text{CINT}/\text{DRIFT}$ for individual
+differences to act on.
 
 A cell's `indvarying` field says at which levels its parameter varies: `TRUE`
-at every level, `FALSE` at none, or the levels by name. Intercepts left
-unspecified vary at every level, so `cint_eta1` varies both between subjects
-and between studies, which is what makes its variance decompose into a
-within-study and a between-study part. `'T0m_eta1||id'` lets the starting
-level vary between subjects only; `'cint_eta1||study'` would vary between
-studies only, with subjects exchangeable within a study. The same field can be
-written by name, `'T0m_eta1, indvarying=id'`, or built with
-`ctPar('T0m_eta1', indvarying = 'id')`. Printing the model says what varies
+for every level, `FALSE` for none, or the names of levels. Intercepts that are
+not specified vary at every level, so `cint_eta1` varies both between subjects
+and between studies, and its variance splits into a within-study and a
+between-study part. `'T0m_eta1||id'` lets the starting level vary between
+subjects only. `'cint_eta1||study'` would let the equilibrium vary between
+studies only, with the subjects in a study sharing one value. The same field
+can be written by name, `'T0m_eta1, indvarying=id'`, or with
+`ctPar('T0m_eta1', indvarying = 'id')`. Printing the model shows what varies
 where, and what each level will estimate:
 
 ```{r levels-print}
@@ -230,10 +227,10 @@ print(m, matrices = FALSE)
 ```
 
 `m$pars$indvarying` holds the same values, one per cell, and can be edited
-directly -- `TRUE`, `FALSE` or level names, as in a cell. A cell's `sdscale`
-scales the prior on the standard deviation at every level it varies at. Levels
-must be **strictly nested**: every subject belongs to exactly one study. ctsem
-checks this and stops if the data say otherwise.
+directly, with `TRUE`, `FALSE` or level names as in a cell. A cell's `sdscale`
+scales the prior on the standard deviation at every level the parameter varies
+at. Levels must be **strictly nested**, with every subject in exactly one
+study. ctsem checks this and stops if the data say otherwise.
 
 ## Fitting
 
@@ -241,11 +238,10 @@ checks this and stops if the data say otherwise.
 fit <- ctFit(dat, m, backend = 'julia', intoverpop = 'laplace', cores = 4)
 ```
 
-`cores` threads the loop over integration units, which are studies here.
-Everything else is as usual: `intoverpop = 'laplace'` requires
-`backend = 'julia'`. With `optimize = FALSE` the same model is sampled instead,
-the random effects drawn with the parameters, and the Laplace approximation
-plays no part in the result.
+`cores` sets the number of threads used for the integration units, which are
+studies here. `intoverpop = 'laplace'` requires `backend = 'julia'`. With
+`optimize = FALSE` the same model is sampled instead, with the random effects
+drawn along with the parameters, and the Laplace approximation is not used.
 
 # Reading the output
 
@@ -257,13 +253,11 @@ The parts specific to a hierarchy:
 
 **`Random-effects standard deviations (id)`** and **`(study)`** are the spread
 of the random effects at each level, on the transformed parameter scale. With
-more than one level, nothing is reported in an unlabelled block — a bare table
-would leave it ambiguous whether it described spread between subjects or
-between studies.
+more than one level, each table is labelled with its level.
 
-Read together they are a variance decomposition. `cint_eta1` appears at both
-levels, so its total individual variation splits into a within-study part and a
-between-study part, against generating values of $0.4$ and $0.5$:
+Together they decompose the variance. `cint_eta1` varies at both levels, so its
+total variation splits into a within-study part and a between-study part,
+here against generating values of $0.4$ and $0.5$:
 
 ```{r decomp}
 s <- summary(fit)
@@ -274,16 +268,16 @@ rbind(
 ```
 
 **`Random-effects correlations (id)`** are correlations between random effects
-*on the raw, untransformed scale* — the correlation ctsem parameterises, not a
-correlation of the transformed parameters. For identity-transformed parameters
-like these the two coincide; for `DRIFT` or `DIFFUSION` they do not. The study
-level has only one effect here, so it has no correlation table.
+on the raw parameter scale. For parameters with identity transforms, like
+these, they are also the correlations of the transformed parameters, but for
+`DRIFT` or `DIFFUSION` they are not. The study level has only one effect here,
+so it has no correlation table.
 
-**`Fixed-effects / Population means`** are the population values, i.e. the
-parameters before any subject's shift is added.
+**`Fixed-effects / Population means`** are the population values, the
+parameters before any random effects are added.
 
-For programmatic use, `summary(fit)$randomEffects` holds the same quantities
-per level, as raw draws rather than as summaries:
+`summary(fit)$randomEffects` holds the same quantities for each level, as raw
+draws:
 
 ```{r payload}
 str(lapply(summary(fit)$randomEffects, function(z)
@@ -292,9 +286,9 @@ str(lapply(summary(fit)$randomEffects, function(z)
 
 # Per-subject parameters
 
-`ctSubjectPars()` returns each subject's own parameter values — population
-value, plus its random effects at every level it belongs to, plus any
-time-independent predictor effects — pushed through the model's transforms:
+`ctSubjectPars()` returns each subject's parameter values: the population
+value plus its random effects at every level it belongs to, plus any time
+independent predictor effects, passed through the model's transforms:
 
 ```{r subjectpars}
 sp <- ctSubjectPars(fit)
@@ -302,11 +296,9 @@ dim(sp)
 round(head(sp[1, , ], 4), 3)
 ```
 
-The array is `draws x subjects x parameters`. On a Laplace fit there is one
-draw: these are the conditional modes at the estimated population parameters, a
-point estimate rather than a posterior. Getting draws would mean re-solving
-every subject's inner mode at every draw, which is a real computation rather
-than a lookup.
+The array is `draws x subjects x parameters`. A Laplace fit gives one draw,
+the conditional modes at the estimated population parameters, which is a point
+estimate.
 
 Against the values that generated the data:
 
@@ -315,9 +307,9 @@ c(cint = cor(sp[1, , 'cint_eta1'], truth$cint),
   T0means = cor(sp[1, , 'T0m_eta1'], truth$t0))
 ```
 
-Because `cint_eta1` varies at both levels, its subject estimates carry the study
-structure. Each study's own value -- the population value shifted by that
-study's effect, with no subject's on top -- is `level = 'study'`:
+Because `cint_eta1` varies at both levels, the subject estimates include the
+study effects. Each study's own value, the population value plus that study's
+effect, comes from `level = 'study'`:
 
 ```{r studymeans}
 st <- ctSubjectPars(fit, level = 'study')
@@ -335,12 +327,12 @@ ggplot(d, aes(x = study, y = cint, colour = study)) +
 ```
 
 The spread of the black study means around the dashed grand mean is the
-between-study variation; the scatter within each study is the within-study
-variation.
+between-study variation, and the scatter within each study is the
+within-study variation.
 
 # Trajectories
 
-`ctPredict()` and `ctKalman()` work as they do for any other fit:
+`ctPredict()` and `ctKalman()` work as for any other fit:
 
 ```{r predict}
 k <- ctPredict(fit, subjects = c(1, 7, 13), timestep = .25,
@@ -350,16 +342,17 @@ plot(k)
 
 ## Choosing which levels enter the trajectory
 
-`randomEffects` selects which levels the trajectory is built from. Naming an id
-column includes that level and every level *outside* it, so:
+`randomEffects` selects the levels whose random effects the trajectory uses.
+Naming an id column includes that level and every level *above* it:
 
 - `'id'` (the default, the innermost id) gives each subject its own trajectory;
 - `'study'` gives the study mean, shared by every subject in a study;
-- `'population'` includes none, giving the trajectory implied by the population
-  parameters alone.
+- `'population'` includes no random effects, giving the trajectory implied by
+  the population parameters alone.
 
-The effect is clearest in the expectation at each subject's first observation,
-which is driven by the parameters rather than by data:
+The difference is clearest in the expectation at each subject's first
+observation, which comes from the parameters before any observation updates
+it:
 
 ```{r levels}
 subs <- c(1, 7, 13, 19, 25)   # one from each study
@@ -370,30 +363,27 @@ sapply(c('id', 'study', 'population'), function(lev) {
 })
 ```
 
-Under `'id'` each subject starts at its own estimated `T0MEANS`. Under `'study'`
-and `'population'` they all start at the same place, because `T0MEANS` varies
-only at the subject level here — the study effect is on `CINT`, so it acts on
-where the trajectories go, not on where they begin.
+Under `'id'` each subject starts at its own estimated `T0MEANS`. Under
+`'study'` and `'population'` they all start at the same value, because
+`T0MEANS` varies only between subjects here. The study effect is on `CINT`, so
+it changes where the trajectories go, and not where they begin.
 
-## The smoothing caveat
+## Which data the trajectories use
 
-A Laplace fit warns, once per call, that its trajectories are the *smoothed*
-equivalent. This is worth understanding rather than dismissing.
+On a Laplace fit with one level of random effects, the predicted and updated
+trajectories use random effects estimated from each subject's earlier data
+only, as a filter would, and smoothed trajectories use the whole record. With
+nested levels, as here, the random effects are estimated from each subject's
+whole record, so even `yprior` depends on the complete series. These are
+smoothed trajectories, and predictions from them are not out-of-sample
+forecasts. ctsem prints a message saying which applies.
 
-In an augmented fit the random effects are latent states, so the filter updates
-them observation by observation, and a trajectory at time $t$ can be built from
-only the data up to $t$. Under Laplace they are conditional modes estimated from
-each subject's whole record. There is no version of them from before a
-subject's later data arrived, so even `yprior` is conditional on the complete
-series. Comparisons that depend on genuine out-of-sample filtering — a
-prediction at $t$ that has not seen $t$ — are not what these give.
-
-What the modes are *not* is recomputed. They are the ones the fit arrived at,
-against the data the fit saw, and they stay fixed however a prediction call
-changes the rows being filtered — selecting subjects, interpolating onto a time
-grid, or withholding observations with `removeObs`. So a prediction with every
-observation withheld still uses that subject's own random effects, which is
-what makes it a prediction *for that subject* rather than for the average one:
+On this fit the random effects are not estimated again for a prediction. They
+are the ones the fit found, from the data the fit used, and stay fixed when a
+prediction call changes the rows being filtered, by selecting subjects,
+interpolating onto a time grid, or withholding observations with `removeObs`.
+A prediction with every observation withheld still uses that subject's own
+random effects, and so is a prediction for that subject:
 
 ```{r fixedmodes}
 firstrow <- function(...) {
@@ -412,25 +402,23 @@ rbind(
 
 **How many groups at the outer level.** A level's standard deviation is
 estimated from the number of *groups* at that level, not the number of
-subjects. Five studies is few, and the interval on `popsd.study` above is
-correspondingly wide. With very few groups the correlation parameters can be
-driven to the boundary; ctsem caps them just short of $\pm 1$ and reports that
-it has done so rather than failing.
+subjects. Five studies is few, and the interval on `popsd.study` above is wide
+accordingly. With very few groups the correlations can run to their limits.
+ctsem holds them just short of $\pm 1$ and warns when a fit ends there.
 
-**Priors** are available at every level and are the standard remedy when an
-outer level is weakly identified.
+**Priors** are available at every level, and help when an outer level is
+weakly identified.
 
-**Choosing between them.** `intoverpop = TRUE`, and the default `'auto'`
-when optimizing, take Laplace on the julia backend. It integrates random
-effects that shift a mean in a linear Gaussian model exactly, inside each
-subject's filter, as augmentation would, and every other effect by the Laplace
-approximation; it is the only option for nesting beyond the subject level.
-Name augmentation explicitly for an effect the filter does not take -- one
-random parameter shared by several cells, say -- where its carrier state is
-cheaper than a Laplace coordinate.
+**Laplace or augmentation.** `intoverpop = TRUE`, and the default `'auto'`
+when optimizing, use the Laplace approximation on the julia backend. Random
+effects that shift a mean in a linear Gaussian model are integrated exactly
+within each subject's filter, as augmentation would, and other effects by the
+Laplace approximation. It is the only option for nesting above the subject
+level. Augmentation can be chosen with `intoverpop = 'augmented'`, and can be
+faster for a random parameter shared by several cells.
 
-**Time-independent predictors** work at any level, provided the predictor
-actually varies at that level.
+**Time independent predictors** work at any level, as long as the predictor
+varies at that level.
 
 # Session
 

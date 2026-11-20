@@ -22,41 +22,37 @@ ctNetwork(
 \item{x}{A \code{ctStanModel} from \code{\link{ctModel}}, or a fit from
 \code{\link{ctFit}} on either backend.}
 
-\item{dt}{Time interval for the temporal and contemporaneous networks. A
-whole number of steps for a discrete time model. Length one; to see the
-interval dependence, call \code{\link{ctNetworkPlot}} with a vector.}
+\item{dt}{Time interval for the temporal and contemporaneous networks, a
+whole number of steps for a discrete time model. A single value. To
+compare intervals, call \code{\link{ctNetworkPlot}} with a vector.}
 
-\item{state}{Where a state dependent cell is evaluated, when \code{x} is a
-fit: \code{'T0MEANS'} (the default, and what \code{\link{ctSummaryMatrices}}
-uses), \code{'mean'} for the mean smoothed latent state, \code{'asymptotic'}
-for the system's own fixed point, or a numeric state vector. Only
-\code{backend='julia'} can re-materialise the matrices elsewhere, so
-anything but the default is an error on a stan fit rather than being
-quietly ignored. Irrelevant to a linear model, and to an unfitted
-specification.}
+\item{state}{Where state dependent cells are evaluated, when \code{x} is a
+fit: \code{'T0MEANS'} (the default, as in \code{\link{ctSummaryMatrices}}),
+\code{'mean'} for the mean smoothed latent state, \code{'asymptotic'} for
+the system's fixed point, or a numeric state vector. Values other than the
+default need \code{backend='julia'} and are an error for a stan fit. No
+effect for a linear model or an unfitted specification.}
 
 \item{standardise}{If TRUE (the default), temporal edges are in standard
-deviation units of the processes themselves, using
-\code{asymDIFFUSIONcov}, so edges between processes on different scales are
-comparable. Falls back to FALSE, with a message, when the system has no
-stationary variance to standardise by.}
+deviation units of the processes, using \code{asymDIFFUSIONcov}, so edges
+between processes on different scales are comparable. Set to FALSE, with
+a message, when the system has no stationary variance.}
 
 \item{impulseType}{What a one unit change in a process brings with it; see
-\code{\link{ctDiscretePars}}, whose argument this is. \code{'unit'} (the
-default) is an impulse of one to that process alone -- the partial
-regression, and a property of the dynamics alone.}
+\code{\link{ctDiscretePars}}. \code{'unit'} (the default) changes that
+process alone, giving the partial regression.}
 
 \item{threshold}{Edges with \code{abs(weight)} at or below this are dropped
-from \code{$edges} and from any plot. The matrices are never thresholded.}
+from \code{$edges} and from any plot. The matrices are not thresholded.}
 
 \item{networks}{Which networks appear in \code{$edges} and in the plot. Any
 of \code{'temporal'}, \code{'contemporaneous'}, \code{'asymptotic'},
-\code{'measurement'}. All four matrices are computed regardless.}
+\code{'measurement'}. All four matrices are always computed.}
 
 \item{plot}{If TRUE, returns the \code{\link{ctNetworkPlot}} of the result
 instead of the result.}
 
-\item{quiet}{Suppress the messages about how the numbers were arrived at.}
+\item{quiet}{Suppress the messages about how the numbers were computed.}
 
 \item{...}{Passed to \code{\link{ctSummaryMatrices}} when \code{x} is a fit,
 and to \code{\link{ctNetworkPlot}} when \code{plot=TRUE}.}
@@ -67,93 +63,84 @@ and to \code{\link{ctNetworkPlot}} when \code{plot=TRUE}.}
 A list of class \code{ctNetwork}:
 \describe{
   \item{\code{temporal}, \code{contemporaneous}, \code{asymptotic},
-    \code{measurement}}{Weight matrices with the model's own names, ready to
-    hand to \code{qgraph::qgraph()}. \code{asymptotic} may be \code{NULL}.}
-  \item{\code{edges}}{Tidy data frame: \code{network}, \code{from},
-    \code{to}, \code{weight}, \code{directed}, \code{self}. Thresholded, and
-    restricted to \code{networks}.}
+    \code{measurement}}{Weight matrices with the model's names, in the form
+    \code{qgraph::qgraph()} takes. \code{asymptotic} may be \code{NULL}.}
+  \item{\code{edges}}{Data frame with columns \code{network}, \code{from},
+    \code{to}, \code{weight}, \code{directed} and \code{self}, thresholded
+    and restricted to \code{networks}.}
   \item{\code{nodes}}{Data frame of \code{name} and \code{type}
     (\code{'latent'} or \code{'manifest'}).}
   \item{\code{DRIFT}, \code{DIFFUSIONcov}, \code{asymDIFFUSIONcov},
-    \code{innovation}}{The matrices the networks were derived from, so every
-    number above can be checked. On a julia fit \code{DRIFT} is the drift's
-    Jacobian at the evaluation point, DRIFT itself where no cell reads the
-    state (see the section on state dependent models).}
+    \code{innovation}}{The matrices the networks were computed from. On a
+    julia fit \code{DRIFT} is the drift's Jacobian at the evaluation point,
+    which equals DRIFT when no cell depends on the state.}
 }
 With attributes \code{dt}, \code{standardise}, \code{impulseType},
   \code{threshold}, \code{networks}, \code{continuoustime}, \code{source},
   \code{stateLabel} (the evaluation point, for a fit) and
-  \code{stateDependent} (the cells with no single value, or \code{NULL}).
+  \code{stateDependent} (the state dependent cells, or \code{NULL}).
 }
 \description{
-The two graphs network psychometrics draws from a multivariate time series --
-the directed temporal network and the undirected contemporaneous network --
-computed from a ctsem model specification or from a fit on either backend.
+Computes the directed temporal network and the undirected contemporaneous
+network used in network psychometrics, from a ctsem model specification or
+from a fit on either backend.
 
-Both are functions of the time interval, which is what a continuous time
-model has to say here that a discrete time VAR does not. Call it at several
-\code{dt} and the networks change shape, not merely scale.
+In a continuous time model both networks depend on the time interval, and
+their shape as well as their scale changes with \code{dt}.
 }
 \details{
 Three networks over the latent processes, plus the measurement model:
 
 \describe{
   \item{\code{temporal}}{\code{expm(DRIFT * dt)}, the discrete time
-    autoregression and cross-lagged matrix at interval \code{dt}. Directed,
-    with the diagonal as self-loops (the autoregressions). Cell
+    autoregressive and cross-lagged matrix at interval \code{dt}. Directed,
+    with the autoregressions as self-loops on the diagonal. Cell
     \code{[i,j]} is the effect of process \code{j} now on process \code{i}
     one interval later, so an edge runs from the column to the row. This is
-    \code{\link{ctDiscretePars}} at a single interval, and shares its
+    \code{\link{ctDiscretePars}} at a single interval, with the same
     \code{impulseType} and \code{standardise} arguments.}
   \item{\code{contemporaneous}}{Partial correlations of the innovation
     covariance accumulated over \code{dt},
     \code{Q(dt) = int_0^dt expm(DRIFT s) DIFFUSIONcov t(expm(DRIFT s)) ds}.
     This is the continuous time counterpart of the graphicalVAR
-    contemporaneous network. Partial correlations are scale free, so as
-    \code{dt} shrinks this tends to the partial correlations of
-    \code{DIFFUSIONcov} itself, and as \code{dt} grows to those of the
-    asymptotic covariance.}
+    contemporaneous network. As \code{dt} shrinks it tends to the partial
+    correlations of \code{DIFFUSIONcov}, and as \code{dt} grows to those of
+    the asymptotic covariance.}
   \item{\code{asymptotic}}{Partial correlations of
-    \code{asymDIFFUSIONcov}, the long run within-subject covariance -- the
-    network a cross-sectional study of a stationary system would see.
+    \code{asymDIFFUSIONcov}, the long run within-subject covariance. This is
+    the network a cross-sectional study of a stationary system would find.
     \code{NULL} if the system is not stationary.}
   \item{\code{measurement}}{\code{LAMBDA}, as a bipartite manifest by latent
-    graph. Directed from latent to manifest.}
+    graph, directed from latent to manifest.}
 }
 
-From a fit, the matrices are the posterior medians
+From a fit, the matrices are the posterior medians that
 \code{\link{ctSummaryMatrices}} reports. From an unfitted specification, a
-fixed cell is its own value and a free cell takes the value its transform
-gives at a raw parameter of zero, which is where estimation starts; how many
-DRIFT, DIFFUSION and LAMBDA cells were treated that way is reported, those
-being the only matrices an edge can come from.
+fixed cell takes its value, and a free cell takes the value its transform
+gives at a raw parameter of zero. The number of DRIFT, DIFFUSION and LAMBDA
+cells set this way is reported.
 }
 \section{State dependent and nonlinear models}{
 
-A DRIFT, DIFFUSION or LAMBDA cell may be written as an expression
-referencing a latent process, and then there is no such thing as \emph{the}
-network. What a fit reports is the system linearised at one point of the
-state space, so the graph drawn from it is that linearisation's graph:
-somewhere else the edge weights differ, and for a strongly nonlinear model so
-does which edges are there at all. The temporal and contemporaneous networks
-then come from the drift's Jacobian at that point (\code{JAx}) and the
-measurement network from the measurement's (\code{Jy}), which differ from
-DRIFT and LAMBDA there where a cell is nonlinear in the state: a cell
-\code{a + b*Y} in the column of process \code{Y} has slope \code{a + 2*b*Y}.
-A stan fit reports no Jacobians, so its edges are the cells' values at
-\code{T0MEANS}, and it says so.
+When a DRIFT, DIFFUSION or LAMBDA cell is an expression of a latent process,
+the network differs across the state space. The networks reported for a fit
+are those of the system linearised at one point, and elsewhere the edge
+weights differ, as can which edges are present. The temporal and
+contemporaneous networks then use the drift's Jacobian at that point
+(\code{JAx}), and the measurement network uses the measurement Jacobian
+(\code{Jy}). These differ from DRIFT and LAMBDA where a cell is nonlinear
+in the state: a cell \code{a + b*Y} in the column of process \code{Y} has
+slope \code{a + 2*b*Y}. A stan fit has no Jacobians, so its edges are the
+cells' values at \code{T0MEANS}, with a message saying so.
 
-When any such cell is present, \code{ctNetwork} says so once, names the
-evaluation point, and records the cells in
-\code{attr(x, 'stateDependent')}; \code{\link{ctNetworkPlot}} puts the point
-in the figure's subtitle so a saved plot carries its own caveat. Use
-\code{state} to move the point, and
-\code{\link{ctPhasePortrait}} or \code{\link{ctStateDependencePlot}} to see
-the variation itself rather than one slice of it. Nothing is said for a
-linear model, whose matrices are the same everywhere.
+When such cells are present, \code{ctNetwork} gives a message naming the
+evaluation point, and records the cells in \code{attr(x, 'stateDependent')}.
+\code{\link{ctNetworkPlot}} puts the point in the plot's subtitle. Use
+\code{state} to change the point, and \code{\link{ctPhasePortrait}} or
+\code{\link{ctStateDependencePlot}} to see how the system varies over the
+state space. For a linear model there is no message.
 
-From an unfitted specification such a cell is reported and left out instead,
-since filling it in would draw a model that was not written.
+From an unfitted specification such cells are reported and left out.
 }
 
 \examples{
@@ -172,8 +159,8 @@ net$edges
 }
 \seealso{
 \code{\link{ctNetworkPlot}} to draw it,
-  \code{\link{ctDiscretePars}} for the temporal network across a continuum of
+  \code{\link{ctDiscretePars}} for the temporal network over a range of
   intervals, \code{\link{ctPhasePortrait}} and
-  \code{\link{ctStateDependencePlot}} for what a state dependent system does
-  away from the point these edges were evaluated at.
+  \code{\link{ctStateDependencePlot}} for how a state dependent system
+  varies away from the evaluation point.
 }

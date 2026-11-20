@@ -20,33 +20,31 @@ ctSubjectPars(
 \item{pointest}{if TRUE, returns only the set of individual difference parameters
 based on the max a posteriori estimate (or the median if sampling approaches were used).}
 
-\item{cores}{Number of cores to use. \code{backend='stan'} only -- a julia fit already
-carries the subject matrices, so there is nothing here to split, and \code{cores} is refused
-by name rather than accepted and ignored.}
+\item{cores}{Number of cores to use. \code{backend='stan'} only, and an
+error for a julia fit, which already holds the subject matrices.}
 
 \item{nsamples}{Number of samples to calculate parameters for. Not used if pointest=TRUE.}
 
 \item{level}{For a model with nested ids (\code{id = c('person', 'couple')}
-in \code{\link{ctModel}}), the level to report: the subject level (the
-default, the first id) or a grouping level above it, which gives each
-group's own parameter values -- the population values shifted by that
-group's random effects and those of the levels above it, without the
-subject-level ones or TI predictor effects. Grouping levels need a
-\code{backend='julia'} fit; their draws take \code{uncertainty} as a
-subject's do.}
+in \code{\link{ctModel}}), the level to report. The default is the subject
+level (the first id). A grouping level above it gives each group's own
+parameter values, which are the population values shifted by that group's
+random effects and those of the levels above it, without subject level
+effects or TI predictor effects. Grouping levels need a
+\code{backend='julia'} fit, and their draws follow \code{uncertainty} as
+for subjects.}
 
-\item{uncertainty}{For \code{backend='julia'} fits with \code{pointest=FALSE}:
-what the draws carry. \code{'total'} (the default) pairs each draw of the
-population parameters with a draw of each subject's random effects from their
-posterior given that subject's data -- plausible values, whose spread is both
-the population parameters' uncertainty and how well the subject's own data
-determine its parameters. \code{'conditional'} keeps the population
-parameters at the estimate and draws only the subject's effects;
-\code{'population'} varies only the population parameters, with each subject
-at its estimate given them, which understates a subject's uncertainty
-whenever its own data say little. A fit that sampled its random effects
-(\code{optimize=FALSE}) already has draws of both, so only \code{'total'}
-applies there.}
+\item{uncertainty}{For \code{backend='julia'} fits with \code{pointest=FALSE},
+what the draws include. \code{'total'} (the default) pairs each draw of the
+population parameters with a draw of each subject's random effects from
+their posterior given that subject's data. The spread then includes both the
+uncertainty of the population parameters and how well the subject's own
+data determine its parameters. \code{'conditional'} keeps the population
+parameters at the estimate and draws only the subject's effects.
+\code{'population'} varies only the population parameters, with each
+subject at its estimate, which understates a subject's uncertainty when its
+own data are weak. A fit that sampled its random effects
+(\code{optimize=FALSE}) only supports \code{'total'}.}
 }
 \value{
 an nsamples by nsubjects by nparams array, with the subjects (or
@@ -62,11 +60,11 @@ This function returns the estimates of individual parameters, taking into accoun
 covariates and random effects, at every level of a nested model.
 
 A julia fit also stores, for every level with random effects, each group's
-conditional posterior of its effects on the raw parameter scale --
-\code{fit$randomeffects}, one entry per level with the groups' \code{mean}
-deviation from the population value and their covariance packed column by
-column (\code{cov}). The draws with \code{uncertainty='total'} are built from
-the same posterior.
+posterior for its effects on the raw parameter scale, in
+\code{fit$randomeffects}: one entry per level, with each group's
+\code{mean} deviation from the population value and its covariance packed
+column by column (\code{cov}). The draws with \code{uncertainty='total'}
+come from this posterior.
 }
 \examples{
 indpars <- ctSubjectPars(ctstantestfit)

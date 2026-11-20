@@ -30,8 +30,8 @@ hess = list(optimcontrol = list(uncertainty = 'hessian'))))}
 \code{cores \%/\% fitCores} at a time, each fit on \code{fitCores}.}
 
 \item{fitCores}{Number of cores for each inner \code{\link{ctFit}} call,
-at most \code{cores}. This is enforced after merging each \code{fitArgs}
-entry so that worker fits cannot take more than their share.}
+at most \code{cores}. It replaces any \code{cores} given in
+\code{fitArgs}.}
 
 \item{generateCores}{Number of cores for \code{\link{ctGenerateFromFit}}
 when generating replicated datasets, at most \code{cores}. Defaults to

@@ -36,11 +36,11 @@ person's own baseline, and baselines are lower with a diagnosis: -1 on average
 against 0.5. So the average baseline is 0.275 in the population, but -0.25 in
 the sample.
 
-The generating model says the structure: the baseline `mm` varies between
-people with sd 0.5 and is 1.5 lower with a diagnosis
-(`"mm|param|TRUE|0.5|depressed=-1.5"`: identity transform, individually
-varying, sd 0.5, effect of `depressed`). `datastruct` says who is observed
-when, and `values` gives the baseline without a diagnosis:
+In the generating model the baseline `mm` varies between people with sd 0.5
+and is 1.5 lower with a diagnosis (`"mm|param|TRUE|0.5|depressed=-1.5"`, which
+gives the identity transform, individual variation, sd 0.5 and the effect of
+`depressed`). `datastruct` says who is observed when, and `values` gives the
+baseline without a diagnosis:
 
 ```{r data}
 library(ctsem)
@@ -89,8 +89,7 @@ the population's.
 * **It weights each person's likelihood.** Each person's log likelihood, with
   their random effects integrated out, is multiplied by their weight, and the
   fit maximises the sum. A weight of 2 counts a person as twice as many people
-  like them. The same applies on every julia route, so it works with any model
-  the julia backend fits.
+  like them. This works for any model the julia backend fits.
 * **Standard errors come from the sandwich.** Weighting adds no information: a
   person with weight 2 is one person, not two. The curvature of the weighted
   likelihood would treat them as two, and so understate the uncertainty

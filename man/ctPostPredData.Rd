@@ -14,8 +14,8 @@ as extra rows whose variable names are suffixed \code{' std. res.'}. Needs one K
 filter pass per generated dataset, so it is much slower than the default.}
 
 \item{nsamples}{Integer or NA. Number of generated datasets to use. If the fit carries
-more than this, draws are subsampled; if it carries none, this many are generated. NA
-uses whatever the fit already has, or the \code{\link{ctGenerateFromFit}} default.}
+more than this, draws are subsampled, and if it carries none, this many are generated.
+NA uses the datasets the fit carries, or the \code{\link{ctGenerateFromFit}} default.}
 }
 \value{
 A long data table with one row per generated draw x data row x variable, carrying

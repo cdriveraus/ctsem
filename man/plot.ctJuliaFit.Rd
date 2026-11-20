@@ -23,16 +23,16 @@ fit with nothing to trace.}
 Nothing. Generates plots.
 }
 \description{
-The \code{backend='julia'} counterpart of \code{\link{plot.ctStanFit}}.
-\code{'regression'} plots model implied regression coefficients against the
-time interval via \code{\link{ctDiscretePars}}, \code{'kalman'} plots
-expectations via \code{\link{ctPredict}}, \code{'priorcheck'} plots each
-population parameter's prior against its posterior via
-\code{\link{ctPlotPosterior}}, and \code{'trace'} plots how the fit reached
-its estimate via \code{\link{ctTracePlot}}: the optimiser's trace, or each
-chain's draws for a sampled fit. Stan's own density and interval plots of a
-sampled fit (\code{'density'}, \code{'intervals'}) have no julia
-counterpart; \code{'priorcheck'} shows the posterior densities.
+Plots for a fit from \code{backend='julia'}, as \code{\link{plot.ctStanFit}}
+gives for stan fits. \code{'regression'} plots the model implied
+regression coefficients against the time interval
+(\code{\link{ctDiscretePars}}), \code{'kalman'} plots expectations
+(\code{\link{ctPredict}}), \code{'priorcheck'} plots each population
+parameter's prior and posterior (\code{\link{ctPlotPosterior}}), and
+\code{'trace'} plots the optimiser's path to the estimate, or the chains
+of a sampled fit (\code{\link{ctTracePlot}}). The stan plot types
+\code{'density'} and \code{'intervals'} are not available, and
+\code{'priorcheck'} shows the posterior densities instead.
 }
 \examples{
 \donttest{

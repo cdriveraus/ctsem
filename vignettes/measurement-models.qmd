@@ -31,30 +31,28 @@ library(ctsem)
 library(ggplot2)
 ```
 
-A ctsem model has two halves. The **dynamic** half says how the latent
-processes evolve between observations; the **measurement** half says how an
-observation at a time point relates to the latent state then. This vignette is
-entirely about the second half: how many indicators load on a process, what
-kind of variable each indicator is, what happens when kinds are mixed, and what
-to do when a loading or a residual is not a constant.
+A ctsem model has two parts. The **dynamic** part describes how the latent
+processes change between observations, and the **measurement** part describes
+how an observation relates to the latent state at that time. This vignette is
+about the measurement part: how many indicators load on a process, what kind
+of variable each indicator is, how to combine kinds, and what to do when a
+loading or a residual variance is not constant.
 
-Everything here uses `backend = 'julia'`. The non-Gaussian indicator types
-(ordinal, count, censored) exist only on that backend, and binary is
-*integrated* there rather than linearised, so a vignette that switched backends
-between sections would not be comparing like with like.
+Everything here uses `backend = 'julia'`. The ordinal, count and censored
+types are only available there, and the two backends handle binary indicators
+differently, so all the examples use the same backend.
 
 # The measurement equation
 
 At each observed time point the filter has a predicted latent state $\eta$. For
-every manifest variable $j$ observed at that row, ctsem forms a linear
+every manifest variable $j$ observed at that time, ctsem forms a linear
 predictor
 
 $$
 \mu_j \;=\; \text{MANIFESTMEANS}_j \;+\; \text{LAMBDA}_{j\cdot}\, \eta
 $$
 
-and then attaches an observation model to it, chosen by that variable's
-`manifesttype`:
+and then applies the observation model set by that variable's `manifesttype`:
 
 | `manifesttype` | Variable | Observation model | Residual |
 |---|---|---|---|
@@ -64,55 +62,53 @@ and then attaches an observation model to it, chosen by that variable's
 | `3` | count, non-negative integers | $y_j \sim \text{Poisson}(e^{\mu_j + e_j})$, $e_j \sim N(0, \text{MANIFESTVAR})$ | free |
 | `4` | censored | $N(\mu_j,\ \text{MANIFESTVAR})$, observed only inside $[\,c^-_j, c^+_j\,]$ | free |
 
-Four things follow from that table and are worth stating before any code.
+Four things follow from that table.
 
 **Binary and ordinal indicators have no residual variance.** Their randomness
-is entirely in the link, and a term added to the linear predictor would not be
-identified if you wanted one: under a probit link
+comes from the link function. A residual term added to the linear predictor
+would not be identified: under a probit link
 $E_e\,\Phi(\mu_j + e) = \Phi(\mu_j / \sqrt{1 + v})$ exactly, so such a term is
-absorbed into the loadings and thresholds, and the logistic link differs only in
-that the absorption is approximate. Their rows and columns of `MANIFESTVAR` are
-fixed to zero, and `ctFit()` fixes any that were left free.
+absorbed into the loadings and thresholds, and under the logistic link the
+same holds approximately. Their rows and columns of `MANIFESTVAR` are fixed to
+zero, and `ctFit()` fixes any that were left free.
 
-**The other three do have one, and it means something different in each.** For
-a continuous indicator it is the usual measurement error variance. For a
-censored one it is the variance of the Gaussian that is observed only inside the
-limits. For a count it is a *dispersion*: a Gaussian term added to the log rate,
-making the observation Poisson-lognormal rather than Poisson. It is identified
-where the binary and ordinal versions of it are not, because a Poisson's
-variance is locked to its mean — the dispersion shifts the mean by $v/2$, which
-`MANIFESTMEANS` absorbs, and multiplies the variance by a factor nothing else in
-the model can produce. It is the only parameter in a ctsem model that moves a
-count's variance-to-mean ratio, and leaving it out does not make the data
-equidispersed: it makes `DIFFUSION` absorb the difference, which is usually the
-parameter the model was for. Only the diagonal counts — a count row is scored on
-its own, so it has no correlated measurement error, and `ctFit()` fixes a free
-off-diagonal to zero.
+**The other three types have a residual, with a different meaning in each.**
+For a continuous indicator it is the usual measurement error variance. For a
+censored indicator it is the variance of the Gaussian that is observed only
+inside the limits. For a count it is a *dispersion*, a Gaussian term added to
+the log rate, which makes the observation Poisson-lognormal. A Poisson's
+variance equals its mean, which is why the dispersion is identified. It shifts
+the mean by $v/2$, which `MANIFESTMEANS` absorbs, and multiplies the variance by a
+factor nothing else in the model can produce. It is the only parameter in a
+ctsem model that changes a count's variance-to-mean ratio. If it is left out,
+`DIFFUSION` absorbs any overdispersion, and `DIFFUSION` is usually a parameter
+of interest. Only the diagonal is used. Each count is scored on its own, so it
+cannot have correlated measurement error, and `ctFit()` fixes free
+off-diagonal entries to zero.
 
-**The scale of the latent process has to come from somewhere.** With a Gaussian
-indicator you can anchor it by fixing a loading, or by fixing `DIFFUSION`. With
-only binary or ordinal indicators there is no free residual to trade against,
-so a loading and the process scale are two names for one quantity: fix the
-loadings and let `DIFFUSION` carry the scale.
+**The scale of the latent process has to be fixed somewhere.** With a Gaussian
+indicator you can fix a loading or fix `DIFFUSION`. With only binary or ordinal
+indicators there is no residual variance to trade against, so a loading and
+the process scale describe the same quantity. Fix the loadings and let
+`DIFFUSION` carry the scale.
 
-**Location works the same way.** `CINT` and `T0MEANS` set where the process
-sits, and each indicator's `MANIFESTMEANS` sets where that indicator sits
-relative to it. ctsem's default fixes `CINT` and `T0MEANS` to zero and frees
-`MANIFESTMEANS`, which is what the examples below use — ordinal indicators
-included. An ordinal indicator's thresholds are *also* locations, so one among
-them is redundant: adding a constant to $\mu_j$ and to every $\tau_{jk}$ leaves
-the cumulative logit unchanged. ctsem resolves that by pinning $\tau_{j1}$ at
-zero, so the location of an ordinal indicator lives in its `MANIFESTMEANS` like
-everyone else's, and what `THRESHOLDS` estimates is the K-2 gaps between
-successive thresholds. The point of putting it there rather than in $\tau_{j1}$
-is that `MANIFESTMEANS` can be `indvarying`: one random effect then shifts all
-of an indicator's category boundaries together, which is what "this person
-answers higher" means, where a random effect on the thresholds would need one
-per boundary.
+**Location works the same way.** `CINT` and `T0MEANS` set the level of the
+process, and each indicator's `MANIFESTMEANS` sets the level of that indicator
+relative to it. By default ctsem fixes `CINT` and `T0MEANS` to zero and frees
+`MANIFESTMEANS`, and the examples below, ordinal ones included, do the same.
+An ordinal indicator's thresholds are also locations, so one of them is
+redundant: adding a constant to $\mu_j$ and to every $\tau_{jk}$ leaves the
+cumulative logit unchanged. ctsem fixes $\tau_{j1}$ at zero, so the location
+of an ordinal indicator is in its `MANIFESTMEANS`, as for other indicators,
+and `THRESHOLDS` estimates the K-2 gaps between successive thresholds. This
+lets `MANIFESTMEANS` be `indvarying`, so that one random effect shifts all of
+an indicator's category boundaries together, which is what a person answering
+higher in general means. A random effect on the thresholds would need one
+effect for each boundary.
 
 # One indicator or many
 
-A univariate Ornstein-Uhlenbeck process, measured three times over at each
+A univariate Ornstein-Uhlenbeck process, measured by three indicators at each
 occasion with loadings 1, 0.8 and 1.2:
 
 ```{r sim-multi}
@@ -132,11 +128,11 @@ head(dmulti, 3)
 
 ## A single indicator
 
-With one indicator per process the loading is not estimable and is fixed, by
-convention to 1. That does *not* mean measurement error is inestimable: in a
-continuous time model the measurement error and the process innovation have
-different signatures across the time interval, so `MANIFESTVAR` and `DIFFUSION`
-remain separately identified.
+With one indicator per process the loading cannot be estimated, and is fixed,
+by convention to 1. The measurement error can still be estimated. In a
+continuous time model, measurement error and process noise have different
+effects across time intervals, so `MANIFESTVAR` and `DIFFUSION` are separately
+identified.
 
 ```{r fit-single}
 msingle <- ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
@@ -150,9 +146,8 @@ summary(fsingle)$popmeans
 
 ## Three indicators
 
-Freeing the two remaining loadings and keeping the first at 1 makes `eta1` a
-common factor. The first indicator's scale is now the latent's scale, which is
-what the fixed 1 buys:
+Freeing the other two loadings, with the first fixed at 1, makes `eta1` a
+common factor. The latent process then has the scale of the first indicator:
 
 ```{r fit-multi}
 mmulti <- ctModel(type = 'ct', n.latent = 1, n.manifest = 3,
@@ -165,8 +160,8 @@ fmulti <- ctFit(dmulti, mmulti, backend = 'julia', cores = 2)
 summary(fmulti)$popmeans
 ```
 
-The loadings come back near their generating values, and the dynamic parameters
-are estimated more sharply than from one indicator alone:
+The loadings come back near their generating values, and the dynamic
+parameters are estimated more precisely than from one indicator:
 
 ```{r compare-indicators}
 s1 <- summary(fsingle)$popmeans
@@ -181,38 +176,29 @@ data.frame(
 ```
 
 ::: {.callout-note}
-## Anchoring, and where the optimiser starts
+## Fixing the scale, and starting values
 
-Fixing `LAMBDA[1,1]` is not the only way to set the scale — fixing `DIFFUSION`
-to 1 and freeing all three loadings fits the same model, and reports loadings
-on the process's own scale instead of on `y1`'s.
+Fixing `LAMBDA[1,1]` is one way to set the scale. Fixing `DIFFUSION` to 1 and
+freeing all three loadings fits the same model, and reports the loadings on
+the scale of the process instead of the scale of `y1`.
 
-The two are equivalent in principle but not always in practice, because where
-the optimiser starts matters. `ctFit` reads the starting values for the
-variance diagonals off the data by default, through
-`optimcontrol$datastart`. Before that it began every fit from a fixed point
-that put `DIFFUSION` near 7 whatever the data were measured in, and on data at
-a much smaller scale a loading-anchored model would collapse the latent to
-zero variance and explain the whole signal as measurement error — a local
-optimum, with the loadings running off to implausible magnitudes to
-compensate. On the data above rescaled by 1/100 that failed on four starting
-seeds out of four, and converges on four out of four now.
-
-It is not a guarantee. A model can sit near a basin boundary at a given scale,
-where the small random jitter ctsem still adds to the start is enough to decide
-which optimum the fit reaches — on the same data rescaled by 100, two seeds in
-four land 328 log units apart, with or without the derived start. So a fit
-reporting non-convergence, or loadings nowhere near anything plausible, is
-worth re-running, and worth checking against `DIFFUSION`-anchored scaling or
-explicit `inits`.
+The two are equivalent in principle, but the optimiser can end in different
+places. By default `ctFit` takes starting values for the variance parameters
+from the data (`optimcontrol$datastart`). This avoids a local optimum in which
+the latent variance collapses to zero, all of the signal is treated as
+measurement error, and the loadings run off to large values. Some models still
+lie near the boundary between two optima, where the small random variation
+ctsem adds to the starting values decides which one the fit reaches. If a fit
+reports non-convergence, or gives implausible loadings, run it again, and
+compare with `DIFFUSION`-anchored scaling or with explicit `inits`.
 :::
 
 # The five indicator types
 
-To see each type on its own, generate one latent trajectory and then measure it
-five different ways. Generating the process with a near-zero measurement
-variance makes the single manifest variable a direct readout of the latent
-state, which the indicators below are built from:
+To see each type on its own, the next example generates one latent trajectory
+and measures it in five ways. The process is generated with a near-zero
+measurement variance, so that its single manifest variable is the latent
+state, from which the indicators below are built:
 
 ```{r sim-latent}
 set.seed(5)
@@ -229,8 +215,7 @@ eta <- d$eta
 ```
 
 Two indicators of each kind, built by applying each row of the table above by
-hand, so that the link in the model and the link in the simulation are visibly
-the same thing:
+hand, so that the link in the simulation is the one in the model:
 
 ```{r sim-types}
 invlogit <- function(x) 1 / (1 + exp(-x))
@@ -279,17 +264,15 @@ ggplot(long, aes(time, value)) +
 ## Specifying each type
 
 `manifesttype` is a vector with one entry per manifest variable. Two of the
-types need something extra alongside it, and both are needed because
-`ctModel()` never sees the data:
+types need further information, because `ctModel()` does not see the data:
 
 * **ordinal** needs `ncategories`, so that the right number of thresholds can
-  be created. `ctGenerate()` needs it for the same reason.
-* **censored** needs `censormin` and `censormax`. These are known constants
-  rather than parameters: an instrument's floor and ceiling are properties of
-  the instrument, and the data cannot inform them. A variable censored on one
-  side only leaves the other infinite.
+  be created. `ctGenerate()` needs it too.
+* **censored** needs `censormin` and `censormax`. These are known constants,
+  the floor and ceiling of the instrument, which the data cannot estimate. For
+  a variable censored on one side only, leave the other limit infinite.
 
-A helper, since the five models below differ only in which columns they take:
+A helper function, since the five models below differ only in their columns:
 
 ```{r model-builder}
 buildmodel <- function(names, type, lambda = 1, ncat = 0,
@@ -317,32 +300,24 @@ models <- list(
   censored   = buildmodel(c('x1', 'x2'), 4, cmin = 0, cmax = 4))
 ```
 
-Every one of these fixes its loadings rather than freeing them, so that the
-latent scale is anchored the same way in all five and the dynamic estimates
-below can be read side by side.
+All of these models fix their loadings, so that the latent scale is set the
+same way in all five and the dynamic estimates below can be compared directly.
 
-The count pair is fixed at 0.5 rather than 1, and that is a choice worth making
-deliberately. A count's loading sets how far its *log* rate travels as the
-process moves, and the exponential turns a wide latent range into a very
-skewed observation. The filter carries a Gaussian summary of the state, and a
-Poisson update is well summarised that way only while the rate stays in a
-moderate range. Measured on this design at 200 subjects and 12 occasions: a
-count read directly off a process with a standard deviation of 1.12 -- log
-rates spanning about seven units, rates from 0.05 to 50 -- recovers `DRIFT` at
--0.20 and -0.32 on two seeds against a generating -0.4, and `DIFFUSION` at
-0.69 and 0.74 against 1. The same process at a standard deviation of 0.45
-recovers -0.407 and -0.418, and its `DIFFUSION` to within 0.012. Halving the
-loading halves the range the link sees, which is why the count column below is
-as accurate as the others. If your counts genuinely do swing over orders of
-magnitude, treat the dynamic estimates from them with the same suspicion.
+The count loadings are fixed at 0.5. A count's loading sets how far its *log*
+rate moves as the process moves, and the exponential turns a wide latent range
+into a very skewed observation. The filter uses a Gaussian approximation to
+the state, which works well for a Poisson update only while the rate stays in
+a moderate range. With a loading of 1 on this process the log rates span
+about seven units (rates from 0.05 to 50), and in simulations `DRIFT` and
+`DIFFUSION` were then clearly underestimated. Halving the loading halves the
+range of the log rate, and the count estimates below are as accurate as the
+others. If your counts vary over orders of magnitude, treat their dynamic
+estimates with caution.
 
-The count models here also estimate a `MANIFESTVAR` diagonal, which for a count
-is the dispersion rather than a measurement error: a Gaussian term on the log
-rate, so the observation is Poisson-lognormal. The counts above were generated
-with one, of 0.3. Freeing it is worth doing on real counts whatever you expect,
-because the alternative is not a Poisson assumption quietly satisfied — it is
-`DIFFUSION` absorbing whatever overdispersion there is, and `DIFFUSION` is
-usually the parameter the model was for.
+The count models also estimate a `MANIFESTVAR` diagonal, which for a count is
+the dispersion on the log rate, making the observation Poisson-lognormal. The
+counts above were generated with a dispersion of 0.3. It is worth freeing for
+real counts, because otherwise `DIFFUSION` absorbs any overdispersion.
 
 ## The same process, through five instruments
 
@@ -359,19 +334,19 @@ data.frame(
   row.names = NULL)
 ```
 
-Every row of that table estimates the same two generating values, $-0.4$ and
+Every row of the table estimates the same two generating values, $-0.4$ and
 $1$, from the same latent trajectory, and every row is within about one
-standard error of them. What differs is how much of the trajectory each
-instrument transmits, which is visible in the standard errors rather than in
-the estimates: two binary items per occasion carry a few bits about a
-continuous state and are the least precise by a factor of two, while the
-continuous, censored and count pairs each recover `DRIFT` to about 0.05.
+standard error of them. The instruments differ in how much information about
+the trajectory they carry, which shows in the standard errors. Two binary items
+per occasion carry little information about a continuous state, and their
+standard errors are about twice as large, while the continuous, censored and
+count pairs each estimate `DRIFT` with a standard error of about 0.05.
 
-The parameters specific to a type appear in the same summary. An ordinal
-indicator's location is in `MANIFESTMEANS`; `THRESHOLDS` holds the first
-threshold, pinned at zero and not reported, and then the **gap** to each
-subsequent one, which is what keeps them ordered. So a four category variable
-contributes one mean and two gaps:
+The parameters specific to each type are in the same summary. An ordinal
+indicator's location is in `MANIFESTMEANS`. `THRESHOLDS` holds the first
+threshold, fixed at zero and not reported, and then the **gap** to each later
+threshold, which keeps them in order. A four category variable therefore has
+one mean and two gaps:
 
 ```{r thresholds}
 thr <- summary(fits$ordinal)$popmeans
@@ -383,10 +358,9 @@ thr[c('mm_o1', gaps), c('mean', 'sd')]
 cumsum(c(0, thr[gaps, 'mean'])) - thr['mm_o1', 'mean']     # against c(-1, 0, 1)
 ```
 
-A censored indicator's residual standard deviation is the one that means what
-it usually means. The model recovers it from the uncensored part of the scale,
-while treating a value sitting at a limit as the probability of being there
-rather than as a density:
+A censored indicator's residual standard deviation has its usual meaning. The
+model estimates it from the uncensored part of the scale, and treats a value
+at a limit as the probability of being at or beyond that limit:
 
 ```{r censored-pars}
 summary(fits$censored)$popmeans[c('mvar_x1', 'mvar_x2', 'mm_x1', 'mm_x2'),
@@ -398,9 +372,9 @@ mean(d$x1 %in% c(0, 4))     # proportion of x1 observations at a limit
 
 ## Several types on one latent
 
-Nothing stops indicators of different types from loading on the same process.
-Each contributes its own likelihood term against the same predicted state, and
-the filter's update at that row takes all of them:
+Indicators of different types can load on the same process. Each contributes
+its own likelihood term for the same predicted state, and the filter's update
+at that time uses all of them:
 
 ```{r fit-mixed-onelatent}
 mixednames <- c('y1', 'b1', 'o1', 'c1', 'x1')
@@ -424,20 +398,19 @@ fmixed <- ctFit(d, mmixed, backend = 'julia', cores = 2)
 summary(fmixed)$popmeans
 ```
 
-One indicator of each kind recovers the process about as precisely as the best
-same-kind pair above, and roughly twice as precisely as the binary or ordinal
-pairs -- with the thresholds, the three `MANIFESTVAR` entries and five
-intercepts all estimated alongside. That is the practical argument for using
-indicators of every kind you have, rather than keeping only whichever are
-convenient to model.
+One indicator of each kind estimates the process about as precisely as the
+best pair of one kind above, and about twice as precisely as the binary or
+ordinal pairs, with the thresholds, the three `MANIFESTVAR` entries and five
+intercepts estimated as well. It is worth using all the indicators you have,
+whatever their kind.
 
 ## Several types on different latents
 
-More usually the types are not interchangeable measures of one thing. An
-ordinal questionnaire item and a binary event indicator measure one construct;
-a count, a censored scale score and a plain continuous variable measure
-another; and the question is how the two constructs drive each other. That is a
-two-process model with a block-structured `LAMBDA`.
+More often, different types measure different things. An ordinal
+questionnaire item and a binary event indicator might measure one construct,
+and a count, a censored scale score and a continuous variable another, with
+the question being how the two constructs affect each other. That is a
+two-process model with a block structured `LAMBDA`.
 
 ```{r sim-twolatent}
 set.seed(11)
@@ -472,14 +445,12 @@ head(d2, 3)
 ```
 
 `ctGenerate(backend = 'julia')` simulates the latent process and draws each
-observation from its measurement model given the state, so it applies the links
-above rather than producing continuous values for a variable the model calls
-binary. The R generator
-integrates a linear Gaussian system and has no notion of a link; it warns if
-asked to generate from a model with non-Gaussian indicators.
+observation from its measurement model given the state, applying the links
+above. The R generator simulates a linear Gaussian system without links, and
+warns if asked to generate from a model with non-Gaussian indicators.
 
 The estimation model has the same block structure, with the measurement
-parameters freed:
+parameters free:
 
 ```{r fit-twolatent}
 estvar <- diag(0, 5)
@@ -501,8 +472,8 @@ f2 <- ctFit(d2, m2, backend = 'julia', cores = 2)
 summary(f2)$popmeans
 ```
 
-The cross-effects are the point of such a model, and they are estimated from
-indicators of four different kinds at once:
+The cross effects are usually the point of such a model, and here they are
+estimated from indicators of four different kinds:
 
 ```{r crosseffects}
 p2 <- summary(f2)$popmeans
@@ -515,8 +486,8 @@ data.frame(
   row.names = NULL)
 ```
 
-`ctKalman()` reconstructs the latent trajectories from the mixed indicators as
-it would from any others:
+`ctKalman()` estimates the latent trajectories from mixed indicators as from
+any others:
 
 ```{r kalman-twolatent, fig.height = 4.6}
 plot(ctKalman(f2, subjects = 1:2, timestep = .2), kalmanvec = 'etasmooth')
@@ -524,20 +495,18 @@ plot(ctKalman(f2, subjects = 1:2, timestep = .2), kalmanvec = 'etasmooth')
 
 # State-dependent measurement
 
-A `LAMBDA` or `MANIFESTVAR` cell need not be a constant. Writing a latent
+A `LAMBDA` or `MANIFESTVAR` cell need not be constant. Writing a latent
 process name into the cell makes it an expression evaluated at the current
 state, so an instrument can become more or less sensitive, or noisier, as the
-process moves.
+process changes.
 
-Free parameters used inside such an expression have to live in the `PARS`
-matrix: a cell containing an expression is the specification itself rather than
-a labelled parameter, so ctsem resolves names appearing in it against `PARS`.
-`PARS` entries are identity-transformed and unbounded, which is why the
-residual below is written as `exp(...)` — that is what keeps a standard
-deviation positive.
+Free parameters used inside such an expression must be in the `PARS` matrix,
+because ctsem looks up the names in an expression among the `PARS` entries.
+`PARS` entries are unbounded and not transformed, so the residual below is
+written as `exp(...)` to keep the standard deviation positive.
 
-Data where the second indicator's loading rises with the process, and the first
-indicator's residual standard deviation rises with it too:
+Data in which the second indicator's loading rises with the process, and so
+does the first indicator's residual standard deviation:
 
 ```{r sim-statedep}
 set.seed(9)
@@ -555,7 +524,7 @@ dsd <- data.frame(ctGenerate(gensd, n = 60, Tpoints = 10,
 head(dsd, 3)
 ```
 
-The estimation model writes the same two expressions, with parameter names in
+The estimation model uses the same two expressions, with parameter names in
 place of the generating constants:
 
 ```{r fit-statedep}
@@ -589,54 +558,54 @@ data.frame(
   row.names = NULL)
 ```
 
-`ctModelIsNonlinear()` reports that such a model has cells with no single
-value, so every summary of it is a reading at one particular state:
+`ctModelIsNonlinear()` reports that such a model has cells that change with
+the state, so any summary of it is a reading at one particular state:
 
 ```{r nonlinear-flag}
 ctModelIsNonlinear(fsd)
 ```
 
-Which is why the honest picture of a state-dependent model is a curve rather
-than a number. `ctStateDependencePlot()` finds the cells that actually move —
-by materialising every model matrix across a grid of states and keeping the
-ones whose value changes, so dependence arriving indirectly, through a `PARS`
-entry or through a covariance built from a dependent cell, is caught too — and
-draws each of them against the process:
+A state dependent model is therefore better described by curves than by
+single numbers. `ctStateDependencePlot()` finds the cells that change with the
+state, by computing every model matrix over a grid of states, and plots each
+of them against the process. This includes cells that depend on the state
+indirectly, through a `PARS` entry or a covariance built from a state
+dependent cell:
 
 ```{r statedep-plot, fig.height = 4}
 ctStateDependencePlot(fsd, along = 'eta1', nsamples = 30)
 ```
 
-One panel is the loading on `y2`, rising with `eta1`. The other is the residual
-*variance* of `y1` — `MANIFESTcov` rather than `MANIFESTVAR`, since that is the
-covariance the filter actually uses — rising with it as well. A `summary()` of
-this model reports one point from each of those curves.
+One panel shows the loading on `y2`, rising with `eta1`. The other shows the
+residual *variance* of `y1` (`MANIFESTcov`, the covariance the filter uses),
+which rises as well. A `summary()` of this model reports one point from each
+of these curves.
 
-Only `LAMBDA` and `MANIFESTVAR` are state-dependent here, but the same
-mechanism applies to `MANIFESTMEANS`, and on the dynamic side to `DRIFT`,
-`DIFFUSION` and `CINT`.
+Only `LAMBDA` and `MANIFESTVAR` depend on the state here, but `MANIFESTMEANS`
+can too, and on the dynamic side so can `DRIFT`, `DIFFUSION` and `CINT`.
 
 # Summary
 
-* `manifesttype` picks the observation model per indicator: `0` continuous,
-  `1` binary, `2` ordinal (with `ncategories`), `3` count, `4` censored (with
-  `censormin` and `censormax`). Everything but `0` needs `backend = 'julia'`.
+* `manifesttype` sets the observation model for each indicator: `0`
+  continuous, `1` binary, `2` ordinal (with `ncategories`), `3` count, `4`
+  censored (with `censormin` and `censormax`). Types `2` to `4` need
+  `backend = 'julia'`.
 * Continuous, count and censored indicators each have a free `MANIFESTVAR`
-  diagonal, meaning a measurement error variance, a log-scale dispersion, and
-  the variance inside the limits respectively. Binary and ordinal have none;
-  fix theirs to zero.
-* An ordinal indicator's location is its `MANIFESTMEANS`, like every other
-  indicator's. `THRESHOLDS` pins the first threshold at zero and estimates the
-  K-2 gaps, so a person-level shift of the whole category scale is one random
-  effect on the mean rather than one per boundary.
-* Anchor the latent scale exactly once: a fixed loading, or a fixed
-  `DIFFUSION`. With no Gaussian indicator on a process it has to be the
-  loadings.
-* A count indicator's loading sets how far its log rate travels. Keep that
-  range moderate -- the filter's Gaussian summary of a Poisson update degrades
-  once the rate swings over orders of magnitude, and the dynamic parameters
-  come back attenuated.
-* Types can be mixed freely, on one process or across several.
-* A `LAMBDA` or `MANIFESTVAR` cell written as an expression in a latent process
-  name is evaluated at the current state; free parameters inside it go in
-  `PARS`, and `ctStateDependencePlot()` shows what the result claims.
+  diagonal, which is the measurement error variance, the dispersion on the log
+  scale, and the variance inside the limits respectively. Binary and ordinal
+  indicators have none, and `ctFit()` fixes theirs to zero.
+* An ordinal indicator's location is its `MANIFESTMEANS`, as for every other
+  indicator. `THRESHOLDS` fixes the first threshold at zero and estimates the
+  K-2 gaps, so a person level shift of the whole category scale is one random
+  effect on the mean.
+* Fix the latent scale once, with a fixed loading or a fixed `DIFFUSION`. With
+  no Gaussian indicator on a process, fix the loadings.
+* A count indicator's loading sets how far its log rate moves. Keep that range
+  moderate, because the filter's Gaussian approximation of a Poisson update
+  degrades once the rate varies over orders of magnitude, and the dynamic
+  parameters are then underestimated.
+* Types can be mixed, on one process or across several.
+* A `LAMBDA` or `MANIFESTVAR` cell written as an expression of a latent
+  process is evaluated at the current state. Free parameters inside it go in
+  `PARS`, and `ctStateDependencePlot()` shows how the cell changes with the
+  state.

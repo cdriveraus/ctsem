@@ -30,55 +30,57 @@ the probs argument is needed to ensure only a single value is returned.}
 \item{state}{The latent state at which state dependent matrix cells are
 evaluated: \code{'T0MEANS'} (the default), \code{'mean'}, \code{'asymptotic'},
 or a numeric state vector. The default is the population initial state, with
-time dependent predictors at zero, which for a model whose dynamics depend on
-the state can be far from where the data are; \code{'mean'} (the mean
-smoothed latent state) or \code{'asymptotic'} (the system's fixed point) is
-then usually the better point. The initial state and the fixed point are each
-draw's own; \code{'mean'} is the estimate's, used for every draw, so a summary
-of the draws there leaves out where that state is. Only \code{backend='julia'}
-can materialise the matrices anywhere other than the default, so anything else
-is an error on a stan fit rather than being silently ignored. Irrelevant to a
-linear model, whose matrices are the same everywhere.}
+time dependent predictors at zero. For a model whose dynamics depend on the
+state this can be far from the data, and \code{'mean'} (the mean smoothed
+latent state) or \code{'asymptotic'} (the system's fixed point) is usually
+more useful. The initial state and the fixed point are computed for each
+draw. \code{'mean'} uses the estimate's mean state for every draw, so its
+uncertainty is not included. Values other than the default need
+\code{backend='julia'} and are an error for a stan fit. No effect for a
+linear model.}
 
 \item{...}{arguments passed to the method for the fit's backend.}
 }
 \value{
 A named list of matrices, each summarised over the posterior (or
-approximate posterior) draws by \code{calcfunc}: the model's own
-(\code{DRIFT}, \code{DIFFUSION}, \code{LAMBDA}, ...), the covariances
-built from them (\code{DIFFUSIONcov}, \code{MANIFESTcov}, and \code{T0cov},
-the initial latent covariance over subjects: \code{T0VAR} plus the
-population covariance of any individually varying \code{T0MEANS}), the
-asymptotic \code{asymCINT} and \code{asymDIFFUSIONcov}, and
-\code{dtDRIFT} at \code{timeinterval}. Beside each covariance its
-correlations, \code{DIFFUSIONcor}, \code{MANIFESTcor}, \code{T0cor} and
-\code{asymDIFFUSIONcor}, taken draw by draw before \code{calcfunc}
-summarises them; a variable whose variance is zero has \code{NA} there. On \code{backend='julia'}, also the
-Jacobians of the drift and of the measurement at the evaluation point,
-\code{JAx} (latent by latent) and \code{Jy} (manifest by latent): the local
-effects of the model linearised at \code{state}. They equal \code{DRIFT} and
-\code{LAMBDA} for a linear model; where a cell is nonlinear in the state they
-do not, since a \code{DRIFT} cell \code{a + q*Y} in the column of process
-\code{Y} holds \code{a + q*Y} there and contributes \code{a + 2*q*Y} to
-\code{JAx}. \code{dtDRIFT} is \code{expm(JAx * timeinterval)} where there is
-a \code{JAx}, the transition \code{\link{ctDiscretePars}} reports, and
-\code{expm(DRIFT * timeinterval)} on stan. For a model whose dynamics depend
-on the state it holds \code{JAx} fixed over the interval: a fair interval
-regression near a fixed point or over a short interval, and away from a fixed
-point one \code{ctDiscretePars(method = 'simulate')} should check. Where parameters vary over subjects,
-also their population covariance on the natural scale, \code{popcov}, and
-their raw-scale correlations, \code{rawpopcorr}, named by parameter (with
-several grouping levels, \code{popcov.<level>} and \code{rawpopcorr.<level>}).
+approximate posterior) draws by \code{calcfunc}. These are the model's own
+matrices (\code{DRIFT}, \code{DIFFUSION}, \code{LAMBDA}, ...), the
+covariances computed from them (\code{DIFFUSIONcov}, \code{MANIFESTcov}, and
+\code{T0cov}, the initial latent covariance over subjects, which is
+\code{T0VAR} plus the population covariance of any individually varying
+\code{T0MEANS}), the asymptotic \code{asymCINT} and \code{asymDIFFUSIONcov},
+and \code{dtDRIFT} at \code{timeinterval}. Each covariance has a matching
+correlation matrix, \code{DIFFUSIONcor}, \code{MANIFESTcor}, \code{T0cor} and
+\code{asymDIFFUSIONcor}, computed for each draw before \code{calcfunc} is
+applied. A variable with zero variance has \code{NA} correlations.
+
+On \code{backend='julia'} the list also holds the Jacobians of the drift and
+of the measurement at the evaluation point, \code{JAx} (latent by latent) and
+\code{Jy} (manifest by latent). These are the local effects of the model
+linearised at \code{state}. They equal \code{DRIFT} and \code{LAMBDA} for a
+linear model, and differ where a cell is nonlinear in the state: a
+\code{DRIFT} cell \code{a + q*Y} in the column of process \code{Y}
+contributes \code{a + 2*q*Y} to \code{JAx}. \code{dtDRIFT} is
+\code{expm(JAx * timeinterval)} where there is a \code{JAx}, as in
+\code{\link{ctDiscretePars}}, and \code{expm(DRIFT * timeinterval)} on stan.
+For a model whose dynamics depend on the state this is accurate near a fixed
+point or over a short interval. Elsewhere, compare with
+\code{ctDiscretePars(method = 'simulate')}.
+
+Where parameters vary over subjects, the list also holds their population
+covariance on the natural scale, \code{popcov}, and their raw-scale
+correlations, \code{rawpopcorr}, named by parameter (with several grouping
+levels, \code{popcov.<level>} and \code{rawpopcorr.<level>}).
 \code{popcov} combines the sds \code{summary()} reports as \code{popsd} with
 those correlations, so it is exact where a parameter's transform is affine,
 as for intercepts and initial means.
 
 On an optimised fit, \code{estimate} holds the same matrices at the fit's
-estimate, unrounded: \code{ctSummaryMatrices(fit)$estimate$DRIFT} is the
-estimated drift matrix, which a summary of the draws need not equal, and
-\code{ctSummaryMatrices(fit, state = s)$estimate$JAx} the model linearised
-at \code{s} at the estimate. A sampled fit has no estimate, and a
-\code{backend='stan'} fit's has no \code{popcov}, which stan simulates.
+estimate, unrounded. For example \code{ctSummaryMatrices(fit)$estimate$DRIFT}
+is the estimated drift matrix, which can differ from the median of the
+draws, and \code{ctSummaryMatrices(fit, state = s)$estimate$JAx} is the
+model linearised at \code{s} at the estimate. A sampled fit has no
+\code{estimate}, and a \code{backend='stan'} fit's has no \code{popcov}.
 }
 \description{
 Summarise model-implied parameter matrices from a ctsem fit object.

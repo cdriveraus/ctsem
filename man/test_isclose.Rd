@@ -7,9 +7,8 @@
 test_isclose(..., tol = 1e-08)
 }
 \arguments{
-\item{...}{values to compare. At least two, and none of them empty:
-comparing a zero-length or NULL value is an error rather than a pass,
-because there is nothing to compare.}
+\item{...}{values to compare. At least two, and none of them empty.
+Comparing a zero-length or NULL value is an error.}
 
 \item{tol}{tolerance}
 }

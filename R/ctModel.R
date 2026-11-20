@@ -4,7 +4,7 @@
 #' which can then be fit to data with function \code{\link{ctFit}}.
 #' 
 #' @param type character string. Use 'ct' (continuous time) or 'dt'
-#' (discrete time) for Stan-based fitting with \code{\link{ctFit}}.
+#' (discrete time) for fitting with \code{\link{ctFit}}.
 #' These return a modern ctsem model object whose \code{pars} data frame can
 #' also be edited through the pars-backed \code{matrices} view.
 #' For legacy workflows, 'omx' returns a matrix-list model object that can
@@ -23,50 +23,45 @@
 #' @param manifestNames n.manifest length vector of manifest variable names as they appear in the data structure, 
 #' without any _Tx time point suffix that may be present in wide data.  Defaults to Y1, Y2, etc.
 #' 
-#' @param manifesttype n.manifest length vector of manifest variable types. 0 (the
-#' default) is a continuous, Gaussian variable; 1 is binary, coded 0/1; 2 is
-#' ordinal, coded as consecutive integers from 1; 3 is a count, coded as
-#' non-negative integers and modelled as Poisson with a log link, so the latent
-#' process gives the log rate. A count keeps a free \code{MANIFESTVAR}
-#' diagonal, unlike a binary or ordinal variable: for a count that entry is a
-#' log-scale dispersion, making the observation Poisson-lognormal with variance
-#' \eqn{\mu + \mu^2(e^{\sigma^2}-1)} against the Poisson's \eqn{\mu}. Fix it
-#' to zero for the equidispersed Poisson. 4 is censored, a Gaussian variable
-#' observed only
-#' within \code{censormin} and \code{censormax}, with values at a limit
-#' contributing the probability of being there rather than a density.
-#' Non-Gaussian variables are supported by the julia backend only, and binary
-#' additionally by stan.
+#' @param manifesttype n.manifest length vector of manifest variable types: 0
+#' (the default) for continuous Gaussian variables, 1 for binary (coded 0/1), 2
+#' for ordinal (consecutive integers from 1), 3 for counts (non-negative
+#' integers, Poisson with a log link, so the latent process gives the log rate)
+#' and 4 for censored (Gaussian, observed between \code{censormin} and
+#' \code{censormax}). For a count the \code{MANIFESTVAR} diagonal stays free
+#' and is a log-scale dispersion, giving a Poisson-lognormal observation with
+#' variance \eqn{\mu + \mu^2(e^{\sigma^2}-1)}. Fix it to zero for a plain
+#' Poisson. A censored value at a limit contributes the probability of being
+#' at or beyond that limit. Types other than 0 need the julia backend, except
+#' binary, which stan also fits.
 #' @param censormin,censormax n.manifest length numeric vectors giving the lower
-#' and upper censoring limits of each \code{manifesttype = 4} variable, and
-#' ignored for the others. Defaults are \code{-Inf} and \code{Inf}; a variable
-#' censored on one side only leaves the other infinite. Unlike thresholds these
-#' are known constants rather than parameters -- a scale's floor and ceiling are
-#' properties of the instrument, and the data cannot inform them.
-#' @param ncategories n.manifest length integer vector, giving the number of
-#' categories of each ordinal manifest variable and ignored for the others.
-#' Required when any \code{manifesttype} is 2, because the model has to know how
-#' many thresholds to estimate before it sees any data -- \code{ctGenerate} needs
-#' it too.
+#' and upper censoring limits of each \code{manifesttype = 4} variable, ignored
+#' for other types. The defaults are \code{-Inf} and \code{Inf}, so a variable
+#' censored on one side keeps the other limit infinite. The limits are fixed,
+#' known values.
+#' @param ncategories n.manifest length integer vector giving the number of
+#' categories of each ordinal manifest variable, ignored for other types.
+#' Required when any \code{manifesttype} is 2, by \code{ctGenerate} as well as
+#' \code{ctFit}.
 #' 
 #' @param latentNames n.latent length vector of latent variable names 
 #' (used for naming parameters, defaults to eta1, eta2, etc).
 #' 
 #' @param id character string denoting column name containing subject identification variables. 
 #' id data may be of any form, though will be coerced internally to an integer sequence rising from 1.
-#' May instead be a character vector naming a nested hierarchy, innermost first:
-#' \code{id = c('subject','study')} treats each subject as belonging to one
-#' study. A cell says where its parameter varies with the \code{indvarying}
-#' field (see \code{\link{ctPar}}): \code{TRUE} at every level, \code{FALSE}
-#' at none, or the names of the levels, so \code{'cint||study'} gives an
-#' intercept that varies between studies with subjects exchangeable within a
-#' study, and \code{'cint||subject,study'} (or \code{TRUE}) one that varies at
-#' both. \code{model$pars$indvarying} holds the same values, one per cell, and
-#' can be edited directly, with \code{TRUE} again meaning every level; a
-#' cell's \code{sdscale} applies at every level it varies at. Intercepts
-#' (\code{T0MEANS}, \code{MANIFESTMEANS}, \code{CINT}) left unspecified vary
-#' at every level. Levels above the subject require \code{backend='julia'}
-#' with \code{intoverpop='laplace'}, and the hierarchy must be strictly nested.
+#' Or a character vector of column names for nested grouping levels, innermost
+#' first: \code{id = c('subject','study')} places each subject in one study.
+#' The \code{indvarying} field of a cell (see \code{\link{ctPar}}) sets the
+#' levels its parameter varies at: \code{TRUE} for every level, \code{FALSE}
+#' for none, or the names of levels. For example \code{'cint||study'} gives an
+#' intercept that varies between studies, and \code{'cint||subject,study'} (or
+#' \code{TRUE}) one that varies at both levels. \code{model$pars$indvarying}
+#' holds these values, one per cell, and can be edited directly. A cell's
+#' \code{sdscale} applies at every level it varies at. Intercepts
+#' (\code{T0MEANS}, \code{MANIFESTMEANS}, \code{CINT}) that are left
+#' unspecified vary at every level. Levels above the subject require
+#' \code{backend='julia'} with \code{intoverpop='laplace'}, and the levels must
+#' be strictly nested.
 #' @param time character string denoting column name containing timing data. Timing data must be numeric.
 #' 
 #' @param T0VAR lower triangular n.latent*n.latent cholesky matrix of latent process initial variance / covariance. 
@@ -84,38 +79,38 @@
 #' and fixes covariances between manifests to 0. "free" frees all values, including covariances.
 #'
 #' @param ASYMPTOTES Matrix with one row per binary indicator, in manifest
-#' order, and two columns: the lower and upper asymptotes of its response
-#' probability, which is then lower + (upper - lower) times the logistic of
-#' the linear predictor. \code{NA} means no asymptote on that side, so the
-#' default -- all \code{NA} -- is the two parameter logistic, and the model
-#' has no ASYMPTOTES matrix at all. Name a lower cell to estimate a guessing
-#' probability (the three parameter model), an upper cell for a ceiling below
-#' one, or both (four parameter); a number between 0 and 1 fixes it, and one
-#' name shared across rows estimates one asymptote for those items. A length 2
-#' vector applies to every binary indicator, so \code{c('guess', NA)} is one
-#' guessing parameter for the whole test. Julia backend only.
+#' order, and two columns giving the lower and upper asymptotes of its
+#' response probability. The probability is then lower + (upper - lower)
+#' times the logistic of the linear predictor. \code{NA} means no asymptote
+#' on that side, and the default of all \code{NA} gives the two parameter
+#' logistic model. A parameter name in the lower column estimates a guessing
+#' probability (three parameter model), in the upper column a ceiling below
+#' one, and in both the four parameter model. A number between 0 and 1 fixes
+#' the asymptote, and a name repeated across rows estimates one asymptote for
+#' those items. A length 2 vector applies to every binary indicator, so
+#' \code{c('guess', NA)} estimates one guessing parameter for the whole test.
+#' Julia backend only.
 #'
 #' @param RESPONSE Matrix with one row per manifest variable and two columns,
-#' the response scale of a censored indicator (manifesttype 4); rows for other
-#' indicators must stay at their defaults. Column 1, \code{halfwidth}: the
-#' half-width of the interval each recorded value stands for -- a value \code{y}
-#' is the event that the latent response lies between the transformed
-#' \code{y - halfwidth} and \code{y + halfwidth}, and a value at
-#' \code{censormin} or \code{censormax} that it lies below or above half a step
-#' in from it. 0, the default, is a value recorded exactly. For a rating scale
-#' it is half the step between categories, so the bottom category of a 7-point
-#' item and a slider's 0 are each what they are; a step that differs by study
-#' is a time independent predictor in the cell. Column 2, \code{power}: the
+#' setting the response scale of censored indicators (manifesttype 4). Rows
+#' for other indicators keep their defaults. Column 1, \code{halfwidth}, is
+#' half the width of the interval a recorded value stands for. A value
+#' \code{y} means the latent response lies between the transformed
+#' \code{y - halfwidth} and \code{y + halfwidth}, a value at \code{censormin}
+#' that it lies below \code{censormin + halfwidth}, and a value at
+#' \code{censormax} that it lies above \code{censormax - halfwidth}. The
+#' default, 0, treats values as exact. For a rating scale use half the step
+#' between categories. A step that differs between studies can be written as
+#' a time independent predictor in the cell. Column 2, \code{power}, sets the
 #' transform from the recorded scale to the latent response,
-#' \eqn{G(r) = L + ((1 + r - L)^p - 1)/p} with \eqn{L} the censormin (0 where
-#' there is none). 1, the default, is linear; below 1 the latent response
-#' moves less per recorded unit high on the scale, so the recorded value moves
-#' faster there; 0 is the log, whose inverse is the exponential link. One
-#' transform serves every form an item is asked in, so a name shared across
-#' items or studies estimates one curvature from all of them. \code{NA} keeps
-#' a default, and a length 2 vector fills every censored row, so
-#' \code{c(0.5, 'power')} is integer data with one estimated transform. Julia
-#' backend only.
+#' \eqn{G(r) = L + ((1 + r - L)^p - 1)/p}, with \eqn{L} the censormin (0 if
+#' there is none). The default, 1, is linear. Values below 1 make the latent
+#' response change less per recorded unit towards the top of the scale, and 0
+#' gives the log transform. A parameter name estimates the power, and a name
+#' shared across items or studies estimates one power from all of them.
+#' \code{NA} keeps the default, and a length 2 vector fills every censored
+#' row, so \code{c(0.5, 'power')} suits integer data with one estimated
+#' transform. Julia backend only.
 #'
 #' @param DRIFT n.latent*n.latent DRIFT matrix of continuous auto and cross effects, 
 #' relating the processes over time. 
@@ -133,23 +128,23 @@
 #' 
 #' @param TIpredNames n.TIpred length vector of time independent predictor variable names,
 #' as they appear in the data structure.  Default names are TI1, TI2, etc.
-#' Or a formula whose terms are such names and smooth terms,
-#' \code{~ s(age, k = 8) + female}: a smooth is a penalised spline of a
-#' person-level covariate, with its smoothness estimated from the data
+#' Or a formula of such names and smooth terms, such as
+#' \code{~ s(age, k = 8) + female}. A smooth term is a penalised spline of a
+#' subject-level covariate, with its smoothness estimated from the data
 #' (\code{backend = 'julia'}). It enters the model as \code{k - 1} predictor
-#' columns, \code{age_lin} (the linear trend) and \code{age_s1}, ..., which
-#' are built from the data when the model is fitted. A cell's \code{tipreds}
-#' field names the covariate (\code{'cint||||age'}) to give it the smooth;
-#' without one, under \code{tipredDefault = TRUE}, a smooth reaches every
-#' free parameter that varies between persons.
-#' 
+#' columns, \code{age_lin} (the linear trend) and \code{age_s1}, ..., built
+#' from the data when the model is fitted. To give a parameter the smooth
+#' effect, name the covariate in its cell's \code{tipreds} field
+#' (\code{'cint||||age'}). Under \code{tipredDefault = TRUE}, cells without a
+#' \code{tipreds} field get the smooth effect if their parameter is free and
+#' varies between subjects.
+#'
 #' @param tipredDefault Logical. TRUE sets any parameters with unspecified time independent
 #' predictor effects to have effects estimated, FALSE fixes the effect to zero unless individually specified.
-#' A cell's effects count as unspecified only when its \code{tipreds} field is
-#' left out: an empty one (\code{'mypar||||'}) states that the parameter has no
-#' predictor effects, which is the way to exclude a parameter under
-#' \code{tipredDefault = TRUE}. The setting is kept on the returned model as
-#' \code{$tipredDefault}.
+#' A cell's effects are unspecified only when its \code{tipreds} field is left
+#' out. An empty field (\code{'mypar||||'}) means no predictor effects, which
+#' excludes a parameter under \code{tipredDefault = TRUE}. The setting is
+#' stored on the model as \code{$tipredDefault}.
 #' 
 #' @param n.TDpred Number of time dependent predictor variables in the dataset.  
 #' 
@@ -174,114 +169,93 @@
 #' @param PARS for types 'ct' and 'dt' only. May be of any structure, only needed to contain extra parameters for certain non-linear models.
 #' @param silent Suppress all output to console.
 #' @param driftScaled for type 'ct' only: which of "DIFFUSION" and "CINT" to
-#' parameterise by what they accrue over one time unit given the process's
-#' own drift diagonal, rather than by their instantaneous rates. A diffusion
-#' sd \code{s} becomes \code{s * sqrt(2 a / expm1(2 a))}, \code{s^2} the variance
-#' the process gains over one time unit from its own noise (its stationary
-#' variance where the drift is fast, the diffusion variance where it is
-#' slow); an intercept \code{u} becomes \code{u * a / expm1(a)}. The fit and
-#' its likelihood are the default parameterisation's; what changes is that
-#' these parameters no longer have to move with the drift diagonal where
-#' fast mean reversion and more noise look alike, so that uncertainty and
-#' sampling are better behaved there. Only the diffusion's diagonal is
-#' rescaled, so its correlations keep their continuous-time meaning. Each
-#' such parameter moves, name, transform, random effects and predictor
-#' effects with it, to a new cell of \code{PARS}, and its own cell becomes an
+#' parameterise by what they add over one time unit, given the process's own
+#' drift diagonal \code{a}. A diffusion sd \code{s} becomes
+#' \code{s * sqrt(2 a / expm1(2 a))}, so that \code{s^2} is the variance the
+#' process gains from its own noise over one time unit. An intercept \code{u}
+#' becomes \code{u * a / expm1(a)}. The model and its likelihood are
+#' unchanged. The rescaled parameters depend less on the drift diagonal, which
+#' helps uncertainty estimation and sampling when fast mean reversion and
+#' larger noise are hard to tell apart. Only the diagonal of DIFFUSION is
+#' rescaled, so its correlations keep their usual meaning. Each rescaled
+#' parameter, with its name, transform, random effects and predictor effects,
+#' moves to a new cell of \code{PARS}, and its original cell becomes an
 #' expression of that cell and the drift diagonal. Not available with
 #' \code{covmattransform = 'cholesky'}.
 #'
-#' @details A matrix cell is one of four things, and which one is decided by
-#' what its text looks like:
+#' @details A matrix cell can be one of four things:
 #'
 #' \itemize{
 #'   \item a \strong{number}, which fixes the cell;
-#'   \item a \strong{parameter name}, which frees it -- the same name in two
-#'     cells is one parameter, which is how an equality constraint is written;
-#'   \item a name \strong{with fields}, adding the transform, the levels of
-#'     \code{id} at which the parameter varies, the prior scaling of that
-#'     variation, and the time-independent predictors acting on the parameter;
+#'   \item a \strong{parameter name}, which frees it. The same name in two
+#'     cells is one parameter, which is how equality constraints are written;
+#'   \item a name \strong{with fields}, giving the transform, the levels of
+#'     \code{id} at which the parameter varies, the prior scale of that
+#'     variation, and the time independent predictors that affect it;
 #'   \item an \strong{expression}, computed from the latent states, the time
 #'     dependent predictors and the \code{PARS} cells.
 #' }
 #'
-#' Fields may be given in either of two interchangeable ways: in a fixed order
-#' separated by \code{|} (\code{'mm||TRUE|0.5'}), or by name
+#' Fields can be given in a fixed order separated by \code{|}
+#' (\code{'mm||TRUE|0.5'}), or by name
 #' (\code{'mm, indvarying=TRUE, sdscale=0.5'}). With nested ids,
-#' \code{indvarying} may name levels instead, as in \code{'mm||study'} or
+#' \code{indvarying} may name levels, as in \code{'mm||study'} or
 #' \code{'mm, indvarying=c(subject, study)'}. A cell containing \code{|} is
-#' read the ordered way; otherwise a cell with a field of the form
-#' \code{name=value} is read the named way, and an unrecognised field name is
-#' an error rather than part of a parameter name.
-#' \code{\link{ctPar}} writes the ordered form from the same named
-#' arguments, for when a specification is built programmatically.
+#' read in the ordered form. Otherwise a cell with a field of the form
+#' \code{name=value} is read in the named form, and an unknown field name is
+#' an error. \code{\link{ctPar}} writes these strings from named arguments.
 #'
-#' Every name in an expression has to be declared: a latent state, a time
-#' dependent predictor, or a parameter given a \code{PARS} cell. Writing a
-#' fresh name inside an expression does not declare it, so
-#' \code{DRIFT = matrix('-exp(dr)*eta1')} needs
-#' \code{PARS = c('dr')} alongside it. To transform one parameter and nothing
-#' else the second field is shorter --
-#' \code{DRIFT = matrix('dr|-exp(param)')}. A cell may also read a time
-#' independent predictor by name, the subject's value of it -- a study's known
-#' response rounding as \code{MANIFESTVAR = 'rsd + mvar'}, say, with
-#' \code{PARS = c('mvar|1e-10 + 5 * log1p_exp(2 * param)')}; this is julia
-#' only. A subject's missing value of such a predictor is imputed or sampled
-#' as any other (\code{optimcontrol$tipredMissing}), and the cell reads that
-#' value.
-#' Population summaries evaluate the cell at a predictor value of zero, where
-#' they report predictor effects. A
-#' cell cannot reference a manifest variable or the time interval at all.
-#' Predictor \emph{effects} on a parameter are set with the \code{tipreds}
-#' field.
+#' Every name in an expression must be a latent state, a time dependent
+#' predictor, or a parameter declared in \code{PARS}. For example
+#' \code{DRIFT = matrix('-exp(dr)*eta1')} needs \code{PARS = c('dr')}. To
+#' transform a single parameter, the transform field is shorter:
+#' \code{DRIFT = matrix('dr|-exp(param)')}. With the julia backend a cell may
+#' also use a time independent predictor by name, which gives the subject's
+#' value of it, as in \code{MANIFESTVAR = 'rsd + mvar'} with
+#' \code{PARS = c('mvar|1e-10 + 5 * log1p_exp(2 * param)')}. Missing values of
+#' such a predictor are imputed or sampled like other missing predictor values
+#' (\code{optimcontrol$tipredMissing}). Population summaries evaluate the cell
+#' at a predictor value of zero. A cell cannot refer to a manifest variable or
+#' to the time interval. Predictor \emph{effects} on a parameter are set with
+#' the \code{tipreds} field.
 #'
-#' Not every simple name in a cell is a parameter name. A latent state or
-#' time dependent predictor name is a \emph{reference} to it, and any number
-#' of matrices may reference the same one. A name declared in a \code{PARS}
-#' cell is likewise a reference wherever else it is written: the
-#' \code{PARS} cell holds the parameter and carries its transform, and the
-#' cells that name it are rewritten into references to that cell.
+#' A latent state or time dependent predictor name in a cell refers to that
+#' state or predictor, and any number of matrices may refer to the same one.
+#' A name declared in \code{PARS} likewise refers to the \code{PARS} cell
+#' wherever else it appears, and that cell holds the parameter and its
+#' transform.
 #'
-#' Repeating a name that is \emph{not} one of those is the equality
-#' constraint, and those cells are one parameter -- one value, one random
-#' effect -- so one transform has to apply to all of them. Cells that would
-#' transform it differently are refused, and that includes cells whose
-#' \emph{defaults} differ: the \code{DRIFT} diagonal is bounded negative
-#' while its off-diagonals are not, so \code{DRIFT = matrix('a', 2, 2)} is
-#' not a way to tie the whole matrix to one parameter. To share a parameter
-#' across cells that would otherwise transform it differently, declare it in
-#' one \code{PARS} cell (\code{PARS = c('a')}) and then apply whatever
-#' transform each cell needs in an expression there --
-#' \code{DRIFT[1,1] = '-exp(a)'} and \code{DIFFUSION[1,1] = 'exp(a)'}. One
-#' parameter then serves cells that need different transforms, and each
-#' transform is stated where it applies. Giving the \code{PARS} cell the
-#' transform instead (\code{PARS = c('a|-exp(param)')}) and writing just the
-#' name in each cell works when one transform suits them all. Two \code{PARS}
-#' cells sharing one label are co-holders rather than references, so they must
-#' agree on the transform as any other repeated name must.
+#' Any other name repeated across cells is one parameter, with one value and
+#' one random effect, so it needs one transform. Cells that would transform it
+#' differently are refused, including cells whose \emph{default} transforms
+#' differ. The \code{DRIFT} diagonal is bounded negative and the off-diagonals
+#' are not, so \code{DRIFT = matrix('a', 2, 2)} is refused. To use one
+#' parameter in cells that need different transforms, declare it in
+#' \code{PARS} (\code{PARS = c('a')}) and write the transform in each cell, as
+#' in \code{DRIFT[1,1] = '-exp(a)'} and \code{DIFFUSION[1,1] = 'exp(a)'}. If
+#' one transform suits every cell, give it in \code{PARS}
+#' (\code{PARS = c('a|-exp(param)')}) and write only the name in each cell.
+#' Two \code{PARS} cells with the same name are one parameter and must have
+#' the same transform.
 #'
-#' A predictor effect belongs to the parameter rather than to the cell, so
-#' cells that are one parameter must state the same \code{tipreds}. Naming an
-#' effect (\code{'mypar||||age=shared'}) constrains every parameter given that
-#' name under that predictor to one coefficient, which costs one fewer free
-#' parameter and makes the two parameters' reported effects identical. Because
-#' one coefficient displaces each parameter's raw value equally, it means the
-#' same thing on the natural scale only where the transforms agree, so sharing
-#' a name between parameters transformed differently is refused. A name is
-#' scoped per predictor: the same label under two predictors is two
-#' coefficients. A number instead of a name (\code{'mypar||||age=0.5'}) fixes
-#' the effect: no coefficient is estimated, and each subject's raw value of the
-#' parameter is displaced by 0.5 times their \code{age}, before the transform.
-#' Fixed effects are fitted by \code{backend = 'julia'} and used by
-#' \code{ctGenerate}; the stan backend refuses them.
+#' A predictor effect belongs to the parameter, so cells holding one parameter
+#' must have the same \code{tipreds}. Naming an effect
+#' (\code{'mypar||||age=shared'}) gives every parameter with that effect name,
+#' for that predictor, one shared coefficient. Because the coefficient acts on
+#' the raw scale, parameters with different transforms cannot share it. The
+#' same effect name under two predictors gives two coefficients. A number
+#' instead of a name (\code{'mypar||||age=0.5'}) fixes the effect, shifting
+#' each subject's raw parameter value by 0.5 times their \code{age} before the
+#' transform. Fixed effects are fitted by \code{backend = 'julia'}
+#' and used by \code{ctGenerate}. The stan backend refuses them.
 #'
 #' A cell that is exactly a latent state or time dependent predictor name is
-#' taken as a reference to it rather than as a parameter of that name, and
-#' warns, because the two readings are different models. \code{'state[1]'}
-#' and \code{'tdpreds[rowi, 1]'} say the same thing without the ambiguity. In
-#' \code{PARS} it is an error rather than a warning: a bare name there reads
-#' as the declaration of a parameter, so write the reference as part of an
-#' expression (\code{'log1p(exp(eta1))'}) if a state-dependent \code{PARS}
-#' cell is what is wanted.
+#' read as a reference to it, with a warning, since a parameter of that name
+#' would give a different model. Write \code{'state[1]'} or
+#' \code{'tdpreds[rowi, 1]'} to avoid the warning. In \code{PARS} such a cell
+#' is an error, because a bare name there declares a parameter. For a
+#' \code{PARS} cell that depends on a state, write the state in an
+#' expression, such as \code{'log1p(exp(eta1))'}.
 #'
 #' @seealso \code{\link{ctPar}} for the fields a matrix cell can carry,
 #' \code{\link{ctFit}} for fitting the result.
@@ -316,8 +290,8 @@
 #'
 #' 
 #' @return For \code{type = 'ct'} or \code{'dt'}, a model of class
-#'   \code{ctStanModel}: \code{$pars} holds one row per matrix cell, and
-#'   \code{$matrices} the same cells as matrices, editable either way. For
+#'   \code{ctStanModel}, with one row per matrix cell in \code{$pars} and the
+#'   same cells as matrices in \code{$matrices}. Either can be edited. For
 #'   \code{type = 'omx'}, a list of matrices of class \code{ctsemInit}, for
 #'   \code{\link{ctGenerate}} or \code{\link{ctModelConvertOMX}}.
 #' @export

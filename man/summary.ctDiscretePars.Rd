@@ -14,32 +14,35 @@
 \item{...}{Not used.}
 }
 \value{
-A data frame, one row per subject, pair of processes (\code{row} the
-  one affected, \code{col} the one acting) and quantity, with the mean, sd
-  and quantiles over draws, and where the object carries the fit's estimate
-  (an optimised fit's population effects, \code{attr(object, 'estimate')}),
-  the quantity read off the estimate's curve, \code{estimate}. The
-  quantities:
+A data frame with one row per subject, pair of processes (\code{row}
+  the process affected, \code{col} the one acting) and quantity, giving the
+  mean, sd and quantiles over draws. If the object carries the fit's
+  estimate (\code{attr(object, 'estimate')}, for an optimised fit), the
+  quantity computed from the estimate's curve is in the \code{estimate}
+  column. The quantities are:
   \describe{
     \item{\code{peak}}{The value of largest magnitude, with its sign.}
-    \item{\code{peaktime}}{The lag at which it occurs.}
-    \item{\code{halftime}}{The first lag after the peak at which the curve's
-      magnitude has fallen to half the peak's, interpolated between lags.
-      For an autoregression, which peaks at lag zero, its half-life: with
-      \code{impulseType = 'observed', standardise = TRUE}, that of the
-      autocorrelation. \code{NA} for a draw whose curve does not fall that
-      far within the lags computed; \code{beyond} is the share of such
-      draws, and the summary is over the others.}
-    \item{\code{area}}{The area under the curve over the lags computed: for
-      a unit impulse over long enough lags, the cumulative effect.}
+    \item{\code{peaktime}}{The time interval at which the peak occurs.}
+    \item{\code{halftime}}{The first interval after the peak at which the
+      curve's magnitude has fallen to half the peak's, interpolated between
+      intervals. For an autoregression, which peaks at zero, this is its
+      half-life, and with \code{impulseType = 'observed', standardise =
+      TRUE} the half-life of the autocorrelation. \code{NA} for a draw whose
+      curve does not fall that far within the intervals computed.
+      \code{beyond} gives the share of such draws, and the summary is over
+      the others.}
+    \item{\code{area}}{The area under the curve over the intervals
+      computed. For a unit impulse over long enough intervals, this is the
+      cumulative effect.}
   }
-  The lags are those \code{ctDiscretePars} was given, so their spacing
-  bounds the precision of \code{peaktime} and \code{halftime}, and their
-  range what \code{halftime} and \code{area} can see.
+  The intervals are the \code{times} given to \code{ctDiscretePars}, so
+  their spacing limits the precision of \code{peaktime} and
+  \code{halftime}, and their range limits what \code{halftime} and
+  \code{area} can capture.
 }
 \description{
-For each curve \code{\link{ctDiscretePars}} returned -- one per subject and
-pair of processes -- the quantities read off it, per draw, and their
+For each curve returned by \code{\link{ctDiscretePars}}, one per subject and
+pair of processes, computes summary quantities for each draw and their
 distribution over draws.
 }
 \examples{

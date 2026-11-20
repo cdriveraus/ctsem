@@ -1,16 +1,16 @@
 #' Prior and posterior distributions of a fit's parameters
 #'
 #' Plots, for each free population parameter of a fit, its prior and its
-#' posterior on the natural scale: the population mean, and for an individually
-#' varying parameter the population standard deviation, at each level it varies
-#' at. Works for fits from either backend. The prior is ctsem's
-#' \code{normal(0,1)} raw prior carried through each parameter's transform --
-#' the prior \code{priors = TRUE} fits with -- so on a fit made without it the
-#' plot shows how far the data moved each parameter from where that prior
-#' would put it. The posterior is the fit's draws: genuine posterior draws for
-#' a sampled fit, the approximate ones \code{\link{ctFitUncertainty}} writes
-#' for an optimized one. \code{ctStanPlotPost} is maintained as a
-#' backward-compatible alias.
+#' posterior on the natural scale. This covers the population mean, and for
+#' an individually varying parameter the population standard deviation at
+#' each level it varies at. Works for fits from either backend. The prior is
+#' ctsem's \code{normal(0,1)} raw prior passed through each parameter's
+#' transform, which is the prior used with \code{priors = TRUE}. For a fit
+#' made without priors, the plot shows how far the data moved each parameter
+#' from where that prior would put it. The posterior comes from the fit's
+#' draws, which are posterior draws for a sampled fit, and approximate ones
+#' from \code{\link{ctFitUncertainty}} for an optimized fit.
+#' \code{ctStanPlotPost} is an alias.
 #'
 #' @param obj A fit from \code{\link{ctFit}}, on either backend. A model on its
 #' own has no posterior; \code{plot(model)} plots its priors.

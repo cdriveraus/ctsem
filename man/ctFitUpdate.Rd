@@ -18,10 +18,9 @@ the fit was made with.}
 slower and usually unnecessary. Stan fits only.}
 
 \item{refit}{if TRUE, refits the model using the old estimates as a starting
-point. Only applicable for optimized fits, not sampling. If FALSE, the old
-fit is returned with its data and model specification replaced; its
-estimates, and everything computed from them when it was fitted, are left
-as they were.}
+point. Only applicable for optimized fits, not sampling. If FALSE, the fit
+is returned with its data and model specification replaced, and its
+estimates and everything computed from them unchanged.}
 
 \item{...}{extra arguments to pass to ctFit}
 }
@@ -33,17 +32,14 @@ Either to include different data, or because you have upgraded ctsem and
 the internal data structure has changed. Works on a fit from either backend.
 }
 \details{
-The fit is rebuilt from its own call: the arguments it was made with are
-passed to \code{\link{ctFit}} again, with the model it was given and, unless
-\code{data} is supplied, the data it was fitted to. Arguments in \code{...}
-replace the fit's own.
+The fit is rebuilt by calling \code{\link{ctFit}} again with the arguments
+and model it was made with, and with its own data unless \code{data} is
+supplied. Arguments in \code{...} replace the fit's own.
 
-With \code{refit=FALSE} and \code{data}, the data are instead prepared under
-the model the fit ran, so the fit keeps its structure along with its
-estimates whatever the data -- a single subject included, which
-\code{\link{ctFit}} would set up without random effects. To predict for
-other data, \code{\link{ctPredict}(fit, newdata = data)} does the same
-without an update.
+With \code{refit=FALSE} and new \code{data}, the fit keeps its model and
+estimates, including its random effects when the new data have only one
+subject. To predict for other data without updating the fit, use
+\code{\link{ctPredict}(fit, newdata = data)}.
 }
 \examples{
 newfit <- ctFitUpdate(ctstantestfit,refit=FALSE)

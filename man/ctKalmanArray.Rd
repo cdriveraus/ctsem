@@ -33,8 +33,7 @@ ctKalmanArray(
 \item{collapsefunc}{function to apply over samples, such as \code{mean}}
 
 \item{cores}{Integer number of cpu cores to use. Only needed if savescores was set to FALSE when fitting.
-\code{backend='stan'} only -- the julia path runs this loop serially in the engine and refuses
-\code{cores} by name rather than accepting it and ignoring it.}
+\code{backend='stan'} only, and an error for a julia fit.}
 
 \item{subjects}{'all' (the default), or the subjects to compute for, as ids in the
 data (see \code{realid}). The output numbers them in the order given, sorted.}
@@ -60,12 +59,11 @@ forward further in time than one observation.}
 and integers that are not ids there are read as ctsem's numbering of the
 subjects, 1 to N, with a message. If FALSE, they are read as that numbering.}
 
-\item{newdata}{Optional long format data, laid out as the data the model
-was fitted to, to compute for instead of the fit's own: new subjects, the
-fit's subjects with other covariate values, or a record cut short. The
-fit's estimates (or, with \code{pointest=FALSE}, its draws) are used as
-they stand, under the model the fit ran; nothing is refitted. See
-\code{\link{ctPredict}}.}
+\item{newdata}{Optional long format data, in the same layout as the data
+the model was fitted to, to compute for instead of the fit's own data. It
+can hold new subjects, the fit's subjects with other covariate values, or a
+record cut short. The fit's estimates (or, with \code{pointest=FALSE}, its
+draws) are used without refitting. See \code{\link{ctPredict}}.}
 
 \item{...}{additional arguments to collpsefunc.}
 }
@@ -83,10 +81,9 @@ likewise the covariance of the linear predictor.
 }
 \description{
 Get Kalman filter estimates from a ctStanFit object.
-\code{ctStanKalman} is maintained as a backward-compatible alias for this
-function. Its pre-3.11 partner \code{ctKalman} is an alias for
-\code{\link{ctPredict}}, not for this function, and returns a long data
-frame rather than a list of arrays.
+\code{ctStanKalman} is an alias for this function. \code{ctKalman}, despite
+the similar name, is an alias for \code{\link{ctPredict}}, which returns a
+long data frame.
 }
 \examples{
 k=ctKalmanArray(ctstantestfit,subjectpars=TRUE,collapsefunc=mean)

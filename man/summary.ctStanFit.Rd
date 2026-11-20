@@ -38,9 +38,8 @@ reported in summary.}
 for large models with many samples.}
 
 \item{priorcheck}{Whether or not to use \code{priorchecking} to compare
-posterior mean and sd to prior mean and sd. \code{backend='stan'} only: a
-julia fit carries no prior block to compare against, and refuses
-\code{priorcheck = TRUE} given explicitly.}
+posterior mean and sd to prior mean and sd. \code{backend='stan'} only.
+\code{priorcheck = TRUE} is an error for a julia fit.}
 
 \item{residualcov}{Whether or not to show standardised residual covariance. Takes a little longer to compute.}
 
@@ -49,17 +48,19 @@ julia fit carries no prior block to compare against, and refuses
 \value{
 List containing summary items, with a \code{print} method for readable console and knitr output.
   On an optimised \code{backend = 'julia'} fit with uncertainty draws, the
-  parameter tables and \code{parmatrices} carry a \code{mode} column beside
-  the draws' mean, sd and quantiles: the fit's estimate on the same scale,
-  the point a likelihood ratio or an information criterion refers to.
+  parameter tables and \code{parmatrices} have a \code{mode} column beside
+  the draws' mean, sd and quantiles. This is the fit's estimate on the same
+  scale, the point that likelihood ratio tests and information criteria
+  refer to.
 
   \code{popmeans} reports each free parameter. A \code{T0VAR},
-  \code{DIFFUSION} or \code{MANIFESTVAR} parameter is a standard deviation
-  on the diagonal; off it, a coordinate the model's \code{covmattransform}
-  turns into correlations, not a correlation: under the default \code{'z'}
-  it is an entry of the correlation matrix's logarithm, which for two
-  variables is the correlation's Fisher z (\code{tanh()} of it is the
-  correlation) and for more is no function of any one correlation. The
+  \code{DIFFUSION} or \code{MANIFESTVAR} parameter on the diagonal is a
+  standard deviation. Off the diagonal it is a parameter that the model's
+  \code{covmattransform} turns into correlations. Under the default
+  \code{'z'} it is an entry of the logarithm of the correlation matrix. For
+  two variables this is the correlation's Fisher z (\code{tanh()} of it is
+  the correlation), and for more variables it does not correspond to any
+  single correlation. The
   correlations are in \code{parmatrices}, as \code{T0cor},
   \code{DIFFUSIONcor}, \code{MANIFESTcor} and \code{asymDIFFUSIONcor} beside
   the covariances, each summarised over the draws' own correlations.

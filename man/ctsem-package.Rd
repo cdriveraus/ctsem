@@ -14,7 +14,7 @@ The general workflow begins by specifying a model using the \code{\link{ctModel}
 then fitting it to data using \code{\link{ctFit}} (alias \code{\link{ctStanFit}}).
 For original OpenMx / SEM functionality from the first ctsem versions, use the
 \pkg{ctsemOMX} package.
-For most purposes, the Stan-based forms in \pkg{ctsem} are more robust and flexible.
+For most purposes, the forms in \pkg{ctsem} are more robust and flexible.
 For examples, see \code{\link{ctFit}}.
 For citation info, please run \code{citation('ctsem')} .
 }

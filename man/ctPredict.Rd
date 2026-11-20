@@ -52,40 +52,38 @@ and integers that are not ids there are read as ctsem's numbering of the
 subjects, 1 to N, with a message. If FALSE, they are read as that numbering.}
 
 \item{randomEffects}{For an \code{intoverpop='laplace'} fit, which levels
-  of random effect the trajectories are built from. Naming one of the
-  model's id columns includes that level and every level outside it, so the
-  innermost id gives each subject its own trajectory and an outer id gives
-  the group mean, shared by every subject in the group.
-  \code{'population'} includes none, giving the trajectory implied by the
-  population parameters alone. Defaults to the innermost id. Ignored for
-  other fits.
+  of random effects the trajectories include. Naming one of the model's id
+  columns includes that level and all levels above it, so the innermost id
+  gives each subject its own trajectory, and an outer id gives the group
+  mean, shared by the subjects in the group. \code{'population'} includes
+  none, giving the trajectory implied by the population parameters alone.
+  Defaults to the innermost id. Ignored for other fits.
 
-  With one level of random effects, left in, each subject's predicted and
-  updated values take its random effects at their posterior given its rows
-  up to each time, and its smoothed values at their mode given its whole
-  record. Otherwise every pass takes the modes from each subject's whole
-  record. Those whole-record modes stay the fit's however this call changes
-  the rows being filtered (selecting subjects, a time grid,
-  \code{removeObs}), so with every observation withheld the smoothed values
-  still use that subject's own random effects.}
+  With a single level of random effects included, each subject's predicted
+  and updated values use the posterior of its random effects given its
+  observations up to each time, and its smoothed values use their mode
+  given its whole record. Otherwise all values use the modes given each
+  subject's whole record. These modes are those of the fit, and do not
+  change when this call changes which rows are filtered (selected subjects,
+  a time grid, \code{removeObs}). So with every observation withheld, the
+  smoothed values still use the subject's own random effects.}
 
 \item{newdata}{Optional long format data to predict for instead of the
 data the model was fitted to, with the same columns: an id, a time, the
 manifest variables (\code{NA} where nothing is observed) and the
-predictors. New subjects, such as hypothetical people with chosen covariate
-values; a subject of the fit under other covariate values; or a record cut
-short at some time, to see what was predictable then. The data are put
-under the model the fit ran, with its estimates as they stand: nothing is
-refitted, and the model keeps its structure whatever the number of
-subjects. A subject's predicted (prior) and updated values condition on
-its rows in \code{newdata} up to each time, and its smoothed values on all
-of them. For a fit with random effects that includes the subject's random
-effects, at their posterior given those rows (for a Laplace fit with one
-level of random effects; otherwise as \code{randomEffects} describes), so
-a subject with no observations gets the population's prediction for its
-covariate values. A row at a time with nothing observed gives a prediction
-there; a time dependent predictor left \code{NA} is taken as zero, as
-\code{\link{ctFit}} takes it.}
+predictors. It can hold new subjects, such as hypothetical people with
+chosen covariate values, a subject of the fit with other covariate values,
+or a record cut short at some time, to see what could be predicted then.
+The fit's estimates are used without refitting, and the model structure is
+kept for any number of subjects. A subject's predicted (prior) and updated
+values are conditional on its rows in \code{newdata} up to each time, and
+its smoothed values on all of its rows. For a fit with random effects this
+includes the subject's random effects (as estimated from those rows for a
+Laplace fit with one level of random effects, and otherwise as
+\code{randomEffects} describes), so a subject with no observations gets the
+population's prediction for its covariate values. A row with nothing
+observed gives a prediction at that time. A time dependent predictor left
+\code{NA} is taken as zero, as in \code{\link{ctFit}}.}
 
 \item{...}{additional arguments to pass to \code{\link{plot.ctKalmanDF}}.}
 }
@@ -104,10 +102,9 @@ If plot=TRUE, nothing is returned but a plot is generated.
 Outputs predicted, updated, and smoothed estimates of manifest indicators and latent states,
 with covariances, for specific subjects from data fit with \code{\link{ctFit}},
 based on either the mode (if optimized) or mean (if sampled) of parameter distribution.
-\code{ctKalman} is an alias for this function and returns the same long data
-frame. The pre-3.11 name \code{ctStanKalman} is not its Stan-prefixed twin:
-that is an alias for \code{\link{ctKalmanArray}}, which returns a list of
-arrays instead.
+\code{ctKalman} is an alias for this function. \code{ctStanKalman}, despite
+the similar name, is an alias for \code{\link{ctKalmanArray}}, which returns
+a list of arrays.
 }
 \examples{
 \donttest{

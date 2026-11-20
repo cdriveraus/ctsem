@@ -164,8 +164,8 @@
 #' as extra rows whose variable names are suffixed \code{' std. res.'}. Needs one Kalman
 #' filter pass per generated dataset, so it is much slower than the default.
 #' @param nsamples Integer or NA. Number of generated datasets to use. If the fit carries
-#' more than this, draws are subsampled; if it carries none, this many are generated. NA
-#' uses whatever the fit already has, or the \code{\link{ctGenerateFromFit}} default.
+#' more than this, draws are subsampled, and if it carries none, this many are generated.
+#' NA uses the datasets the fit carries, or the \code{\link{ctGenerateFromFit}} default.
 #'
 #' @return A long data table with one row per generated draw x data row x variable, carrying
 #' the generated \code{value}, the corresponding \code{obsValue}, and the \code{id},
@@ -489,11 +489,11 @@ ctPostPredData <- function(fit, residuals = FALSE, nsamples = NA){
 #'
 #' @param fit A fitted ctsem model.
 #' @param panels Which panels to produce. \code{'all'} (the default), \code{'structure'},
-#' \code{'calibration'}, or a character vector of panel names -- see Details.
+#' \code{'calibration'}, or a character vector of panel names (see Details).
 #' @param variables Character vector of variable names to restrict to, or NULL for all.
 #' \code{'LogLik'} is a valid name here.
 #' @param nsamples Integer or NA. Number of generated datasets to compare against. NA uses
-#' whatever the fit already carries.
+#' the datasets the fit carries.
 #' @param datarows Integer vector of data rows to use, or \code{'all'}.
 #' @param diffsize Integer vector > 0. Lags, in observations, for the rate-of-change panels.
 #' One pair of panels is produced per lag.
@@ -504,11 +504,10 @@ ctPostPredData <- function(fit, residuals = FALSE, nsamples = NA){
 #' @param jitter Non-negative numeric. Jitter added to the values in the rate-of-change
 #' panels, as a proportion of each variable's standard deviation, applied to observed and
 #' generated alike. Useful when data are rounded or ordinal. 0, the default, adds none.
-#' @param residuals Logical. Include standardised prior residuals as extra variables. Slow --
-#' it needs one Kalman pass per generated dataset.
+#' @param residuals Logical. Include standardised prior residuals as extra variables. Slow,
+#' as it needs one Kalman filter pass per generated dataset.
 #' @param timebins Positive integer. Number of equal-count bins of time for the
-#' \code{MeanTrajectory} panel. Subjects are rarely observed at identical times, so the mean
-#' at a time is a mean within a bin of times.
+#' \code{MeanTrajectory} panel, which shows the mean within each bin.
 #' @param lags Non-negative integer vector. Observation lags for the \code{LaggedCovariance}
 #' panel, passed to \code{\link{ctFitCheckCov}}.
 #' @param lagcor Logical. If TRUE (the default) the \code{LaggedCovariance} panel shows
@@ -522,55 +521,54 @@ ctPostPredData <- function(fit, residuals = FALSE, nsamples = NA){
 #' @details
 #' Two families of panel are produced.
 #'
-#' \strong{structure} asks whether the model reproduces the shape of the data:
-#' \code{Density} (marginal distributions), \code{MeanTrajectory} (the mean over subjects
-#' against time), \code{ValueByTime} and \code{ValueByOccasion} (the model-implied density
-#' of each variable against time and against occasion number, with the observed data as
-#' points on top), \code{ChangeByValue} and \code{ChangeByTime} (rate of change against
-#' current value and against time), and \code{LaggedCovariance} (the lagged covariance or
-#' correlation structure). \code{ChangeByValue} is the phase plane, and is the panel that
-#' shows nonlinear dynamics: a linear model implies a straight band with a constant slope, so
-#' curvature in the observed points relative to the model shading is evidence the drift is
-#' not linear.
+#' \strong{structure} panels check whether the model reproduces the shape of
+#' the data: \code{Density} (marginal distributions), \code{MeanTrajectory}
+#' (the mean over subjects against time), \code{ValueByTime} and
+#' \code{ValueByOccasion} (the model implied density of each variable against
+#' time and against occasion number, with the observed data as points),
+#' \code{ChangeByValue} and \code{ChangeByTime} (rate of change against
+#' current value and against time), and \code{LaggedCovariance} (the lagged
+#' covariance or correlation structure). \code{ChangeByValue} is the phase
+#' plane. A linear model implies a straight band with a constant slope there,
+#' so curvature in the observed points relative to the model shading suggests
+#' nonlinear dynamics.
 #'
-#' \code{MeanTrajectory} and \code{ValueByTime} both plot against time and answer different
-#' questions. \code{ValueByTime} shows where the model puts an individual observation, so its
-#' envelope is as wide as the data; \code{MeanTrajectory} shows where it puts the \emph{mean}
-#' of a bin of observations, whose sampling distribution is narrower by roughly the square
-#' root of the bin count. A bias in the average level is therefore visible in the second while
-#' sitting comfortably inside the first.
+#' \code{ValueByTime} shows where the model expects individual observations,
+#' so its band is as wide as the data. \code{MeanTrajectory} shows where it
+#' expects the mean of a bin of observations, which has a much narrower band,
+#' so a bias in the average level is easier to see there.
 #'
-#' \code{LaggedCovariance} is \code{\link{ctFitCheckCov}} rendered as a dashboard panel: one
-#' plot per variable, faceted by the variable it is paired with, empirical against the central
-#' 95\% of the generated datasets at each lag. It is the only panel that looks at dependence
-#' \emph{across} time rather than at each time, which is what makes it the one that responds
-#' to a wrong drift or diffusion when every marginal already matches. Call
-#' \code{\link{ctFitCheckCov}} directly to split it by a group or a predictor.
+#' \code{LaggedCovariance} shows \code{\link{ctFitCheckCov}} as a panel, with
+#' one plot per variable, faceted by the variable it is paired with, comparing
+#' the empirical values to the central 95\% of the generated datasets at each
+#' lag. It is the only panel that looks at dependence across time, and so the
+#' one most likely to show a wrong drift or diffusion when the marginal
+#' distributions match. Call \code{\link{ctFitCheckCov}} directly to split it
+#' by a group or a predictor.
 #'
-#' \strong{calibration} asks whether the predictive distribution is the right width and in
-#' the right place: \code{PredictedVsObserved}, \code{IntervalCoverage}, \code{PIT}, and the
-#' PIT resolved by \code{CalibrationByInterval} and \code{CalibrationBySubject}. A departure
-#' that depends on the time interval implicates the dynamics rather than the measurement
-#' model, since the measurement model cannot know the interval.
+#' \strong{calibration} panels check whether the predictive distribution has
+#' the right width and location: \code{PredictedVsObserved},
+#' \code{IntervalCoverage}, \code{PIT}, and the PIT split by
+#' \code{CalibrationByInterval} and \code{CalibrationBySubject}. A problem that
+#' depends on the time interval points to the dynamics, since the measurement
+#' model does not depend on the interval.
 #'
-#' The row-wise log likelihood appears throughout as an extra variable, \code{LogLik} --
-#' its distribution should match between model and data like any other quantity. It is
-#' omitted from the rate-of-change panels, where the derivative of a log likelihood with
-#' respect to time is not a meaningful quantity. Note that the observed side of the LogLik
-#' comparison is evaluated at the point estimate, so it carries no parameter uncertainty
-#' while the generated side does.
+#' The row-wise log likelihood appears in most panels as an extra variable,
+#' \code{LogLik}, whose distribution should match between model and data like
+#' any other. It is left out of the rate-of-change panels. The observed log
+#' likelihood is evaluated at the point estimate, so it has no parameter
+#' uncertainty, while the generated one does.
 #'
-#' \code{SubjectLogLik} asks the same question one level up: each subject's total log
-#' likelihood, summed over that subject's rows, compared as a cumulative distribution
-#' across subjects against the same curve from each generated dataset. Aggregating within
-#' a subject first is what makes a subject the model fits badly across many occasions show
-#' up, rather than being spread thin across the row-wise panels. The comparison is against
-#' replicate datasets of the same size rather than a smooth density, so it is the right
-#' reference however few subjects there are.
+#' \code{SubjectLogLik} compares each subject's total log likelihood, as a
+#' cumulative distribution across subjects, against the same curve from each
+#' generated dataset. This shows subjects the model fits badly over many
+#' occasions, which the row-wise panels can miss. The reference is the
+#' generated datasets of the same size, so it is valid for any number of
+#' subjects.
 #'
-#' The approximation is only as good as the number of generated datasets, so a fit carrying
-#' few draws gives a coarse picture -- the PIT in particular is discrete on
-#' \code{nsamples + 1} values.
+#' The comparison is only as precise as the number of generated datasets
+#' allows. With few draws the picture is coarse, and the PIT takes only
+#' \code{nsamples + 1} distinct values.
 #'
 #' @return A named list of ggplot objects, invisibly if \code{plot=TRUE}.
 #'
@@ -1068,8 +1066,7 @@ ctPostPredPlots <- function(fit, panels = 'all', variables = NULL,
 #' Posterior predictive checks for a ctsem fit
 #'
 #' \code{ctPostPredict} and \code{ctStanPostPredict} are aliases for
-#' \code{\link{ctPostPredPlots}}, which the two functions were merged into. They differ from
-#' it only in printing the panels by default rather than returning them.
+#' \code{\link{ctPostPredPlots}}, except that they print the panels by default.
 #'
 #' @param fit A fitted ctsem model.
 #' @param ... Passed to \code{\link{ctPostPredPlots}}.

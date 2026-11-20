@@ -401,10 +401,10 @@ ctPoly <- function(x,y,ylow,yhigh,steps=20,...){
 #' @param manifestNames vector of character strings giving column names of manifest indicator variables
 #' @param TDpredNames vector of character strings giving column names of time dependent predictor variables
 #' @param TIpredNames vector of character strings giving column names of time independent predictor variables
-#' @return A character vector of column names for a wide format dataset: the
-#'   manifest variables and time dependent predictors at each time point,
-#'   the intervals \code{dT1}, \code{dT2}, ..., then the time independent
-#'   predictors.
+#' @return A character vector of column names for a wide format dataset, with
+#'   the manifest variables and time dependent predictors at each time point,
+#'   then the intervals \code{dT1}, \code{dT2}, ..., then the time
+#'   independent predictors.
 #' @export
 
 ctWideNames<-function(n.manifest,Tpoints,n.TDpred=0,n.TIpred=0,manifestNames='auto',TDpredNames='auto',TIpredNames='auto'){

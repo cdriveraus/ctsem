@@ -42,8 +42,8 @@ where \code{line} does not draw the estimate.}
 
 \item{xlab}{x label.}
 
-\item{ylim}{Two values, the lower and upper limits of the y axis. The plot
-zooms to them; intervals reaching past them are drawn to the edge.}
+\item{ylim}{Two values, the lower and upper limits of the y axis. Intervals
+that extend past them are cut at the edge.}
 
 \item{facets}{May be 'Subject' or 'Effect'.}
 
@@ -60,11 +60,11 @@ the fill.}
 the outer \code{quantiles} of the draws as \code{ymin} and \code{ymax}, and the line as \code{value}), and a character string that can be
 evaluated (with the necessary arguments such as ylab etc filled in). For modifying plots.}
 
-\item{line}{What the line is. \code{'estimate'} (the default) draws the
-effects at the fit's estimate where \code{x} carries them
-(\code{attr(x, 'estimate')}: an optimised fit's population effects), and the
-middle of \code{quantiles} otherwise; \code{'median'} always draws the middle
-of \code{quantiles}. The band is the draws' either way.}
+\item{line}{What the line shows. \code{'estimate'} (the default) draws the
+effects at the fit's estimate when \code{x} carries them
+(\code{attr(x, 'estimate')}, for an optimised fit), and otherwise the
+middle of \code{quantiles}. \code{'median'} draws the middle of
+\code{quantiles}. The band shows the quantiles of the draws.}
 }
 \value{
 A ggplot2 object. This can be modified by the various ggplot2 functions, or displayed using print(x).
@@ -74,12 +74,11 @@ Plots the output from \code{\link{ctDiscretePars}}, for model implied regression
 \code{ctStanDiscreteParsPlot} is maintained as a backward-compatible alias.
 }
 \details{
-For a model whose dynamics depend on the state, the curves are the model
-linearised at one point, or simulated from it, and the subtitle names the
-point. The default, the population initial state with time dependent
-predictors at zero, can be far from where the data are; choose the point, and
-whether to linearise or simulate, with \code{ctDiscretePars(state = , method = )},
-whose help says when the linearisation is a fair interval regression.
+For a model whose dynamics depend on the state, the curves are computed at
+one point in the state space, and the subtitle names the point. The default,
+the population initial state with time dependent predictors at zero, can be
+far from the data. Choose the point, and whether to linearise or simulate,
+with \code{ctDiscretePars(state = , method = )}.
 }
 \examples{
 data.table::setDTthreads(1) #ignore this line

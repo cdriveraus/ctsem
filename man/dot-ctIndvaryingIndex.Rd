@@ -15,13 +15,10 @@ integer vector of parameter numbers, one per random effect.
 \description{
 The order the model declares them in: the `indvarying` column numbers each
 varying parameter as `.ctModelMatSetup()` meets it in the parameter table.
-Not matsetup's row order, which puts PARS first so they are computed before
-what reads them -- an order for computation, which made a parameter's place
-among the random effects depend on whether it was written in PARS. Moving a
-random innovation sd into PARS to scale it by the state then reordered the
-effects, and their correlation coordinates, which are not invariant to
-order, no longer matched the fit's. The augmented route already followed
-the declared order (`ivnames`), so the two routes also disagreed for any
-model with a random PARS parameter.
+This differs from matsetup's row order, which puts PARS first for
+computation. Using the declared order keeps a parameter's place among the
+random effects, and so the meaning of their correlation parameters, the
+same whether or not it is written in PARS, and the same on every
+integration method.
 }
 \keyword{internal}

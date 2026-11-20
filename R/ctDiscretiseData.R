@@ -2,12 +2,11 @@
 #'
 #' Rounds timing information so equal intervals, according to specified
 #' timestep, are achieved. Each subject's times are moved to the nearest point of a
-#' grid that starts at the subject's first time; values that land on the same point
+#' grid that starts at the subject's first time. Values that land on the same point
 #' are averaged, with a warning. NA's are inserted in other columns as necessary.
 #' Any columns specified by TDpredNames have zeroes rather than NA's inserted
-#' (because some estimation routines do not tolerate NA's in covariates), while
-#' columns specified by TIpredNames are left as NA's -- since a time independent
-#' predictor is constant within a subject, inserting zeroes for it would be incorrect.
+#' (because some estimation routines do not tolerate NA's in covariates). Columns
+#' specified by TIpredNames are left as NA's in inserted rows.
 #'
 #' @param dlong Long format data
 #' @param timestep Positive real value to discretise

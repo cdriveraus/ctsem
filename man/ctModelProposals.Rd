@@ -34,20 +34,19 @@ A data frame of class \code{ctModelProposals}, one row per change,
   \code{proposal}, what \code{ctModelImprove()} needs to make the change.
 }
 \description{
-The changes \code{\link{ctModelImprove}} would consider for a fit: the
-relaxations its score tests indicate and, given an adequacy check, the
-structural changes the check's families point to -- a process of an item's
-own or shared by two, a slow process, a cycle, a second order. Rows can be
-handed to \code{ctModelImprove(changes = )}, which refits with them and
-judges each by the search's criterion: a search made a step at a time, by
-hand.
+Lists the changes \code{\link{ctModelImprove}} would consider for a fit:
+the relaxations its score tests indicate and, given an adequacy check, the
+structural changes the check's families point to (a process of an item's
+own or shared by two items, a slow process, a cycle, or second order
+dynamics). Rows can be passed to \code{ctModelImprove(changes = )}, which
+refits with them and judges each by the search's criterion, so that a
+search can be made one step at a time, by hand.
 }
 \details{
-Unlike a search's rounds, every indicated change is listed, including
-relaxations the tests cannot tell apart (one \code{class}), of which a
-round refits only the strongest; and the structural changes are listed
-beside the relaxations, where a round turns to them only once the screen
-is clean.
+Every indicated change is listed, including relaxations the tests cannot
+tell apart (the same \code{class}), of which a search round refits only
+the strongest. The structural changes are listed beside the relaxations,
+while a search round tries them only once the screen finds nothing.
 }
 \seealso{
 \code{vignette('score-tests')}.

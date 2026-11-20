@@ -17,13 +17,12 @@
 A ggplot.
 }
 \description{
-Without \code{family}, each family's Holm-adjusted p-value on a log scale,
-against \code{alpha}. With a family, its
-statistics: for the families over the gaps between a subject's rows
-(\code{residuals}, \code{latent}, \code{volatility}, \code{scores}),
-each pair's estimate by gap with a 95 per cent interval; for
-\code{periodic}, each variable's z by period; for any other, the
-statistics' z, the 40 largest. The intervals and z are each statistic's
-own: the family's p-value, which accounts for how many there are, is the
-test.
+Without \code{family}, plots each family's Holm adjusted p-value on a log
+scale, against \code{alpha}. With a family, plots its statistics. For the
+families over time gaps (\code{residuals}, \code{latent},
+\code{volatility}, \code{scores}) this is each pair's estimate by gap with
+a 95 per cent interval, for \code{periodic} each variable's z by period,
+and for the others the 40 largest z. The intervals and z values are for
+each statistic alone. The family's p-value, which allows for the number of
+statistics, is the test.
 }

@@ -13,17 +13,16 @@ ctModelIsNonlinear(x)
 Logical.
 }
 \description{
-A ctsem matrix cell may be specified as an expression referencing a latent
-process or a time dependent predictor -- for instance
-\code{DRIFT[1,1] = '-log1p(exp(param)) * eta2'}. Such a cell has no single
-value, only a value at a given state and set of predictor values, and the
-package's summaries and plots must therefore name the point they evaluated
-it at.
+A ctsem matrix cell may be an expression of a latent process or a time
+dependent predictor, such as
+\code{DRIFT[1,1] = '-log1p(exp(param)) * eta2'}. Such a cell has a value
+only at a given state and set of predictor values, so summaries and plots
+report the point at which they evaluated it.
 }
 \details{
-References to an individually varying parameter's carrier state (the
-\code{intoverpop} representation of a random effect) do not count: those are
-parameters, not dynamics, and are reported exactly.
+References to the state that carries an individually varying parameter
+(with \code{intoverpop='augmented'}) do not count, since these are
+parameters, reported exactly.
 }
 \examples{
 ctModelIsNonlinear(ctstantestfit)

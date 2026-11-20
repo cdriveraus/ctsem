@@ -1,7 +1,7 @@
 # New in ctsem 4
 
 Version 4 adds an estimation engine written in Julia, now the default, and most
-new features build on it. Most code written for version 3 still runs; the
+new features build on it. Most code written for version 3 still runs. The
 tables at the end list the changed defaults and the renamed and removed
 functions. [NEWS.md](NEWS.md) is the change log.
 

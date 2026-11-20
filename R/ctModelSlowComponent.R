@@ -1,43 +1,37 @@
 #' Add slow processes that drive a model's latent processes
 #'
-#' Each latent in \code{indices} gains a slow latent, named \code{slow_} and
-#' the latent's name, that drives it through the drift: an estimated effect
-#' \code{DRIFT[k, slow_k]} moves the level the latent returns to with the slow
-#' process, so a process can wander over weeks while it fluctuates over hours.
-#' Its equilibrium is \code{DRIFT[k, slow_k] / |DRIFT[k, k]|} times the slow
-#' process, so a person with faster dynamics follows the slow process less
-#' closely.
+#' Each latent in \code{indices} gets a slow latent, named \code{slow_} and the
+#' latent's name, that drives it through the drift. An estimated effect
+#' \code{DRIFT[k, slow_k]} shifts the level the latent returns to with the slow
+#' process, so a process can drift over weeks while fluctuating over hours.
+#' The latent's equilibrium is \code{DRIFT[k, slow_k] / |DRIFT[k, k]|} times
+#' the slow process, so a person with faster dynamics follows the slow process
+#' less closely.
 #'
-#' A slow process is slower than the latent it drives by construction: its
-#' drift is the latent's times \code{inv_logit(r)}, with \code{r} a
-#' \code{PARS} parameter named \code{drift_} and the slow process's name, so
-#' its rate is a fraction of the latent's. Left free, the two rates can trade
-#' places: with only the latent measured, a latent of drift \code{a} driven by
-#' a slow process of drift \code{b} has the spectrum of one with the two
-#' exchanged and the effect adjusted, so the "slow" process can come out the
-#' fast one, and refits from other starting values did. The latent's drift
-#' parameter is declared in \code{PARS} for this, keeping its name,
-#' transform, individual variation and predictor effects, so where the
-#' latent's rate varies over people the slow process's follows it. Where the
-#' latent's drift is fixed the fraction is of that value; where it is an
-#' expression the slow process's persistence is left free, as before.
+#' The slow process is always slower than the latent it drives. Its drift is
+#' the latent's drift times \code{inv_logit(r)}, with \code{r} a \code{PARS}
+#' parameter named \code{drift_} and the slow process's name. If both rates
+#' were free, they could swap, since with only the latent measured the two
+#' processes are interchangeable. The latent's drift parameter is declared in
+#' \code{PARS} for this, keeping its name, transform, individual variation and
+#' predictor effects, so where the latent's rate varies over people the slow
+#' process's rate varies with it. Where the latent's drift is fixed, the slow
+#' process's drift is a fraction of that value. Where the latent's drift is an
+#' expression, the slow process's persistence is left free.
 #'
 #' A slow process has innovations of unit variance (the effect carries its
-#' scale), correlated with those of the other slow processes, including ones
-#' added earlier, and not with the fast ones.
-#' It has no loadings and no intercept, and no individual variation or
-#' predictor effects. Its initial mean and variance are its stationary ones
-#' (\code{T0MEANS} and the \code{T0VAR} diagonal \code{'stationary'}, see
-#' \code{\link{ctFit}}): zero and \code{1 / (2 |a|)} for persistence
-#' \code{a}. Its initial covariance with the latent it drives is free -- that
-#' latent follows it, so the two start related -- and with the other states
-#' zero.
+#' scale), correlated with those of other slow processes, including ones
+#' added earlier, and uncorrelated with the others. It has no loadings, no
+#' intercept, and no individual variation or predictor effects. Its initial
+#' mean and variance are its stationary ones (\code{T0MEANS} and the
+#' \code{T0VAR} diagonal \code{'stationary'}, see \code{\link{ctFit}}), zero
+#' and \code{1 / (2 |a|)} for persistence \code{a}. Its initial covariance
+#' with the latent it drives is free, and with other states zero.
 #'
-#' The effect has to start away from zero. At zero neither the slow process nor
-#' its effect has a gradient, so an optimiser started there stays. When
-#' refitting from a model without the slow process, start the effect at one
-#' (the slow process's sign is not identified, so either sign will do) and
-#' the fraction small; \code{\link{ctModelImprove}} starts it at a tenth.
+#' The effect needs a starting value away from zero, because at zero neither
+#' the slow process nor its effect has a gradient. When refitting from a model
+#' without the slow process, start the effect at one (either sign) and the
+#' fraction small. \code{\link{ctModelImprove}} starts it at a tenth.
 #'
 #' @param ctm A model from \code{ctModel(type = 'ct')}.
 #' @param indices Which latents get a slow process, by position.

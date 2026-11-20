@@ -18,23 +18,21 @@
 #' How model matrix cells vary with a latent state
 #'
 #' @description
-#' Plot every context-dependent matrix cell against one latent process, across
-#' the range that process occupies, with the posterior spread at each point.
+#' Plots every context-dependent matrix cell against one latent process, over
+#' the range that process covers, with the posterior spread at each point.
 #'
-#' This is the plot that says what a state-dependent model actually claims.
-#' \code{summary()} reports each cell as a single number at a single state;
-#' here the same cell is drawn as the function of the state it really is, and
-#' the summary's number is one point on that curve.
+#' \code{summary()} reports each cell as a single number at a single state.
+#' This plot shows the same cell as a function of the state, with the
+#' summary's number as one point on the curve.
 #'
 #' @details
-#' Cells are chosen by measuring rather than by parsing: every model matrix is
-#' materialised across the grid, and a cell is kept when its value actually
-#' moves. That catches dependence arriving indirectly -- through a PARS entry,
-#' or through a covariance built from a state-dependent cell -- without having
-#' to trace it symbolically.
+#' Every model matrix is evaluated over the grid, and a cell is shown when its
+#' value changes. This includes cells that depend on the state indirectly,
+#' through a PARS entry or through a covariance built from a state dependent
+#' cell.
 #'
-#' A model with no state-dependent cells has nothing to draw, and says so
-#' rather than returning an empty plot.
+#' For a model with no state dependent cells, the function says so and
+#' returns no plot.
 #'
 #' @param fit A ctJuliaFit.
 #' @param along The latent process to vary, by name or index.

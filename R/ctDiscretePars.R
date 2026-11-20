@@ -69,87 +69,78 @@ ctStanParnames <- ctRawParnames
 #'@param nsamples Number of samples from the stanfit to use for plotting. Higher values will
 #'increase smoothness / accuracy, at cost of plotting speed. Values greater than the total
 #'number of samples will be set to total samples.
-#'@param impulseType What a "one unit change in process c" is taken to bring
-#'with it. Every variant is \code{dtDRIFT(t) \%*\% C} for a different companion
-#'matrix \code{C}, whose column c says what else moves.
+#'@param impulseType What a "one unit change in process c" brings with it.
+#'Each option gives \code{dtDRIFT(t) \%*\% C} for a different matrix \code{C},
+#'whose column c says what else changes.
 #'\describe{
-#'  \item{\code{'unit'} (the default)}{\code{C = I}. An impulse of one unit
-#'    (one standard deviation when \code{standardise=TRUE}) is applied to
-#'    process c alone and nothing else moves, because the change was imposed.
-#'    This is the \emph{partial} regression \code{E[x(t+u)|x(t)]}, and the
-#'    only variant that is a property of the dynamics alone.}
+#'  \item{\code{'unit'} (the default)}{\code{C = I}. Process c alone changes
+#'    by one unit (one standard deviation when \code{standardise=TRUE}). This
+#'    is the \emph{partial} regression \code{E[x(t+u)|x(t)]}, and the only
+#'    option that depends on the dynamics alone.}
 #'  \item{\code{'observed'}}{\code{C = Sigma diag(Sigma)^-1}
 #'    with \code{Sigma = asymDIFFUSIONcov}. Process c is \emph{observed} one
-#'    unit above expectation and the others are not held fixed, so they move by
-#'    \code{Sigma_rc/Sigma_cc}. This is the \emph{simple} regression -- what
-#'    regressing the observed data on x_c alone recovers.}
+#'    unit above its expectation, and the other processes change with it by
+#'    \code{Sigma_rc/Sigma_cc}. This is the \emph{simple} regression, the one
+#'    obtained by regressing the observed data on x_c alone.}
 #'  \item{\code{'shock'}}{\code{C = Q diag(Q)^-1} with
-#'    \code{Q = DIFFUSIONcov}. One hypothetical system noise innovation arrives
-#'    in c, with companion innovations \code{Q_rc/Q_cc}. An impulse response
-#'    rather than a regression.}
+#'    \code{Q = DIFFUSIONcov}. A system noise innovation in c, with the
+#'    correlated innovations \code{Q_rc/Q_cc} in the other processes. This is
+#'    an impulse response.}
 #'  \item{\code{'orthogonal'}}{From the Cholesky factor of DIFFUSION, so
-#'    shocks are uncorrelated. Depends on the order of the latent processes,
-#'    which is a modelling assumption rather than a property of the fit.}
+#'    shocks are uncorrelated. The result depends on the order of the latent
+#'    processes.}
 #'}
-#'The companion matrices are asymmetric, and must be: a one unit move in a
-#'wide-spread process implies more movement in a narrow one than the reverse.
-#'\code{'observed'} and \code{'shock'} use different covariance matrices
-#'because they ask different questions, and coincide only under isotropic decay
-#'with no cross effects.
+#'These matrices are not symmetric: a one unit change in a process with a
+#'large variance implies a larger change in one with a small variance than
+#'the reverse. \code{'observed'} and \code{'shock'} are the same only when
+#'every process decays at the same rate and there are no cross effects.
 #'@param observational Deprecated. Use \code{impulseType}: \code{FALSE} is
 #'\code{'unit'} and \code{TRUE} is \code{'observed'}.
 #'@param standardise Logical, \code{FALSE} by default. If \code{TRUE}, report
-#'the effect of a one standard deviation change in process c as a change in r's
-#'own standard deviations, taking both scales from the stationary within
-#'subject covariance \code{asymDIFFUSIONcov}. That makes effects between
-#'processes on different scales comparable, and is what \code{\link{ctNetwork}}
-#'reports by default. \code{FALSE} leaves the effects in the processes' own
-#'units, so \code{impulseType='unit', standardise=FALSE} is the bare
-#'\code{expm(DRIFT*t)}. A system with no stationary variance has nothing to
-#'standardise by, and those draws are returned as NaN with a message. The plot
-#'title states which scale was used either way.
+#'the effect of a one standard deviation change in process c in standard
+#'deviations of process r, with both taken from the stationary within subject
+#'covariance \code{asymDIFFUSIONcov}. This makes effects between processes on
+#'different scales comparable, and is what \code{\link{ctNetwork}} reports by
+#'default. With \code{FALSE} the effects are in the processes' own units, and
+#'\code{impulseType='unit', standardise=FALSE} gives \code{expm(DRIFT*t)}.
+#'Draws for a system with no stationary variance are returned as NaN, with a
+#'message. The plot title states which scale was used.
 #'@param cov Logical. If TRUE, covariances are returned instead of regression coefficients.
 #'@param plot Logical. If TRUE, ggplots output using \code{\link{ctDiscreteParsPlot}}
 #'instead of returning output.
 #'@param cores Number of cpu cores to use for computing subject matrices.
 #'If subject matrices were saved during fiting, not used.
-#'@param state Evaluation point for any matrix cell that depends on the latent
-#'state or a time dependent predictor -- see \code{\link{ctContextDependence}}.
+#'@param state Where to evaluate matrix cells that depend on the latent state
+#'or a time dependent predictor (see \code{\link{ctContextDependence}}).
 #'\code{NULL} (the default) or \code{'T0MEANS'} uses the population initial
-#'state, with time dependent predictors at zero, which for a model whose
-#'dynamics depend on the state can be far from where the data are;
-#'\code{'mean'} the mean smoothed latent state, \code{'asymptotic'} the
-#'system's own fixed point; or supply a numeric state vector. The initial state
-#'and the fixed point are each draw's own, so the intervals include where they
-#'are; \code{'mean'} is the estimate's, used for every draw, so its intervals
-#'leave out where that state is. A process that does not change (a latent
-#'predictor) is held at its initial value in finding the fixed point. Requires
-#'\code{backend='julia'} and \code{subjects='popmean'}. For a linear model the
-#'argument makes no difference, since no cell depends on the state.
-#'@param method How the interval regressions are obtained. \code{'linearise'}
-#'(the default) exponentiates the drift's Jacobian at the evaluation point,
-#'\code{expm(J*t)} with \code{J} the model's \code{JAx}: the DRIFT matrix itself
-#'for a linear model, where it is exact, and for a model whose dynamics depend
-#'on the state, the response of the model linearised at \code{state}. Where a
-#'cell is nonlinear in the state the two differ: a DRIFT cell \code{a + b*Y}
-#'in the column of process \code{Y} is \code{a + b*Y} there, and contributes
-#'\code{a + 2*b*Y} to the Jacobian. A stan fit carries no Jacobian, and
-#'exponentiates DRIFT as evaluated at \code{T0MEANS}. The linearisation holds
-#'\code{J} fixed over the interval, so it is a fair interval regression near a
-#'fixed point, or over intervals short beside the dynamics; away from a fixed
-#'point the state moves during the interval, the nonlinear system's response
-#'can differ from it, and \code{'simulate'} is the check. \code{'simulate'}
+#'state, with time dependent predictors at zero. For a model whose dynamics
+#'depend on the state this can be far from the data. \code{'mean'} uses the
+#'mean smoothed latent state, \code{'asymptotic'} the system's fixed point,
+#'and a numeric vector gives the state directly. The initial state and the
+#'fixed point are computed for each posterior draw, so their uncertainty is
+#'included in the intervals. \code{'mean'} uses the estimate's mean state for
+#'every draw, so its uncertainty is not included. A process that does not
+#'change (a latent predictor) is held at its initial value when finding the
+#'fixed point. Requires \code{backend='julia'} and \code{subjects='popmean'}.
+#'For a linear model the argument has no effect.
+#'@param method How the regressions are computed. \code{'linearise'} (the
+#'default) computes \code{expm(J*t)}, with \code{J} the Jacobian of the drift
+#'(the model's \code{JAx}) at the evaluation point. For a linear model
+#'\code{J} is the DRIFT matrix and the result is exact. For a model whose
+#'dynamics depend on the state, \code{J} can differ from DRIFT: a DRIFT cell
+#'\code{a + b*Y} in the column of process \code{Y} contributes \code{a + 2*b*Y}
+#'to the Jacobian. A stan fit has no Jacobian, and uses DRIFT evaluated at
+#'\code{T0MEANS}. The linearisation is accurate near a fixed point and for
+#'intervals that are short relative to the dynamics. \code{'simulate'}
 #'integrates the nonlinear system from \code{state}, and from \code{state}
 #'plus a shock of one stationary standard deviation in each process in turn
-#'(with the companion movements \code{impulseType} gives), and differences the
-#'trajectories, divided back to one unit (one standard deviation when
-#'\code{standardise=TRUE}): the model implied regression for a shock of that
-#'size. It starts at 1 and decays to 0 for a stable process, and reduces
-#'exactly to \code{'linearise'} when no cell depends on the state; for a
-#'strongly nonlinear system the curve depends on the shock's size, and near a
-#'fixed point the difference from \code{'linearise'} is that size's effect.
-#'\code{'simulate'} requires \code{backend='julia'} and is slower, so it
-#'uses \code{nsamples} posterior draws with a small default.
+#'(with the accompanying changes \code{impulseType} gives), and takes the
+#'difference between the trajectories, scaled to one unit (one standard
+#'deviation when \code{standardise=TRUE}). It gives the same result as
+#'\code{'linearise'} when no cell depends on the state. For a strongly
+#'nonlinear system the result depends on the size of the shock.
+#'\code{'simulate'} requires \code{backend='julia'} and is slower, so it uses
+#'\code{nsamples} posterior draws, with a small default.
 #'@param ... additional plotting arguments to control \code{\link{ctDiscreteParsPlot}}
 #'@examples
 #' data.table::setDTthreads(1) #ignore this line
@@ -163,33 +154,30 @@ ctStanParnames <- ctRawParnames
 #'g= g+ labs(title='Cross effects')
 #'print(g)
 #'@details
-#'Two of these combinations are quantities you may already know under other
-#'names. \code{impulseType='unit'} with \code{standardise=FALSE} is the
-#'discrete time autoregression and cross-lagged matrix, \code{expm(DRIFT*t)}.
-#'\code{impulseType='observed'} with \code{standardise=TRUE} is the model
-#'implied \emph{cross-correlation function},
-#'\code{Cor(x_r(t+u), x_c(t))} -- the model's counterpart to the empirical
-#'autocorrelations \code{\link{ctACF}} computes from the data, and equal to
-#'the latent correlation matrix at \code{t=0}.
+#'\code{impulseType='unit'} with \code{standardise=FALSE} gives the discrete
+#'time autoregressive and cross-lagged matrix, \code{expm(DRIFT*t)}.
+#'\code{impulseType='observed'} with \code{standardise=TRUE} gives the model
+#'implied \emph{cross-correlation function}, \code{Cor(x_r(t+u), x_c(t))},
+#'which corresponds to the empirical autocorrelations \code{\link{ctACF}}
+#'computes from the data, and equals the latent correlation matrix at
+#'\code{t=0}.
 #'
 #'If plot=TRUE, the function will return a ggplot2 object
 #'(and hence needs to be printed if intended to display within a loop).
 #'This can be modified by the various ggplot2 functions, or displayed using print(x).
-#'@return With \code{plot = FALSE}, an array of the discrete time
-#'coefficients, by sample, subject, time interval, row and column, of class
-#'\code{ctDiscretePars}: \code{summary()} gives each curve's peak, the lag of
-#'the peak, the lag at which it has fallen to half the peak (a half-life), and
-#'the area under it, with their uncertainty (\code{\link{summary.ctDiscretePars}}).
-#'On an optimised fit, with \code{subjects = 'popmean'}, the same
-#'coefficients at the fit's estimate are \code{attr(x, 'estimate')}, by
-#'subject, time interval, row and column: for \code{'linearise'} computed from
-#'the matrices \code{ctSummaryMatrices(fit, state = )$estimate} reports, for
-#'\code{'simulate'} simulated at the estimate. The draws' mean or median need
-#'not equal them. \code{summary()} reads their quantities into an
-#'\code{estimate} column, and \code{\link{ctDiscreteParsPlot}} draws them as
-#'its line. A sampled fit has no estimate, and gives none; nor do
-#'\code{subjects} other than \code{'popmean'}, whose matrices come from each
-#'subject's filter pass over the draws.
+#'@return With \code{plot = FALSE}, an array of class \code{ctDiscretePars}
+#'holding the discrete time coefficients, by sample, subject, time interval,
+#'row and column. \code{summary()} (\code{\link{summary.ctDiscretePars}})
+#'gives each curve's peak, the time of the peak, the time at which it falls to
+#'half the peak (a half-life), and the area under it, with their uncertainty.
+#'For an optimised fit with \code{subjects = 'popmean'}, the coefficients at
+#'the fit's estimate are in \code{attr(x, 'estimate')}, by subject, time
+#'interval, row and column. These are computed from the matrices
+#'\code{ctSummaryMatrices(fit, state = )$estimate} reports, or for
+#'\code{'simulate'} simulated at the estimate, and can differ from the mean or
+#'median of the draws. \code{summary()} reports them in an \code{estimate}
+#'column, and \code{\link{ctDiscreteParsPlot}} draws them as its line. Sampled
+#'fits, and subjects other than \code{'popmean'}, have no such estimate.
 #'With \code{plot = TRUE}, a ggplot object.
 #'@aliases ctStanDiscretePars
 #'@export
@@ -412,35 +400,38 @@ ctStanDiscretePars <- ctDiscretePars
 
 #' Summarise discrete time effect curves
 #'
-#' For each curve \code{\link{ctDiscretePars}} returned -- one per subject and
-#' pair of processes -- the quantities read off it, per draw, and their
+#' For each curve returned by \code{\link{ctDiscretePars}}, one per subject and
+#' pair of processes, computes summary quantities for each draw and their
 #' distribution over draws.
 #'
 #' @param object Output of \code{\link{ctDiscretePars}} with \code{plot = FALSE}.
 #' @param probs Quantiles of each quantity over draws.
 #' @param ... Not used.
-#' @return A data frame, one row per subject, pair of processes (\code{row} the
-#'   one affected, \code{col} the one acting) and quantity, with the mean, sd
-#'   and quantiles over draws, and where the object carries the fit's estimate
-#'   (an optimised fit's population effects, \code{attr(object, 'estimate')}),
-#'   the quantity read off the estimate's curve, \code{estimate}. The
-#'   quantities:
+#' @return A data frame with one row per subject, pair of processes (\code{row}
+#'   the process affected, \code{col} the one acting) and quantity, giving the
+#'   mean, sd and quantiles over draws. If the object carries the fit's
+#'   estimate (\code{attr(object, 'estimate')}, for an optimised fit), the
+#'   quantity computed from the estimate's curve is in the \code{estimate}
+#'   column. The quantities are:
 #'   \describe{
 #'     \item{\code{peak}}{The value of largest magnitude, with its sign.}
-#'     \item{\code{peaktime}}{The lag at which it occurs.}
-#'     \item{\code{halftime}}{The first lag after the peak at which the curve's
-#'       magnitude has fallen to half the peak's, interpolated between lags.
-#'       For an autoregression, which peaks at lag zero, its half-life: with
-#'       \code{impulseType = 'observed', standardise = TRUE}, that of the
-#'       autocorrelation. \code{NA} for a draw whose curve does not fall that
-#'       far within the lags computed; \code{beyond} is the share of such
-#'       draws, and the summary is over the others.}
-#'     \item{\code{area}}{The area under the curve over the lags computed: for
-#'       a unit impulse over long enough lags, the cumulative effect.}
+#'     \item{\code{peaktime}}{The time interval at which the peak occurs.}
+#'     \item{\code{halftime}}{The first interval after the peak at which the
+#'       curve's magnitude has fallen to half the peak's, interpolated between
+#'       intervals. For an autoregression, which peaks at zero, this is its
+#'       half-life, and with \code{impulseType = 'observed', standardise =
+#'       TRUE} the half-life of the autocorrelation. \code{NA} for a draw whose
+#'       curve does not fall that far within the intervals computed.
+#'       \code{beyond} gives the share of such draws, and the summary is over
+#'       the others.}
+#'     \item{\code{area}}{The area under the curve over the intervals
+#'       computed. For a unit impulse over long enough intervals, this is the
+#'       cumulative effect.}
 #'   }
-#'   The lags are those \code{ctDiscretePars} was given, so their spacing
-#'   bounds the precision of \code{peaktime} and \code{halftime}, and their
-#'   range what \code{halftime} and \code{area} can see.
+#'   The intervals are the \code{times} given to \code{ctDiscretePars}, so
+#'   their spacing limits the precision of \code{peaktime} and
+#'   \code{halftime}, and their range limits what \code{halftime} and
+#'   \code{area} can capture.
 #' @examples
 #' dp <- ctDiscretePars(ctstantestfit, times = seq(0, 5, .1), nsamples = 20)
 #' summary(dp)
@@ -696,12 +687,11 @@ ctDiscreteParsDrift<-function(ctpars,times, impulseType,  standardise,cov=FALSE,
 #'Plots the output from \code{\link{ctDiscretePars}}, for model implied regression strengths at specified times for continuous time models fit with ctStanFit.
 #'\code{ctStanDiscreteParsPlot} is maintained as a backward-compatible alias.
 #'
-#'For a model whose dynamics depend on the state, the curves are the model
-#'linearised at one point, or simulated from it, and the subtitle names the
-#'point. The default, the population initial state with time dependent
-#'predictors at zero, can be far from where the data are; choose the point, and
-#'whether to linearise or simulate, with \code{ctDiscretePars(state = , method = )},
-#'whose help says when the linearisation is a fair interval regression.
+#'For a model whose dynamics depend on the state, the curves are computed at
+#'one point in the state space, and the subtitle names the point. The default,
+#'the population initial state with time dependent predictors at zero, can be
+#'far from the data. Choose the point, and whether to linearise or simulate,
+#'with \code{ctDiscretePars(state = , method = )}.
 #'
 #'@param x list object returned from \code{\link{ctDiscretePars}}.
 #'@param indices Either a string specifying type of plot to create, or an n by 2
@@ -712,19 +702,19 @@ ctDiscreteParsDrift<-function(ctpars,times, impulseType,  standardise,cov=FALSE,
 #'@param quantiles numeric vector of length 3, with values between 0 and 1, specifying which quantiles to plot.
 #'The default plots 95\% credible intervals as the band, and the posterior median at 50\% as the line
 #'where \code{line} does not draw the estimate.
-#'@param line What the line is. \code{'estimate'} (the default) draws the
-#'effects at the fit's estimate where \code{x} carries them
-#'(\code{attr(x, 'estimate')}: an optimised fit's population effects), and the
-#'middle of \code{quantiles} otherwise; \code{'median'} always draws the middle
-#'of \code{quantiles}. The band is the draws' either way.
+#'@param line What the line shows. \code{'estimate'} (the default) draws the
+#'effects at the fit's estimate when \code{x} carries them
+#'(\code{attr(x, 'estimate')}, for an optimised fit), and otherwise the
+#'middle of \code{quantiles}. \code{'median'} draws the middle of
+#'\code{quantiles}. The band shows the quantiles of the draws.
 #'@param latentNames Vector of character strings denoting names for the latent variables.
 #''auto' just uses eta1 eta2 etc.
 #'@param polygonalpha Numeric between 0 and 1 to multiply the alpha of
 #'the fill.
 #'@param ylab y label.
 #'@param xlab x label.
-#'@param ylim Two values, the lower and upper limits of the y axis. The plot
-#'zooms to them; intervals reaching past them are drawn to the edge.
+#'@param ylim Two values, the lower and upper limits of the y axis. Intervals
+#'that extend past them are cut at the edge.
 #'@param facets May be 'Subject' or 'Effect'.
 #'@param colour Character string denoting how colour varies. 'Effect' or 'Subject'.
 #'@param title Character string. 'auto' generates automatically, NULL can be used to disable title.

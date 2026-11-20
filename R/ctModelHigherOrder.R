@@ -1,34 +1,32 @@
 #' Raise the order of a ctsem model's latent processes.
 #'
-#' Each latent in \code{indices} gains a derivative latent (named \code{d}
-#' and the latent's name), which drives the level with a fixed unit
-#' coefficient. That makes each a damped oscillator: a second order process,
-#' whose autocorrelation can dip below zero and rise again, which no first
-#' order process can.
+#' Each latent in \code{indices} gets a derivative latent (named \code{d} and
+#' the latent's name), which drives the level with a fixed coefficient of one.
+#' Each becomes a damped oscillator, a second order process whose
+#' autocorrelation can fall below zero and rise again.
 #'
-#' A model from \code{ctModel(type = 'ct')} is rewritten cell by cell on its
-#' parameter table, with a new inertia time \eqn{\tau > 0} for each latent
+#' A model from \code{ctModel(type = 'ct')} is rewritten on its parameter
+#' table, with a new inertia time \eqn{\tau > 0} for each latent
 #' (\code{inertia_} and the latent's name, in \code{PARS}):
 #' \deqn{\tau \ddot{x} + \dot{x} = a x + q \, dW,}
 #' where \eqn{a} is the level's own drift and \eqn{q} its diffusion, both
-#' keeping their names and every setting -- transform, individual variation,
-#' predictor effects. The derivative's row of \code{DRIFT} reads \eqn{a/\tau}
-#' and \eqn{-1/\tau}, and its diffusion \eqn{q/\tau}. As \eqn{\tau} goes to
-#' zero the derivative follows the level at once and the process is the
-#' first order one it was, so the new model contains the old one with every
-#' old parameter at its value; from \eqn{\tau = 1/(4|a|)} on, the process
-#' oscillates. The derivative starts where the process alone holds it at
-#' equilibrium: mean zero, uncorrelated with every state, and variance
-#' \eqn{q^2/(2\tau)}, so the inertia time is the one new parameter. With the
-#' noise left on the level (\code{diffusion = FALSE}), or none, its initial
-#' mean, variance and covariances are free.
+#' keeping their names and settings (transform, individual variation,
+#' predictor effects). The derivative's row of \code{DRIFT} is \eqn{a/\tau}
+#' and \eqn{-1/\tau}, and its diffusion is \eqn{q/\tau}. As \eqn{\tau} goes to
+#' zero the process becomes the original first order one, so the new model
+#' contains the old one with every old parameter at its value. For
+#' \eqn{\tau \ge 1/(4|a|)} the process oscillates. The derivative starts at
+#' its equilibrium given the process: mean zero, uncorrelated with other
+#' states, and variance \eqn{q^2/(2\tau)}, so the inertia time is the only new
+#' parameter. With the noise left on the level (\code{diffusion = FALSE}), or
+#' no noise, the derivative's initial mean, variance and covariances are free.
 #'
 #' A model in the older matrix-list form from \code{ctModel(type = 'omx')} is
-#' written instead as the derivative pulled back by the level through an
-#' estimated coefficient (negative unless \code{explosive}), with the level's
-#' own autoregression as the derivative's damping. That is the same family of
-#' processes, but its first order member is reached only as the damping, the
-#' coefficient and the diffusion all grow without bound.
+#' extended differently, with the derivative pulled back by the level through
+#' an estimated coefficient (negative unless \code{explosive}), and the level's
+#' own autoregression as the derivative's damping. This gives the same family
+#' of processes, but the first order model is only reached as the damping, the
+#' coefficient and the diffusion all go to infinity.
 #'
 #' @param ctm ctModel, \code{type = 'ct'} or \code{type = 'omx'}.
 #' @param indices Vector of integers, which latents to raise the order of.

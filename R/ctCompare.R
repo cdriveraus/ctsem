@@ -2,30 +2,28 @@
 #'
 #' \code{anova()} on two or more optimised fits of nested models to the same
 #' data gives each fit's number of parameters, AIC, BIC, log likelihood and -2
-#' log likelihood, and tests each fit against the one above it: the chi-square
-#' statistic (twice the gain in log likelihood), its degrees of freedom (the
-#' extra parameters) and its p-value. The fits may come from either backend.
+#' log likelihood, and tests each fit against the one above it, with the
+#' chi-square statistic (twice the gain in log likelihood), its degrees of
+#' freedom (the extra parameters) and its p-value. The fits may come from
+#' either backend.
 #'
 #' The fits are ordered by their number of parameters, and each is tested
 #' against the one with the next fewer, so the models must be nested in that
-#' order; \code{anova()} cannot check that. A negative statistic, which warns,
-#' means a model fits worse than one nested in it: the models are not nested,
-#' or an optimisation stopped short.
+#' order. \code{anova()} cannot check this. A negative statistic gives a
+#' warning, and means a model fits worse than one nested in it: either the
+#' models are not nested, or an optimisation stopped short.
 #'
-#' The p-value is the chi-square distribution's on the difference in
-#' parameters. Where the smaller model fixes a variance at zero, such as a
-#' random effect's, the null lies on the boundary of the parameter space and
-#' that p-value is conservative (Stram & Lee, 1994); \code{\link{ctScoreTest}}
-#' tests a new random effect against the corrected reference without
-#' refitting.
+#' When the smaller model fixes a variance at zero, such as a random
+#' effect's, the chi-square p-value is conservative (Stram & Lee, 1994).
+#' \code{\link{ctScoreTest}} tests a new random effect against the correct
+#' reference distribution without refitting.
 #'
-#' The log likelihoods are those \code{logLik()} reports. Where a fit's
-#' random-effects check or a refined fit integrated the random effects, that
-#' is the integrated value, and the heading says so. A fit with priors
-#' maximised the posterior, so its log likelihood is read at the posterior
-#' mode rather than at the likelihood's maximum, and the heading says that too.
-#' Sampled fits have no single log likelihood; compare them with
-#' \code{\link{ctLOO}}.
+#' The log likelihoods are those \code{logLik()} reports. If the random
+#' effects were integrated more exactly after the fit, by its random-effects
+#' check or a refined fit, that integrated value is used, and the heading
+#' says so. A fit with priors maximised the posterior, so its log likelihood
+#' is taken at the posterior mode, and the heading says that too. Sampled
+#' fits have no single log likelihood. Compare them with \code{\link{ctLOO}}.
 #'
 #' @param object An optimised fit from \code{\link{ctFit}}.
 #' @param ... Further optimised fits, of models nested with \code{object} and

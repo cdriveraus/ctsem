@@ -171,88 +171,76 @@
 
 #' Check which parameters a dataset can inform, before fitting
 #'
-#' Reports the directions of the parameter space this data carries no
-#' information about, and the parameters involved in them, without fitting the
-#' model.
+#' Reports the directions of the parameter space the data carry no
+#' information about, and the parameters involved in them, without fitting
+#' the model.
 #'
-#' This catches structural non-identification -- parameters that only appear
-#' together, a latent process nothing measures, a scale that is never fixed --
-#' which is a property of the model and holds wherever it is evaluated. It is
-#' not a verdict on the model: a direction that is flat at one point may be
-#' perfectly informed at the estimate, which is why several points are used and
-#' only parameters lying in the flat subspace at every one of them are reported
-#' as uninformed.
+#' This finds structural non-identification, such as parameters that only
+#' appear together, a latent process nothing measures, or a scale that is
+#' never fixed. These are properties of the model that hold wherever it is
+#' evaluated. A direction can be flat at one point and well informed at the
+#' estimate, so several points are used, and only parameters in the flat
+#' directions at every point are reported as uninformed.
 #'
 #' The model is prepared by \code{\link{ctFit}}, with any of its arguments
 #' given in \code{...}, so what is checked is the model a fit with the same
 #' arguments would estimate.
 #'
-#' Not every flat direction means the same thing. A random effect on a variance
-#' cell (DIFFUSION, MANIFESTVAR) under \code{intoverpop = 'augmented'} with a
-#' full-rank population covariance (\code{poprank = NA}; the route's default
-#' rank leaves out the directions its filter cannot see) is
-#' partially identified: the population covariances it generates with the other
-#' individually varying parameters are determined, while their decomposition
-#' into a scale and correlations is a ridge. The printed summary distinguishes
-#' the two cases, because the advice differs -- fixing a value discards
-#' information in the first case and is the fix in the second.
+#' A random effect on a variance parameter (DIFFUSION, MANIFESTVAR) under
+#' \code{intoverpop = 'augmented'} with a full rank population covariance
+#' (\code{poprank = NA}) is partially identified. The population covariances
+#' it implies with the other varying parameters are determined, but their
+#' split into a scale and correlations is not. The printed summary separates
+#' partial from complete non-identification, because the advice differs:
+#' fixing a value discards information in the first case, and is the fix in
+#' the second.
 #'
 #' @param datalong Long format data, as for \code{\link{ctFit}}.
 #' @param model Model from \code{\link{ctModel}}.
-#' @param inits Optional evaluation point. Supplying one uses that single point
-#'   and disables the comparison across points described in Details.
+#' @param inits Optional evaluation point. Supplying one uses that single
+#'   point, without the comparison across points described in Details.
 #' @param nstart Number of points to evaluate. The first is the origin of the
-#'   unconstrained space; the rest are dispersed draws around it.
+#'   unconstrained space, and the rest are dispersed draws around it.
 #' @param spread Standard deviation of the additional evaluation points on the
-#'   raw scale. Large enough that they are genuinely different points, which
-#'   \code{\link{ctFit}}'s own \code{rnorm(npar, 0, 0.01)} initialisation is
-#'   not.
-#' @param seed Seed for the dispersed evaluation points, so that two identical
+#'   raw scale.
+#' @param seed Seed for the dispersed evaluation points, so that identical
 #'   calls give identical output. The session's random stream is restored
-#'   afterwards, so this neither depends on it nor disturbs it. \code{NULL}
-#'   draws from the session stream instead, which makes the result depend on
-#'   where that had got to.
-#' @param priors Whether to include the prior. \code{FALSE} by default, because
-#'   the question is what the \emph{data} can inform: a prior informs every
-#'   direction, so a model unidentified by its data looks fine with priors on
-#'   and the check stops being able to say anything.
-#' @param cores As for \code{\link{ctFit}}, and also the subject-chunk ceiling
-#'   for every engine call this function makes, restored on exit.
+#'   afterwards. \code{NULL} draws from the session's stream instead.
+#' @param priors Whether to include the prior. \code{FALSE} by default,
+#'   because a prior informs every direction, so a model the data do not
+#'   identify looks fine with priors on.
+#' @param cores As for \code{\link{ctFit}}.
 #' @param verbose As for \code{\link{ctFit}}.
 #' @param ... Further arguments to \code{\link{ctFit}} that shape the model,
 #'   such as \code{intoverpop} or \code{poprank}, with ctFit's defaults.
 #' @param rtol A direction counts as uninformed when the information along it
-#'   falls below this fraction of the best-informed direction's. The default
-#'   separates zero from merely small: on the scaled information a structurally
-#'   unidentified direction sits at machine precision (measured: 7e-17), while
-#'   a weakly identified one on a comparable model sat at 3e-12. Raise it to
-#'   catch weak directions too, at the cost of reporting some a fit would have
-#'   settled.
+#'   is below this fraction of the best informed direction's. The default
+#'   separates zero from small, so that only structurally unidentified
+#'   directions are reported. Raise it to report weakly identified directions
+#'   too, including some a fit would settle.
 #'
-#' @return An object of class \code{ctIdentify} with \code{$parameters} (names
-#'   in the flat subspace at every evaluation point), \code{$partial} and
-#'   \code{$structural} splitting those into the partially and completely
-#'   unidentified, \code{$sometimes} (in a flat direction beyond that subspace
-#'   at some points), \code{$rotating} (whether the basis of the flat subspace
-#'   turns between points), \code{$nweak}, \code{$condition},
-#'   \code{$starts} holding the per-point detail, and \code{$effects}, the
-#'   random-effect information at a supplied \code{inits} (\code{NULL}
-#'   otherwise). Printing it summarises what was found.
+#' @return An object of class \code{ctIdentify}, with \code{$parameters}
+#'   (names in the flat directions at every evaluation point),
+#'   \code{$partial} and \code{$structural} (those split into the partially
+#'   and completely unidentified), \code{$sometimes} (in a flat direction at
+#'   some points only), \code{$rotating} (whether the flat directions change
+#'   between points), \code{$nweak}, \code{$condition}, \code{$starts} (the
+#'   detail for each point), and \code{$effects}, the information about the
+#'   random effects at a supplied \code{inits} (\code{NULL} otherwise).
+#'   Printing it summarises what was found.
 #'
-#' @details Requires the Julia backend, which is where the per-subject scores
-#'   come from. The statistic has rank at most the number of subjects, so a
-#'   model with more free parameters than subjects reports flat directions for
-#'   that reason alone; the printed summary says when that applies.
+#' @details Requires the julia backend, which supplies the per-subject
+#'   scores. The information has rank at most the number of subjects, so a
+#'   model with more free parameters than subjects shows flat directions for
+#'   that reason alone, and the printed summary says when that applies.
 #'
 #'   How well the data determine each random effect's population standard
-#'   deviation, and how much of each subject's effect its own data determine
-#'   -- the check \code{\link{ctFit}} makes at its estimate, stored as
-#'   \code{fit$identifiability$effects} -- is taken here only at a supplied
-#'   \code{inits}, such as a fit's \code{estimate$raw}. It depends on the
-#'   population standard deviations, which only a fit estimates: at the
-#'   default evaluation points it describes the starting values rather than
-#'   the data, and there it read a well identified random drift as less
-#'   informed than one the data barely inform.
+#'   deviation, and how much of each subject's effect its own data determine,
+#'   is checked only at a supplied \code{inits}, such as a fit's
+#'   \code{estimate$raw}. \code{\link{ctFit}} makes the same check at its
+#'   estimate, stored as \code{fit$identifiability$effects}. It depends on
+#'   the population standard deviations, so at the default evaluation points
+#'   it would describe the starting values instead of the data.
 #'
 #' @seealso \code{\link{ctFit}} runs the equivalent check on a finished fit,
 #'   evaluated at the estimate and stored as \code{fit$identifiability}.

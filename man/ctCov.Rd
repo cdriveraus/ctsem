@@ -22,24 +22,24 @@ reach every correlation matrix, and a covariance it cannot represent is
 refused.
 }
 \description{
-ctsem's covariance matrices -- \code{T0VAR}, \code{DIFFUSION},
+ctsem's covariance matrices (\code{T0VAR}, \code{DIFFUSION},
 \code{MANIFESTVAR}, and the population spreads \code{RAWPOPVAR} and
-\code{RAWPOPVAR_<idname>} -- are specified as a lower triangle: standard
-deviations on the diagonal, and below it coordinates that the model's
+\code{RAWPOPVAR_<idname>}) are specified as a lower triangle, with standard
+deviations on the diagonal and, below it, values that the model's
 \code{covmattransform} turns into correlations. Except for two variables
-under \code{'z'}, where a coordinate is Fisher's z, what one coordinate
-yields depends on the others, so the cells for a given covariance are not
-something to work out by hand. \code{ctCov()} computes them.
+under \code{'z'}, where each value is Fisher's z of the correlation, the
+correlations depend on all the values together, so the cells for a given
+covariance are hard to work out by hand. \code{ctCov()} computes them.
 }
 \details{
-Pass the result wherever a fixed matrix goes: \code{ctModel(DIFFUSION =
-ctCov(S))}, \code{m$matrices$T0VAR <- ctCov(S)}, or \code{m$RAWPOPVAR <-
-ctCov(S)}, in every case for the whole matrix. The model keeps the
-covariance as well as the cells, so the matrix keeps its meaning if
-\code{covmattransform} is changed afterwards, and the R generator of
-\code{\link{ctGenerate}} -- which reads covariance cells as a Cholesky
-factor -- generates from the same covariance as the julia one. A cell edited
-by hand afterwards replaces what \code{ctCov()} wrote.
+Use the result wherever a fixed matrix can go, such as
+\code{ctModel(DIFFUSION = ctCov(S))}, \code{m$matrices$T0VAR <- ctCov(S)},
+or \code{m$RAWPOPVAR <- ctCov(S)}, always for the whole matrix. The model
+also stores the covariance, so the matrix keeps its meaning if
+\code{covmattransform} is changed later, and the R generator of
+\code{\link{ctGenerate}}, which reads covariance cells as a Cholesky
+factor, generates from the same covariance as the julia generator. A cell
+edited by hand afterwards replaces what \code{ctCov()} wrote.
 
 For \code{RAWPOPVAR}, the covariance is that of the raw, untransformed
 parameters across subjects (or groups, for \code{RAWPOPVAR_<idname>}),

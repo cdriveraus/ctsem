@@ -1,8 +1,8 @@
 #' Append pseudo-posterior samples to an optimized ctStanFit object (deprecated)
 #'
-#' Appends normal draws from the fit's already-computed covariance to its
-#' raw posterior. Deprecated in favour of \code{\link{ctOptimUncertainty}} with
-#' \code{uncertainty = 'stored'}, which does the same on both backends.
+#' Appends normal draws from the fit's covariance to its raw posterior.
+#' Deprecated, use \code{\link{ctOptimUncertainty}} with
+#' \code{uncertainty = 'stored'}, which works on both backends.
 #'
 #' @param fit fit object
 #' @param nsamples number of samples desired
@@ -10,24 +10,16 @@
 #'
 #' @return fit object with extra samples
 #' @aliases ctAddSamples
-#' @details These are pseudo-posterior draws from the fitted covariance, not
-#'   posterior draws from a sampler. \code{\link{ctFitUncertainty}} with
-#'   \code{uncertainty = 'sample'} is the latter -- Hamiltonian Monte Carlo
-#'   from an optimized \code{ctJuliaFit} -- and is a different object, not
-#'   another route to this one.
+#' @details The draws come from the fitted covariance, not from a sampler. To
+#'   sample the posterior of a fit, use \code{ctFitUncertainty(fit, 'sample')}.
 #'
-#'   Deprecated in favour of \code{ctOptimUncertainty(fit, uncertainty =
-#'   'stored', finishsamples = n)}, which draws from the same covariance for
-#'   the same zero model evaluations, works on a \code{ctJuliaFit} as well as a
-#'   \code{ctStanFit}, and records the new sample count in
-#'   \code{$uncertainty$settings}. It also replaces the draws rather than
-#'   appending to them: appending normal draws to a posterior that came from
-#'   \code{uncertainty='is'} or \code{'bootstrap'} leaves part of each in one
-#'   matrix with nothing recording the mixture, which is what this function
-#'   does.
+#'   \code{ctOptimUncertainty(fit, uncertainty = 'stored', finishsamples = n)}
+#'   draws from the same covariance, records the number of draws in
+#'   \code{$uncertainty$settings}, and replaces the existing draws instead of
+#'   appending to them, so that draws from different methods are not mixed.
 #'
-#'   \code{ctAddSamples} is the same function under its pre-3.11 name; both are
-#'   deprecated together.
+#'   \code{ctAddSamples} is the older name of this function, and is also
+#'   deprecated.
 #' @seealso \code{\link{ctOptimUncertainty}}, \code{\link{ctFitUncertainty}}
 #' @export
 #'
@@ -1280,13 +1272,12 @@ imis_is <- function(parlp,
 #' @param plot Logical. If TRUE, plot iteration details. Probably slower.
 #' @param estonly if TRUE,just return point estimates under $rawest subobject.
 #' @param verbose Integer from 0 to 2. Higher values print more information during model fit -- for debugging.
-#' @param tol objective tolerance -- the optimizer stops when the objective
+#' @param tol objective tolerance. The optimizer stops when the objective
 #' changes by less than this between evaluations.
-#' @param g_tol gradient tolerance: stop when the l2 norm of the gradient falls
-#' below this. \code{NULL} (the default) leaves it off, which is what this
-#' optimizer has always done -- \code{tol} is its criterion. The julia backend
-#' reads the same name and defaults it to 1e-8 instead.
-#' @param x_tol parameter-step tolerance: stop when the update to the parameter
+#' @param g_tol gradient tolerance. Stop when the l2 norm of the gradient falls
+#' below this. \code{NULL} (the default) leaves it off, so \code{tol} is the
+#' stopping rule.
+#' @param x_tol parameter-step tolerance. Stop when the update to the parameter
 #' vector is smaller than this. \code{NULL} leaves it off.
 #' @param maxiter maximum optimizer iterations. \code{NULL} leaves the existing
 #' caps in place (99999 for the bfgs optimizer, 5000 for the stochastic one).
@@ -1295,15 +1286,14 @@ imis_is <- function(parlp,
 #' @param priors logical. If TRUE, a priors integer is set to 1 (TRUE) in the standata object -- only has an effect if 
 #' the stan model uses this value. 
 #' @param carefulfit Logical. If TRUE, priors are always used for a rough first pass to obtain starting values when priors=FALSE
-#' @param stallretries Integer. Number of times to restart the optimizer from fresh random
-#' values when it finishes somewhere that is not a maximum -- see \code{stalltol}. Only applies
-#' when \code{init='random'}; with supplied inits a failed fit is reported but not retried.
+#' @param stallretries Integer. Number of times to restart the optimizer from new random
+#' values when it stops somewhere that is not a maximum (see \code{stalltol}). Only applies
+#' when \code{init='random'}. With supplied inits a failed fit is reported but not retried.
 #' Set to 0 to disable retrying.
 #' @param stalltol Gradient per data point above which the optimizer is taken to have stopped
-#' short rather than converged. Rough likelihoods -- binary indicators are the case this was
-#' built for -- can leave both optimizers unable to find an improving step, which they report as
-#' convergence, returning the starting values as the estimate. Converged fits sit near 1e-5 per
-#' data point, stalled ones at 1 or more.
+#' short of convergence. Rough likelihoods, such as with binary indicators, can leave the
+#' optimizer unable to find an improving step, which it reports as convergence at the starting
+#' values. Converged fits are usually near 1e-5 per data point, and stalled ones at 1 or more.
 #' @param subsamplesize value between 0 and 1 representing proportion of subjects to include in first pass fit. 
 #' @param cores Number of cpu cores to use, should be at least 2.
 #' @param uncertainty Character string selecting the optimized-fit uncertainty

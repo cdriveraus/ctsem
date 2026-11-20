@@ -67,7 +67,7 @@ if(1==99){
 #' then fitting it to data using \code{\link{ctFit}} (alias \code{\link{ctStanFit}}).
 #' For original OpenMx / SEM functionality from the first ctsem versions, use the
 #' \pkg{ctsemOMX} package.
-#' For most purposes, the Stan-based forms in \pkg{ctsem} are more robust and flexible.
+#' For most purposes, the forms in \pkg{ctsem} are more robust and flexible.
 #' For examples, see \code{\link{ctFit}}.
 #' For citation info, please run \code{citation('ctsem')} .
 #'  
@@ -138,9 +138,8 @@ ctDocs <- function(){
 
 #' Tests if 2 values are close to each other
 #'
-#' @param ... values to compare. At least two, and none of them empty:
-#'   comparing a zero-length or NULL value is an error rather than a pass,
-#'   because there is nothing to compare.
+#' @param ... values to compare. At least two, and none of them empty.
+#'   Comparing a zero-length or NULL value is an error.
 #' @param tol tolerance
 #'
 #' @return Logical or testthat output.

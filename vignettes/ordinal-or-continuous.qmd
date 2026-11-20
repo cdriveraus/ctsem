@@ -25,19 +25,20 @@ library(ctsem)
 library(ggplot2)
 ```
 
-A rating scale can be modelled two ways in ctsem: `manifesttype = 0` puts a
-Gaussian residual on the observed code, `manifesttype = 2` puts a cumulative
-logit on it. Ordinal indicators require `backend = 'julia'`; the other
-indicator types are covered in the measurement models vignette.
+A rating scale can be modelled in two ways in ctsem. `manifesttype = 0` treats
+the observed code as continuous with a Gaussian residual, and
+`manifesttype = 2` uses a cumulative logit. Ordinal indicators require
+`backend = 'julia'`. The other indicator types are covered in the measurement
+models vignette.
 
-To see what the first choice changes, we simulate from a known process,
-categorise it, and fit the same dynamic model both ways. One simulated sample
-carries its own sampling error, so every comparison with the generating values
-below is shown with its uncertainty: a fit is doing its job when its interval
-covers the truth, wherever its point estimate happens to fall.
+To see what the choice changes, we simulate from a known process, categorise
+it, and fit the same dynamic model both ways. A single simulated sample has
+its own sampling error, so each comparison with the generating values below is
+shown with its uncertainty, and a fit does well when its interval covers the
+true value.
 
-Code that only generates or draws is folded throughout; unfold it if you want
-to reproduce the figures.
+Code that only generates data or draws figures is folded. Unfold it to
+reproduce the figures.
 
 # The data
 
@@ -121,8 +122,8 @@ ggplot(s, aes(time)) +
 ```
 
 The points follow the line, but only to the resolution of the bands, and they
-cross a threshold early or late depending on the disturbance. Both items use
-the whole scale, with no category so rare that it carries nothing:
+cross a threshold early or late depending on the noise. Both items use the
+whole scale, and no category is very rare:
 
 ```{r categoryuse, fig.height = 2.4}
 #| code-fold: true
@@ -135,9 +136,9 @@ ggplot(freq, aes(category)) + geom_bar() + facet_wrap(~item) +
 
 # Fitting it as ordinal
 
-This is the whole of it. Two arguments do the work: `manifesttype = 2` asks
-for the cumulative logit, and `ncategories` says how many thresholds to
-estimate, which the model has to know before it sees the data.
+Two arguments make an indicator ordinal. `manifesttype = 2` asks for the
+cumulative logit, and `ncategories` gives the number of categories, so that
+the model knows how many thresholds to estimate before it sees the data.
 
 ```{r ordinalfit}
 ordinalmodel <- ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
@@ -150,19 +151,18 @@ ordinalfit <- ctFit(d[, c('id', 'time', 'y1', 'y2')], ordinalmodel,
   backend = 'julia')
 ```
 
-Everything else is left at its default, and the defaults are the ones you
-want. `CINT` is already zero, so the process mean lives in `T0MEANS`, which is
-freely estimated and individually varying -- as is `MANIFESTMEANS`, giving
-each person their own level and their own item locations. `MANIFESTVAR` is
-diagonal by default and `ctFit()` fixes it for a binary or ordinal indicator
-anyway, since the cumulative logit already supplies the randomness and a
-residual variance on top of it is not identified.
+Everything else is left at its default. `CINT` is zero by default, so the
+process mean is in `T0MEANS`, which is estimated and varies over people. So
+does `MANIFESTMEANS`, which gives each person their own level and their own
+item locations. `ctFit()` fixes `MANIFESTVAR` to zero for binary and ordinal
+indicators, because the cumulative logit already supplies the randomness and a
+residual variance would not be identified.
 
 ## `ncategories` when the indicators are mixed
 
 `ncategories` takes one entry per manifest variable, or a single value for all
 of them, and only the ordinal entries are read. For a model with a Gaussian, an
-ordinal and a binary indicator, all three of these are the same thing:
+ordinal and a binary indicator, these three are equivalent:
 
 ```{r ncatmixed, eval = FALSE}
 ncategories = c(NA, 5, NA)    # NA where it does not apply
@@ -170,11 +170,10 @@ ncategories = c(0, 5, 0)      # or zero
 ncategories = 5               # or one value, since the rest are ignored
 ```
 
-`NA` is the clearest of the three, because it says the number is not merely
-zero but meaningless for that variable. Whatever you pass for a non-ordinal
-variable is overwritten with zero. Omitting the argument entirely while any
-variable is ordinal is an error that names the variables, because the model
-has to know how many thresholds to estimate before it sees the data.
+`NA` is the clearest of the three, because it shows that the number does not
+apply to that variable. Values for variables that are not ordinal are set to
+zero. If any variable is ordinal and `ncategories` is missing, ctsem stops
+with an error that names the variables.
 
 `summary()` reports the thresholds on the latent scale, one row per category
 boundary:
@@ -201,16 +200,14 @@ gaussianfit <- ctFit(d[, c('id', 'time', 'y1', 'y2')], gaussianmodel,
 
 # What should and should not agree
 
-The two fits place the latent processes on different scales. Both are set by
-the same convention -- `LAMBDA` is fixed at 1, so the latent takes its units
-from the indicator -- but the units differ: the Gaussian fit measures `eta1`
-in answer codes, the ordinal fit in logits, because the cumulative logit's own
-scale is fixed and the latent is measured against it.
+The two fits put the latent processes on different scales. In both, `LAMBDA`
+is fixed at 1, so the latent process takes its units from the indicator. The
+Gaussian fit therefore measures `eta1` in answer codes, and the ordinal fit in
+logits, since the scale of the cumulative logit is fixed.
 
-The thresholds do not fix that scale; they would rescale along with the
-process. What pins it is the link. Free the loadings as well and nothing pins
-it at all, which is the identification problem the item response vignette
-deals with.
+The link function sets this scale, and the thresholds would rescale along with
+the process. With the loadings free as well, nothing sets the scale, which is
+the identification problem covered in the item response vignette.
 
 A parameter can therefore only be compared across the two fits if it is
 invariant to rescaling the latent processes.
@@ -227,16 +224,15 @@ invariant to rescaling the latent processes.
 **Not expected to agree**
 
 * *The raw cross effect* `drift_eta2_eta1`, whose unit is `eta2` per unit of
-  `eta1` per unit time. Note this is already true between the two processes
-  within a single fit: `eta2` is the more variable because it accumulates
-  `eta1`, so the same effect takes different numbers on differently scaled
-  processes.
+  `eta1` per unit time. The same holds within one fit. `eta2` is more variable
+  because it accumulates `eta1`, so the same effect takes different values on
+  processes with different scales.
 * *`DIFFUSION` and `T0VAR` on their own*, and the residual variances.
 * *`MANIFESTMEANS`*, a location on the latent scale in the Gaussian fit and
   the thresholds' anchor in the ordinal one.
 
-Only the ordinal fit's scale means anything outside the questionnaire, so
-where the raw quantities differ it is the ordinal fit to report.
+Only the ordinal fit's scale has a meaning outside the questionnaire, so where
+the raw quantities differ, report the ordinal fit.
 
 # Comparison
 
@@ -303,23 +299,21 @@ knitr::kable(rbind(comparable(gaussianfit, 'gaussian on the codes'),
 ```
 
 `latentsd1` is in answer-code units for the Gaussian fit and in logits for the
-ordinal fit, so the two fitted values are not comparable with each other. The
-ordinal one *is* comparable with the truth, because the link fixes its units:
-it estimates a real quantity rather than a convention, and checking it is
-worth doing before reading anything else.
+ordinal fit, so the two fitted values cannot be compared with each other. The
+ordinal value can be compared with the true value, because the link fixes its
+units, and it is worth checking first.
 
-Every interval in the table that should cover its generating value does, in
-both fits. The bands say the same with one qualification: the Gaussian band
-covers the true curve throughout, while beyond an interval of about three the
-true curve runs along the upper edge of the ordinal band rather than inside
-it. Both estimated curves sit below the truth, by similar amounts, which is
-what sampling error shared by two fits of the same sample looks like rather
-than something either measurement model does.
+In both fits, every interval in the table that should cover its generating
+value does. The bands mostly agree too. The Gaussian band covers the true
+curve throughout, while beyond an interval of about three the true curve runs
+along the upper edge of the ordinal band. Both estimated curves are below the
+truth by similar amounts, which is what sampling error shared by two fits of
+the same sample looks like.
 
-On this design the Gaussian approximation costs little on the scale-invariant
-quantities. Categorisation is a monotone transformation plus noise that is
-independent across items and occasions given the latent state, and a Gaussian
-residual can absorb a good deal of that. What differs is what the remaining
-numbers are about: the Gaussian fit's raw effects, variances and locations
-describe the answer codes of this questionnaire, while the ordinal fit's are on
-a scale the link fixes, and those are the ones to report.
+In this design the Gaussian approximation costs little for the quantities that
+do not depend on scale. Given the latent state, categorisation is a monotone
+transformation plus noise that is independent across items and occasions, and
+a Gaussian residual can absorb much of that. The other quantities differ in
+meaning. The Gaussian fit's raw effects, variances and locations describe the
+answer codes of this questionnaire, while the ordinal fit's are on the scale
+fixed by the link, and those are the ones to report.

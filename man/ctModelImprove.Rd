@@ -31,249 +31,230 @@ ctModelImprove(
 \arguments{
 \item{fit}{A fit from \code{\link{ctFit}} with \code{backend = 'julia'}.}
 
-\item{covariates}{Optional subject-level covariates the model may add, as
+\item{covariates}{Optional subject level covariates the model may add, as
 for \code{\link{ctScoreTest}}.}
 
 \item{relax}{Which relaxations may be made.}
 
-\item{changes}{Optionally rows of \code{\link{ctModelProposals}}: the first
+\item{changes}{Optional rows of \code{\link{ctModelProposals}}. The first
 round refits with these, in the order given, instead of screening, and
 keeps the first that improves the fit by \code{criterion}. With
-\code{maxsteps = 1}, one step of a search made by hand; later rounds
-screen as usual.}
+\code{maxsteps = 1} this is one step of a search made by hand. Later
+rounds screen as usual.}
 
 \item{candidates}{Optional list of alternative models (from
-\code{\link{ctModel}}) to try when the screen is clean but the checks fail.}
+\code{\link{ctModel}}) to try when the screen finds nothing but the
+checks fail.}
 
 \item{alpha}{Level for the screen (Benjamini-Hochberg within each family),
 for the likelihood ratio decision, and for adequacy.}
 
-\item{maxsteps}{Most refit rounds.}
+\item{maxsteps}{Maximum number of refit rounds.}
 
-\item{ntry}{Proposals from the score tests refitted in a round, at most:
-one at a time, the strongest first, keeping the first that improves the
-fit. Proposals from the adequacy check are tried the same way until one
-improves or none is left, since the check does not change until the model
-does. Pruning and a held-out confirmation refit this many side by side.}
+\item{ntry}{Maximum number of proposals from the score tests refitted in a
+round, one at a time, the strongest first, keeping the first that
+improves the fit. Proposals from the adequacy check are tried in the same
+way until one improves the fit or none is left. Pruning and held-out
+confirmation refit this many at a time.}
 
 \item{criterion}{\code{'LR'}, \code{'AIC'} or \code{'BIC'}.}
 
 \item{adequacy}{Use \code{\link{ctFitAdequacy}} to decide when to stop.}
 
-\item{prune}{After the search, try dropping each kept change in turn and
-drop it if the likelihood does not need it given the others: a change
-kept early can be made redundant by one kept later.}
+\item{prune}{After the search, try dropping each kept change in turn, and
+drop it if the likelihood does not need it given the others. A change
+kept early can be made unnecessary by one kept later.}
 
 \item{close}{Optional root mean square residual correlation regarded as a
-close enough fit to stop at; see Details.}
+close enough fit to stop at (see Selection and confirmation).}
 
 \item{holdout}{Share of subjects, between 0 and 0.5, held out of the search
 to confirm its changes on.}
 
-\item{form}{How covariates are screened, as for \code{\link{ctScoreTest}};
+\item{form}{How covariates are screened, as for \code{\link{ctScoreTest}}.
 \code{'threshold'} lets the search add a covariate as a step.}
 
 \item{periods}{Periods for the adequacy check's \code{periodic} family, as
-for \code{\link{ctFitAdequacy}}; by default it scans.}
+for \code{\link{ctFitAdequacy}}. By default a range is scanned.}
 
-\item{nsamples}{Generated datasets for the adequacy checks.}
+\item{nsamples}{Number of generated datasets for the adequacy checks.}
 
-\item{projection}{How the adequacy checks remove the estimation, as for
+\item{projection}{How the adequacy checks account for estimation, as for
 \code{\link{ctFitAdequacy}}.}
 
-\item{cores}{Cores for fitting and testing. With two or more, once a
-refit has taken longer than five minutes, the refits of pruning and of a
-held-out confirmation run side by side in worker processes, \code{ntry}
-at a time, as sampling chains do, each with an equal share of
-\code{cores}: they are independent, one fit uses its cores only partly,
-and a worker takes about half a minute to start.
+\item{cores}{Cores for fitting and testing. With two or more cores, once a
+refit has taken longer than five minutes, the refits for pruning and for
+held-out confirmation run in parallel worker processes, \code{ntry} at a
+time, each with an equal share of \code{cores}.
 \code{options(ctsem.improve.processes = FALSE)} keeps them in this
 session.}
 
 \item{checkpoint}{Optional file the search saves its state to after every
-round and after pruning. Called again with the same file, the same fit and
-the same settings, it resumes after the last round saved; a file from a
-different search is refused. A long search on a cluster otherwise keeps
-nothing until it ends. With \code{verbose}, the refit running is also
-saved every ten minutes beside it (\code{<checkpoint>.refit.rds}): the
-round, the change, the iteration and the raw parameters it had reached,
-and, where a change's starts are refitted side by side, the start.}
+round and after pruning. Called again with the same file, fit and
+settings, the search resumes after the last round saved. A file from a
+different search is refused. With \code{verbose}, the refit in progress
+is also saved every ten minutes (\code{<checkpoint>.refit.rds}), with the
+round, the change, the iteration and the raw parameters reached.}
 
 \item{verbose}{Report progress: each round's steps, each refit's time, and
 while a refit runs, its iteration, objective and gradient every ten
 minutes.}
 }
 \value{
-An object of class \code{ctModelImprove}: \code{fit} (the final
-  fit), \code{history} (every refit tried: the round, the relaxation, its
-  screening p-value, the change in log likelihood and parameters, the
-  criterion's verdict, and whether it was kept; a pruning row, \code{family}
-  \code{'prune'}, says whether the change was dropped, and a \code{'rank'} row
-  whether the lower rank was kept), \code{screens} (the score
-  tests of each round), \code{adequacy} (the final checks),
-  \code{confirmation} (with \code{holdout}: each kept change's likelihood
-  ratio test on the held-out subjects), and \code{stopped} (why the search
-  ended: \code{'adequate'}, no adequacy family detected misfit;
-  \code{'close fit'}, those that did were shown within \code{close};
-  \code{'not adequate, no candidate improved'} or \code{'not adequate,
-  nothing left to try'}, the checks still detect misfit; \code{'nothing
-  indicated'}, with \code{adequacy = FALSE}, the screen was clean;
-  \code{'maxsteps'}). A refit that failed, or ended below the model it
-  extends, is in \code{history} with a note saying so. With \code{holdout},
-  the held-out subjects take no part in the search; each kept change is
-  tested once on them, at the end, at \code{alpha}. \code{fit} is the model with the confirmed
-  changes refitted to every subject, and \code{selected} the search's own
-  choice fitted to the subjects it searched on.
+An object of class \code{ctModelImprove}, containing: \code{fit},
+  the final fit; \code{history}, every refit tried, with the round, the
+  relaxation, its screening p-value, the change in log likelihood and
+  parameters, the criterion's verdict and whether it was kept (a row with
+  \code{family} \code{'prune'} says whether the change was dropped, and a
+  \code{'rank'} row whether the lower rank was kept); \code{screens}, the
+  score tests of each round; \code{adequacy}, the final checks;
+  \code{confirmation}, with \code{holdout}, each kept change's likelihood
+  ratio test on the held-out subjects; and \code{stopped}, why the search
+  ended: \code{'adequate'} (no adequacy family detected misfit),
+  \code{'close fit'} (those that did were shown to be within
+  \code{close}), \code{'not adequate, no candidate improved'} or
+  \code{'not adequate, nothing left to try'} (the checks still detect
+  misfit), \code{'nothing indicated'} (with \code{adequacy = FALSE}, the
+  screen found nothing) or \code{'maxsteps'}. A refit that failed, or ended
+  below the model it extends, is in \code{history} with a note. With
+  \code{holdout}, \code{fit} is the model with the confirmed changes
+  refitted to every subject, and \code{selected} is the search's own choice
+  fitted to the subjects it searched on.
 }
 \description{
-Starting from a fitted model, repeatedly: screens it with
-\code{\link{ctScoreTest}}; refits it with the most strongly indicated
-relaxations, one at a time, warm started from the current estimates; keeps
-the best of them if the refit's likelihood confirms it; and stops when no
-relaxation is indicated and the model is adequate by
-\code{\link{ctFitAdequacy}}. When nothing is indicated but the model is not
-adequate, a slow process driving a latent
-(\code{\link{ctModelSlowComponent}}), a cycle such as a daily rhythm
+Starting from a fitted model, repeatedly screens it with
+\code{\link{ctScoreTest}}, refits it with the most strongly indicated
+relaxations one at a time, starting from the current estimates, and keeps
+the best of them if the refit's likelihood confirms it. The search stops
+when no relaxation is indicated and \code{\link{ctFitAdequacy}} finds the
+model adequate. When nothing is indicated but the model is not adequate,
+it tries structural changes in the same way: a slow process driving a
+latent (\code{\link{ctModelSlowComponent}}), a cycle such as a daily rhythm
 (\code{\link{ctModelPeriodicComponent}}), a process of its own for an item
-(\code{\link{ctModelUniqueProcess}}), raising the order of a latent process
-(\code{\link{ctModelHigherOrder}}) and any models given in
-\code{candidates} are tried the same way, each ranked by the adequacy
-check's evidence for it: a slow process for a latent whose updates stay
-correlated over time gaps (the \code{latent} family), a cycle at the period
-the \code{periodic} family points to, a process of its own for an item
-whose errors stay correlated with its own (the \code{residuals} family).
+(\code{\link{ctModelUniqueProcess}}), a higher order latent process
+(\code{\link{ctModelHigherOrder}}), and any models given in
+\code{candidates}. These are ranked by the adequacy check's evidence for
+them: a slow process for a latent whose updates stay correlated over time
+gaps (the \code{latent} family), a cycle at the period the
+\code{periodic} family points to, and a process of its own for an item
+whose errors stay correlated over time (the \code{residuals} family).
 }
 \details{
-The relaxations, in the language of the model:
+The relaxations, in terms of the model:
 \describe{
   \item{heterogeneity}{\code{indvarying = TRUE} for a parameter and the
-    \code{T0MEANS} parameters, whose covariances with it the test took in;
-    for a fixed \code{MANIFESTMEANS} cell, a parameter there varying about
-    the fixed value as its stated mean.}
-  \item{covariates}{a covariate added as a time independent predictor, with
-    effects on the parameters its tests single out.}
-  \item{statedependence}{a term \code{d * eta_k * eta_m} in a latent's
-    drift, written into \code{CINT} with \code{d} a \code{PARS} parameter:
-    a drift coefficient that varies with a state.}
-  \item{volatility}{a latent's innovation sd scaled by \code{exp(v *
-    eta_m)}: innovations whose size depends on a state.}
-  \item{fixed}{a cell fixed at zero freed: a drift cross effect, a
-    diffusion covariance, a cross loading.}
-  \item{level}{a parameter of the dynamics or error variances that depends
-    on a subject's level (a random intercept) let vary over subjects, its
-    random effect correlated with the intercepts (\code{\link{ctScoreTest}}'s
-    level terms).}
-  \item{slow}{a slow process driving a latent through its drift, its effect
-    started at one and its persistence at a tenth of the latent's; where
-    the model has a slow process for another latent, that process driving
-    this one too is tried first.}
-  \item{periodic}{a cycle of the period the adequacy check points to,
-    driving every latent with innovations of its own, each subject's
-    phase set from the clock at its first row and free to deviate; the
-    phase predictors are added to the data.}
-  \item{unique}{a process of its own, persistent, loading on one item;
-    and, where the \code{pairs} family finds two items' errors correlated
-    within an occasion, a process the two share
-    (\code{ctModelUniqueProcess(shared = TRUE)}): an error is meant to be
-    random, and co-movement within an occasion that the latents' innovation
-    covariances do not explain is read as a process faster than the
-    occasions. Like the other structural changes it is tried once the
-    score tests indicate nothing, ranked against them by the check's
-    evidence, so that it does not absorb misfit that belongs to a cycle or
-    to one item's own process.}
-  \item{errorcov}{not by default: a measurement error covariance the score
-    test flags is freed, for designs with a reason for correlated error,
-    such as a method the items share, and no shared process is proposed.}
-  \item{order}{a latent process made second order.}
+    \code{T0MEANS} parameters. For a fixed \code{MANIFESTMEANS} cell, a
+    parameter that varies around the fixed value as its stated mean.}
+  \item{covariates}{A covariate added as a time independent predictor, with
+    effects on the parameters its tests pick out.}
+  \item{statedependence}{A term \code{d * eta_k * eta_m} in a latent's
+    drift, written into \code{CINT} with \code{d} a \code{PARS} parameter,
+    so that a drift coefficient varies with a state.}
+  \item{volatility}{A latent's innovation sd scaled by
+    \code{exp(v * eta_m)}, so that the size of the innovations depends on a
+    state.}
+  \item{fixed}{A cell fixed at zero is freed: a drift cross effect, a
+    diffusion covariance or a cross loading.}
+  \item{level}{A parameter of the dynamics or error variances that depends
+    on a subject's level (a random intercept) is allowed to vary over
+    subjects, correlated with the intercepts (see the level tests of
+    \code{\link{ctScoreTest}}).}
+  \item{slow}{A slow process driving a latent through its drift, with its
+    effect starting at one and its persistence at a tenth of the latent's.
+    If the model already has a slow process for another latent, letting
+    that process drive this latent too is tried first.}
+  \item{periodic}{A cycle of the period the adequacy check points to,
+    driving every latent that has innovations. Each subject's phase is set
+    from the clock at its first row and can deviate from it. The phase
+    predictors are added to the data.}
+  \item{unique}{A persistent process of its own, loading on one item. Where
+    the \code{pairs} family finds two items' errors correlated within an
+    occasion, a process shared by the two
+    (\code{ctModelUniqueProcess(shared = TRUE)}) is tried too, treating
+    such correlation as a process faster than the occasions. Like the other
+    structural changes, this is tried only once the score tests indicate
+    nothing.}
+  \item{errorcov}{Not by default. A measurement error covariance the score
+    test flags is freed, instead of proposing a shared process. This is
+    for designs with a reason for correlated errors, such as a method the
+    items share.}
+  \item{order}{A latent process made second order.}
 }
 
-On a reduced-rank level (\code{poprank}) a heterogeneity result for a
+On a reduced rank level (\code{poprank}), a heterogeneity result for a
 parameter that already varies through the shared dimensions gives it a
-variance of its own (\code{popunique}); without reduced rank, a
-significant \code{dimension} test makes the parameters its direction
-loads on vary together. Relaxations the score tests cannot tell apart (the same
+variance of its own (\code{popunique}). Without reduced rank, a
+significant \code{dimension} test makes the parameters in its direction
+vary together. Relaxations the score tests cannot tell apart (the same
 \code{class}) are not refitted in the same round.
 
-Each random effect the search adds brings its correlations with the others,
-and with many effects for few subjects the data no longer determine them.
-When a kept change leaves the fit's curvature weak or negative along the
-population covariance (\code{fit$identifiability}), the covariance is
-refitted at one rank lower (\code{poprank}), starting from its leading
-dimensions, and the lower rank kept unless the likelihood ratio test needs
-the dropped dimension; it steps down until the fit is identified. Later
-random effects then load on the shared dimensions, and later heterogeneity
-results give own variances. Single-level models only.
+Each random effect the search adds brings correlations with the others,
+and with many random effects and few subjects the data no longer determine
+them. When a kept change leaves the population covariance poorly
+identified (\code{fit$identifiability}), the covariance is refitted at one
+rank lower (\code{poprank}), and the lower rank is kept unless the
+likelihood ratio test needs the dropped dimension. This repeats until the
+fit is identified. Later random effects then load on the shared
+dimensions, and later heterogeneity results give own variances. This is
+for single level models only.
 
-When the search stops, each change kept is tried out again, by refitting
-without it (\code{prune}), and dropped if the others make it redundant.
+When the search stops, each change kept is tested again by refitting
+without it (\code{prune}), and dropped if the others make it unnecessary.
 
 A relaxation is kept when its refit improves on the current model by
-\code{criterion}: a likelihood ratio test at \code{alpha} divided by the
-number of refits tried at that step (\code{'LR'}), or a lower AIC or BIC
-(subjects as the sample size). The likelihood ratio test of a new random
-effect against the chi-square is conservative, as its variance starts on a
-boundary.
+\code{criterion}: a likelihood ratio test against a chi-square on the
+parameters the change adds, at \code{alpha} divided by the number of
+refits tried at that step (\code{'LR'}), or a lower AIC or BIC (with
+subjects as the sample size). The chi-square reference is only
+approximate for these changes. It is conservative for a new random effect,
+whose variance starts at zero, and can be wrong in either direction for a
+new process or cycle. Screening, rounds and pruning are further choices it
+does not count, so the p-values describe the steps the search took and do
+not test the final model. A refit that ends below the model it extends has
+not reached an optimum, and is recorded as such.
 }
 \section{Error rates}{
- The screen and the refit read the same data, so a
-  refit confirms most of what the screen proposes, and the search's error
-  rate is close to \code{alpha} per decision. Measured on simulated data (one
-  latent, 80 subjects, 20 irregular rows, 40 searches each): with nothing
-  missing, \code{alpha = 0.05} kept something in 5 per cent of searches and
-  \code{alpha = 0.01} in none; an omitted covariate shifting a random
-  intercept by half its sd was added in 75 and 55 per cent; an unrelated
-  covariate never. \code{criterion = 'BIC'} kept something in 8 per cent,
-  so at that size it is not the stricter choice. A drift that varied over
-  subjects was never added as such at that size; a random diffusion or
-  measurement error variance stood in for it in 10 per cent, since what the
-  data showed was subjects differing in variance. A search makes a decision
-  per family it screens, so its error rate grows with the families: on two
-  processes with three items each (60 subjects, about 48 rows each), where
-  the screen also tests state dependence and volatility in each process,
-  \code{alpha = 0.05} kept something in 4 of 20 searches with nothing
-  missing (a volatility term twice, state dependence once, a random effect
-  once), and \code{alpha = 0.01} is the stricter choice. With an omitted
-  cross effect, a process of an item's own and a daily cycle in the same
-  data, the search kept the cross effect in 19 of 20 searches, the cycle in
-  16 and the item's process in all 20.
+ Because the screen and the refit use the same data,
+  the error rate is close to \code{alpha} for each decision, and grows with
+  the number of families screened. In simulations with nothing missing, a
+  one process model (80 subjects) kept a change in 5 per cent of searches
+  at \code{alpha = 0.05} and in none at \code{alpha = 0.01}, while a model
+  of two processes with three items each, where state dependence and
+  volatility are also screened in each process, kept a change in 4 of 20
+  searches at \code{alpha = 0.05}. For larger models \code{alpha = 0.01} is
+  the safer choice. \code{criterion = 'BIC'} was not stricter than
+  \code{'LR'} at these sizes. Small effects can be missed or replaced: a
+  drift that varied over subjects was not found at 80 subjects, and a
+  random diffusion or measurement error variance was sometimes added
+  instead.
+}
 
-The result is a model chosen by the data it is fitted to, and its
-standard errors and tests do not account for that choice (MacCallum,
-Roznowski & Necowitz, 1992). \code{holdout} sets aside a share of the
-subjects: the search runs on the rest, and each change it keeps is then
-tested on the held-out subjects alone, by refitting the final model without
-it there; \code{confirmation} says which held, and the final model, refitted
-to every subject, keeps only those. Every step, and every refit tried and
-rejected, is in \code{history}.
+\section{Selection and confirmation}{
+ The result is a model chosen by the
+  data it is fitted to, and its standard errors and tests do not account
+  for that choice (MacCallum, Roznowski & Necowitz, 1992). \code{holdout}
+  sets aside a share of the subjects. The search runs on the rest, and each
+  change it keeps is then tested on the held-out subjects alone, by
+  refitting the final model without it there. \code{confirmation} says
+  which changes held, and the final model, refitted to every subject, keeps
+  only those. Every step, and every refit tried and rejected, is in
+  \code{history}.
 
-With many observations a model can be rejected by the checks for
-departures that are small on these summaries. With \code{close}, the search
-also stops when every check that fails is a residual or within-row
-correlation family
-whose size is shown below \code{close} (\code{\link{ctFitAdequacy}}).
+  With many observations, the checks can reject a model for departures
+  that are small. With \code{close}, the search also stops when every
+  failing check is a residual or within row correlation family whose size
+  is shown to be below \code{close} (see \code{\link{ctFitAdequacy}}).
+}
 
-Each refit is judged by \code{criterion}; with \code{'LR'}, the likelihood
-ratio against a chi-square on the parameters the change adds, at
-\code{alpha} divided by the refits the round tries. That reference is
-exact for none of the changes the search makes: a variance added at zero
-sits on its boundary, where the chi-square is conservative, and a process
-or cycle added brings parameters that mean nothing when its coupling is
-zero, where it can err either way. Screening, rounds and pruning add
-further choices the level does not count. The search is a way of
-developing a model, and its p-values describe the steps it took rather than
-testing the result. A refit that ends below the model it extends has not
-reached an optimum, and is recorded as such.
-
-On the Laplace route the filter integrates a fit's intercept-type random
-effects exactly where it can, and Laplace approximates only the others (the
-two-step term); a change that makes the dynamics read the state takes that
-away, and its refit is on the one-step term
-(\code{optimcontrol$laplace_onestep} in \code{\link{ctFit}}). Beside random
-dynamics the two approximate their integrals differently, so such a refit
-is compared with the current model refitted one-step from its own
-estimate: a fast comparison of two approximations. To compare integrals
-instead, start the search from a fit with \code{intoverpop =
-'quadrature'}: every refit is then refined the same way.
+\section{Laplace fits}{
+ On a Laplace fit, a change that makes the dynamics
+  depend on the state is refitted with the one-step Laplace approximation
+  (\code{optimcontrol$laplace_onestep} in \code{\link{ctFit}}), and where
+  the model has random dynamics, it is compared with the current model
+  refitted the same way. To compare the models with their random effects
+  integrated more exactly, start the search from a fit with
+  \code{intoverpop = 'quadrature'}, so that every refit is refined in the
+  same way.
 }
 
 \seealso{

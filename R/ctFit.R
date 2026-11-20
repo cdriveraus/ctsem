@@ -360,17 +360,14 @@
 #' Either to include different data, or because you have upgraded ctsem and
 #' the internal data structure has changed. Works on a fit from either backend.
 #'
-#' The fit is rebuilt from its own call: the arguments it was made with are
-#' passed to \code{\link{ctFit}} again, with the model it was given and, unless
-#' \code{data} is supplied, the data it was fitted to. Arguments in \code{...}
-#' replace the fit's own.
+#' The fit is rebuilt by calling \code{\link{ctFit}} again with the arguments
+#' and model it was made with, and with its own data unless \code{data} is
+#' supplied. Arguments in \code{...} replace the fit's own.
 #'
-#' With \code{refit=FALSE} and \code{data}, the data are instead prepared under
-#' the model the fit ran, so the fit keeps its structure along with its
-#' estimates whatever the data -- a single subject included, which
-#' \code{\link{ctFit}} would set up without random effects. To predict for
-#' other data, \code{\link{ctPredict}(fit, newdata = data)} does the same
-#' without an update.
+#' With \code{refit=FALSE} and new \code{data}, the fit keeps its model and
+#' estimates, including its random effects when the new data have only one
+#' subject. To predict for other data without updating the fit, use
+#' \code{\link{ctPredict}(fit, newdata = data)}.
 #'
 #' @param oldfit fit object to be updated, from \code{\link{ctFit}} with either
 #' backend.
@@ -379,10 +376,9 @@
 #' @param recompile whether to force a recompile of the Stan model -- safer but
 #' slower and usually unnecessary. Stan fits only.
 #' @param refit if TRUE, refits the model using the old estimates as a starting
-#' point. Only applicable for optimized fits, not sampling. If FALSE, the old
-#' fit is returned with its data and model specification replaced; its
-#' estimates, and everything computed from them when it was fitted, are left
-#' as they were.
+#' point. Only applicable for optimized fits, not sampling. If FALSE, the fit
+#' is returned with its data and model specification replaced, and its
+#' estimates and everything computed from them unchanged.
 #' @param ... extra arguments to pass to ctFit
 #'
 #' @return updated fit object, of the same class as \code{oldfit}.
@@ -699,20 +695,19 @@ T0VARredundancies <- function(ctm) {
 #' Fits a ctsem model specified via \code{\link{ctModel}} with type either 'ct' or 'dt'.
 #' \code{ctStanFit} is maintained as a backward-compatible alias.
 #'
-#' A julia fit with random effects reports, at its estimate, how much of each
-#' random effect each subject's own data determine, and how many subjects' worth
-#' of information each population standard deviation rests on
-#' (\code{fit$identifiability$effects}). An effect resting on fewer than two is
-#' named in a message, in \code{summary()} and in \code{\link{ctReport}}, with a
-#' lower \code{poprank} suggested where its level can take one and
-#' \code{indvarying = FALSE} after it.
+#' For a julia fit with random effects, \code{fit$identifiability$effects}
+#' reports how much of each random effect each subject's data determine, and
+#' how many subjects' worth of information each population standard deviation
+#' rests on. An effect resting on fewer than two is named in a message, in
+#' \code{summary()} and in \code{\link{ctReport}}, with a suggestion to lower
+#' \code{poprank} or set \code{indvarying = FALSE}.
 #'
 #' @aliases ctStanFit
-#' @seealso \code{\link{ctOptimControl}} for every optimiser setting;
-#' \code{\link{ctFitUncertainty}} for uncertainty after a fit;
-#' \code{\link{ctIdentify}} reports which parameters the data can inform,
-#' before a fit is spent finding out; \code{\link{ctTracePlot}} draws the
-#' optimisation trace a julia fit records.
+#' @seealso \code{\link{ctOptimControl}} for the optimiser settings,
+#' \code{\link{ctFitUncertainty}} for uncertainty after a fit,
+#' \code{\link{ctIdentify}} to check which parameters the data can inform
+#' before fitting, and \code{\link{ctTracePlot}} to plot the optimisation trace
+#' of a julia fit.
 #' @param datalong long format data containing columns for subject id, time,
 #' manifest variables, any time dependent (i.e. varying within subject)
 #' predictors, and any time independent (not varying within subject)
@@ -723,241 +718,235 @@ T0VARredundancies <- function(ctm) {
 #' @param stanmodeltext already specified Stan model character string, generally leave NA unless modifying Stan model directly.
 #' (Possible after modification of output from fitting with argument fit=FALSE.) \code{backend='stan'} only.
 #' @param intoverstates Logical. TRUE (the default) integrates over the latent
-#' states with a Kalman filter. FALSE makes the states part of what is
-#' estimated -- the target becomes the joint density of the data and the
-#' states, and the fit reports the trajectory in \code{fit$estimate$states} --
-#' and is for sampling: with \code{backend='julia'} that route makes no
-#' Gaussian assumption about the state anywhere, where the filter's update for
-#' a binary, ordinal or count indicator is an assumed-density projection.
-#' \code{optimize=TRUE} is refused, because the joint mode is degenerate rather
-#' than an estimate; \code{optimcontrol$estonly=TRUE} returns it anyway, with
-#' no standard errors.
+#' states with a Kalman filter. FALSE estimates the states along with the
+#' parameters, and the fit reports their trajectory in
+#' \code{fit$estimate$states}. FALSE is for sampling (\code{optimize=FALSE}).
+#' With \code{backend='julia'} it avoids the Gaussian approximation the filter
+#' makes for binary, ordinal and count indicators. \code{optimize=TRUE} is
+#' refused, because the joint mode of states and parameters is not a useful
+#' estimate. With \code{optimcontrol$estonly=TRUE} the mode is returned anyway,
+#' without standard errors.
 #' @param binomial Deprecated. Logical indicating the use of binary rather than Gaussian data, as with IRT analyses.
 #' This now sets the \code{manifesttype} of every indicator to 1, for binary.
-#' @param fit If FALSE, prepare the model and data without fitting: stan
-#' returns its fit object unfitted, julia the specification its engine reads.
+#' @param fit If FALSE, the model and data are prepared but not fitted. With
+#' \code{backend='stan'} the unfitted fit object is returned, and with
+#' \code{backend='julia'} the specification passed to the engine.
 #' @param poprank Rank of the population covariance of the individually
-#' varying parameters. \code{'auto'}, the default, uses the number of varying
-#' parameters that reach the observation mean: under
-#' \code{intoverpop='augmented'} that is all the route can identify, so it
-#' costs no likelihood, it does nothing on a model whose varying parameters all
-#' reach the mean, and it says so when it reduces. \code{NA} leaves the
-#' covariance unrestricted. A smaller whole number is an approximation -- fewer
-#' dimensions than the data support, which lowers the likelihood and distorts
-#' the parameters retained -- useful for parsimony or speed.
+#' varying parameters. \code{NA} leaves the covariance unrestricted. A whole
+#' number below the number of varying parameters gives a reduced-rank
+#' covariance, with fewer parameters and a faster fit, but as an approximation
+#' to the full covariance. \code{'auto'}, the default, uses the number of
+#' varying parameters that affect the expected observations. Under
+#' \code{intoverpop='augmented'} that is all the data can identify, so the
+#' default loses nothing, and a message says when it reduces the rank. Under
+#' \code{'laplace'} and \code{'none'} the default leaves the covariance
+#' unrestricted, and a rank has to be given explicitly. Requires
+#' \code{backend='julia'}.
 #'
-#' Requires \code{backend='julia'}, and the default applies to
-#' \code{'augmented'} only: under \code{'laplace'} and \code{'none'} the
-#' dropped coordinates are identified, so a rank has to be asked for. There it
-#' may be given per grouping level by name, as \code{poprank=c(study=2)}, with
-#' \code{'auto'} resolved per level, and it may not fall below the number of
-#' individually varying T0MEANS with a free T0VAR, whose latents then take their
-#' initial variance from this covariance. Under \code{'augmented'} a varying T0MEANS cannot be
-#' reduced at all, and an explicit rank is refused. A restricted covariance is
-#' \code{L \%*\% t(L)} for a loading matrix \code{L}, reported as
-#' \code{poploading_<parameter>_dim<j>.<level>}; a loading's sign is
-#' arbitrary, so read the standard deviations and correlations
-#' \code{summary()} reports. A stated \code{RAWPOPVAR} cell turns a defaulted
-#' reduction off, and is refused alongside a rank asked for. May also be set on
-#' the model, as \code{model$poprank <- 2}. A rank of 0 is allowed at a level
-#' whose every varying parameter has an own variance (\code{popunique}).
-#' @param popunique Own variances on a reduced-rank level: the parameters
-#' selected get a variance of their own beside the \code{poprank} shared
-#' dimensions, so that level's covariance is \code{L \%*\% t(L)} plus a
-#' diagonal -- the factor-analytic form. \code{TRUE} selects every parameter
-#' varying at a level, \code{FALSE} none, and names select matrices or
-#' parameters, e.g. \code{popunique = c(subject = 'MANIFESTMEANS')}. One
-#' unnamed value applies to every level; named entries, or a named list, apply
-#' per level. Each selected level needs a \code{poprank} below its number of
-#' varying parameters; \code{poprank = 0} with every parameter selected gives
+#' Under \code{'laplace'} and \code{'none'} a rank may be given per grouping
+#' level by name, as \code{poprank=c(study=2)}, and it may not be lower than
+#' the number of individually varying T0MEANS with a free T0VAR. Under
+#' \code{'augmented'} a model with a varying T0MEANS keeps full rank, and an
+#' explicit rank is refused. A reduced covariance is \code{L \%*\% t(L)} for a
+#' loading matrix \code{L}, reported as
+#' \code{poploading_<parameter>_dim<j>.<level>}. The sign of a loading is
+#' arbitrary, so interpret the standard deviations and correlations that
+#' \code{summary()} reports. A stated \code{RAWPOPVAR} cell switches the
+#' default reduction off, and cannot be combined with an explicit rank. The
+#' rank may also be set on the model, as \code{model$poprank <- 2}. A rank of
+#' 0 is allowed at a level where every varying parameter has its own variance
+#' (\code{popunique}).
+#' @param popunique Parameters that get a variance of their own on a
+#' reduced-rank level, in addition to the \code{poprank} shared dimensions.
+#' That level's covariance is then \code{L \%*\% t(L)} plus a diagonal, as in
+#' factor analysis. \code{TRUE} selects every parameter varying at a level,
+#' \code{FALSE} none, and names select matrices or parameters, e.g.
+#' \code{popunique = c(subject = 'MANIFESTMEANS')}. An unnamed value applies
+#' to every level, and named entries, or a named list, apply per level. Each
+#' selected level needs a \code{poprank} below its number of varying
+#' parameters. \code{poprank = 0} with every parameter selected gives
 #' independent random effects. Reported as
 #' \code{popunique_<parameter>.<level>}, on the same raw scale as a full-rank
 #' sd. Requires \code{backend = 'julia'} and \code{intoverpop = 'laplace'} or
-#' sampling (\code{'none'}); must be passed by name.
-#' @param popblocks Shared dimensions in blocks, on a reduced-rank level: a
-#' list of blocks, each a list with \code{rank}, how many shared dimensions,
-#' and \code{effects}, which parameters load on them -- \code{TRUE} for every
-#' parameter varying at the level, or names of matrices or parameters, as for
-#' \code{popunique}. A parameter loads only on the dimensions of the blocks
-#' that name it, so parameters with no block in common are uncorrelated, and
-#' one named in no block needs an own variance (\code{popunique}). A level's
-#' rank is the sum of its blocks' ranks, so \code{poprank} need not be given
-#' for it; \code{'auto'} there defers to the blocks, and a number must equal
-#' the sum. One unnamed list of blocks applies to every level; a list named by
-#' level gives each level its own. For example, person-level item intercepts
-#' that do not covary with a latent level but may covary with each other and
-#' with the dynamics: \code{popblocks = list(level = list(rank = 1, effects =
-#' c('lev', 'DRIFT')), items = list(rank = 2, effects = c('MANIFESTMEANS',
-#' 'DRIFT')))}. Within a block, its first \code{rank} parameters, in the
-#' order the model lists them, form its basis. Loadings are reported as
-#' \code{poploading_<parameter>_dim<j>}, the dimensions numbered across the
-#' blocks in order. Requires \code{backend = 'julia'} and \code{intoverpop =
-#' 'laplace'} or sampling (\code{'none'}); must be passed by name.
-#' @param weights Sampling weights, one per subject: the name of a column of
-#' \code{datalong} that is constant within subject, or a numeric vector named
-#' by subject id (or unnamed, in the order subjects first appear in the data).
-#' Each subject's contribution to the likelihood -- its marginal likelihood,
-#' random effects integrated out -- is multiplied by its weight (the weighted
-#' pseudo-likelihood), and the prior is not; a weight of zero leaves the
-#' subject out. Weights are normalised to a mean of one over the weighted
-#' subjects, and standard errors come from the sandwich estimator unless
-#' \code{optimcontrol$uncertainty} says otherwise. \code{fit$estimate$loglik}
-#' stays the data's log likelihood at the estimate;
-#' \code{fit$estimate$loglik_weighted} is the weighted one. Requires
-#' \code{backend = 'julia'} and optimisation; with nested ids, weights must be
-#' constant within each group of the outermost level. Must be passed by name.
-#' @param intoverpop How declared individual differences (random effects) are
-#' handled: integrated out of the likelihood, or sampled with everything else.
+#' sampling (\code{'none'}), and must be passed by name.
+#' @param popblocks Shared dimensions in blocks, on a reduced-rank level. A
+#' list of blocks, each a list with \code{rank}, the number of shared
+#' dimensions, and \code{effects}, the parameters that load on them:
+#' \code{TRUE} for every parameter varying at the level, or names of matrices
+#' or parameters as for \code{popunique}. A parameter loads only on the
+#' dimensions of the blocks that name it, so parameters with no block in
+#' common are uncorrelated, and a parameter in no block needs its own variance
+#' (\code{popunique}). A level's rank is the sum of its blocks' ranks, so
+#' \code{poprank} need not be given, and if it is given as a number it must
+#' equal that sum. One unnamed list of blocks applies to every level, and a
+#' list named by level gives each level its own. For example, person-level
+#' item intercepts that do not covary with a latent level, but may covary with
+#' each other and with the dynamics: \code{popblocks = list(level = list(rank
+#' = 1, effects = c('lev', 'DRIFT')), items = list(rank = 2, effects =
+#' c('MANIFESTMEANS', 'DRIFT')))}. The first \code{rank} parameters of a
+#' block, in the order the model lists them, form its basis. Loadings are
+#' reported as \code{poploading_<parameter>_dim<j>}, with the dimensions
+#' numbered across the blocks in order. Requires \code{backend = 'julia'} and
+#' \code{intoverpop = 'laplace'} or sampling (\code{'none'}), and must be
+#' passed by name.
+#' @param weights Sampling weights, one per subject. Either the name of a
+#' column of \code{datalong} that is constant within subject, or a numeric
+#' vector named by subject id (or unnamed, in the order subjects first appear
+#' in the data). Each subject's likelihood, with random effects integrated
+#' out, is multiplied by its weight (a weighted pseudo-likelihood). The prior
+#' is not weighted. A weight of zero leaves the subject out. Weights are
+#' normalised to a mean of one over the weighted subjects, and standard errors
+#' come from the sandwich estimator unless \code{optimcontrol$uncertainty}
+#' says otherwise. \code{fit$estimate$loglik} is the unweighted log likelihood
+#' at the estimate, and \code{fit$estimate$loglik_weighted} the weighted one.
+#' Requires \code{backend = 'julia'} and optimisation. With nested ids,
+#' weights must be constant within each group of the outermost level. Must be
+#' passed by name.
+#' @param intoverpop How random effects (individual differences) are handled:
+#' integrated out of the likelihood, or sampled with the other parameters.
 #'
 #' \code{'auto'}, the default, integrates them out when optimizing, as
 #' \code{TRUE} does, and samples them (\code{'none'}) when
-#' \code{optimize=FALSE} -- except on julia where every subject's likelihood is
-#' Gaussian in its effects (Gaussian indicators, effects only on means through
-#' the affine transform), where they are integrated exactly and the population
-#' parameters sampled (\code{'laplace'}).
+#' \code{optimize=FALSE}. The exception is a julia fit in which every
+#' subject's likelihood is Gaussian in its random effects (a linear model with
+#' Gaussian indicators, and random effects only on means, with linear
+#' transforms). There the random effects are integrated exactly and the
+#' population parameters sampled (\code{'laplace'}).
 #'
-#' \code{TRUE} integrates them out: by \code{'laplace'} on
-#' \code{backend='julia'}, and by \code{'augmented'} on stan, which has only
-#' that route, or with \code{intoverstates=FALSE}, which composes with it
-#' only. \code{fit$args$resolved$intoverpopreason} records why. Before 4.0.0
-#' \code{TRUE} always meant \code{'augmented'}.
+#' \code{TRUE} integrates them out, by \code{'laplace'} on
+#' \code{backend='julia'} and by \code{'augmented'} on \code{backend='stan'}
+#' or with \code{intoverstates=FALSE}.
+#' \code{fit$args$resolved$intoverpopreason} records which was used and why.
 #'
-#' \code{'laplace'} (\code{backend='julia'}) integrates an effect that shifts
-#' a mean in a linear Gaussian model -- a manifest mean, an initial mean, a
-#' continuous intercept -- exactly, inside each subject's filter, and every
-#' other effect by a Laplace approximation at its mode, which \code{summary()}
-#' reports. \code{'augmented'} makes each random effect a state of the filter:
-#' exact for effects that shift a mean in a linear Gaussian model, and a
-#' linearisation elsewhere. That shrinks random effects on the dynamics; where
-#' the dynamics depend on the state, an effect that reaches them -- a random
-#' initial mean too, the more so beside a random manifest mean that keeps the
-#' data from pinning it down -- is linearised over its population spread,
-#' which can overstate the likelihood and move the maximum; and variation on a
-#' DIFFUSION or MANIFESTVAR parameter is only partly identified. ctFit warns of
-#' both.
+#' \code{'laplace'} (\code{backend='julia'}) integrates random effects on a
+#' manifest mean, initial mean or continuous intercept of a linear Gaussian
+#' model exactly, and all other random effects by a Laplace approximation.
+#'
+#' \code{'augmented'} adds each random effect to the states of the Kalman
+#' filter. This is exact for random effects on means in a linear Gaussian
+#' model, and a linear approximation elsewhere, which shrinks random effects
+#' on the dynamics. In a model whose dynamics depend on the state, a random
+#' effect on the dynamics or the initial mean can also overstate the
+#' likelihood and move the estimates, and variation in DIFFUSION or
+#' MANIFESTVAR parameters is only partly identified. ctFit warns in both
+#' cases.
 #'
 #' \code{'quadrature'} (\code{backend='julia'}, optimizing) fits by
-#' \code{'laplace'} and then refines the fit with the units the random-effects check
-#' names (\code{optimcontrol$checks}) integrated numerically -- each unit by
-#' adaptive Gauss-Hermite or lattice rules, whichever reaches the accuracy at
-#' the lower cost, at any number of effects -- reporting that objective's
-#' estimate, standard errors and log likelihood (Laplace's kept in
-#' \code{loglik_laplace}). Seconds to minutes; longer where the units nest;
+#' \code{'laplace'}, then refines the fit by integrating numerically the
+#' random effects of the subjects (or groups) that the random-effects check
+#' flags (\code{optimcontrol$checks}). The reported estimates, standard errors
+#' and log likelihood are from the refined fit, with the Laplace log
+#' likelihood kept in \code{loglik_laplace}. The refinement takes seconds to
+#' minutes, longer with nested levels.
 #' \code{ctFitUncertainty(fit, intoverpop = 'quadrature')} does the same after
 #' a fit.
 #'
-#' \code{FALSE}, or \code{'none'}, samples them, so it needs
-#' \code{optimize=FALSE}: maximising over every subject's effects would drive
-#' the population variance to zero. With \code{optimize=FALSE} on julia,
-#' \code{'none'} (and so \code{'auto'}, but for the exception above) samples the
-#' joint posterior of parameters and random effects; \code{'laplace'} and \code{'augmented'}
-#' sample the population parameters with the effects integrated out, by the
-#' Laplace approximation or the filter, and \code{TRUE} by whichever of the two
-#' it resolves to.
+#' \code{FALSE}, or \code{'none'}, samples the random effects with the other
+#' parameters and needs \code{optimize=FALSE}, because maximising over every
+#' subject's random effects would drive the population variance to zero. With
+#' \code{optimize=FALSE} on julia, \code{'none'} samples the joint posterior
+#' of parameters and random effects, while \code{'laplace'} and
+#' \code{'augmented'} sample the population parameters with the random
+#' effects integrated out.
 #' @param sameInitialTimes if TRUE, include an empty observation for every subject that has no observation
 #' at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,
 #' rather than just at the earliest observation for that subject. Important when modelling trends over time, age, etc.
 #' @param plot if TRUE, for sampling, a Shiny program is launched upon fitting to interactively plot samples.
-#' May struggle with many (e.g., > 5000) parameters. For optimizing, the optimisation trace is plotted --
-#' with \code{backend='julia'} once the fit returns, since the fit is one call
-#' into the engine; for live output use \code{optimcontrol$callback}.
+#' May struggle with many (e.g., > 5000) parameters. For optimizing, the optimisation trace is plotted,
+#' with \code{backend='julia'} after the fit returns. For live output during a
+#' julia fit use \code{optimcontrol$callback}.
 #' @param derrind deprecated, latents involved in dynamic error calculations are determined automatically now.
-#' @param optimize if TRUE, estimate by optimisation -- maximum likelihood, or
-#' maximum a posteriori with \code{priors=TRUE} -- with uncertainty from the
-#' curvature at the estimate. If FALSE, sample the posterior: with Stan's HMC
-#' sampler for \code{backend='stan'}, and for \code{backend='julia'} with
-#' NUTS through a learnt map on the joint posterior of parameters and random
-#' effects, or NUTS or tempered SMC when there are none or \code{intoverpop}
-#' integrates them out -- slower,
-#' but exact rather than a normal approximation at a mode. Other uncertainty methods for an optimised fit,
-#' importance sampling among them, are in \code{\link{ctFitUncertainty}}. A
-#' sampled fit's point estimate is the per-parameter median of the draws on
-#' stan (\code{fit$stanfit$rawest}) and their mean on julia
-#' (\code{fit$estimate$raw}).
-#' @param optimcontrol List of optimiser settings, read by both backends with
-#' the same meaning: stopping rules (\code{tol}, \code{g_tol},
-#' \code{maxiter}), the start (\code{initsd}, \code{carefulfit}), the
-#' uncertainty computed at the end (\code{uncertainty}, \code{estonly}), and
-#' optional phases such as \code{stochastic} and, under
-#' \code{intoverpop='laplace'}, \code{saem} and \code{checks}.
-#' \code{\link{ctOptimControl}} lists every name with its backend and default.
-#' A misspelled name, or one the chosen backend cannot honour, is an error.
+#' @param optimize if TRUE, estimate by optimisation (maximum likelihood, or
+#' maximum a posteriori with \code{priors=TRUE}), with standard errors from
+#' the curvature at the estimate. If FALSE, sample the posterior, with Stan's
+#' HMC sampler for \code{backend='stan'} and with NUTS or tempered SMC for
+#' \code{backend='julia'} (see \code{sampleControl}). Sampling is slower, but
+#' does not rely on a normal approximation at the estimate. Other uncertainty
+#' methods for an optimised fit, including importance sampling, are in
+#' \code{\link{ctFitUncertainty}}. The point estimate of a sampled fit is the
+#' median of the draws for each parameter on stan (\code{fit$stanfit$rawest}),
+#' and their mean on julia (\code{fit$estimate$raw}).
+#' @param optimcontrol List of optimiser settings, with the same meaning on
+#' both backends: stopping rules (\code{tol}, \code{g_tol}, \code{maxiter}),
+#' starting values (\code{initsd}, \code{carefulfit}), the uncertainty
+#' computed at the end (\code{uncertainty}, \code{estonly}), and optional
+#' stages such as \code{stochastic}, and \code{saem} and \code{checks} under
+#' \code{intoverpop='laplace'}. \code{\link{ctOptimControl}} lists every
+#' setting with its backend and default. A misspelled name, or one the backend
+#' does not support, is an error.
 #' @param nopriors deprecated, use priors argument. logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.
-#' @param iter \strong{Deprecated} -- use \code{sampleControl$iter}. Still
+#' @param iter \strong{Deprecated}, use \code{sampleControl$iter}. Still
 #' honoured, with a warning.
 #' @param inits \code{NULL} (the default) for ctsem's own starting values, or
 #' a vector of starting values on the raw (unconstrained) scale, one per free
-#' parameter, as a fit holds its estimate: \code{fit$estimate$raw} on julia,
-#' \code{fit$stanfit$rawest} on stan. On julia, a fit itself: its estimates are
-#' matched to this model's parameters by name, so a model extended by a
-#' predictor or a smooth starts where the fit stopped, with the new
-#' coefficients at zero. With \code{backend='stan'} and
-#' \code{optimize=FALSE}, the string \code{'optimize'} optimises first and
-#' starts the chains there.
+#' parameter, such as \code{fit$estimate$raw} from a julia fit or
+#' \code{fit$stanfit$rawest} from a stan fit. With \code{backend='julia'} it
+#' may also be a fit, whose estimates are matched to this model's parameters
+#' by name, so that a model extended by a predictor or a smooth starts from
+#' the earlier estimates with the new coefficients at zero. With
+#' \code{backend='stan'} and \code{optimize=FALSE}, \code{'optimize'}
+#' optimises first and starts the chains there.
 #' @param priors \code{FALSE} (the default), \code{TRUE} or \code{'randomCorr'}.
-#' \code{FALSE} uses no prior: maximum likelihood. \code{TRUE} adds ctsem's
-#' \code{normal(0,1)} raw-scale prior to every parameter, making an optimised
-#' fit maximum a posteriori. \code{'randomCorr'} applies it to the
-#' random-effect correlations only, at every level: a bounded correlation on an
-#' unbounded coordinate can walk along a direction the data do not determine,
-#' and the prior holds it. Sampling (\code{optimize=FALSE}) without a prior on
-#' every parameter warns, because a parameter the data leave flat has an
-#' improper posterior; use \code{priors=TRUE} there. \code{'randomCorr'} needs
-#' \code{backend='julia'}.
-#' @param cores number of cpu cores to use: a positive whole number, or
-#' \code{'maxneeded'} for all but one (capped at the number of chains on
-#' stan). Defaults to \code{getOption("mc.cores", 2)}. It is the most CPU
-#' cores the call uses at once, counting every process it starts: on julia
-#' the threads a fit uses, BLAS included, and a sampling run's worker
-#' processes, which share it between them. A julia fit at \code{cores > 1} is
-#' not reproducible to the last decimal, because its sums are divided among
-#' workers in an order that varies from run to run; use \code{cores = 1} for a
-#' before-and-after comparison. The Julia
-#' session starts as wide as the call that starts it, and a later call asking
-#' for more runs at what it has and says so: \code{ctJuliaSetup(threads = n,
-#' force = TRUE)} restarts it wider, and
-#' \code{options(ctsem.julia.restart = TRUE)} has a fit do so itself.
-#' @param backend Either 'julia' (the default) or 'stan'. The two take the same
-#' model definitions and give the same summaries. The julia backend
-#' optimises and samples (\code{optimize=FALSE}), and adds
+#' \code{FALSE} uses no priors, giving maximum likelihood estimates.
+#' \code{TRUE} adds ctsem's \code{normal(0,1)} prior on the raw scale to every
+#' parameter, giving maximum a posteriori estimates when optimising.
+#' \code{'randomCorr'} puts that prior on the random-effect correlations only,
+#' at every level, which helps when the data do not determine those
+#' correlations well. Sampling (\code{optimize=FALSE}) without priors on every
+#' parameter gives a warning, because a parameter the data do not determine
+#' then has an improper posterior, so use \code{priors=TRUE} when sampling.
+#' \code{'randomCorr'} needs \code{backend='julia'}.
+#' @param cores number of CPU cores to use, either a positive whole number or
+#' \code{'maxneeded'} for all but one (at most the number of chains on stan).
+#' Defaults to \code{getOption("mc.cores", 2)}. This is the most cores the
+#' call uses at once, including any worker processes it starts. Julia fits
+#' with \code{cores > 1} can differ in the last decimal places from run to
+#' run, so use \code{cores = 1} when comparing results exactly. The Julia
+#' session starts with as many threads as the first call that needs it asks
+#' for. A later call asking for more runs with what the session has, and says
+#' so. \code{ctJuliaSetup(threads = n, force = TRUE)} restarts the session
+#' with more threads, and \code{options(ctsem.julia.restart = TRUE)} lets a
+#' fit restart it when needed.
+#' @param backend Either 'julia' (the default) or 'stan'. Both take the same
+#' model specification and give the same summaries. Only the julia backend has
 #' \code{intoverpop='laplace'}, grouping levels above the subject, and
-#' ordinal, count and censored indicators, and it integrates a binary one rather
-#' than linearising it. It needs a working Julia, which
-#' \code{\link{ctJuliaInstall}} sets up once; see also
-#' \code{\link{ctJuliaSetup}}. 'stan' was the default up to ctsem 3.11 and
-#' needs no external toolchain; it is to be deprecated.
+#' ordinal, count and censored indicators, and it handles binary indicators
+#' more accurately. It needs Julia, which \code{\link{ctJuliaInstall}} sets up
+#' (see also \code{\link{ctJuliaSetup}}). The stan backend needs no other
+#' software, and will be deprecated.
 #' @param sampleControl Used when \code{optimize=FALSE}: a list of sampler
-#' settings. \code{chains} (4 on julia, 2 on stan); \code{iter} (1000, warmup
-#' and sampling together); \code{warmup} (200, or half of \code{iter} if that
-#' is less; not used by the map sampler, which learns its map over warm-up
-#' windows of its own first); \code{draws}, the
-#' post-warmup count, which wins over \code{iter}
-#' when given; \code{seed}; \code{saveEffects}, whether every random-effect
-#' draw is kept; and \code{processes} (FALSE), whether the chains run in worker
-#' processes -- at most \code{cores} at once, so four chains on two cores run
-#' two at a time -- rather than together in this session.
+#' settings. \code{chains} is the number of chains (4 on julia, 2 on stan).
+#' \code{iter} is the number of iterations including warmup (1000).
+#' \code{warmup} is the number of warmup iterations (200, or half of
+#' \code{iter} if that is less), and is not used by the map sampler, which
+#' has its own warmup. \code{draws} is the number of draws after warmup, and
+#' overrides \code{iter} when given. \code{seed} sets the random seed.
+#' \code{saveEffects} keeps every random-effect draw. \code{processes} (FALSE)
+#' runs the chains in separate worker processes, at most \code{cores} at
+#' once, instead of together in this session.
 #'
-#' For \code{backend='julia'} also \code{sampler} (\code{'map'}, NUTS
-#' through a learnt map, on the joint posterior; \code{'saem'}, SAEM's kernel,
-#' or \code{'nuts'} by choice), \code{placement} (the map starts from an
-#' optimised fit; for \code{'saem'} and \code{'nuts'} on the joint posterior
-#' \code{'saem'}: SAEM's state places the chains, so no Laplace optimum is
-#' needed; \code{'fit'} places them around an optimised fit), the stopping
-#' target \code{minESS} (200, of the
-#' worst parameter) and \code{rhatTarget} (1.01), with \code{meanESS},
-#' \code{maxDraws} and \code{settleTol}, and NUTS's \code{maxdepth},
+#' For \code{backend='julia'} the list also takes \code{sampler}:
+#' \code{'map'} (NUTS through a learnt map, the default for the joint
+#' posterior), \code{'saem'} or \code{'nuts'}. \code{placement} sets where the
+#' chains start. The map sampler starts from an optimised fit. For
+#' \code{'saem'} and \code{'nuts'} on the joint posterior, the default
+#' \code{'saem'} starts them from an SAEM run, with no optimisation needed,
+#' and \code{'fit'} starts them around an optimised fit. Sampling stops when
+#' the effective sample size of the worst parameter reaches \code{minESS}
+#' (200) and R-hat is below \code{rhatTarget} (1.01), and may run to four
+#' times the requested number of draws to get there. \code{meanESS},
+#' \code{maxDraws}, \code{settleTol}, and the NUTS settings \code{maxdepth},
 #' \code{target_accept}, \code{maxdelta}, \code{init_scale},
-#' \code{adapt_metric} and \code{adapt_effects} -- all described under
-#' \code{uncertainty = 'sample'} in \code{\link{ctFitUncertainty}}, with how
-#' lower targets give a quicker approximate posterior. A run stops once the
-#' target is met, and may run to four times the post-warmup count to reach it.
-#' A name the sampler does not read is an error. For \code{backend='stan'} the
-#' settings are rstan's, passed to \code{\link[rstan]{stan}}'s \code{control}.
-#' @param chains \strong{Deprecated} -- use \code{sampleControl$chains}. Still
+#' \code{adapt_metric} and \code{adapt_effects} are described under
+#' \code{uncertainty = 'sample'} in \code{\link{ctFitUncertainty}}, along
+#' with lower targets for a quicker approximate posterior. A setting the
+#' sampler does not use is an error. For \code{backend='stan'} the settings
+#' are passed to the \code{control} argument of \code{\link[rstan]{stan}}.
+#' @param chains \strong{Deprecated}, use \code{sampleControl$chains}. Still
 #' honoured, with a warning.
-#' @param control \strong{Deprecated} -- use \code{sampleControl}, which is the
-#' same list under a name that says what it controls. Still honoured, with a
-#' warning; where both name the same setting, \code{sampleControl} wins.
+#' @param control \strong{Deprecated}, use \code{sampleControl}, which takes
+#' the same settings. Still honoured, with a warning. If both give the same
+#' setting, \code{sampleControl} is used.
 #' @param nlcontrol List of non-linear control parameters.
 #' \code{maxtimestep} must be a positive numeric,  specifying the largest time
 #' span covered by the numerical integration. The large default ensures that for each observation time interval,
@@ -965,65 +954,63 @@ T0VARredundancies <- function(ctm) {
 #' the integration is nested within an Euler like loop.
 #' Smaller values may offer greater accuracy, but are slower and not always necessary. Given the exponential integration,
 #' linear model elements are fit exactly with only a single step.
-#' \code{nsubsteps = 'auto'} (julia backend only) instead measures, at the starting values and again at the
-#' optimum, how nonlinear each observation interval is and refines only the intervals that need it
-#' (under \code{intoverpop = 'laplace'}, with each subject at its random-effect modes);
-#' \code{substeptol} (default 0.01) is the largest acceptable linearisation error as a fraction of the
-#' predicted state standard deviation, and \code{maxsubsteps} (default 64) caps an interval.
-#' \code{maxtimestep} remains a ceiling on the step. The choice is reported in \code{fit$substeps}.
-#' With \code{optimize = FALSE} that optimum is the one that places the sampler, and the chains keep the
-#' mesh chosen there.
-#' \code{transition = 'euler'} (julia backend, \code{intoverstates = FALSE} only) replaces the exponential
-#' step between substeps of the state-explicit path with plain Euler-Maruyama, for a reference that
-#' shares no approximation with the filter; it needs a fine \code{maxtimestep}. See also
+#' With \code{backend='julia'}, \code{nsubsteps = 'auto'} instead measures how
+#' nonlinear each observation interval is, at the starting values and again at
+#' the optimum, and adds integration steps only to the intervals that need
+#' them. \code{substeptol} (default 0.01) is the largest acceptable
+#' linearisation error, as a fraction of the predicted state standard
+#' deviation, and \code{maxsubsteps} (default 64) is the most steps for one
+#' interval. \code{maxtimestep} still limits the step size. The steps chosen
+#' are reported in \code{fit$substeps}. When sampling, they are chosen at the
+#' optimised fit that starts the sampler, and kept for the chains.
+#' \code{transition = 'euler'} (julia backend with \code{intoverstates = FALSE} only) uses
+#' Euler-Maruyama steps between substeps instead of the exponential step. This gives a reference
+#' free of the filter's approximations, and needs a small \code{maxtimestep}. See also
 #' \code{\link{ctParticleLik}}.
 #' @param verbose Integer from 0 to 2. 1 reports progress while the model
-#'   fits; 2 additionally keeps every progress line rather than overwriting one
-#'   in place, and prints more for debugging. Whether overwriting is possible is
-#'   detected from where the output is going; set
-#'   \code{options(ctsem.progress.overwrite = FALSE)} if that detection is wrong
-#'   for your front end -- a Shiny app capturing stdout, for instance -- or
-#'   \code{TRUE} to force it on.
+#'   fits. 2 also prints more for debugging, and keeps every progress line
+#'   instead of overwriting the last one. Whether progress lines can be
+#'   overwritten is detected from where the output goes. If the detection is
+#'   wrong, as it can be for a Shiny app capturing the output, set
+#'   \code{options(ctsem.progress.overwrite = FALSE)}, or \code{TRUE} to force
+#'   overwriting.
 #' @param stationary Logical. If TRUE, each subject's latent processes start
-#' from the distribution DRIFT, CINT and DIFFUSION settle into -- the mean
-#' \code{-DRIFT^-1 CINT} and the asymptotic covariance -- rather than from
-#' T0MEANS and T0VAR, which are then not estimated. Suits processes observed
-#' long after they began, and saves estimating the initial state. Requires
-#' \code{backend='julia'}, a continuous time model, and a DRIFT, CINT and
-#' DIFFUSION that are fixed within each subject: no cell may depend on the
-#' latent states or on time dependent predictors. Individual differences in
-#' those matrices are allowed with \code{intoverpop='laplace'}, which
-#' \code{intoverpop='auto'} then chooses; each subject starts from its own
-#' stationary distribution. A latent process whose DRIFT is fixed so that it
-#' never settles -- a row fixed at zero, or a fixed oscillation such as
-#' \code{\link{ctModelPeriodicComponent}}'s clock -- is refused.
+#' from their stationary distribution, with the long run mean
+#' \code{-DRIFT^-1 CINT} and the asymptotic covariance, and T0MEANS and T0VAR
+#' are not estimated. This suits processes observed long after they began.
+#' Requires \code{backend='julia'}, a continuous time model, and DRIFT, CINT
+#' and DIFFUSION matrices that do not depend on the latent states or on time
+#' dependent predictors. Individual differences in those matrices are allowed
+#' with \code{intoverpop='laplace'}, which \code{intoverpop='auto'} then
+#' chooses, and each subject then starts from its own stationary
+#' distribution. A latent process whose DRIFT is fixed so that it never
+#' settles, such as a row fixed at zero or the clock of
+#' \code{\link{ctModelPeriodicComponent}}, is refused.
 #'
-#' To start only some initial conditions there, name those cells
-#' \code{'stationary'} in the model (\code{backend='julia'}); every other
-#' initial condition stays as written. A T0MEANS cell takes its entry of the
-#' stationary mean, asymCINT. A T0VAR diagonal cell gives its latent the
-#' stationary variance, asymDIFFUSION's diagonal, keeping that latent's
-#' T0VAR correlations with the others. A T0VAR off-diagonal cell gives the
+#' To start only some initial conditions at stationarity, name those cells
+#' \code{'stationary'} in the model (\code{backend='julia'}). Other initial
+#' conditions stay as written. A T0MEANS cell takes its entry of the
+#' stationary mean (asymCINT). A T0VAR diagonal cell gives its latent the
+#' stationary variance (the diagonal of asymDIFFUSION) and keeps its T0VAR
+#' correlations with the other latents. A T0VAR off-diagonal cell gives the
 #' pair the stationary covariance, and needs both their variances, and every
-#' covariance among the latents it joins, named too. The stationary moments
-#' are those of the marked latents and every latent that drives them, so a
-#' latent driven by others works, and DRIFT, CINT and DIFFUSION need to be
-#' fixed within each subject only for those.
+#' covariance among the latents it joins, named too. The stationary
+#' distribution is computed for the marked latents and the latents that drive
+#' them, so DRIFT, CINT and DIFFUSION need to be fixed within each subject
+#' only for those latents.
 #' @param forcerecompile logical. For \code{backend='stan'}, recompiles the
 #' stan model regardless of apparent need (for development). For
-#' \code{backend='julia'}, compiles the model's state-dependent expressions --
-#' matrix cells that read a latent state, and their derivatives -- and any
-#' parameter transforms of your own into code for this model, rather than
-#' evaluating them as data. The model's first fit in a session then compiles
-#' for a minute or more, and its gradients run faster: by up to a third for a
-#' heavily nonlinear model (many state-dependent cells, or long formulas in
-#' them), and by little otherwise. Worth it only when such a model's fit takes
-#' many minutes.
+#' \code{backend='julia'}, compiles the model's state-dependent matrix cells
+#' and any custom parameter transforms into code for this model, instead of
+#' interpreting them. The first fit of the model in a session then takes a
+#' minute or more longer, and later computations run up to a third faster for
+#' heavily nonlinear models. Only worth it when such a model takes many
+#' minutes to fit.
 #' @param saveCompile if TRUE and compilation is needed / requested, writes the stan model to
 #' the parent frame as ctsem.compiled (unless that object already exists and is not from ctsem), to avoid unnecessary recompilation.
 #' @param savescores Logical. If TRUE, output from the Kalman filter is saved in output. For datasets with many variables
-#' or time points, will increase file size substantially. \code{backend='stan'} only;
-#' on julia, \code{\link{ctKalman}} computes it from the fit.
+#' or time points, will increase file size substantially. \code{backend='stan'} only.
+#' For julia fits, \code{\link{ctKalman}} computes it from the fit.
 #' @param savesubjectmatrices Logical. If TRUE, subject specific matrices are saved --
 #' only relevant when either time dependent predictors or individual differences are
 #' used. Can increase memory usage dramatically in large models, and can be computed after fitting using ctExtract
@@ -1035,33 +1022,25 @@ T0VARredundancies <- function(ctm) {
 #' Generated data is in the $Ygen subobject after running \code{extract} on the fit object.
 #' For datasets with many manifest variables or time points, file size may be large.
 #' To generate data based on the posterior of a fitted model, see \code{\link{ctGenerateFromFit}}.
-#' \code{backend='stan'} only; julia generates with \code{\link{ctGenerate}}.
+#' \code{backend='stan'} only. For julia, use \code{\link{ctGenerate}}.
 #' @param compileArgs List of arguments to pass to \code{\link[rstan]{stan_model}} for compilation of the Stan model.
 #' @param ... additional arguments to pass to \code{\link[rstan]{stan}} function
-#' (\code{backend='stan'} only; refused on julia).
+#' (\code{backend='stan'} only).
 #' @return A fitted object of class \code{ctStanFit} (\code{backend='stan'}) or
-#' \code{ctJuliaFit} (\code{backend='julia'}), both also classed \code{ctFit}.
-#' Besides backend-specific components, every fit carries \code{$args}, a list
-#' with two sublists that mean the same thing on both backends:
+#' \code{ctJuliaFit} (\code{backend='julia'}), both also of class \code{ctFit}.
+#' Every fit includes \code{$args}, a list with two parts that are the same on
+#' both backends:
 #' \describe{
-#'  \item{\code{input}}{Exactly what was passed to \code{ctFit()}, or the
-#'  formal default when an argument was not supplied -- \code{intoverpop} may
-#'  still read \code{'auto'}, and \code{cores} \code{'maxneeded'} if that is
-#'  what was passed.}
-#'  \item{\code{resolved}}{What the fit actually ran with, after \code{'auto'}
-#'  routing, deprecated-argument merges (e.g. \code{nopriors} into
-#'  \code{priors}) and backend-specific defaults were settled -- \code{cores}
-#'  is a concrete integer, \code{intoverpop} is one of \code{'augmented'},
-#'  \code{'laplace'} or \code{'none'}, and \code{priors} is \code{TRUE},
-#'  \code{FALSE} or \code{'randomCorr'}. A call that gives the same \code{input}
-#'  on both backends gives the same \code{resolved} on both.}
+#'  \item{\code{input}}{The arguments passed to \code{ctFit()}, with the
+#'  defaults for those not supplied, so \code{intoverpop} may be
+#'  \code{'auto'}.}
+#'  \item{\code{resolved}}{The settings the fit ran with, after defaults and
+#'  \code{'auto'} were resolved and deprecated arguments merged (such as
+#'  \code{nopriors} into \code{priors}). \code{cores} is a whole number,
+#'  \code{intoverpop} is \code{'augmented'}, \code{'laplace'} or
+#'  \code{'none'}, and \code{priors} is \code{TRUE}, \code{FALSE} or
+#'  \code{'randomCorr'}.}
 #' }
-#' Before this, \code{$args} itself held the raw call on a stan fit and only
-#' the resolved settings on a julia fit, so the same field name meant opposite
-#' things across backends; code reading \code{fit$args$intoverpop} or
-#' \code{fit$args$cores} directly should now read \code{fit$args$resolved} (or
-#' \code{$input}, if the literal call is what is wanted, as
-#' \code{\link{ctFitUpdate}} does).
 #' @export
 #' @examples
 #' \donttest{

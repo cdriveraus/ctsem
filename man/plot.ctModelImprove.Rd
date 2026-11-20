@@ -15,8 +15,8 @@
 A ggplot.
 }
 \description{
-The search's path: one row per refit, in the order tried, from the log
-likelihood its round started at to the one the refit reached, both as
-gained over the starting fit; kept changes filled, rejected ones open.
-Pruning's decisions are in the subtitle.
+Plots the search's path, one row per refit in the order tried, from the
+log likelihood its round started at to the one the refit reached, both as
+the gain over the starting fit. Kept changes are filled and rejected ones
+open. Pruning decisions are in the subtitle.
 }

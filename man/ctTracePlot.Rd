@@ -13,8 +13,9 @@ ctTracePlot(fit, which = NULL, plot = TRUE)
 \code{'gradient_norm'}, \code{'inner_converged'}) for an optimized fit,
 parameter names for a sampled one. Defaults to all of them.}
 
-\item{plot}{If \code{FALSE}, return the data rather than a plot: the trace
-for an optimized fit, one row per draw and parameter for a sampled one.}
+\item{plot}{If \code{FALSE}, return the data instead of plotting it. For an
+optimized fit this is the trace, and for a sampled fit one row per draw
+and parameter.}
 }
 \value{
 A ggplot, or with \code{plot = FALSE} a data frame.

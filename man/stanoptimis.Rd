@@ -49,7 +49,7 @@ if init='random' .}
 
 \item{estonly}{if TRUE,just return point estimates under $rawest subobject.}
 
-\item{tol}{objective tolerance -- the optimizer stops when the objective
+\item{tol}{objective tolerance. The optimizer stops when the objective
 changes by less than this between evaluations.}
 
 \item{stochastic}{Logical. Use stochastic gradient descent as main optimizer. Always finishes (double checks) with mize (bfgs) optimizer.}
@@ -59,16 +59,15 @@ the stan model uses this value.}
 
 \item{carefulfit}{Logical. If TRUE, priors are always used for a rough first pass to obtain starting values when priors=FALSE}
 
-\item{stallretries}{Integer. Number of times to restart the optimizer from fresh random
-values when it finishes somewhere that is not a maximum -- see \code{stalltol}. Only applies
-when \code{init='random'}; with supplied inits a failed fit is reported but not retried.
+\item{stallretries}{Integer. Number of times to restart the optimizer from new random
+values when it stops somewhere that is not a maximum (see \code{stalltol}). Only applies
+when \code{init='random'}. With supplied inits a failed fit is reported but not retried.
 Set to 0 to disable retrying.}
 
 \item{stalltol}{Gradient per data point above which the optimizer is taken to have stopped
-short rather than converged. Rough likelihoods -- binary indicators are the case this was
-built for -- can leave both optimizers unable to find an improving step, which they report as
-convergence, returning the starting values as the estimate. Converged fits sit near 1e-5 per
-data point, stalled ones at 1 or more.}
+short of convergence. Rough likelihoods, such as with binary indicators, can leave the
+optimizer unable to find an improving step, which it reports as convergence at the starting
+values. Converged fits are usually near 1e-5 per data point, and stalled ones at 1 or more.}
 
 \item{uncertainty}{Character string selecting the optimized-fit uncertainty
 approximation. Options are \code{'hessian'}, \code{'checked'},
@@ -116,12 +115,11 @@ but each subjects data remains whole -- processed by one core in one subset.}
 
 \item{stochasticTolAdjust}{Multiplier for stochastic optimizer tolerance.}
 
-\item{g_tol}{gradient tolerance: stop when the l2 norm of the gradient falls
-below this. \code{NULL} (the default) leaves it off, which is what this
-optimizer has always done -- \code{tol} is its criterion. The julia backend
-reads the same name and defaults it to 1e-8 instead.}
+\item{g_tol}{gradient tolerance. Stop when the l2 norm of the gradient falls
+below this. \code{NULL} (the default) leaves it off, so \code{tol} is the
+stopping rule.}
 
-\item{x_tol}{parameter-step tolerance: stop when the update to the parameter
+\item{x_tol}{parameter-step tolerance. Stop when the update to the parameter
 vector is smaller than this. \code{NULL} leaves it off.}
 
 \item{maxiter}{maximum optimizer iterations. \code{NULL} leaves the existing

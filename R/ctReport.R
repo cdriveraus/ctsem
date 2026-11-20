@@ -1042,9 +1042,9 @@
 #'
 #' Runs the package's reporting and fit-checking functions over a fitted model
 #' and writes the results into one folder, with a markdown index that says what
-#' each file is and how to read it. Works for either backend; components a
-#' backend or a model does not support are recorded in the index as not
-#' produced, rather than stopping the run.
+#' each file is and how to read it. Works for either backend. Components a
+#' backend or a model does not support are listed in the index as not
+#' produced, and the run continues.
 #'
 #' @param fit A fit from \code{\link{ctFit}} (class \code{ctStanFit} or
 #'   \code{ctJuliaFit}).
@@ -1084,22 +1084,24 @@
 #'   written, skipped or failed. Called for the files it writes.
 #'
 #' @details
-#' The expensive parts are \code{adequacy}, \code{covcheck} and
-#' \code{postpred}, which generate data from the fit (once, shared),
+#' The slow parts are \code{adequacy}, \code{covcheck} and \code{postpred},
+#' which generate data from the fit (once, shared between them),
 #' \code{scoretests}, which evaluates the model extended with new terms, and
-#' \code{crossval}, which refits. \code{components = 'quick'} excludes them
-#' all.
+#' \code{crossval}, which refits. \code{components = 'quick'} leaves them all
+#' out.
 #'
-#' \code{profile} walks the log probability along each raw parameter, holding
-#' the others at the estimate, over a grid measured in the standard error that
-#' parameter's own curvature implies. It flags parameters whose slice peaks away
-#' from the estimate (the optimizer did not arrive), whose surface is not the
-#' shape a standard error assumes, and whose reported interval is much wider
-#' than their own curvature (they sit on a ridge with other parameters). It is a
-#' conditional slice, not a profile likelihood, which is why it is cheap enough
-#' to run by default; \code{identification} names the ridge directions.
+#' \code{profile} evaluates the log probability along each raw parameter,
+#' holding the others at the estimate, over a grid in units of the standard
+#' error implied by that parameter's own curvature. It flags parameters whose
+#' slice peaks away from the estimate (the optimiser did not reach the
+#' maximum), whose shape does not match what a standard error assumes, and
+#' whose reported interval is much wider than their own curvature implies
+#' (they lie on a ridge with other parameters). With the other parameters
+#' held fixed it is cheap, but it is not a profile likelihood
+#' (\code{\link{ctFitProfile}}). \code{identification} names the ridge
+#' directions.
 #'
-#' @section Checking a fit -- which function answers what:
+#' @section Which function checks what:
 #' \describe{
 #' \item{Can the data inform every parameter?}{\code{\link{ctIdentify}} before
 #'   fitting; \code{fit$identifiability} and \code{\link{ctFitProfile}} after.}

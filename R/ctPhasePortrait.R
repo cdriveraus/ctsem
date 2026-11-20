@@ -84,42 +84,40 @@
 #' Phase portrait of a fitted continuous time model
 #'
 #' @description
-#' Draw the model's vector field over a plane of the latent state space: at
-#' each point, the direction and speed the deterministic part of the system
-#' moves. For a model whose matrices depend on the latent state -- the reason
-#' the julia backend exists -- this shows behaviour that no single reported
-#' DRIFT matrix can, because there is no single DRIFT matrix.
+#' Draws the model's vector field over a plane of the latent state space,
+#' showing at each point the direction and speed in which the deterministic
+#' part of the system moves. For a model whose matrices depend on the latent
+#' state, this shows behaviour that a single DRIFT matrix cannot describe.
 #'
 #' @details
 #' Three things are drawn over the field, each of which can be turned off:
 #'
 #' \itemize{
 #'   \item \strong{Nullclines}, the curves where one process stops changing.
-#'     Where the nullclines of two processes cross, the whole system stops:
-#'     that is a fixed point, and a nonlinear system may have several.
+#'     Where the nullclines of two processes cross, the whole system is at
+#'     rest. That is a fixed point, and a nonlinear system may have several.
 #'   \item \strong{The fixed point} found by \code{state='asymptotic'}, marked
-#'     when it lies inside the plotted region. Only one is found, by Newton from
-#'     T0MEANS; the nullcline crossings show whether there are others.
+#'     when it lies inside the plotted region. Only one fixed point is found,
+#'     starting from T0MEANS. The nullcline crossings show whether there are
+#'     others.
 #'   \item \strong{Smoothed trajectories} for a few subjects, so the field can
-#'     be read against where the data actually went.
+#'     be compared with where the data went.
 #' }
 #'
-#' With more than two latent processes the remaining ones are held at
-#' \code{state}, so the picture is a slice rather than the whole story --
-#' change \code{state} and the slice changes.
+#' With more than two latent processes the others are held at \code{state},
+#' so the plot shows one slice of the state space, which changes with
+#' \code{state}.
 #'
 #' A linear model has an affine field, straight nullclines and exactly one
-#' fixed point. It is drawn correctly, from a stan fit as readily as a julia
-#' one, but it shows nothing the DRIFT matrix did not already say. A nonlinear
-#' stan fit is refused rather than drawn as if it were linear.
+#' fixed point. It can be drawn from a stan or a julia fit, but shows nothing
+#' beyond the DRIFT matrix. A nonlinear stan fit is refused.
 #'
 #' @param fit A ctJuliaFit, or a ctStanFit of a linear model.
 #' @param latents Two latent processes, by name or index, forming the plane.
 #' @param extent \code{'data'} (the default) spans the smoothed latent states,
 #'   \code{'sd'} spans two stationary standard deviations either side of
 #'   T0MEANS, or supply a list of two numeric ranges.
-#' @param gridsize Arrows per side. The field costs one engine call per point,
-#'   so cost is quadratic in this.
+#' @param gridsize Arrows per side. Computing time grows with its square.
 #' @param state Where the *other* latent processes are held, as in
 #'   \code{\link{ctDiscretePars}}: \code{'asymptotic'}, \code{'mean'},
 #'   \code{'T0MEANS'}, or a numeric state.
@@ -129,7 +127,7 @@
 #' @param trajectories Number of subjects' smoothed trajectories to overlay, or
 #'   0 for none.
 #' @param plot If FALSE, return the field, nullclines and trajectories as data
-#'   rather than a plot.
+#'   instead of a plot.
 #' @return A ggplot, or when \code{plot=FALSE} a list with \code{field}, the
 #'   \code{latents} on the plane, \code{stateLabel} naming where the off-plane
 #'   processes were held, the \code{held} process names, and \code{nullclines},

@@ -16,30 +16,31 @@ ctParticleLik(
 }
 \arguments{
 \item{fit}{A fit from \code{ctFit(..., backend = 'julia')} with the default
-\code{intoverpop}; random effects carried as augmented states are
-integrated by the particles. Laplace-route fits are refused.}
+\code{intoverpop}. Random effects carried as extra states are integrated
+by the particles. Fits using the Laplace approximation are refused.}
 
 \item{particles}{Particles per subject.}
 
-\item{substeps}{Transition steps per observation interval. This is the
-reference mesh, independent of anything the fit used, and floored by the
-fit's own \code{maxtimestep} or automatic mesh.}
+\item{substeps}{Transition steps per observation interval, independent of
+the fit's own settings, but never coarser than the fit's
+\code{maxtimestep} or automatic step size.}
 
-\item{transition}{\code{'exponential'} applies the filter's own
-discretisation at each particle's state: exact for the linear parts of the
-model, second order otherwise, so the comparison isolates the filter's
-Gaussian assumption. \code{'euler'} is plain Euler-Maruyama, which shares no
-approximation with the filter at all but needs several times more substeps.}
+\item{transition}{\code{'exponential'} uses the filter's own
+discretisation at each particle's state, which is exact for the linear
+parts of the model, so the comparison shows the error of the filter's
+Gaussian approximation. \code{'euler'} is plain Euler-Maruyama, which
+shares no approximation with the filter but needs several times more
+substeps.}
 
-\item{seed}{Fixes every draw; the result is reproducible given it.}
+\item{seed}{Seed for every draw, so the result is reproducible.}
 
-\item{replicates}{Independent runs (with seeds \code{seed}, \code{seed + 1},
-...). One run reports an approximate standard error from the effective
-sample sizes; more than one reports the standard deviation across runs.}
+\item{replicates}{Number of independent runs (with seeds \code{seed},
+\code{seed + 1}, ...). With one run, an approximate standard error is
+computed from the effective sample sizes, and with more, the standard
+deviation across runs is reported.}
 
-\item{cores}{Engine threads. The particle filter splits the subjects across
-them, each subject with its own random stream, so the result does not
-depend on the count.}
+\item{cores}{Engine threads. Each subject has its own random stream, so
+the result does not depend on the number of cores.}
 }
 \value{
 A list: \code{loglik}, the particle estimate (mean over replicates);
@@ -51,28 +52,27 @@ A list: \code{loglik}, the particle estimate (mean over replicates);
   settings.
 }
 \description{
-The filter ctsem fits with is an assumed-density approximation: it carries a
-Gaussian for the latent states, linearises the drift over each prediction
-step, and projects non-Gaussian measurement updates back onto a Gaussian.
-For a linear model with Gaussian indicators it is exact; for anything else
-the size of its error is invisible from inside it. This function estimates
-the same marginal log likelihood at the fit's estimates with a bootstrap
-particle filter that makes none of those approximations, and reports the
+The Kalman filter ctsem fits with approximates the distribution of the
+latent states by a Gaussian. It linearises the drift over each prediction
+step, and approximates non-Gaussian measurement updates by Gaussian ones.
+For a linear model with Gaussian indicators it is exact, and otherwise its
+error cannot be seen from the fit alone. This function computes the same
+marginal log likelihood at the fit's estimates with a bootstrap particle
+filter, which makes none of these approximations, and reports the
 difference, in total and per row.
 }
 \details{
-Each particle steps through the process with drift, diffusion and every
-state-dependent parameter evaluated at its own state, is weighted by the
-conditional density of the row's observations given that state (Gaussian,
-binary, ordinal, count and censored indicators are all handled), and is
-resampled when the weights degenerate. The estimate is unbiased with Monte
-Carlo error falling as one over the square root of \code{particles}.
+Each particle moves through the process with drift, diffusion and every
+state dependent parameter evaluated at its own state, is weighted by the
+density of the row's observations given that state (Gaussian, binary,
+ordinal, count and censored indicators are all handled), and is resampled
+when the weights become uneven. The estimate is unbiased, and its Monte
+Carlo error falls with the square root of \code{particles}.
 
-It is a diagnostic at fixed parameters, not an estimator. Two things decide
-whether to trust the comparison: \code{se} should be well below the
-difference you care about (raise \code{particles}, or set \code{replicates}
-for an empirical standard error), and doubling \code{substeps} should not
-move the answer.
+It is a check at fixed parameters, and does not estimate them. The
+comparison can be trusted when \code{se} is well below the difference that
+matters (raise \code{particles}, or set \code{replicates} for an empirical
+standard error), and doubling \code{substeps} does not change the answer.
 }
 \examples{
 \donttest{

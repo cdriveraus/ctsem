@@ -90,15 +90,14 @@ ctStanRawSamples<-function(fit){
 #'@param state The latent state at which state dependent matrix cells are
 #'evaluated: \code{'T0MEANS'} (the default), \code{'mean'}, \code{'asymptotic'},
 #'or a numeric state vector. The default is the population initial state, with
-#'time dependent predictors at zero, which for a model whose dynamics depend on
-#'the state can be far from where the data are; \code{'mean'} (the mean
-#'smoothed latent state) or \code{'asymptotic'} (the system's fixed point) is
-#'then usually the better point. The initial state and the fixed point are each
-#'draw's own; \code{'mean'} is the estimate's, used for every draw, so a summary
-#'of the draws there leaves out where that state is. Only \code{backend='julia'}
-#'can materialise the matrices anywhere other than the default, so anything else
-#'is an error on a stan fit rather than being silently ignored. Irrelevant to a
-#'linear model, whose matrices are the same everywhere.
+#'time dependent predictors at zero. For a model whose dynamics depend on the
+#'state this can be far from the data, and \code{'mean'} (the mean smoothed
+#'latent state) or \code{'asymptotic'} (the system's fixed point) is usually
+#'more useful. The initial state and the fixed point are computed for each
+#'draw. \code{'mean'} uses the estimate's mean state for every draw, so its
+#'uncertainty is not included. Values other than the default need
+#'\code{backend='julia'} and are an error for a stan fit. No effect for a
+#'linear model.
 #'@param ... arguments passed to the method for the fit's backend.
 #'@examples
 #'\donttest{
@@ -106,41 +105,44 @@ ctStanRawSamples<-function(fit){
 #'ctSummaryMatrices(ctstantestfit)
 #'}
 #'@return A named list of matrices, each summarised over the posterior (or
-#'approximate posterior) draws by \code{calcfunc}: the model's own
-#'(\code{DRIFT}, \code{DIFFUSION}, \code{LAMBDA}, ...), the covariances
-#'built from them (\code{DIFFUSIONcov}, \code{MANIFESTcov}, and \code{T0cov},
-#'the initial latent covariance over subjects: \code{T0VAR} plus the
-#'population covariance of any individually varying \code{T0MEANS}), the
-#'asymptotic \code{asymCINT} and \code{asymDIFFUSIONcov}, and
-#'\code{dtDRIFT} at \code{timeinterval}. Beside each covariance its
-#'correlations, \code{DIFFUSIONcor}, \code{MANIFESTcor}, \code{T0cor} and
-#'\code{asymDIFFUSIONcor}, taken draw by draw before \code{calcfunc}
-#'summarises them; a variable whose variance is zero has \code{NA} there. On \code{backend='julia'}, also the
-#'Jacobians of the drift and of the measurement at the evaluation point,
-#'\code{JAx} (latent by latent) and \code{Jy} (manifest by latent): the local
-#'effects of the model linearised at \code{state}. They equal \code{DRIFT} and
-#'\code{LAMBDA} for a linear model; where a cell is nonlinear in the state they
-#'do not, since a \code{DRIFT} cell \code{a + q*Y} in the column of process
-#'\code{Y} holds \code{a + q*Y} there and contributes \code{a + 2*q*Y} to
-#'\code{JAx}. \code{dtDRIFT} is \code{expm(JAx * timeinterval)} where there is
-#'a \code{JAx}, the transition \code{\link{ctDiscretePars}} reports, and
-#'\code{expm(DRIFT * timeinterval)} on stan. For a model whose dynamics depend
-#'on the state it holds \code{JAx} fixed over the interval: a fair interval
-#'regression near a fixed point or over a short interval, and away from a fixed
-#'point one \code{ctDiscretePars(method = 'simulate')} should check. Where parameters vary over subjects,
-#'also their population covariance on the natural scale, \code{popcov}, and
-#'their raw-scale correlations, \code{rawpopcorr}, named by parameter (with
-#'several grouping levels, \code{popcov.<level>} and \code{rawpopcorr.<level>}).
+#'approximate posterior) draws by \code{calcfunc}. These are the model's own
+#'matrices (\code{DRIFT}, \code{DIFFUSION}, \code{LAMBDA}, ...), the
+#'covariances computed from them (\code{DIFFUSIONcov}, \code{MANIFESTcov}, and
+#'\code{T0cov}, the initial latent covariance over subjects, which is
+#'\code{T0VAR} plus the population covariance of any individually varying
+#'\code{T0MEANS}), the asymptotic \code{asymCINT} and \code{asymDIFFUSIONcov},
+#'and \code{dtDRIFT} at \code{timeinterval}. Each covariance has a matching
+#'correlation matrix, \code{DIFFUSIONcor}, \code{MANIFESTcor}, \code{T0cor} and
+#'\code{asymDIFFUSIONcor}, computed for each draw before \code{calcfunc} is
+#'applied. A variable with zero variance has \code{NA} correlations.
+#'
+#'On \code{backend='julia'} the list also holds the Jacobians of the drift and
+#'of the measurement at the evaluation point, \code{JAx} (latent by latent) and
+#'\code{Jy} (manifest by latent). These are the local effects of the model
+#'linearised at \code{state}. They equal \code{DRIFT} and \code{LAMBDA} for a
+#'linear model, and differ where a cell is nonlinear in the state: a
+#'\code{DRIFT} cell \code{a + q*Y} in the column of process \code{Y}
+#'contributes \code{a + 2*q*Y} to \code{JAx}. \code{dtDRIFT} is
+#'\code{expm(JAx * timeinterval)} where there is a \code{JAx}, as in
+#'\code{\link{ctDiscretePars}}, and \code{expm(DRIFT * timeinterval)} on stan.
+#'For a model whose dynamics depend on the state this is accurate near a fixed
+#'point or over a short interval. Elsewhere, compare with
+#'\code{ctDiscretePars(method = 'simulate')}.
+#'
+#'Where parameters vary over subjects, the list also holds their population
+#'covariance on the natural scale, \code{popcov}, and their raw-scale
+#'correlations, \code{rawpopcorr}, named by parameter (with several grouping
+#'levels, \code{popcov.<level>} and \code{rawpopcorr.<level>}).
 #'\code{popcov} combines the sds \code{summary()} reports as \code{popsd} with
 #'those correlations, so it is exact where a parameter's transform is affine,
 #'as for intercepts and initial means.
 #'
 #'On an optimised fit, \code{estimate} holds the same matrices at the fit's
-#'estimate, unrounded: \code{ctSummaryMatrices(fit)$estimate$DRIFT} is the
-#'estimated drift matrix, which a summary of the draws need not equal, and
-#'\code{ctSummaryMatrices(fit, state = s)$estimate$JAx} the model linearised
-#'at \code{s} at the estimate. A sampled fit has no estimate, and a
-#'\code{backend='stan'} fit's has no \code{popcov}, which stan simulates.
+#'estimate, unrounded. For example \code{ctSummaryMatrices(fit)$estimate$DRIFT}
+#'is the estimated drift matrix, which can differ from the median of the
+#'draws, and \code{ctSummaryMatrices(fit, state = s)$estimate$JAx} is the
+#'model linearised at \code{s} at the estimate. A sampled fit has no
+#'\code{estimate}, and a \code{backend='stan'} fit's has no \code{popcov}.
 #'@aliases ctStanContinuousPars
 #'@export
 # `state` is part of the generic, not an extra the julia method happens to
@@ -206,40 +208,38 @@ ctStanContinuousPars <- ctSummaryMatrices
 #' @param fit A fit from \code{\link{ctFit}}.
 #' @param pointest if TRUE, returns only the set of individual difference parameters
 #' based on the max a posteriori estimate (or the median if sampling approaches were used).
-#' @param cores Number of cores to use. \code{backend='stan'} only -- a julia fit already
-#' carries the subject matrices, so there is nothing here to split, and \code{cores} is refused
-#' by name rather than accepted and ignored.
+#' @param cores Number of cores to use. \code{backend='stan'} only, and an
+#' error for a julia fit, which already holds the subject matrices.
 #' @param nsamples Number of samples to calculate parameters for. Not used if pointest=TRUE.
 #' @param level For a model with nested ids (\code{id = c('person', 'couple')}
-#' in \code{\link{ctModel}}), the level to report: the subject level (the
-#' default, the first id) or a grouping level above it, which gives each
-#' group's own parameter values -- the population values shifted by that
-#' group's random effects and those of the levels above it, without the
-#' subject-level ones or TI predictor effects. Grouping levels need a
-#' \code{backend='julia'} fit; their draws take \code{uncertainty} as a
-#' subject's do.
-#' @param uncertainty For \code{backend='julia'} fits with \code{pointest=FALSE}:
-#' what the draws carry. \code{'total'} (the default) pairs each draw of the
-#' population parameters with a draw of each subject's random effects from their
-#' posterior given that subject's data -- plausible values, whose spread is both
-#' the population parameters' uncertainty and how well the subject's own data
-#' determine its parameters. \code{'conditional'} keeps the population
-#' parameters at the estimate and draws only the subject's effects;
-#' \code{'population'} varies only the population parameters, with each subject
-#' at its estimate given them, which understates a subject's uncertainty
-#' whenever its own data say little. A fit that sampled its random effects
-#' (\code{optimize=FALSE}) already has draws of both, so only \code{'total'}
-#' applies there.
+#' in \code{\link{ctModel}}), the level to report. The default is the subject
+#' level (the first id). A grouping level above it gives each group's own
+#' parameter values, which are the population values shifted by that group's
+#' random effects and those of the levels above it, without subject level
+#' effects or TI predictor effects. Grouping levels need a
+#' \code{backend='julia'} fit, and their draws follow \code{uncertainty} as
+#' for subjects.
+#' @param uncertainty For \code{backend='julia'} fits with \code{pointest=FALSE},
+#' what the draws include. \code{'total'} (the default) pairs each draw of the
+#' population parameters with a draw of each subject's random effects from
+#' their posterior given that subject's data. The spread then includes both the
+#' uncertainty of the population parameters and how well the subject's own
+#' data determine its parameters. \code{'conditional'} keeps the population
+#' parameters at the estimate and draws only the subject's effects.
+#' \code{'population'} varies only the population parameters, with each
+#' subject at its estimate, which understates a subject's uncertainty when its
+#' own data are weak. A fit that sampled its random effects
+#' (\code{optimize=FALSE}) only supports \code{'total'}.
 #'
 #' @details This function returns the estimates of individual parameters, taking into account any
 #' covariates and random effects, at every level of a nested model.
 #'
 #' A julia fit also stores, for every level with random effects, each group's
-#' conditional posterior of its effects on the raw parameter scale --
-#' \code{fit$randomeffects}, one entry per level with the groups' \code{mean}
-#' deviation from the population value and their covariance packed column by
-#' column (\code{cov}). The draws with \code{uncertainty='total'} are built from
-#' the same posterior.
+#' posterior for its effects on the raw parameter scale, in
+#' \code{fit$randomeffects}: one entry per level, with each group's
+#' \code{mean} deviation from the population value and its covariance packed
+#' column by column (\code{cov}). The draws with \code{uncertainty='total'}
+#' come from this posterior.
 #'
 #' @return an nsamples by nsubjects by nparams array, with the subjects (or
 #' groups, for a grouping \code{level}) labelled by their ids in the data.
@@ -393,24 +393,25 @@ getparnames <- function(fit,reonly=FALSE, subjvariationonly=FALSE, popstatesonly
 #' @param parmatrices if TRUE, also return additional parameter matrices -- can be slow to compute
 #' for large models with many samples.
 #' @param priorcheck Whether or not to use \code{priorchecking} to compare
-#'   posterior mean and sd to prior mean and sd. \code{backend='stan'} only: a
-#'   julia fit carries no prior block to compare against, and refuses
-#'   \code{priorcheck = TRUE} given explicitly.
+#'   posterior mean and sd to prior mean and sd. \code{backend='stan'} only.
+#'   \code{priorcheck = TRUE} is an error for a julia fit.
 #' @param residualcov Whether or not to show standardised residual covariance. Takes a little longer to compute.
 #' @param ... Additional arguments to pass to \code{priorcheckreport}, such as \code{meanlim}, or \code{sdlim}.
 #' @return List containing summary items, with a \code{print} method for readable console and knitr output.
 #'   On an optimised \code{backend = 'julia'} fit with uncertainty draws, the
-#'   parameter tables and \code{parmatrices} carry a \code{mode} column beside
-#'   the draws' mean, sd and quantiles: the fit's estimate on the same scale,
-#'   the point a likelihood ratio or an information criterion refers to.
+#'   parameter tables and \code{parmatrices} have a \code{mode} column beside
+#'   the draws' mean, sd and quantiles. This is the fit's estimate on the same
+#'   scale, the point that likelihood ratio tests and information criteria
+#'   refer to.
 #'
 #'   \code{popmeans} reports each free parameter. A \code{T0VAR},
-#'   \code{DIFFUSION} or \code{MANIFESTVAR} parameter is a standard deviation
-#'   on the diagonal; off it, a coordinate the model's \code{covmattransform}
-#'   turns into correlations, not a correlation: under the default \code{'z'}
-#'   it is an entry of the correlation matrix's logarithm, which for two
-#'   variables is the correlation's Fisher z (\code{tanh()} of it is the
-#'   correlation) and for more is no function of any one correlation. The
+#'   \code{DIFFUSION} or \code{MANIFESTVAR} parameter on the diagonal is a
+#'   standard deviation. Off the diagonal it is a parameter that the model's
+#'   \code{covmattransform} turns into correlations. Under the default
+#'   \code{'z'} it is an entry of the logarithm of the correlation matrix. For
+#'   two variables this is the correlation's Fisher z (\code{tanh()} of it is
+#'   the correlation), and for more variables it does not correspond to any
+#'   single correlation. The
 #'   correlations are in \code{parmatrices}, as \code{T0cor},
 #'   \code{DIFFUSIONcor}, \code{MANIFESTcor} and \code{asymDIFFUSIONcor} beside
 #'   the covariances, each summarised over the draws' own correlations.

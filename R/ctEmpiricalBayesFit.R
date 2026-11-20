@@ -432,12 +432,11 @@ ctEBfitArgsOptimDefaults <- function(fitargs, stochastic=FALSE,
 #' again using the resulting empirical Bayes prior.
 #'
 #' Works with either \code{backend='stan'} or \code{backend='julia'}, passed via
-#' \code{subjectFitArgs} or \code{...}; every per-subject \code{\link{ctFit}}
+#' \code{subjectFitArgs} or \code{...}. Every per-subject \code{\link{ctFit}}
 #' call uses the same backend. \code{ebUse='rawposterior'} needs each subject
-#' fit to carry posterior draws (the default for both backends' optimised fits,
-#' unless \code{optimcontrol$estonly=TRUE}), or a sampled fit
-#' (\code{optimize=FALSE}, or for \code{backend='julia'} a Laplace fit passed
-#' through \code{\link{ctFitUncertainty}} with \code{uncertainty = 'sample'}).
+#' fit to carry posterior draws, which optimised fits on both backends do
+#' unless \code{optimcontrol$estonly=TRUE}, or a sampled fit
+#' (\code{optimize=FALSE}).
 #'
 #' @param datalong Long format data containing multiple subjects.
 #' @param model Model object from \code{\link{ctModel}}. Time independent

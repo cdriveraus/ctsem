@@ -28,14 +28,13 @@ ctNetworkPlot(
 \item{dt}{One or more time intervals. Ignored, with a message, when \code{x}
 is already a \code{ctNetwork}.}
 
-\item{state}{Where a state dependent cell is evaluated; see
+\item{state}{Where state dependent cells are evaluated; see
 \code{\link{ctNetwork}}. Ignored, with a message, when \code{x} is already
-a \code{ctNetwork}, which was built at a point of its own. When the system
-is state dependent the point appears in the plot's subtitle, so a saved
-figure carries its own caveat; a linear system gets no subtitle.}
+a \code{ctNetwork}. For a state dependent system the point appears in the
+plot's subtitle. A linear system gets no subtitle.}
 
 \item{networks}{Which networks to draw; see \code{\link{ctNetwork}}. Each
-becomes a panel, as does each \code{dt}.}
+network and each \code{dt} gets its own panel.}
 
 \item{threshold}{Edges with \code{abs(weight)} at or below this are not drawn.}
 
@@ -48,8 +47,8 @@ becomes a panel, as does each \code{dt}.}
 \item{nodesize, labelsize}{Node and label size.}
 
 \item{poscolour, negcolour}{Colours for positive and negative edges. The
-defaults are a colour-blind safe blue and red; the literature's green and
-red are \code{'darkgreen'} and \code{'red'}.}
+defaults are a colour-blind safe blue and red. For the common green and
+red, use \code{'darkgreen'} and \code{'red'}.}
 
 \item{title}{Panel title, or NULL for none. \code{'auto'} names the source
 and the interval.}
@@ -59,25 +58,23 @@ when \code{engine='qgraph'}.}
 }
 \value{
 A ggplot2 object, which can be modified further or printed. With
-  \code{engine='qgraph'}, the qgraph object, invisibly, having drawn.
+  \code{engine='qgraph'}, the qgraph object, invisibly, after drawing it.
 }
 \description{
-Plots what \code{\link{ctNetwork}} computes, in the style of the network
-psychometrics literature: signed edges, width by magnitude, arrowheads and
+Plots the networks \code{\link{ctNetwork}} computes, in the usual style of
+network psychometrics: signed edges with width by magnitude, arrowheads and
 self-loops on the directed temporal network, and no arrowheads on the
-undirected contemporaneous one.
+undirected contemporaneous network.
 
-Give \code{dt} more than one value and the same networks are drawn side by
-side at each interval, which is the continuous time point: the graph a study
-would have recovered depends on how often it measured.
+Given more than one \code{dt}, the networks are drawn side by side at each
+interval, showing how the network a study finds depends on how often it
+measures.
 }
 \details{
-Drawn with ggplot2, which ctsem already depends on, so no extra package is
-needed. \code{engine='qgraph'} hands the weight matrix to
-\code{qgraph::qgraph()} instead, if that package is installed --
-\code{\link{ctNetwork}}'s matrices are in the shape qgraph expects, so
-\code{qgraph::qgraph(ctNetwork(fit)$temporal, directed=TRUE)} needs nothing
-from this function.
+Drawn with ggplot2. \code{engine='qgraph'} passes the weight matrix to
+\code{qgraph::qgraph()} instead, if that package is installed. The matrices
+from \code{\link{ctNetwork}} can also be passed to qgraph directly, as in
+\code{qgraph::qgraph(ctNetwork(fit)$temporal, directed=TRUE)}.
 }
 \examples{
 m <- ctModel(type='ct', n.latent=3, n.manifest=3,

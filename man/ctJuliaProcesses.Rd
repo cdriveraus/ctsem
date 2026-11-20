@@ -7,37 +7,43 @@
 ctJuliaProcesses(interval = 0.5)
 }
 \arguments{
-\item{interval}{Seconds over which to measure CPU use, which is what the
-\code{busy} column reports; \code{0} skips the measurement.}
+\item{interval}{Seconds over which to measure CPU use, reported in the
+\code{busy} column. \code{0} skips the measurement.}
 }
 \value{
-A data frame, one row per process, with columns \code{pid};
-  \code{role} (\code{"this session"}, \code{"worker of this session"},
-  \code{"another R session"}, \code{"orphaned"} for one whose R session has
-  ended, \code{"JuliaConnectoR, unrecorded"}, or \code{"child of <pid>"});
-  \code{busy} and \code{cpu_percent} over \code{interval};
-  \code{cpu_seconds}; \code{memory_mb}; \code{julia_threads}, the Julia
-  thread count ctsem started it with; \code{os_threads}; \code{r_pid}, the
-  R process it serves; \code{started}; and \code{note}, which says when
-  this session's engine is still finishing an interrupted call.
+A data frame with one row per process, and columns:
+\describe{
+  \item{\code{pid}}{The process id.}
+  \item{\code{role}}{\code{"this session"}, \code{"worker of this
+  session"}, \code{"another R session"}, \code{"orphaned"} (its R session
+  has ended), \code{"JuliaConnectoR, unrecorded"}, or
+  \code{"child of <pid>"}.}
+  \item{\code{busy}, \code{cpu_percent}}{CPU use over \code{interval}.}
+  \item{\code{cpu_seconds}, \code{memory_mb}}{CPU time and memory used.}
+  \item{\code{julia_threads}}{The number of Julia threads ctsem started it
+  with.}
+  \item{\code{os_threads}}{The number of operating system threads.}
+  \item{\code{r_pid}}{The R process it serves.}
+  \item{\code{started}}{When it started.}
+  \item{\code{note}}{Says when this session's engine is still finishing an
+  interrupted call.}
+}
 }
 \description{
-Lists the Julia processes on this machine that ctsem started or that
-belong to them: this R session's engine, the engines of its sampling
-workers, those of other R sessions, and any left running by an R session
-that has ended. A Julia process can outlive what it was started for --
-Escape leaves one finishing an uninterruptible step in the background, and a
-crashed R session leaves its engine running until the engine notices -- so
-this is where to look when a machine is busier than it should be.
+Lists the Julia processes on this machine that ctsem started: this R
+session's engine, the engines of its sampling workers, those of other R
+sessions, and any left running by an R session that has ended. A Julia
+process can keep running after it is no longer needed, for example after
+Escape interrupts a step that cannot be interrupted, or after R crashes.
+Look here when the machine is busier than it should be.
 \code{\link{ctJuliaKill}} stops them.
 }
 \details{
-ctsem records each Julia session it starts, which is how its processes are
-told from any other Julia. A JuliaConnectoR session it has no record of --
-one started by other code, or by a ctsem too old to record it -- is listed
-too, as is a Julia process started by one of these (precompiling the engine,
-typically). CPU, memory, thread and parent details need the \pkg{ps}
-package; without it, only which processes exist and whose they are.
+ctsem records each Julia session it starts. Unrecorded JuliaConnectoR
+sessions, such as one started by other code or by an older ctsem, are
+listed too, as are Julia processes they started (usually to precompile
+the engine). CPU, memory, thread and parent details need the \pkg{ps}
+package. Without it, only the processes and their owners are listed.
 }
 \examples{
 \donttest{

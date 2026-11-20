@@ -58,9 +58,9 @@ observed at irregular times.
 \details{
 Within each subject, every pair of observations is put in the time lag bin nearest
 to the time between them, at multiples of \code{timestep} up to \code{time.max}. The value at a
-lag is the correlation of the pairs in its bin, pooled over subjects: of a variable at time
-t + lag with the same variable at time t for an autocorrelation, and for the cross correlation
-\code{'x_y'} of x at time t + lag with y at time t, so that at a positive lag y is the earlier.
+lag is the correlation of the pairs in its bin, pooled over subjects. For an autocorrelation
+this is a variable at time t + lag with the same variable at time t. For the cross correlation
+\code{'x_y'} it is x at time t + lag with y at time t, so at a positive lag y is the earlier.
 Lags with fewer than three pairs are left out. Autocorrelations are returned from the first
 non-zero lag, as the lag 0 autocorrelation is always 1. Cross correlations include lag 0, the
 contemporaneous correlation. Bootstrap samples resample whole subjects, and the plot shows a

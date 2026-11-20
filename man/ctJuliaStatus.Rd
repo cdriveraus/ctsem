@@ -7,32 +7,33 @@
 ctJuliaStatus(project = NULL, julia_bin = NULL)
 }
 \arguments{
-\item{project}{Optional local ContinuousTimeSEM.jl checkout to use instead of
-the copy that ships with ctsem. Rarely needed: the engine is part of ctsem
-and is edited in place under \code{inst/julia/}.}
+\item{project}{Optional local ContinuousTimeSEM.jl checkout to use instead
+of the copy that ships with ctsem. Rarely needed, mainly for development.}
 
 \item{julia_bin}{Optional Julia binary directory.}
 }
 \value{
-A list describing the selected Julia engine: whether it is
-  \code{available} -- a julia fit could run now without asking anything,
-  which needs a Julia that starts and the engine's Julia packages installed,
-  or consent to install them given in advance with
-  \code{CTSEM_JULIA_AGREE=yes} (checked by a short \code{julia} process,
-  once per session, never a session) -- whether the \code{connectoR} bridge
-  package is installed at a version the backend runs on,
-  the \code{julia_bin} directory in use and the \code{julia} version there,
-  the \code{engine} version (a hash of the engine source shipped with this
-  ctsem, which is also what its cached project directory is keyed on), and
-  the number of \code{threads} in a running session (\code{NA} when none is
-  running: this never starts one, so it leaves the session's width to the
-  first call that needs it).
+A list describing the Julia engine:
+\describe{
+  \item{\code{available}}{TRUE if a julia fit could run now without asking
+  for anything: Julia starts and the engine's Julia packages are
+  installed, or consent to install them was given with
+  \code{CTSEM_JULIA_AGREE=yes}.}
+  \item{\code{connectoR}}{Whether \pkg{JuliaConnectoR} is installed at a
+  suitable version.}
+  \item{\code{julia_bin}, \code{julia}}{The Julia directory in use, and the
+  Julia version there.}
+  \item{\code{project}}{The engine's project directory.}
+  \item{\code{engine}}{The version of the engine shipped with this ctsem.}
+  \item{\code{threads}}{The number of threads of a running Julia session,
+  or \code{NA} if none is running.}
+}
 }
 \description{
-Reports what \code{backend='julia'} would find, and installs nothing: it is
-safe to call on a machine with no Julia and no \pkg{JuliaConnectoR}, where it
-says so rather than erroring. \code{\link{ctJuliaInstall}} supplies whatever
-it reports as missing.
+Reports what \code{backend='julia'} would find, without installing
+anything or starting a Julia session. It is safe to call on a machine
+without Julia or \pkg{JuliaConnectoR}. \code{\link{ctJuliaInstall}}
+installs anything it reports as missing.
 }
 \examples{
 status <- ctJuliaStatus()
