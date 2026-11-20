@@ -41,7 +41,8 @@
 #'     \code{T0MEANS} parameters. For a fixed \code{MANIFESTMEANS} cell, a
 #'     parameter that varies around the fixed value as its stated mean.}
 #'   \item{covariates}{A covariate added as a time independent predictor, with
-#'     effects on the parameters its tests pick out.}
+#'     effects on the parameters its tests pick out. For a predictor the model
+#'     already has, effects on further parameters its tests pick out.}
 #'   \item{statedependence}{A term \code{d * eta_k * eta_m} in a latent's
 #'     drift, written into \code{CINT} with \code{d} a \code{PARS} parameter,
 #'     so that a drift coefficient varies with a state.}
@@ -596,7 +597,12 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
 .ctImproveScreen <- function(current, available, relax, form, cores) {
   tests <- intersect(relax, c('heterogeneity', 'covariates', 'statedependence', 'volatility',
     'fixed', 'level'))
-  if (is.null(available)) tests <- setdiff(tests, 'covariates')
+  # The model's own predictors are screened for effects on further
+  # parameters, given or not: a covariate the search added is not offered
+  # again, and its other effects would otherwise show only as variation
+  # between subjects.
+  if (is.null(available) && !length(.ctScoreOwnNames(current)))
+    tests <- setdiff(tests, 'covariates')
   if (!length(tests)) return(NULL)
   suppressMessages(ctScoreTest(current, covariates = available, tests = tests, form = form,
     cores = cores, verbose = FALSE))
@@ -1129,6 +1135,29 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   stats::setNames(raw[ok], names2[lv2$load_index[ok]])
 }
 
+# A covariate added to the model and its data as a time independent predictor
+# with effects on `pars`: the column `z` of the covariates, or where `cut` is
+# given, whether it lies above it, as column `zname`.
+.ctImproveAddCovariate <- function(model, data, covs, z, pars, cut = NULL, zname = z) {
+  idname <- model$subjectIDname
+  add <- unique(covs[, c(idname, z)])
+  if (!is.null(cut)) {
+    add[[zname]] <- as.numeric(add[[z]] > cut)
+    add <- add[, c(idname, zname)]
+    z <- zname
+  }
+  data <- merge(data[, setdiff(names(data), z), drop = FALSE], add, by = idname,
+    all.x = TRUE, sort = FALSE)
+  data <- data[order(data[[idname]], data[[model$timeName]]), , drop = FALSE]
+  model$TIpredNames <- c(model$TIpredNames, z)
+  model$n.TIpred <- length(model$TIpredNames)
+  model$pars[[paste0(z, '_effect')]] <- ifelse(model$pars$param %in% pars, 'TRUE', 'FALSE')
+  # Its effects are the ones the tests singled out, not a default for cells a
+  # later change adds.
+  model$statedTIpreds <- c(model$statedTIpreds, z)
+  list(model = model, data = data)
+}
+
 # What the screen indicates, as edits: one per heterogeneity parameter, state
 # term and fixed cell significant within its family, and one per covariate
 # whose joint test is significant, adding it with effects on the parameters
@@ -1252,6 +1281,30 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
     pt <- pt[!grepl('^popsd_|^scale\\(', pt$parameter), , drop = FALSE]
     pars <- pt$parameter[pt$p_adj < alpha]
     if (!length(pars)) next
+    # A predictor the model has: its effects on these parameters as well.
+    if (isTRUE(cv$joint$inmodel) && z %in% model$TIpredNames) {
+      out[[length(out) + 1L]] <- list(key = paste0('cov:', z, ':', paste(sort(pars),
+        collapse = ',')), family = 'covariates', label = paste0(z,
+        ' also as a predictor of ', paste(pars, collapse = ', ')), p = cv$joint$p,
+        rank = stats::pchisq(cv$joint$LM, cv$joint$df, lower.tail = FALSE),
+        edit = local({ z <- z; pars <- pars
+          function(model, data, covs, args = list()) {
+            # Rebuilt without the change that added it (pruning that change),
+            # the predictor comes in with these effects alone, so that what
+            # is judged is its other effects.
+            if (!z %in% model$TIpredNames) {
+              if (!z %in% names(covs)) stop(z, ' is no longer in the model')
+              return(.ctImproveAddCovariate(model, data, covs, z, pars))
+            }
+            col <- paste0(z, '_effect')
+            rows <- .ctParamRows(model, pars)
+            if (is.null(model$pars[[col]])) model$pars[[col]] <- 'FALSE'
+            model$pars[[col]] <- as.character(model$pars[[col]])
+            model$pars[[col]][rows[!is.na(rows)]] <- 'TRUE'
+            list(model = model, data = data)
+          } }))
+      next
+    }
     # A column name the model can take: the sign and point as letters, since
     # 'age_above_-0.297' was not found in the data it had just been added to.
     zname <- if (is.null(cut)) z else paste0(z, '_above_',
@@ -1261,25 +1314,8 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
         signif(cut, 3)), ' as a predictor of ', paste(pars, collapse = ', ')),
       p = cv$joint$p, rank = stats::pchisq(cv$joint$LM, cv$joint$df, lower.tail = FALSE),
       edit = local({ z <- z; pars <- pars; cut <- cut; zname <- zname
-        function(model, data, covs, args = list()) {
-        idname <- model$subjectIDname
-        add <- unique(covs[, c(idname, z)])
-        if (!is.null(cut)) {
-          add[[zname]] <- as.numeric(add[[z]] > cut)
-          add <- add[, c(idname, zname)]
-          z <- zname
-        }
-        data <- merge(data[, setdiff(names(data), z), drop = FALSE], add, by = idname,
-          all.x = TRUE, sort = FALSE)
-        data <- data[order(data[[idname]], data[[model$timeName]]), , drop = FALSE]
-        model$TIpredNames <- c(model$TIpredNames, z)
-        model$n.TIpred <- length(model$TIpredNames)
-        model$pars[[paste0(z, '_effect')]] <- ifelse(model$pars$param %in% pars, 'TRUE', 'FALSE')
-        # Its effects are the ones the tests singled out, not a default for
-        # cells a later change adds.
-        model$statedTIpreds <- c(model$statedTIpreds, z)
-        list(model = model, data = data)
-      } }))
+        function(model, data, covs, args = list())
+          .ctImproveAddCovariate(model, data, covs, z, pars, cut, zname) }))
   }
   s <- st$statedependence$terms
   if (!is.null(s)) for (r in which(s$p_adj < alpha)) {

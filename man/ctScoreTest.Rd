@@ -35,8 +35,9 @@ row per subject in the fit's subject order.}
 \code{'covariates'}, \code{'statedependence'}, \code{'volatility'},
 \code{'fixed'}, \code{'level'} and \code{'instability'}. By default all
 but \code{'instability'}. Covariates are tested only when
-\code{covariates} is given, and levels only where the model has a random
-intercept.}
+\code{covariates} is given or \code{'covariates'} is asked for (then the
+model's own predictors alone), and levels only where the model has a
+random intercept.}
 
 \item{form}{How a covariate enters: \code{'auto'} (indicators for a factor,
 character or logical covariate, linear otherwise), \code{'linear'},
@@ -89,7 +90,8 @@ An object of class \code{ctScoreTest}, a list with
   per pair of blocks, and \code{directions}, the direction found for each
   tested block),
   \code{covariates} (one element per covariate, each a list of its
-  \code{joint} test and a data frame \code{parameters}),
+  \code{joint} test and a data frame \code{parameters}, including the
+  model's own predictors, marked by \code{joint$inmodel}),
   \code{statedependence} (a list of \code{terms}, a data frame, and
   \code{joint}, the tests per equation and overall), \code{volatility}
   (the same, for the innovation sds), \code{fixed} (a list of \code{cells}
@@ -217,6 +219,14 @@ relaxations that matter before interpreting their sizes.
   which only \code{p} is given. Subjects with a missing value contribute at
   the mean. To act on a result, add the covariate to the data and to
   \code{TIpredNames}, and refit.
+
+  The model's own time independent predictors are tested as well, each on
+  the parameters it does not yet act on, using the values the fit read.
+  Their results have \code{joint$inmodel} set to \code{TRUE}. A predictor
+  added with an effect on one parameter may act on another too, and that
+  can show only once other changes are made. To act on a result, set the
+  predictor's effect on that parameter (\code{<predictor>_effect} in
+  \code{model$pars}) and refit. \code{\link{ctModelImprove}} does that.
 
   \code{form = 'threshold'} tests for a step at an unknown cut instead. The
   joint test is computed at each cut from the 15th to the 85th percentile,

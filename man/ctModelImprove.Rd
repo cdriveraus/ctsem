@@ -146,7 +146,8 @@ The relaxations, in terms of the model:
     \code{T0MEANS} parameters. For a fixed \code{MANIFESTMEANS} cell, a
     parameter that varies around the fixed value as its stated mean.}
   \item{covariates}{A covariate added as a time independent predictor, with
-    effects on the parameters its tests pick out.}
+    effects on the parameters its tests pick out. For a predictor the model
+    already has, effects on further parameters its tests pick out.}
   \item{statedependence}{A term \code{d * eta_k * eta_m} in a latent's
     drift, written into \code{CINT} with \code{d} a \code{PARS} parameter,
     so that a drift coefficient varies with a state.}
