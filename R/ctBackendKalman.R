@@ -1150,12 +1150,6 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   fit$standata <- standata
   fit$data <- .ctStandataNA(standata)
   if (!julia) return(fit)
-  # The zeroes the prepared data hold for missing TD predictors (warned of
-  # above), in the frame the specification keeps as well: a prediction over a
-  # time grid rebuilds from that frame, and a missing value there reached the
-  # filter as one.
-  td <- model$TDpredNames
-  if (length(td)) datalong[td][is.na(datalong[td])] <- 0
   spec <- .ctBackendSpec(fit)
   prepared <- suppressMessages(.ctJuliaPrepare(datalong, model,
     prepared_data = standata, project = spec$project,
