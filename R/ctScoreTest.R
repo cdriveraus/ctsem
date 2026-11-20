@@ -144,9 +144,12 @@
 #'   style shared by an item's thresholds covaries with the dynamic level. A
 #'   pair in which one block loads on every effect of the other is not tested,
 #'   since those covariances are in the model already, and is listed with a
-#'   note. Both are calibrated by resampling subjects. An effect whose population
-#'   mean is stated has no coordinate to differentiate along and is left out
-#'   of both.
+#'   note. Both are calibrated by resampling subjects, and adjusted together
+#'   (\code{p_adj}). An effect whose population mean is stated is tested
+#'   through the model with that mean estimated at its stated value, the
+#'   projection on the fit's own parameters alone. \code{\link{ctModelImprove}}
+#'   acts on both: a further dimension for a block, and blocks sharing
+#'   dimensions.
 #'
 #' @section Covariates: For each covariate, the effects it would have on every
 #'   tested parameter if added as a time independent predictor (on the raw
@@ -364,8 +367,9 @@
 #'   \code{MANIFESTMEANS} cell),
 #'   \code{dimension} (the largest eigenvalue, its p-value and the direction,
 #'   when two or more parameters are tested), \code{blocks} (on a reduced-rank
-#'   level, \code{dimension}, a row per block, and \code{covariance}, a row
-#'   per pair of blocks),
+#'   level, \code{dimension}, a row per block, with the one-step \code{sd}
+#'   along its direction, \code{covariance}, a row per pair of blocks, and
+#'   \code{directions}, each tested block's whole direction),
 #'   \code{covariates} (one element per covariate, each a list of its
 #'   \code{joint} test and a data frame \code{parameters}),
 #'   \code{statedependence} (a list of \code{terms}, a data frame, and
@@ -539,6 +543,19 @@ ctScoreTest <- function(fit, covariates = NULL,
     # along every pair of directions from two blocks.
     plan <- if (reduced && 'heterogeneity' %in% tests && is.null(parameters))
       .ctScoreBlockPlan(fit, est) else NULL
+    # An effect whose population mean is stated has no coordinate in the fit,
+    # so where a block holds one its tests are taken on the model with those
+    # means estimated, at their stated values (`.ctScoreStatedSpec()`).
+    stated <- unique(unlist(lapply(plan, `[[`, 'stated')))
+    bext <- if (length(stated)) tryCatch(.ctScoreStatedSpec(fit, est, stated, cores),
+      error = function(e) {
+        out$info$errors[['heterogeneity, blocks: stated means']] <<- conditionMessage(e)
+        warning("heterogeneity, blocks: ", conditionMessage(e), "; effects with a ",
+          "stated mean are left out of the block tests.", call. = FALSE)
+        NULL
+      })
+    onext <- !is.null(bext)
+    if (onext) plan <- .ctScoreBlockPlan(fit, est, bext)
     within <- unique(unlist(lapply(plan, function(b)
       if (length(b$index) > b$rank) b$index)))
     vdirs <- do.call(cbind, lapply(plan, `[[`, 'dirs'))
@@ -546,11 +563,14 @@ ctScoreTest <- function(fit, covariates = NULL,
     vpairs <- .ctScoreBlockPairs(plan, vdirs, vblock)
     nested <- attr(vpairs, 'nested')
     if (!NROW(vpairs)) vpairs <- NULL
-    rows <- union(union(union(het, cov), R), within)
+    rows <- union(union(union(het, cov), R), if (!onext) within)
     say("Score contributions: ", 2L * (length(rows) + NCOL(dirs) + NROW(pairs) +
       NCOL(vdirs) + NROW(vpairs)) + 1L, " per-subject gradient passes")
-    pieces <- .ctScorePieces(fit, est, rows = rows, second = union(union(het, R), within),
-      dirs = dirs, pairs = pairs, vdirs = vdirs, vpairs = vpairs, cores = cores)
+    pieces <- if (length(rows) || !onext) .ctScorePieces(fit, est, rows = rows,
+      second = union(union(het, R), if (!onext) within), dirs = dirs, pairs = pairs,
+      vdirs = if (!onext) vdirs, vpairs = if (!onext) vpairs, cores = cores) else
+      .ctBackendWithMaxChunks(cores, list(S = .ctBackendScoreMatrix(fit, est),
+        Hsum = local({ H <- .ctBackendHessian(fit, est); (H + t(H)) / 2 })))
     if (nrow(pieces$S) != .ctFitNsubjects(fit)) stop("This model has a level ",
       "above the subject, so its independent units are not subjects. ",
       "Heterogeneity and covariate tests need subjects; use ",
@@ -575,7 +595,9 @@ ctScoreTest <- function(fit, covariates = NULL,
         het, nboot)
     })
     if (length(plan)) attempt('heterogeneity, blocks', {
-      out$blocks <- .ctScoreBlocks(pieces, ptab, plan, vblock, variance, nboot,
+      out$blocks <- if (onext) .ctScoreBlocks(.ctScoreStatedPieces(bext, pieces, within,
+        vdirs, vpairs, cores), list(name = names(bext$x2)), plan, vblock, variance, nboot,
+        nested = nested) else .ctScoreBlocks(pieces, ptab, plan, vblock, variance, nboot,
         nested = nested)
     })
     if (length(cov)) attempt('covariates', {
@@ -696,13 +718,16 @@ ctScoreTest <- function(fit, covariates = NULL,
 # of them in `vpairs`, the summed mixed second derivative v_a' d2 s v_b
 # (`Vmix`), from the difference along their sum.
 .ctScorePieces <- function(fit, est, rows, second, dirs = NULL, pairs = NULL,
-  vdirs = NULL, vpairs = NULL, step = 1e-3, cores = 2L) {
+  vdirs = NULL, vpairs = NULL, step = 1e-3, cores = 2L, score = NULL, hessian = NULL) {
   p <- length(est)
   if (!length(rows) && !NCOL(vdirs)) stop("No parameters to test.", call. = FALSE)
   Hdir <- Tmix <- Hv <- Dv <- Vmix <- NULL
   along <- function(w) step * max(1, max(abs(est[w != 0]))) / max(abs(w))
+  # Each subject's scores, and the summed Hessian: the fit's, or another
+  # objective's (`.ctScoreStatedPieces()`).
+  scores <- if (is.null(score)) function(x) .ctBackendScoreMatrix(fit, x) else score
   .ctBackendWithMaxChunks(cores, {
-    S <- .ctBackendScoreMatrix(fit, est)
+    S <- scores(est)
     n <- nrow(S)
     H <- array(0, c(n, length(rows), p))
     D2 <- array(0, c(n, p, length(second)))
@@ -710,9 +735,9 @@ ctScoreTest <- function(fit, covariates = NULL,
       k <- rows[a]
       h <- step * max(1, abs(est[k]))
       e <- est; e[k] <- est[k] + h
-      plus <- .ctBackendScoreMatrix(fit, e)
+      plus <- scores(e)
       e[k] <- est[k] - h
-      minus <- .ctBackendScoreMatrix(fit, e)
+      minus <- scores(e)
       H[, a, ] <- (plus - minus) / (2 * h)
       j <- match(k, second)
       if (!is.na(j)) D2[, , j] <- (plus - 2 * S + minus) / h^2
@@ -723,8 +748,8 @@ ctScoreTest <- function(fit, covariates = NULL,
       for (d in seq_len(ncol(dirs))) {
         w <- dirs[, d]
         h <- step * max(1, max(abs(est[w != 0]))) / max(abs(w))
-        plus <- .ctBackendScoreMatrix(fit, est + h * w)
-        minus <- .ctBackendScoreMatrix(fit, est - h * w)
+        plus <- scores(est + h * w)
+        minus <- scores(est - h * w)
         Hdir[, d, ] <- (plus - minus) / (2 * h)
       }
     }
@@ -735,8 +760,8 @@ ctScoreTest <- function(fit, covariates = NULL,
         jr <- pairs[k, ]
         w <- replace(numeric(p), jr, 1)
         h <- step * max(1, abs(est[jr]))
-        d2 <- colSums(.ctBackendScoreMatrix(fit, est + h * w) - 2 * S +
-          .ctBackendScoreMatrix(fit, est - h * w)) / h^2
+        d2 <- colSums(scores(est + h * w) - 2 * S +
+          scores(est - h * w)) / h^2
         Tmix[, k] <- (d2 - own(jr[1]) - own(jr[2])) / 2
       }
     }
@@ -745,8 +770,8 @@ ctScoreTest <- function(fit, covariates = NULL,
       Dv <- matrix(0, p, ncol(vdirs))
       for (d in seq_len(ncol(vdirs))) {
         h <- along(vdirs[, d])
-        plus <- .ctBackendScoreMatrix(fit, est + h * vdirs[, d])
-        minus <- .ctBackendScoreMatrix(fit, est - h * vdirs[, d])
+        plus <- scores(est + h * vdirs[, d])
+        minus <- scores(est - h * vdirs[, d])
         Hv[, d, ] <- (plus - minus) / (2 * h)
         Dv[, d] <- colSums(plus - 2 * S + minus) / h^2
       }
@@ -755,13 +780,13 @@ ctScoreTest <- function(fit, covariates = NULL,
         for (k in seq_len(nrow(vpairs))) {
           w <- vdirs[, vpairs[k, 1]] + vdirs[, vpairs[k, 2]]
           h <- along(w)
-          d2 <- colSums(.ctBackendScoreMatrix(fit, est + h * w) - 2 * S +
-            .ctBackendScoreMatrix(fit, est - h * w)) / h^2
+          d2 <- colSums(scores(est + h * w) - 2 * S +
+            scores(est - h * w)) / h^2
           Vmix[, k] <- (d2 - Dv[, vpairs[k, 1]] - Dv[, vpairs[k, 2]]) / 2
         }
       }
     }
-    Hsum <- .ctBackendHessian(fit, est)
+    Hsum <- if (is.null(hessian)) .ctBackendHessian(fit, est) else hessian
   })
   Hsum <- (Hsum + t(Hsum)) / 2
   list(S = S, H = H, rows = rows, D2 = D2, second = second, Hsum = Hsum,
@@ -1039,11 +1064,15 @@ ctScoreTest <- function(fit, covariates = NULL,
 # the test conservative. The statistic is the largest eigenvalue of T scaled
 # by each diagonal's spread (invariant to each parameter's units), against a
 # multiplier bootstrap over subjects; its eigenvector is the direction, read
-# as loadings (Hall & Praestgaard, 2001; Zhu & Zhang, 2006).
+# as loadings (Hall & Praestgaard, 2001; Zhu & Zhang, 2006). `sd` is the
+# one-step sd along the direction, scaled to its largest loading of one: the
+# score sum_i u'C_i u over its expected information, sum_i (u'H_i u)^2 / 2,
+# as a new random effect's one-step variance is; NA where that is not
+# positive.
 .ctScoreDimension <- function(pieces, ptab, het, nboot = 1999L) {
   S <- pieces$S
   n <- nrow(S)
-  Iinv <- .ctScorePinv(-pieces$Hsum)$inv
+  Iinv <- .ctScoreIinv(pieces)
   Hr <- lapply(het, function(j) .ctScoreHrow(pieces, j))
   # Candidates whose own contributions the fit determines say nothing here
   # (.ctScoreDetermined), and their near-zero spread would scale the rest.
@@ -1082,20 +1111,27 @@ ctScoreTest <- function(fit, covariates = NULL,
   }
   u <- e$vectors[, 1] / sqrt(dsd)
   u <- u / u[which.max(abs(u))]
+  score <- sum(vapply(seq_len(K), function(a) sum(u[a] * u * T[a, ]), 0))
+  hu <- Reduce(`+`, lapply(seq_len(K), function(a)
+    u[a] * as.numeric(Hr[[a]][, het, drop = FALSE] %*% u)))
+  tau2 <- score / sum(hu^2 / 2)
   list(lambda = lambda, p = .ctScoreBoot(matrix(C, n, K * K), nboot, statistic = largest),
-    direction = stats::setNames(u, ptab$name[het])[order(-abs(u))])
+    direction = stats::setNames(u, ptab$name[het])[order(-abs(u))],
+    sd = if (is.finite(tau2) && tau2 > 0) sqrt(tau2) else NA_real_)
 }
 
 
 # The subject level's blocks on a reduced-rank level (`popblocks`; without
 # them the level is one block of every effect, its rank the level's): each
 # block's name, rank, its effects and their raw population-mean coordinates
-# (`index`; an effect with a stated mean has none, and is left out of both
-# tests), and its fitted loadings as directions in those coordinates
+# (`index`), and its fitted loadings as directions in those coordinates
 # (`dirs`, one column a dimension, each loading times the effect's sd scale
-# as `_laplace_poploading` builds it). A dimension whose loadings are all zero
-# gives no direction. NULL where the subject level is not of reduced rank.
-.ctScoreBlockPlan <- function(fit, est) {
+# as `_laplace_poploading` builds it). An effect with a stated mean has no
+# coordinate in the fit (`stated` names them): given `ext`, the model with
+# those means estimated (`.ctScoreStatedSpec()`), the coordinates are that
+# model's and it has one. A dimension whose loadings are all zero gives no
+# direction. NULL where the subject level is not of reduced rank.
+.ctScoreBlockPlan <- function(fit, est, ext = NULL) {
   levels <- fit$model_spec$laplace$levels
   if (!length(levels)) return(NULL)
   lv <- levels[[1]]
@@ -1104,6 +1140,13 @@ ctScoreTest <- function(fit, covariates = NULL,
   k <- length(lv$param)
   raw <- as.integer(lv$re_index)
   raw[raw > npar] <- NA_integer_
+  if (!is.null(ext)) {
+    free <- !is.na(raw)
+    raw[free] <- ext$theta[raw[free]]
+    raw[!free] <- ext$delta[match(as.character(lv$param)[!free],
+      names(ext$x2)[ext$delta])]
+    npar <- length(ext$x2)
+  }
   entries <- .ctJuliaLoadingEntries(lv)
   L <- matrix(0, k, lv$rank)
   L[cbind(entries$row, entries$col)] <- est[lv$load_index] *
@@ -1121,8 +1164,57 @@ ctScoreTest <- function(fit, covariates = NULL,
     dirs[raw[members[free]], ] <- L[members[free], cols, drop = FALSE]
     dirs <- dirs[, colSums(abs(dirs)) > 0, drop = FALSE]
     list(name = b$name, rank = as.integer(b$rank), param = b$param,
-      index = raw[members[free]], dirs = dirs)
+      index = raw[members[free]], dirs = dirs,
+      stated = as.character(lv$param)[members[!free]])
   })
+}
+
+# The inverse information a projection reads: the pieces' own where they carry
+# one (`.ctScoreStatedPieces()`), else that of their summed Hessian.
+.ctScoreIinv <- function(pieces) if (!is.null(pieces$Iinv)) pieces$Iinv else
+  .ctScorePinv(-pieces$Hsum)$inv
+
+# The fitted model with the stated population means of `stated` estimated, at
+# their stated values (`spec$anchors$raw`), which is the fit: prepared as the
+# fit was (`.ctScoreExtendedSpec()`), for the block tests of effects whose mean
+# the fit states. The modes it takes are held for as long as `hold`, the
+# caller's frame, runs.
+.ctScoreStatedSpec <- function(fit, est, stated, cores = 2L, hold = parent.frame()) {
+  base <- .ctFitBaseModel(fit)
+  anchors <- fit$model_spec$anchors
+  if (is.null(base) || !all(stated %in% anchors$param)) stop("the stated means of ",
+    paste(stated, collapse = ', '), " are not in this fit's model.", call. = FALSE)
+  model <- base
+  keep <- setdiff(names(base$fixedpopmeans), stated)
+  model$fixedpopmeans <- if (length(keep)) base$fixedpopmeans[keep] else NULL
+  model$fixedpopmeansraw <- NULL
+  .ctScoreExtendedSpec(fit, est, model, stated, 'effects with a stated mean', cores,
+    hold = hold, at = stats::setNames(as.numeric(anchors$raw[match(stated,
+      anchors$param)]), stated))
+}
+
+# The block tests' pieces on the model with stated means estimated (`ext`):
+# each subject's scores there, along the block directions and the effects'
+# coordinates (`.ctScorePieces()`), projected on the fit's own parameters
+# alone -- the estimated means are held at their stated values under the
+# null, as the fit holds them -- through the fit's information (`pieces`), or
+# where the extension is read one-step or on the layer, its own along the
+# fit's parameters.
+.ctScoreStatedPieces <- function(ext, pieces, within, vdirs, vpairs, cores = 2L) {
+  n2 <- length(ext$x2)
+  info <- if (isTRUE(ext$onestep) || isTRUE(ext$layer))
+    .ctScoreExtendedInformation(ext, cores) else -pieces$Hsum
+  H <- matrix(0, n2, n2)
+  H[ext$theta, ext$theta] <- -info
+  score <- function(x) as.matrix(.ctJuliaGet(ext$module$ctsem_subject_gradients(
+    ext$objective, .ctJuliaVector(as.numeric(x)), prior = TRUE))$scores)
+  bp <- .ctScorePieces(NULL, as.numeric(ext$x2), rows = within, second = within,
+    vdirs = vdirs, vpairs = vpairs, cores = cores, score = score, hessian = H)
+  if (nrow(bp$S) != nrow(pieces$S)) stop("the extended model's units are not the fit's.",
+    call. = FALSE)
+  bp$Iinv <- matrix(0, n2, n2)
+  bp$Iinv[ext$theta, ext$theta] <- .ctScorePinv(info)$inv
+  bp
 }
 
 # The pairs of directions, one from each of two blocks, whose covariance the
@@ -1171,15 +1263,24 @@ ctScoreTest <- function(fit, covariates = NULL,
 # covariances are tested jointly, two sided, by a studentised bootstrap of
 # the subjects' contributions, as the covariates' joint tests are; with the
 # model variance, against chi-square.
+#
+# Both tables' `p_adj` are adjusted together (Benjamini-Hochberg), as one
+# family. `directions` keeps each tested block's whole direction, named by
+# its effects' raw coordinates, for a refit that adds the dimension
+# (ctModelImprove); the table shows its five largest loadings, and `sd` the
+# one-step sd along it.
 .ctScoreBlocks <- function(pieces, ptab, plan, vblock, variance = 'robust',
   nboot = 1999L, nested = NULL) {
+  directions <- list()
   dimension <- do.call(rbind, lapply(plan, function(b) {
     if (length(b$index) <= b$rank) return(NULL)
     d <- .ctScoreDimension(pieces, ptab, b$index, nboot)
+    if (!is.null(d)) directions[[b$name]] <<- d$direction
     top <- if (is.null(d)) character() else utils::head(names(d$direction), 5L)
     data.frame(block = b$name, rank = b$rank, effects = length(b$index),
       lambda = if (is.null(d)) NA_real_ else d$lambda,
       p = if (is.null(d)) NA_real_ else d$p,
+      sd = if (is.null(d)) NA_real_ else d$sd,
       direction = if (is.null(d)) NA_character_ else
         paste0(top, ' ', signif(d$direction[top], 2), collapse = ', '),
       stringsAsFactors = FALSE)
@@ -1188,7 +1289,7 @@ ctScoreTest <- function(fit, covariates = NULL,
   if (NROW(pieces$vpairs)) {
     S <- pieces$S
     n <- nrow(S)
-    Iinv <- .ctScorePinv(-pieces$Hsum)$inv
+    Iinv <- .ctScoreIinv(pieces)
     V <- pieces$vdirs
     Hd <- function(a) {
       M <- pieces$Hv[, a, , drop = TRUE]
@@ -1247,7 +1348,10 @@ ctScoreTest <- function(fit, covariates = NULL,
         p = NA_real_, note = 'in the model: one block loads on every effect of the other',
         stringsAsFactors = FALSE)
     })))
-  list(dimension = dimension, covariance = covariance)
+  adj <- .ctScoreBH(c(dimension$p, covariance$p))
+  if (NROW(dimension)) dimension$p_adj <- adj[seq_len(nrow(dimension))]
+  if (NROW(covariance)) covariance$p_adj <- adj[NROW(dimension) + seq_len(nrow(covariance))]
+  list(dimension = dimension, covariance = covariance, directions = directions)
 }
 
 # Whether a projected contribution is one the fitted scores already determine:
@@ -1983,7 +2087,7 @@ ctScoreTest <- function(fit, covariates = NULL,
 # caller's frame, runs (`.ctJuliaHoldModes()`), so that every difference
 # reads one function, the one the estimate maximises.
 .ctScoreExtendedSpec <- function(fit, est, model, names_new, label, cores = 2L,
-  hold = parent.frame()) {
+  hold = parent.frame(), at = NULL) {
   spec <- fit$model_spec
   args <- .ctScoreNamedLevels(fit, .ctFitReplayArgs(fit))
   args$model <- model
@@ -2007,6 +2111,9 @@ ctScoreTest <- function(fit, covariates = NULL,
       collapse = ', '), call. = FALSE)
   x2 <- setNames(numeric(length(nm2)), nm2)
   x2[nm1] <- est
+  # New coordinates at zero, or where `at` says: a stated mean freed sits at
+  # its stated value.
+  if (length(at)) x2[names(at)] <- at
   # Where the extension's Laplace term is not the fit's -- the fit's filter
   # integrates its intercept-type effects exactly given the others, and the
   # extension's terms read the state, so its filter cannot -- both are taken
@@ -2043,7 +2150,7 @@ ctScoreTest <- function(fit, covariates = NULL,
   # where it is read. Before this, a four-latent fit with priors refused at 40
   # terms x -0.919 = -36.76, which read as a model the rebuild had got wrong.
   priored <- isTRUE(fit$args$resolved$priors)
-  offset <- if (priored) length(names_new) * stats::dnorm(0, log = TRUE) else 0
+  offset <- if (priored) sum(stats::dnorm(x2[names_new], log = TRUE)) else 0
   if (!isTRUE(abs(ev$value - value1 - offset) <= 1e-6 * max(1, abs(value1)))) stop(
     "The extended model does not reproduce the fit at zero (log likelihood ",
     signif(ev$value - offset, 8), " against ", signif(value1, 8), "), so its scores are ",
