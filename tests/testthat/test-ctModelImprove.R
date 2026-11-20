@@ -533,3 +533,93 @@ test_that("a rank change starts at the best low-rank covariance, applies last an
   expect_identical(vapply(out$kept, `[[`, '', 'label'), c('a', rank$label, 'b'))
   expect_true(all(grepl(rank$label, tried, fixed = TRUE)))
 })
+
+test_that("a reduced-rank level's blocks are given a dimension, or share theirs", {
+  x <- .score_blocks_fit()
+  fit <- x$fit
+  model <- ctsem:::.ctFitBaseModel(fit)
+  replay <- ctsem:::.ctFitReplayArgs(fit)
+  # The block tests' result, as ctScoreTest() gives it: the items need a
+  # second dimension, and say their dimension covaries with the level.
+  dir <- c(mm2 = 1, mm1 = 0.3, mm4 = -0.8, mm3 = 0.4)
+  bt <- list(dimension = data.frame(block = 'items', rank = 1L, effects = 4L, lambda = 9,
+      p = 0.001, sd = 0.5, direction = '', p_adj = 0.002, stringsAsFactors = FALSE),
+    covariance = data.frame(blocks = 'dynamics x items', LM = 9, df = 1L, p = 0.003,
+      p_adj = 0.003, stringsAsFactors = FALSE), directions = list(items = dir))
+  props <- ctsem:::.ctImproveBlockProposals(bt, fit, replay, 0.05)
+  expect_identical(vapply(props, `[[`, '', 'key'), c('blockdim:items', 'blockcov:dynamics:items'))
+  # Shared, the items' one dimension reaches the level (one loading) rather
+  # than the level's reaching four items.
+  shared <- props[[2]]$edit(model, x$data, NULL, list())$args$popblocks
+  expect_identical(shared$items$effects, c('MANIFESTMEANS', 'lev'))
+  expect_identical(shared$dynamics$effects, 'lev')
+  e <- props[[1]]$edit(model, x$data, NULL, list())
+  expect_equal(e$args$popblocks$items$rank, 2)
+  expect_equal(e$args$popblocks$dynamics$rank, 1)
+  # The refit starts at the fit's population covariance plus the test's
+  # direction at its sd, also where the raised block's dimensions come first
+  # and the others' are numbered after them, which a match by name misread.
+  popcov <- function(spec, x) as.matrix(ctsem:::.ctBackendJuliaValue(
+    ctsem:::.ctJuliaModule(spec$project)$ctsem_laplace_popcov(ctsem:::.ctJuliaObjective(spec),
+    ctsem:::.ctJuliaNumericVector(x), 1L)))
+  lv <- fit$model_spec$laplace$levels[[1]]
+  P1 <- popcov(fit$model_spec, ctsem:::.ctFitRawEstimate(fit))
+  dimnames(P1) <- list(lv$param, lv$param)
+  v <- stats::setNames(numeric(nrow(P1)), rownames(P1))
+  v[names(dir)] <- 0.5 * dir
+  est <- stats::setNames(ctsem:::.ctFitRawEstimate(fit), ctsem:::.ctFitRawParNames(fit))
+  for (order in list(c('dynamics', 'items'), c('items', 'dynamics'))) {
+    args <- e$args
+    args$popblocks <- args$popblocks[order]
+    prep <- ctsem:::.ctImproveSpec(fit, e$model, e$data, 1L, args)
+    init <- stats::setNames(numeric(length(prep$names)), prep$names)
+    shared <- intersect(names(est), prep$names)
+    init[shared] <- est[shared]
+    start <- ctsem:::.ctImproveBlockStart(fit, prep$spec, prep$names,
+      attr(props[[1]]$start, 'blocks'))
+    init[names(start)] <- start
+    lv2 <- prep$spec$laplace$levels[[1]]
+    expect_equal(lv2$rank, 3L)
+    P2 <- popcov(prep$spec, init)
+    dimnames(P2) <- list(lv2$param, lv2$param)
+    expect_equal(P2[rownames(P1), colnames(P1)] - P1, outer(v, v), tolerance = 1e-10)
+  }
+  refit <- ctsem:::.ctImproveRefit(fit, e$model, e$data, 1L, props[[1]]$start, e$args)
+  verdict <- ctsem:::.ctImproveCompare(fit, refit, 'LR', 0.05, 1L)
+  expect_true(verdict$accept)
+  expect_gt(verdict$dloglik, 50)
+  # A parameter a change lets vary joins the block of the effects it is to
+  # covary with, a block of full rank gaining a dimension for it; one a block
+  # takes already (by its matrix) changes nothing.
+  j <- model
+  j$pars$indvarying[j$pars$param %in% 'dr'] <- TRUE
+  joined <- ctsem:::.ctImproveBlockJoin(j, replay$popblocks, 'dr', 'lev')$popblocks
+  expect_identical(joined$dynamics$effects, c('lev', 'dr'))
+  expect_equal(joined$dynamics$rank, 2)
+  expect_identical(joined$items, replay$popblocks$items)
+  expect_null(ctsem:::.ctImproveBlockJoin(model, replay$popblocks, 'mm2'))
+  # Arguments merged replace a list of blocks rather than merging by name.
+  m <- ctsem:::.ctImproveMergeArgs(list(popblocks = list(list(rank = 1, effects = 'a')),
+    cores = 2), list(popblocks = list(block1 = list(rank = 2, effects = 'a'))))
+  expect_identical(m$popblocks, list(block1 = list(rank = 2, effects = 'a')))
+  expect_equal(m$cores, 2)
+  # The echelon rotation keeps L L', also where the leading rows are zero.
+  set.seed(1)
+  for (lead in c(FALSE, TRUE)) {
+    L <- matrix(stats::rnorm(15), 5, 3)
+    if (lead) L[1:2, ] <- 0
+    G <- ctsem:::.ctImproveGivens(L)
+    expect_equal(tcrossprod(G), tcrossprod(L), tolerance = 1e-12)
+    expect_true(all(G[upper.tri(G)] == 0))
+  }
+  # Without blocks the level's rank goes up by one, as a rank change.
+  flat <- list(model_spec = list(laplace = list(levels = list(list(load_index = 1:3,
+    rank = 1L, param = c('a', 'b', 'c'))))))
+  bt$dimension$block <- 'level'
+  bt$directions <- list(level = c(a = 1, b = 0.5))
+  rk <- ctsem:::.ctImproveBlockProposals(bt, flat, list(), 0.05)
+  expect_length(rk, 1L)
+  expect_identical(rk[[1]]$family, 'rank')
+  expect_identical(rk[[1]]$key, 'rank:2')
+  expect_equal(attr(rk[[1]]$start, 'blocks')[[1]], c(a = 0.5, b = 0.25))
+})
