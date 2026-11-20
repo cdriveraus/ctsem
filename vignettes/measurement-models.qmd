@@ -82,9 +82,9 @@ the mean by $v/2$, which `MANIFESTMEANS` absorbs, and multiplies the variance by
 factor nothing else in the model can produce. It is the only parameter in a
 ctsem model that changes a count's variance-to-mean ratio. If it is left out,
 `DIFFUSION` absorbs any overdispersion, and `DIFFUSION` is usually a parameter
-of interest. Only the diagonal is used. Each count is scored on its own, so it
-cannot have correlated measurement error, and `ctFit()` fixes free
-off-diagonal entries to zero.
+of interest. For counts and censored indicators only the diagonal is used.
+Each is scored on its own, so it cannot have correlated measurement error, and
+`ctFit()` stops with an error if an off-diagonal entry is not zero.
 
 **The scale of the latent process has to be fixed somewhere.** With a Gaussian
 indicator you can fix a loading or fix `DIFFUSION`. With only binary or ordinal
