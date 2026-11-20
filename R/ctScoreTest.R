@@ -159,6 +159,14 @@
 #'   the mean. To act on a result, add the covariate to the data and to
 #'   \code{TIpredNames}, and refit.
 #'
+#'   The model's own time independent predictors are tested as well, each on
+#'   the parameters it does not yet act on, using the values the fit read.
+#'   Their results have \code{joint$inmodel} set to \code{TRUE}. A predictor
+#'   added with an effect on one parameter may act on another too, and that
+#'   can show only once other changes are made. To act on a result, set the
+#'   predictor's effect on that parameter (\code{<predictor>_effect} in
+#'   \code{model$pars}) and refit. \code{\link{ctModelImprove}} does that.
+#'
 #'   \code{form = 'threshold'} tests for a step at an unknown cut instead. The
 #'   joint test is computed at each cut from the 15th to the 85th percentile,
 #'   and the largest (Andrews, 1993), which is the split a score based tree
@@ -298,8 +306,9 @@
 #'   \code{'covariates'}, \code{'statedependence'}, \code{'volatility'},
 #'   \code{'fixed'}, \code{'level'} and \code{'instability'}. By default all
 #'   but \code{'instability'}. Covariates are tested only when
-#'   \code{covariates} is given, and levels only where the model has a random
-#'   intercept.
+#'   \code{covariates} is given or \code{'covariates'} is asked for (then the
+#'   model's own predictors alone), and levels only where the model has a
+#'   random intercept.
 #' @param form How a covariate enters: \code{'auto'} (indicators for a factor,
 #'   character or logical covariate, linear otherwise), \code{'linear'},
 #'   \code{'spline'}, \code{'factor'} or \code{'threshold'} (a step at an
@@ -340,7 +349,8 @@
 #'   per pair of blocks, and \code{directions}, the direction found for each
 #'   tested block),
 #'   \code{covariates} (one element per covariate, each a list of its
-#'   \code{joint} test and a data frame \code{parameters}),
+#'   \code{joint} test and a data frame \code{parameters}, including the
+#'   model's own predictors, marked by \code{joint$inmodel}),
 #'   \code{statedependence} (a list of \code{terms}, a data frame, and
 #'   \code{joint}, the tests per equation and overall), \code{volatility}
 #'   (the same, for the innovation sds), \code{fixed} (a list of \code{cells}
@@ -422,10 +432,13 @@ ctScoreTest <- function(fit, covariates = NULL,
   # Stability needs a dual pass of the filter per eight parameters (on the
   # Laplace route one per truncated record), so it is run when asked for.
   if (!testsgiven) tests <- setdiff(tests, 'instability')
+  # Asked for without covariates, the family tests the model's own predictors
+  # on the parameters they do not act on (`.ctScoreOwnPredictors()`).
   if ('covariates' %in% tests && is.null(covariates)) {
-    if (testsgiven) stop("tests includes 'covariates' but no covariates were ",
-      "given.", call. = FALSE)
-    tests <- setdiff(tests, 'covariates')
+    if (testsgiven && !length(.ctScoreOwnNames(fit))) stop("tests includes ",
+      "'covariates' but no covariates were given, and the model has no time ",
+      "independent predictors of its own.", call. = FALSE)
+    if (!testsgiven) tests <- setdiff(tests, 'covariates')
   }
   if (!is.null(covariates) && !'covariates' %in% tests && testsgiven)
     message("covariates given but not tested: tests does not include 'covariates'.")
@@ -485,7 +498,7 @@ ctScoreTest <- function(fit, covariates = NULL,
     # a wrong id column or a non-numeric threshold is the caller's to fix, and
     # stops the call, where a family the model cannot support does not.
     bases <- NULL
-    if (length(cov)) {
+    if (length(cov) && !is.null(covariates)) {
       values <- .ctScoreCovariateValues(fit, covariates)
       forms <- rep_len(form, length(values))
       bases <- Map(function(z, f, name) {
@@ -496,7 +509,13 @@ ctScoreTest <- function(fit, covariates = NULL,
         } else .ctScoreBasis(z, f, df, name)
       }, values, forms, names(values))
     }
-    dirs <- if (reduced && length(cov)) .ctScoreScaleDirections(est, ptab, parameters) else NULL
+    # The model's own predictors, each on the model parameters among these it
+    # does not act on; without covariates given, those parameters are all the
+    # family tests.
+    own <- if (length(cov)) .ctScoreOwnPredictors(fit, ptab, cov) else NULL
+    if (is.null(covariates)) cov <- sort(unique(unlist(lapply(own, `[[`, 'targets'))))
+    dirs <- if (reduced && length(cov) && !is.null(covariates))
+      .ctScoreScaleDirections(est, ptab, parameters) else NULL
     # Each heterogeneity test takes in its covariances with the initial means
     # and the effects already varying (.ctScoreExisting): their rows, and a
     # pass along each tested parameter and effect together for the mixed
@@ -572,9 +591,20 @@ ctScoreTest <- function(fit, covariates = NULL,
     })
     if (length(cov)) attempt('covariates', {
       items <- .ctScoreItems(pieces, ptab, cov)
-      out$covariates <- Map(function(G, name) if (is.list(G) && !is.null(G$threshold))
+      if (length(bases)) out$covariates <- Map(function(G, name)
+        if (is.list(G) && !is.null(G$threshold))
         .ctScoreThreshold(pieces, items, G$threshold, name, variance, nboot) else
         .ctScoreCovariate(pieces, items, G, variance, nboot), bases, names(bases))
+      itemnames <- vapply(items, `[[`, '', 'name')
+      for (name in names(own)) {
+        G <- tryCatch(.ctScoreBasis(own[[name]]$values, 'linear', df, name),
+          error = function(e) NULL)
+        if (is.null(G)) next
+        res <- .ctScoreCovariate(pieces, items[match(ptab$name[own[[name]]$targets],
+          itemnames)], G, variance, nboot)
+        res$joint$inmodel <- TRUE
+        out$covariates[[name]] <- res
+      }
     })
   }
   extended <- intersect(tests, c('statedependence', 'volatility', 'fixed'))
@@ -1394,7 +1424,7 @@ ctScoreTest <- function(fit, covariates = NULL,
 }
 
 # Covariate values per subject, in the fit's subject order, as a named list.
-.ctScoreCovariateValues <- function(fit, covariates) {
+.ctScoreCovariateValues <- function(fit, covariates, own = FALSE) {
   covariates <- as.data.frame(covariates, stringsAsFactors = FALSE)
   idname <- .ctFitModelObject(fit)$subjectIDname
   ids <- .ctFitIdMap(fit)$original
@@ -1402,9 +1432,10 @@ ctScoreTest <- function(fit, covariates = NULL,
   vars <- setdiff(names(covariates), idcol)
   if (!length(vars)) stop("covariates has no columns besides the id.", call. = FALSE)
   inmodel <- intersect(vars, .ctFitModelObject(fit)$TIpredNames)
-  if (length(inmodel)) stop("Already in the model as time independent ",
-    "predictors: ", paste(inmodel, collapse = ', '), ". Test covariates the ",
-    "model does not contain.", call. = FALSE)
+  if (length(inmodel) && !own) stop("Already in the model as time independent ",
+    "predictors: ", paste(inmodel, collapse = ', '), ". Those are tested on ",
+    "the parameters they do not act on without being given; give covariates ",
+    "the model does not contain.", call. = FALSE)
   if (is.na(idcol)) {
     if (nrow(covariates) != length(ids)) stop("covariates needs a '", idname,
       "' column, or exactly one row per subject in the fit's subject order (",
@@ -1429,9 +1460,44 @@ ctScoreTest <- function(fit, covariates = NULL,
   })
   names(out) <- vars
   missingids <- sum(!as.character(ids) %in% key)
-  if (missingids) message(missingids, " subjects have no row in covariates and ",
-    "contribute at the covariates' means.")
+  if (missingids && !own) message(missingids, " subjects have no row in ",
+    "covariates and contribute at the covariates' means.")
   out
+}
+
+# The model's own time independent predictors that the covariates family
+# tests: every one but the columns of a smooth term (`s()`), whose shape is
+# penalised and whose effects come as a set.
+.ctScoreOwnNames <- function(fit) {
+  model <- .ctFitModelObject(fit)
+  setdiff(model$TIpredNames, unlist(lapply(model$TIsmooths, `[[`, 'columns')))
+}
+
+# Each of the model's own predictors (`.ctScoreOwnNames()`) with the
+# parameters among `cov` it does not act on (`targets`, raw positions of model
+# parameters; the specification's `ti_effects` says what it acts on) and its
+# value per subject as the fit's data give it. Effects on a population sd
+# are left out: a predictor acts on a parameter's value. Only predictors with
+# a target are returned.
+.ctScoreOwnPredictors <- function(fit, ptab, cov) {
+  names <- .ctScoreOwnNames(fit)
+  if (!length(names)) return(NULL)
+  model <- .ctFitModelObject(fit)
+  te <- fit$model_spec$ti_effects
+  candidates <- cov[ptab$kind[cov] == 'model']
+  targets <- lapply(names, function(z) {
+    acts <- if (NROW(te)) as.integer(te$parameter[as.integer(te$predictor) ==
+      match(z, model$TIpredNames)]) else integer()
+    setdiff(candidates, acts)
+  })
+  keep <- lengths(targets) > 0L
+  if (!any(keep)) return(NULL)
+  names <- names[keep]
+  data <- as.data.frame(.ctFitLongData(fit))
+  values <- .ctScoreCovariateValues(fit, data[, c(model$subjectIDname, names),
+    drop = FALSE], own = TRUE)
+  stats::setNames(Map(function(v, t) list(values = v, targets = t), values[names],
+    targets[keep]), names)
 }
 
 # The basis a covariate enters with, centred, missing values at the mean
@@ -2591,7 +2657,8 @@ print.ctScoreTest <- function(x, digits = 3, top = 10, ...) {
   }
   for (c in x$covariates) {
     j <- c$joint
-    cat("\nCovariate ", j$covariate, " (", j$form,
+    cat("\nCovariate ", j$covariate, " (", if (isTRUE(j$inmodel))
+      "in the model, on the parameters it does not act on" else j$form,
       if (!is.null(j$cut)) paste0(", above ", signif(j$cut, digits)), "): joint LM = ",
       signif(j$LM, digits), ", df = ", j$df, ", p = ", signif(j$p, digits), "\n", sep = "")
     fmt(c$parameters[, withclass(c$parameters, c('parameter', 'estimate', 'se',

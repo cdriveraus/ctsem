@@ -28,9 +28,11 @@ skip_on_32bit()
     if (scenario == 'level') a <- -0.5 * exp(0.6 * lev)
     if (scenario == 'het') a <- -0.5 * exp(0.6 * stats::rnorm(1))
     if (scenario == 'cov') a <- -0.5 * exp(0.3 * z[i])
+    # 'cov2': z acts on the drift twice as strongly, with no draws of its own.
+    if (scenario == 'cov2') a <- -0.5 * exp(0.6 * z[i])
     if (scenario == 'sdep') b <- 0.4
     mm <- if (scenario == 'level') lev else
-      stats::rnorm(1) + if (scenario == 'cov') 0.8 * z[i] else 0
+      stats::rnorm(1) + if (scenario %in% c('cov', 'cov2')) 0.8 * z[i] else 0
     times <- cumsum(c(0, stats::rexp(nobs - 1L, 1)))
     x <- stats::rnorm(1, 0, sigma / sqrt(-2 * a))
     xs <- numeric(nobs); xs[1] <- x
@@ -357,6 +359,58 @@ test_that("results are reproducible and leave the caller's random numbers alone"
   b <- suppressMessages(ctScoreTest(x$fit, covariates = unique(x$data[, c('id', 'w')]),
     tests = 'covariates', cores = 1, verbose = FALSE, nboot = 199))
   expect_identical(a$covariates$w$joint$p, b$covariates$w$joint$p)
+})
+
+test_that("a predictor the model has is tested on the parameters it does not act on", {
+  # z shifts the manifest mean and the drift; the model has it on the mean
+  # alone, as a search leaves it after adding it there.
+  d <- .score_data('cov2')
+  m <- suppressMessages(ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
+    LAMBDA = matrix(1), TIpredNames = 'z', tipredDefault = FALSE,
+    MANIFESTMEANS = matrix(ctPar('mm_Y1', indvarying = TRUE, tipreds = 'z'))))
+  fit <- fit_cached('scoretest own predictor', suppressMessages(ctFit(
+    d[, c('id', 'time', 'Y1', 'z')], m, backend = 'julia', cores = 1, verbose = 0)))
+  # The values are the ones the fit read: on the parameter z acts on, z times
+  # that parameter's score lies in the span of the fitted scores (the mean's
+  # and the effect's), so its projected contribution vanishes.
+  est <- ctsem:::.ctFitRawEstimate(fit)
+  ptab <- ctsem:::.ctScoreParameterTable(fit)
+  own <- ctsem:::.ctScoreOwnPredictors(fit, ptab, which(ptab$kind == 'model'))
+  expect_identical(names(own), 'z')
+  mm <- which(ptab$name == 'mm_Y1')
+  expect_false(mm %in% own$z$targets)
+  expect_true(which(ptab$name == 'drift_eta1') %in% own$z$targets)
+  S <- ctsem:::.ctBackendScoreMatrix(fit, est)
+  G <- ctsem:::.ctScoreBasis(own$z$values, 'linear', 3, 'z')
+  b <- as.integer(fit$model_spec$ti_effects$coefficient)
+  X <- G[, 1] * S[, mm]
+  expect_lt(max(abs(stats::lm.fit(S[, c(mm, b)], X)$residuals)), 1e-6 * max(abs(X)))
+
+  st <- suppressMessages(ctScoreTest(fit, tests = 'covariates', cores = 1, nboot = 199,
+    verbose = FALSE))
+  expect_null(st$info$errors)
+  z <- st$covariates$z
+  expect_true(z$joint$inmodel)
+  expect_false('mm_Y1' %in% z$parameters$parameter)
+  dr <- z$parameters[z$parameters$parameter == 'drift_eta1', ]
+  expect_lt(dr$p_adj, 0.05)
+  expect_lt(dr$estimate, 0)
+  expect_true(all(z$parameters$p_adj[z$parameters$parameter != 'drift_eta1'] > 0.05))
+  expect_output(print(st), 'in the model, on the parameters it does not act on')
+
+  # A search proposes the further effect and keeps it; with no covariates
+  # left to offer, its screen still tests the model's own.
+  props <- ctsem:::.ctImproveProposals(st, ctsem:::.ctFitBaseModel(fit), 0.05, fit)
+  expect_identical(vapply(props, `[[`, '', 'label'), 'z also as a predictor of drift_eta1')
+  e <- props[[1]]$edit(ctsem:::.ctFitBaseModel(fit), d, NULL, list())
+  p <- e$model$pars
+  expect_identical(p$z_effect[p$param %in% c('drift_eta1', 'mm_Y1')], c('TRUE', 'TRUE'))
+  expect_true(all(p$z_effect[!p$param %in% c('drift_eta1', 'mm_Y1')] %in% 'FALSE'))
+  refit <- ctsem:::.ctImproveRefit(fit, e$model, e$data, 1L, NULL, e$args)
+  expect_true(ctsem:::.ctImproveCompare(fit, refit, 'LR', 0.05, 1L)$accept)
+  expect_lt(summary(refit)$tipreds['tip_z_drift_eta1', 'mean'], 0)
+  screen <- ctsem:::.ctImproveScreen(fit, NULL, 'covariates', 'auto', 1L)
+  expect_true(screen$covariates$z$joint$inmodel)
 })
 
 test_that("what cannot be tested is refused by name", {

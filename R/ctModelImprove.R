@@ -41,7 +41,8 @@
 #'     \code{T0MEANS} parameters. For a fixed \code{MANIFESTMEANS} cell, a
 #'     parameter that varies around the fixed value as its stated mean.}
 #'   \item{covariates}{A covariate added as a time independent predictor, with
-#'     effects on the parameters its tests pick out.}
+#'     effects on the parameters its tests pick out. For a predictor the model
+#'     already has, effects on further parameters its tests pick out.}
 #'   \item{statedependence}{A term \code{d * eta_k * eta_m} in a latent's
 #'     drift, written into \code{CINT} with \code{d} a \code{PARS} parameter,
 #'     so that a drift coefficient varies with a state.}
@@ -596,7 +597,12 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
 .ctImproveScreen <- function(current, available, relax, form, cores) {
   tests <- intersect(relax, c('heterogeneity', 'covariates', 'statedependence', 'volatility',
     'fixed', 'level'))
-  if (is.null(available)) tests <- setdiff(tests, 'covariates')
+  # The model's own predictors are screened for effects on further
+  # parameters, given or not: a covariate the search added is not offered
+  # again, and its other effects would otherwise show only as variation
+  # between subjects.
+  if (is.null(available) && !length(.ctScoreOwnNames(current)))
+    tests <- setdiff(tests, 'covariates')
   if (!length(tests)) return(NULL)
   suppressMessages(ctScoreTest(current, covariates = available, tests = tests, form = form,
     cores = cores, verbose = FALSE))
@@ -1252,6 +1258,24 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
     pt <- pt[!grepl('^popsd_|^scale\\(', pt$parameter), , drop = FALSE]
     pars <- pt$parameter[pt$p_adj < alpha]
     if (!length(pars)) next
+    # A predictor the model has: its effects on these parameters as well.
+    if (isTRUE(cv$joint$inmodel) && z %in% model$TIpredNames) {
+      out[[length(out) + 1L]] <- list(key = paste0('cov:', z, ':', paste(sort(pars),
+        collapse = ',')), family = 'covariates', label = paste0(z,
+        ' also as a predictor of ', paste(pars, collapse = ', ')), p = cv$joint$p,
+        rank = stats::pchisq(cv$joint$LM, cv$joint$df, lower.tail = FALSE),
+        edit = local({ z <- z; pars <- pars
+          function(model, data, covs, args = list()) {
+            if (!z %in% model$TIpredNames) stop(z, ' is no longer in the model')
+            col <- paste0(z, '_effect')
+            rows <- .ctParamRows(model, pars)
+            if (is.null(model$pars[[col]])) model$pars[[col]] <- 'FALSE'
+            model$pars[[col]] <- as.character(model$pars[[col]])
+            model$pars[[col]][rows[!is.na(rows)]] <- 'TRUE'
+            list(model = model, data = data)
+          } }))
+      next
+    }
     # A column name the model can take: the sign and point as letters, since
     # 'age_above_-0.297' was not found in the data it had just been added to.
     zname <- if (is.null(cut)) z else paste0(z, '_above_',
