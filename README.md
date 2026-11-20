@@ -184,6 +184,11 @@ Options follow the parameter’s name, such as `tipreds` for covariate
 effects or `indvarying` for random effects; `ctPar()` writes these
 strings.
 
+The same models can be written in lavaan, Mplus or brms style syntax
+with `ctModelLavaan()`, `ctModelMplus()` and `ctModelFormula()`, see the
+[model syntax
+vignette](https://cdriveraus.github.io/ctsem/articles/model-syntax.html).
+
 ``` r
 summary(f)$tipreds
 #>                  mean    sd   2.5%   50% 97.5%  mode     z
