@@ -84,8 +84,10 @@ An object of class \code{ctScoreTest}, a list with
   \code{heterogeneity} (a data frame, one row per parameter or fixed
   \code{MANIFESTMEANS} cell), \code{dimension} (the largest eigenvalue, its
   p-value and the direction, when two or more parameters are tested),
-  \code{blocks} (on a reduced rank level, \code{dimension}, a row per
-  block, and \code{covariance}, a row per pair of blocks),
+  \code{blocks} (on a reduced rank level, \code{dimension}, a row per block
+  with the one-step \code{sd} along its direction, \code{covariance}, a row
+  per pair of blocks, and \code{directions}, the direction found for each
+  tested block),
   \code{covariates} (one element per covariate, each a list of its
   \code{joint} test and a data frame \code{parameters}),
   \code{statedependence} (a list of \code{terms}, a data frame, and
@@ -180,16 +182,22 @@ relaxations that matter before interpreting their sizes.
 
   On a reduced rank level, \code{blocks} tests what its blocks of shared
   dimensions (\code{popblocks}, or without them the whole level as one
-  block) leave out. \code{blocks$dimension} tests, within each block with
-  more effects than dimensions, whether the block needs another shared
-  dimension, with the block's fitted loadings projected out.
-  \code{blocks$covariance} tests, for each pair of blocks, the covariances
-  between their dimensions, which the model holds at zero. An example is
-  whether a response style shared by an item's thresholds covaries with
-  the dynamic level. A pair in which one block loads on every effect of the
-  other already has these covariances in the model, and is listed with a
-  note but not tested. Both are calibrated by resampling subjects. Effects
-  whose population mean is stated are left out of both.
+  block) leave out, beside the own variances. \code{blocks$dimension}
+  tests, within each block with more effects than dimensions, whether the
+  block needs another shared dimension, with the block's fitted loadings
+  projected out. The rows for single parameters, which test own variances,
+  cannot show this. \code{blocks$covariance} tests, for each pair of
+  blocks, the covariances between their dimensions, which the model holds
+  at zero, with a joint two sided score test. An example is whether a
+  response style shared by an item's thresholds covaries with the dynamic
+  level. A pair in which one block loads on every effect of the other
+  already has these covariances in the model, and is listed with a note but
+  not tested. Both are calibrated by resampling subjects and adjusted
+  together (\code{p_adj}). An effect whose population mean is stated is
+  tested through the model with that mean free and set to its stated value,
+  and only the fit's own parameters are projected out.
+  \code{\link{ctModelImprove}} acts on both, adding a dimension to a block
+  or letting blocks share dimensions.
 }
 
 \section{Covariates}{
@@ -266,18 +274,22 @@ relaxations that matter before interpreting their sizes.
   dynamics or of the error variances depends on a subject's level, where
   the level is a random intercept. For each free \code{DRIFT},
   \code{DIFFUSION} and \code{MANIFESTVAR} parameter that does not vary over
-  subjects, and each \code{MANIFESTMEANS} or \code{CINT} intercept that
-  does, it tests a term \code{g * intercept} added to the parameter, at
-  \code{g = 0}. When subjects' levels are in the intercepts, the latent
-  states are deviations from them, so the state dependence and volatility
-  tests only see dependence on the deviation. A parameter that depends on a
-  subject's usual level, such as persistence that differs between people
-  who are usually high and those usually low, otherwise shows only as
-  heterogeneity. \code{estimate} is the one-step change in the parameter,
-  on its own scale, per unit of the intercept. To act on a result, let the
-  parameter vary over subjects, so its correlation with the intercept is
-  estimated. \code{\link{ctModelImprove}} does this. A model with no random
-  intercept has nothing to test.
+  subjects, including a \code{PARS} parameter that those matrices read in
+  an expression, and each \code{MANIFESTMEANS} or \code{CINT} intercept
+  that does, it tests a term \code{g * intercept} added to the parameter,
+  at \code{g = 0}, wherever the model reads the parameter. When subjects'
+  levels are in the intercepts, the latent states are deviations from them,
+  so the state dependence and volatility tests only see dependence on the
+  deviation. A parameter that depends on a subject's usual level, such as
+  persistence or innovation size that differs between people who are
+  usually high and those usually low, otherwise shows only as
+  heterogeneity, with no direction. These terms test that direction. The
+  score is taken from the extended model's gradient, averaged over each
+  subject's posterior for the intercept. \code{estimate} is the one-step
+  change in the parameter, on its own scale, per unit of the intercept. To
+  act on a result, let the parameter vary over subjects, so its correlation
+  with the intercept is estimated. \code{\link{ctModelImprove}} does this.
+  A model with no random intercept has nothing to test.
 }
 
 \section{Fixed cells}{

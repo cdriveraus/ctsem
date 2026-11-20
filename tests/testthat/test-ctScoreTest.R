@@ -288,6 +288,45 @@ test_that("a parameter that depends on the subject's level is found by the level
   expect_null(st1$info$errors)
 })
 
+test_that("a PARS parameter the dynamics read through an expression has level terms", {
+  # The same model with its drift written as a PARS parameter that the drift
+  # cell reads in an expression: the term shifts the parameter where it is
+  # read, so its test is the plain parameter's.
+  x <- .score_fit('level', seed = 4L)
+  m <- suppressMessages(ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
+    LAMBDA = matrix(1), DRIFT = matrix('a_eta * 1'),
+    PARS = matrix('a_eta|-(1e-06 + 2 * log1p_exp(-(2 * param)))')))
+  f <- fit_cached('scoretest level drift in PARS', suppressMessages(ctFit(
+    x$data[, c('id', 'time', 'Y1')], m, backend = 'julia', cores = 1, verbose = 0)))
+  st <- suppressMessages(ctScoreTest(f, tests = 'level', cores = 1, verbose = FALSE))
+  plain <- suppressMessages(ctScoreTest(x$fit, tests = 'level', cores = 1, verbose = FALSE))
+  expect_null(st$info$errors)
+  a <- st$level$terms[st$level$terms$parameter == 'a_eta', ]
+  d <- plain$level$terms[plain$level$terms$parameter == 'drift_eta1', ]
+  expect_equal(nrow(a), 1L)
+  expect_equal(a$LM, d$LM, tolerance = 1e-4)
+  expect_equal(a$estimate, d$estimate, tolerance = 1e-4)
+  # A second process held at a gap from the first reads the shifted
+  # parameter too, and the gap is tested.
+  two <- suppressMessages(ctModel(type = 'ct', manifestNames = c('y1', 'y2'),
+    latentNames = c('eta', 'med'), LAMBDA = matrix(c(1, 0, 1, 1), 2, 2, byrow = TRUE),
+    DRIFT = matrix(c('a_eta', 0, 0, 'a_eta - d_med'), 2, 2, byrow = TRUE),
+    PARS = matrix(c('a_eta|-log1p_exp(-param)', 'd_med|log1p_exp(param)'), ncol = 1),
+    CINT = matrix(c(ctPar('c_eta', indvarying = TRUE), 0)),
+    MANIFESTMEANS = matrix(0, 2, 1)))
+  lm <- ctsem:::.ctScoreLevelModel(two)
+  expect_true(all(c('a_eta', 'd_med') %in% lm$terms$parameter))
+  p <- lm$model$pars
+  ta <- lm$terms$name[lm$terms$parameter == 'a_eta']
+  td <- lm$terms$name[lm$terms$parameter == 'd_med']
+  expect_equal(p$param[p$matrix == 'DRIFT' & p$row == 2 & p$col == 2],
+    paste0('(a_eta + ', ta, ' * c_eta) - (d_med + ', td, ' * c_eta)'))
+  expect_equal(p$param[p$matrix == 'DRIFT' & p$row == 1 & p$col == 1],
+    paste0('a_eta + ', ta, ' * c_eta'))
+  expect_identical(ctsem:::.ctScoreReads(c('a_eta - d', 'a_eta2', 'ba_eta', 'x.a_eta',
+    'a_eta(1)', NA), 'a_eta'), c(TRUE, FALSE, FALSE, FALSE, FALSE, FALSE))
+})
+
 test_that("the level in the latent is the same linear model as the level in the indicator", {
   # With linear dynamics and the same initial distribution -- the deviation
   # from 0, the level from its stationary mean, each with its stationary
@@ -589,41 +628,6 @@ test_that("covariances between blocks are tested only where the blocks leave the
   expect_null(attr(pr, 'nested'))
 })
 
-# A reduced-rank level in blocks, as the hc-wellbeing reanalysis fits them: a
-# subject's level in one block, item intercepts in another named by matrix,
-# one of them about a stated mean. The intercepts are generated from two
-# dimensions, which their block's one does not span, independently of the
-# level.
-.score_blocks_fit <- function() fit_cached('scoretest blocks', {
-  set.seed(21)
-  lam <- c(1, 0.8, 1.2, 1)
-  d <- do.call(rbind, lapply(seq_len(150L), function(i) {
-    times <- cumsum(c(0, stats::runif(9L, 0.5, 1.5)))
-    lev <- stats::rnorm(1, 0, 0.6)
-    f <- stats::rnorm(2)
-    mm <- c(0, 0.5 * f[1], 0.5 * f[1] + 0.5 * f[2], -0.5 * f[2])
-    eta <- numeric(10L); eta[1] <- stats::rnorm(1)
-    for (t in 2:10) {
-      e <- exp(-0.6 * (times[t] - times[t - 1]))
-      eta[t] <- e * eta[t - 1] + (1 - e) * lev / 0.6 +
-        stats::rnorm(1, 0, sqrt((1 - e^2) / 1.2))
-    }
-    y <- sapply(1:4, function(j) lam[j] * eta + mm[j] + stats::rnorm(10L, 0, 0.4))
-    data.frame(id = i, time = times, Y1 = y[, 1], Y2 = y[, 2], Y3 = y[, 3], Y4 = y[, 4])
-  }))
-  m <- suppressMessages(ctModel(type = 'ct', manifestNames = paste0('Y', 1:4),
-    latentNames = 'eta', LAMBDA = matrix(lam), DRIFT = matrix('dr'),
-    CINT = matrix(ctPar('lev', indvarying = TRUE)), DIFFUSION = matrix('q'),
-    MANIFESTMEANS = matrix(c(ctPar('mm1', indvarying = TRUE, mean = 0),
-      ctPar('mm2', indvarying = TRUE), ctPar('mm3', indvarying = TRUE),
-      ctPar('mm4', indvarying = TRUE))), T0MEANS = matrix(0), T0VAR = matrix(1)))
-  blocks <- list(dynamics = list(rank = 1, effects = 'lev'),
-    items = list(rank = 1, effects = 'MANIFESTMEANS'))
-  list(data = d, blocks = blocks, fit = suppressWarnings(suppressMessages(ctFit(d, m,
-    backend = 'julia', intoverpop = 'laplace', popblocks = blocks, cores = 1,
-    verbose = 0))))
-})
-
 test_that("a reduced-rank level's blocks are tested for a further dimension and for covariances", {
   x <- .score_blocks_fit()
   fit <- x$fit
@@ -631,8 +635,27 @@ test_that("a reduced-rank level's blocks are tested for a further dimension and 
   ptab <- ctsem:::.ctScoreParameterTable(fit)
   plan <- ctsem:::.ctScoreBlockPlan(fit, est)
   expect_identical(vapply(plan, `[[`, '', 'name'), c('dynamics', 'items'))
-  # The stated mean has no coordinate, so the items block tests three.
+  # The stated mean has no coordinate in the fit, so the items block reads
+  # it on the model with that mean estimated at its stated value, which
+  # reproduces the fit's scores and curvature on every shared coordinate.
   expect_setequal(ptab$name[plan[[2]]$index], c('mm2', 'mm3', 'mm4'))
+  expect_identical(plan[[2]]$stated, 'mm1')
+  ext <- ctsem:::.ctScoreStatedSpec(fit, est, 'mm1', cores = 1)
+  plan2 <- ctsem:::.ctScoreBlockPlan(fit, est, ext)
+  expect_setequal(names(ext$x2)[plan2[[2]]$index], paste0('mm', 1:4))
+  S1 <- ctsem:::.ctBackendScoreMatrix(fit, est)
+  S2 <- as.matrix(ctsem:::.ctJuliaGet(ext$module$ctsem_subject_gradients(ext$objective,
+    ctsem:::.ctJuliaVector(as.numeric(ext$x2)), prior = TRUE))$scores)
+  expect_equal(S2[, ext$theta], S1, tolerance = 1e-6)
+  H2 <- as.matrix(ctsem:::.ctBackendJuliaValue(ext$module$ctsem_hessian_columns(
+    ext$objective, ctsem:::.ctJuliaNumericVector(as.numeric(ext$x2)),
+    ctsem:::.ctJuliaVector(seq_along(ext$x2)))))
+  V2 <- cbind(plan2[[1]]$dirs, plan2[[2]]$dirs)
+  bp <- ctsem:::.ctScoreStatedPieces(ext, list(S = S1, Hsum = (H2[ext$theta, ext$theta] +
+    t(H2[ext$theta, ext$theta])) / 2), plan2[[2]]$index, V2, matrix(1:2, 1), cores = 1)
+  expect_equal(colSums(bp$Hv[, 2, ]), as.numeric(H2 %*% V2[, 2]), tolerance = 1e-5)
+  # Projected on the fit's parameters alone: the freed mean is held.
+  expect_true(all(bp$Iinv[-ext$theta, ] == 0))
   # The directional pieces are the engine's: summed over subjects, H_i v is
   # the exact Hessian along v, and the mixed second derivative along a pair
   # is the exact Hessian's change along one direction applied to the other.
@@ -656,8 +679,11 @@ test_that("a reduced-rank level's blocks are tested for a further dimension and 
   # give; the level is independent of them.
   dm <- st$blocks$dimension
   expect_identical(dm$block, 'items')
-  expect_equal(dm$effects, 3L)
+  expect_equal(dm$effects, 4L)
   expect_lt(dm$p, 0.05)
+  expect_gt(dm$sd, 0)
+  expect_setequal(names(st$blocks$directions$items), paste0('mm', 1:4))
+  expect_false(is.null(st$blocks$covariance$p_adj))
   cv <- st$blocks$covariance
   expect_identical(cv$blocks, 'dynamics x items')
   expect_equal(cv$df, 1L)

@@ -83,15 +83,26 @@
 #' vary together. Relaxations the score tests cannot tell apart (the same
 #' \code{class}) are not refitted in the same round.
 #'
+#' Where the shared dimensions are in blocks (\code{popblocks} in
+#' \code{\link{ctFit}}), the search acts on \code{\link{ctScoreTest}}'s block
+#' tests. A block that needs a further dimension is given one, starting along
+#' the direction the test found (without blocks, the level's rank goes up by
+#' one). When the dimensions of two blocks covary, the blocks share them, and
+#' whichever block needs fewer new loadings to reach the other's effects is
+#' extended to them. A parameter that a change makes individually varying
+#' joins the block of the effects it should covary with (the initial means for
+#' a heterogeneity result, the intercept for a level result), unless a block
+#' already includes it. A block of full rank gains a dimension with it.
+#'
 #' Each random effect the search adds brings correlations with the others,
 #' and with many random effects and few subjects the data no longer determine
 #' them. When a kept change leaves the population covariance poorly
 #' identified (\code{fit$identifiability}), the covariance is refitted at one
-#' rank lower (\code{poprank}), and the lower rank is kept unless the
-#' likelihood ratio test needs the dropped dimension. This repeats until the
-#' fit is identified. Later random effects then load on the shared
-#' dimensions, and later heterogeneity results give own variances. This is
-#' for single level models only.
+#' rank lower (\code{poprank}), starting from its leading dimensions, and the
+#' lower rank is kept unless the likelihood ratio test needs the dropped
+#' dimension. This repeats until the fit is identified. Later random effects
+#' then load on the shared dimensions, and later heterogeneity results give
+#' own variances. This is for single level models only.
 #'
 #' When the search stops, each change kept is tested again by refitting
 #' without it (\code{prune}), and dropped if the others make it unnecessary.
@@ -400,7 +411,7 @@ ctModelImprove <- function(fit, covariates = NULL,
     best <- which(ok)[which.max(vapply(tried[ok], function(t) t$verdict$score, 0))]
     current <- tried[[best]]$refit
     data <- tried[[best]]$edited$data
-    extraargs <- utils::modifyList(extraargs, as.list(tried[[best]]$edited$args))
+    extraargs <- .ctImproveMergeArgs(extraargs, as.list(tried[[best]]$edited$args))
     kept[[length(kept) + 1L]] <- tried[[best]]$prop
     history[[length(history) - length(tried) + best]]$kept <- TRUE
     ad <- NULL
@@ -829,6 +840,9 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
     if (length(model$groupIDnames)) break
     k <- .ctImproveNvarying(model)
     replay <- .ctFitReplayArgs(current)
+    # A level in blocks takes its rank from them, and refuses a poprank that
+    # differs from their sum.
+    if (.ctPopblocksRequested(replay$popblocks)) break
     r <- suppressWarnings(as.integer(replay$poprank))
     if (!length(r) || is.na(r) || r >= k) r <- k
     t0 <- sum(as.logical(model$pars$indvarying) %in% TRUE & model$pars$matrix %in% 'T0MEANS')
@@ -878,9 +892,241 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   for (p in c(kept[!rank], kept[rank])) {
     e <- p$edit(model, data, covariates, args)
     model <- e$model; data <- e$data
-    if (!is.null(e$args)) args <- utils::modifyList(args, e$args)
+    if (!is.null(e$args)) args <- .ctImproveMergeArgs(args, e$args)
   }
   list(model = model, data = data, args = args)
+}
+
+# Two sets of ctFit arguments, `b` over `a`: as utils::modifyList(), except
+# that `popblocks` and `popunique` are taken whole from `b`. Merged by name, a
+# list of blocks gained the edited copies beside the unnamed originals.
+.ctImproveMergeArgs <- function(a, b) {
+  if (!length(b)) return(a)
+  out <- utils::modifyList(a, b)
+  for (k in intersect(c('popblocks', 'popunique'), names(b)))
+    if (is.null(b[[k]])) out[[k]] <- NULL else out[k] <- list(b[[k]])
+  out
+}
+
+# The subject level's blocks as `popblocks` gives them, each named as ctFit
+# names it (an unnamed block is 'block<i>'), edited by `fun`, and written back:
+# a list of blocks, or by level where the model has levels above the subject.
+.ctImproveEditBlocks <- function(popblocks, model, fun) {
+  levelnames <- c(model$subjectIDname, model$groupIDnames)
+  bylevel <- .ctPopblocksByLevel(popblocks, levelnames)
+  subject <- model$subjectIDname
+  blocks <- bylevel[[subject]]
+  nm <- names(blocks)
+  if (is.null(nm)) nm <- rep('', length(blocks))
+  unnamed <- is.na(nm) | !nzchar(nm)
+  nm[unnamed] <- paste0('block', which(unnamed))
+  names(blocks) <- nm
+  bylevel[[subject]] <- fun(blocks)
+  if (length(levelnames) == 1L) bylevel[[subject]] else bylevel
+}
+
+# The subject level's blocks resolved on `model`: each block's name, rank and
+# the parameters it takes.
+.ctImproveResolvedBlocks <- function(model, popblocks) {
+  m <- .ctResolveLevels(model)
+  levelnames <- c(m$subjectIDname, m$groupIDnames)
+  columns <- stats::setNames(c('indvarying', if (length(m$groupIDnames))
+    paste0('indvarying_', m$groupIDnames)), levelnames)
+  .ctPopblocksResolve(m, popblocks, levelnames, columns)[[m$subjectIDname]]
+}
+
+# Parameters a change lets vary (`pars`), on a level whose shared dimensions
+# come in blocks: each that no block takes yet joins the block holding most of
+# `partners`, the effects it is to covary with; failing them, the block
+# holding most effects of its own matrices; failing that, the first block of
+# full rank, else the first. A block of full rank gains a dimension for each,
+# so the new effect keeps a variance of its own there; a block of lower rank
+# keeps its rank, the new effect loading on its shared dimensions as on a
+# reduced-rank level without blocks. Without it a change that made a
+# parameter vary on such a level was refused when refitted, every varying
+# effect needing a block or an own variance. NULL where there are no blocks or
+# nothing to place, else the ctFit arguments to change.
+.ctImproveBlockJoin <- function(model, popblocks, pars, partners = character()) {
+  if (!.ctPopblocksRequested(popblocks)) return(NULL)
+  blocks <- .ctImproveResolvedBlocks(model, popblocks)
+  pars <- setdiff(pars, unlist(lapply(blocks, `[[`, 'param')))
+  if (!length(pars)) return(NULL)
+  names <- vapply(blocks, `[[`, '', 'name')
+  holds <- function(set) vapply(blocks, function(b) sum(b$param %in% set), 0)
+  hit <- holds(partners)
+  if (!any(hit > 0)) hit <- holds(model$pars$param[model$pars$matrix %in%
+    model$pars$matrix[model$pars$param %in% pars]])
+  full <- vapply(blocks, function(b) b$rank >= length(b$param), logical(1))
+  target <- if (any(hit > 0)) which.max(hit) else if (any(full)) which(full)[1] else 1L
+  grow <- full[target]
+  name <- names[target]
+  list(popblocks = .ctImproveEditBlocks(popblocks, model, function(bl) {
+    bl[[name]]$effects <- unique(c(as.character(bl[[name]]$effects), pars))
+    if (grow) bl[[name]]$rank <- bl[[name]]$rank + length(pars)
+    bl
+  }))
+}
+
+# What ctScoreTest's block tests (`blocks`) propose, on a reduced-rank level:
+# for a block that needs a further dimension, its rank raised by one (without
+# blocks, the level's, as a rank change), started along the test's direction
+# at its one-step sd; for two blocks whose dimensions covary, the one whose
+# dimensions then reach the other's effects with fewer new loadings extended
+# to them -- its dimensions covarying with the other's effects, as the test's
+# covariances do. A pair either of which already loads on every effect of the
+# other is not tested, so the extension is not proposed twice.
+.ctImproveBlockProposals <- function(bt, current, replay, alpha) {
+  if (is.null(bt) || is.null(current)) return(list())
+  lv <- current$model_spec$laplace$levels[[1]]
+  if (is.null(lv) || !length(lv$load_index)) return(list())
+  blocks <- if (length(lv$blocks)) lv$blocks else
+    list(list(name = 'level', rank = lv$rank, param = lv$param))
+  byname <- stats::setNames(blocks, vapply(blocks, `[[`, '', 'name'))
+  blocked <- .ctPopblocksRequested(replay$popblocks)
+  out <- list()
+  d <- bt$dimension
+  if (NROW(d)) for (r in which(d$p_adj < alpha)) {
+    name <- d$block[r]
+    b <- byname[[name]]
+    if (is.null(b) || b$rank >= length(b$param)) next
+    dir <- bt$directions[[name]]
+    add <- if (!is.null(dir) && is.finite(d$sd[r])) list(dir * d$sd[r])
+    start <- structure(numeric(), blocks = add)
+    if (!blocked) {
+      change <- .ctImproveRankChange(b$rank + 1L)
+      change$key <- paste0('rank:', b$rank + 1L)
+      change$p <- change$rank <- d$p[r]
+      change$label <- paste0('a further shared dimension (population covariance of rank ',
+        b$rank + 1L, ')')
+      change$start <- start
+      out[[length(out) + 1L]] <- change
+      next
+    }
+    out[[length(out) + 1L]] <- list(key = paste0('blockdim:', name), family = 'blocks',
+      label = paste0('a further shared dimension in block ', name), p = d$p[r],
+      rank = d$p[r], start = start,
+      edit = local({ name <- name; pb <- replay$popblocks
+        function(model, data, covs, args = list()) {
+          old <- if (!is.null(args$popblocks)) args$popblocks else pb
+          list(model = model, data = data, args = list(popblocks = .ctImproveEditBlocks(old,
+            model, function(bl) {
+              if (is.null(bl[[name]])) stop('no block called ', name)
+              bl[[name]]$rank <- bl[[name]]$rank + 1L
+              bl
+            })))
+        } }))
+  }
+  cv <- bt$covariance
+  if (blocked && NROW(cv)) for (r in which(cv$p_adj < alpha)) {
+    ab <- strsplit(cv$blocks[r], ' x ', fixed = TRUE)[[1]]
+    A <- byname[[ab[1]]]; B <- byname[[ab[2]]]
+    if (is.null(A) || is.null(B)) next
+    if (B$rank * length(setdiff(A$param, B$param)) <
+        A$rank * length(setdiff(B$param, A$param))) { swap <- A; A <- B; B <- swap }
+    out[[length(out) + 1L]] <- list(key = paste0('blockcov:', paste(sort(ab), collapse = ':')),
+      family = 'blocks', label = paste0("block ", A$name, "'s dimensions loading on block ",
+        B$name, "'s effects"), p = cv$p[r], rank = cv$p[r],
+      edit = local({ a <- A$name; b <- B$name; pb <- replay$popblocks
+        function(model, data, covs, args = list()) {
+          old <- if (!is.null(args$popblocks)) args$popblocks else pb
+          list(model = model, data = data, args = list(popblocks = .ctImproveEditBlocks(old,
+            model, function(bl) {
+              if (is.null(bl[[a]]) || is.null(bl[[b]])) stop('no blocks called ', a, ' and ', b)
+              ea <- bl[[a]]$effects; eb <- bl[[b]]$effects
+              bl[[a]]$effects <- if (isTRUE(ea) || isTRUE(eb)) TRUE else
+                unique(c(as.character(ea), as.character(eb)))
+              bl
+            })))
+        } }))
+  }
+  out
+}
+
+# Rotate a block's loadings (rows its effects in level order, columns its
+# dimensions) into the echelon form the engine reads, zero where an effect
+# comes before a dimension (`L[p, q] = 0` for p < q), by Givens rotations of
+# pairs of columns, which keep L L'. A QR of the leading rows does the same
+# where they are of full rank, and pivots where they are not -- as they are
+# when a block gains effects that come first, their loadings starting at zero.
+.ctImproveGivens <- function(L) {
+  r <- min(nrow(L), ncol(L))
+  for (p in seq_len(r)) for (q in seq_len(ncol(L))[-seq_len(p)]) {
+    b <- L[p, q]
+    if (b == 0) next
+    a <- L[p, p]
+    h <- sqrt(a^2 + b^2)
+    cp <- L[, p]; cq <- L[, q]
+    L[, p] <- (a * cp + b * cq) / h
+    L[, q] <- (-b * cp + a * cq) / h
+  }
+  L
+}
+
+# Raw starting loadings for a refit of a reduced-rank level (`spec2`, the
+# refit's specification; `names2`, its raw names), from the current fit's,
+# block by block (a level without blocks is one): each block's loadings on the
+# effects it keeps, the effects it gains at zero, and each dimension it gains
+# along one of `add` -- deviations on the effects' raw scales, named by
+# effect, such as a block test's direction times its one-step sd -- or,
+# failing one, a small loading on the effect that dimension starts at: at zero
+# a new dimension's gradient vanishes. Then rotated into echelon form
+# (`.ctImproveGivens()`), which keeps each block's covariance. Matched by name
+# alone, a block's new dimension took the next block's loadings, whose
+# dimensions are numbered after it, and a block whose basis changed lost
+# loadings now held at zero.
+.ctImproveBlockStart <- function(current, spec2, names2, add = NULL) {
+  lv2 <- spec2$laplace$levels[[1]]
+  if (is.null(lv2) || !length(lv2$load_index) || !isTRUE(lv2$rank > 0)) return(NULL)
+  asblocks <- function(lv) if (length(lv$blocks)) lv$blocks else
+    list(list(name = 'level', rank = lv$rank, param = lv$param))
+  old <- list()
+  lv1 <- current$model_spec$laplace$levels[[1]]
+  if (!is.null(lv1) && length(lv1$load_index) && isTRUE(lv1$rank > 0)) {
+    est <- .ctFitRawEstimate(current)
+    ent <- .ctJuliaLoadingEntries(lv1)
+    L1 <- matrix(0, length(lv1$param), lv1$rank,
+      dimnames = list(as.character(lv1$param), NULL))
+    L1[cbind(ent$row, ent$col)] <- est[lv1$load_index] * as.numeric(lv1$sd_scale)[ent$row]
+    at <- 0L
+    for (b in asblocks(lv1)) {
+      old[[b$name]] <- L1[as.character(b$param), at + seq_len(b$rank), drop = FALSE]
+      at <- at + b$rank
+    }
+  }
+  param2 <- as.character(lv2$param)
+  scale2 <- stats::setNames(as.numeric(lv2$sd_scale), param2)
+  ent2 <- .ctJuliaLoadingEntries(lv2)
+  raw <- rep(NA_real_, length(lv2$load_index))
+  at <- 0L
+  for (b in asblocks(lv2)) {
+    members <- param2[param2 %in% b$param]
+    L <- matrix(0, length(members), b$rank, dimnames = list(members, NULL))
+    o <- old[[b$name]]
+    had <- 0L
+    if (!is.null(o)) {
+      had <- min(ncol(o), b$rank)
+      k <- intersect(members, rownames(o))
+      L[k, seq_len(had)] <- o[k, seq_len(had), drop = FALSE]
+    }
+    for (j in seq_len(b$rank - had) + had) {
+      fits <- vapply(add, function(v) length(v) > 0L &&
+        all(names(v)[v != 0] %in% members), logical(1))
+      if (any(fits)) {
+        v <- add[[which(fits)[1]]]
+        add <- add[-which(fits)[1]]
+        k <- intersect(names(v), members)
+        L[k, j] <- v[k]
+      } else L[j, j] <- 0.1 * scale2[[members[j]]]
+    }
+    L <- .ctImproveGivens(L)
+    for (k in which(ent2$col > at & ent2$col <= at + b$rank)) {
+      e <- param2[ent2$row[k]]
+      raw[k] <- L[e, ent2$col[k] - at] / scale2[[e]]
+    }
+    at <- at + b$rank
+  }
+  ok <- is.finite(raw)
+  stats::setNames(raw[ok], names2[lv2$load_index[ok]])
 }
 
 # What the screen indicates, as edits: one per heterogeneity parameter, state
@@ -921,7 +1167,7 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
           if (length(with)) paste0(', with ', paste(with, collapse = ', '))),
         p = h$p[r], rank = rankp(r), class = h$class[r],
         start = .ctImprovePopsdStart(model, name, h$sd[r]),
-        edit = local({ row <- row; name <- name; with <- with
+        edit = local({ row <- row; name <- name; with <- with; pb <- replay$popblocks
           function(model, data, covs, args = list()) {
             pars <- model$pars
             k <- which(pars$matrix %in% 'MANIFESTMEANS' & pars$row %in% row &
@@ -933,7 +1179,8 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
             pars$indvarying[pars$param %in% c(name, with)] <- TRUE
             model$pars <- pars
             model$fixedpopmeans <- c(model$fixedpopmeans, stats::setNames(value, name))
-            list(model = model, data = data)
+            list(model = model, data = data, args = .ctImproveBlockJoin(model,
+              if (!is.null(args$popblocks)) args$popblocks else pb, c(name, with), with))
           } }))
       next
     }
@@ -942,10 +1189,13 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
       family = 'heterogeneity', label = paste0(par, ' individually varying',
         if (length(with)) paste0(', with ', paste(with, collapse = ', '))), p = h$p[r],
       rank = rankp(r), class = h$class[r],
-      start = .ctImprovePopsdStart(model, par, h$sd[r]),
-      edit = local({ pars <- c(par, with); function(model, data, covs, args = list()) {
+      start = structure(.ctImprovePopsdStart(model, par, h$sd[r]),
+        blocks = if (is.finite(h$sd[r]) && h$sd[r] > 0) list(stats::setNames(h$sd[r], par))),
+      edit = local({ pars <- c(par, with); with <- with; pb <- replay$popblocks
+        function(model, data, covs, args = list()) {
         model$pars$indvarying[model$pars$param %in% pars] <- TRUE
-        list(model = model, data = data)
+        list(model = model, data = data, args = .ctImproveBlockJoin(model,
+          if (!is.null(args$popblocks)) args$popblocks else pb, pars, with))
       } })) else list(key = paste0('own:', par), family = 'heterogeneity',
       label = paste0(par, ' given a variance of its own'), p = h$p[r],
       rank = rankp(r), class = h$class[r],
@@ -968,11 +1218,14 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
     out[[length(out) + 1L]] <- list(key = paste0('het:', par), family = 'level',
       label = paste0(par, ' individually varying (with ', lv$level[r], ')'), p = lv$p[r],
       rank = lv$p[r], class = lv$class[r],
-      edit = local({ par <- par; function(model, data, covs, args = list()) {
+      edit = local({ par <- par; level <- lv$level[r]; pb <- replay$popblocks
+        function(model, data, covs, args = list()) {
         model$pars$indvarying[model$pars$param %in% par] <- TRUE
-        list(model = model, data = data)
+        list(model = model, data = data, args = .ctImproveBlockJoin(model,
+          if (!is.null(args$popblocks)) args$popblocks else pb, par, level))
       } }))
   }
+  out <- c(out, .ctImproveBlockProposals(st$blocks, current, replay, alpha))
   # The dimension test runs only where the level is not of reduced rank
   # (ctScoreTest), so a significant one makes the parameters its direction
   # loads on vary together.
@@ -1643,6 +1896,10 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   init <- setNames(numeric(length(names2)), names2)
   shared <- intersect(names(est), names2)
   init[shared] <- est[shared]
+  # A reduced-rank level's loadings, block by block (`.ctImproveBlockStart()`).
+  loadings <- tryCatch(.ctImproveBlockStart(current, prepared$spec, names2,
+    attr(start, 'blocks')), error = function(e) NULL)
+  init[names(loadings)] <- loadings
   start <- start[names(start) %in% names2]
   init[names(start)] <- start
   args$fit <- TRUE
@@ -1748,7 +2005,7 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
 .ctImproveSpec <- function(current, model, data, cores, args = NULL) {
   extra <- args
   args <- .ctFitReplayArgs(current)
-  if (length(extra)) args <- utils::modifyList(args, extra)
+  if (length(extra)) args <- .ctImproveMergeArgs(args, extra)
   args$model <- model
   args$datalong <- data
   args$cores <- cores

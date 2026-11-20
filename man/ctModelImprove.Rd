@@ -188,15 +188,26 @@ significant \code{dimension} test makes the parameters in its direction
 vary together. Relaxations the score tests cannot tell apart (the same
 \code{class}) are not refitted in the same round.
 
+Where the shared dimensions are in blocks (\code{popblocks} in
+\code{\link{ctFit}}), the search acts on \code{\link{ctScoreTest}}'s block
+tests. A block that needs a further dimension is given one, starting along
+the direction the test found (without blocks, the level's rank goes up by
+one). When the dimensions of two blocks covary, the blocks share them, and
+whichever block needs fewer new loadings to reach the other's effects is
+extended to them. A parameter that a change makes individually varying
+joins the block of the effects it should covary with (the initial means for
+a heterogeneity result, the intercept for a level result), unless a block
+already includes it. A block of full rank gains a dimension with it.
+
 Each random effect the search adds brings correlations with the others,
 and with many random effects and few subjects the data no longer determine
 them. When a kept change leaves the population covariance poorly
 identified (\code{fit$identifiability}), the covariance is refitted at one
-rank lower (\code{poprank}), and the lower rank is kept unless the
-likelihood ratio test needs the dropped dimension. This repeats until the
-fit is identified. Later random effects then load on the shared
-dimensions, and later heterogeneity results give own variances. This is
-for single level models only.
+rank lower (\code{poprank}), starting from its leading dimensions, and the
+lower rank is kept unless the likelihood ratio test needs the dropped
+dimension. This repeats until the fit is identified. Later random effects
+then load on the shared dimensions, and later heterogeneity results give
+own variances. This is for single level models only.
 
 When the search stops, each change kept is tested again by refitting
 without it (\code{prune}), and dropped if the others make it unnecessary.
