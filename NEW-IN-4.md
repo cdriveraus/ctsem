@@ -86,6 +86,7 @@ and [ordinal or continuous data](https://cdriveraus.github.io/ctsem/articles/ord
 | `ctScoreTest(fit)` | test whether the model is missing random effects, covariate effects or nonlinearity, without refitting ([vignette](https://cdriveraus.github.io/ctsem/articles/score-tests.html)) |
 | `ctFitAdequacy(fit)` | test the model's one-step-ahead predictions |
 | `ctModelImprove(fit)` | search for a better model step by step, guided by score tests |
+| `ctModelImprove(fit, reduceOnly = TRUE)` | simplify the parts of a model the data do not identify: parameters the data do not determine, or a random effects covariance of too high a rank |
 | `ctLOO(fit, method = 'psis')` | cross validation without refitting |
 | `ctFitProfile(fit)` | profile likelihood |
 | `anova()`, `coef()`, `vcov()`, `logLik()` | the standard R generics |

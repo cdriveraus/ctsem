@@ -137,19 +137,20 @@ test_that("divergences at the correlation bound are reported and leave the verdi
   expect_identical(ctsem:::.ctSampleDivergent(old), 5L)
   expect_identical(ctsem:::.ctSampleDivergentBound(old), 0L)
   # Where the draws' covariance points below its number of effects, the
-  # message suggests the poprank that would fit it, as a fit on the bound's
-  # warning does; at full rank it says nothing more, and with several levels
-  # it names each.
+  # message gives the rank and, as a fit on the bound's warning does, the
+  # search that reduces it (on one level) or the poprank (with several); at
+  # full rank it says nothing more, and with several levels it names each.
   ranked <- diag(5L, 5L)
   ranked$corbound_rank <- data.frame(level = "id", k = 4L, rank = 2L)
-  expect_message(ctsem:::.ctSampleWarn(ranked),
-    "about rank 2 of 4 in the median draw: consider poprank = 2")
+  expect_message(ctsem:::.ctSampleWarn(ranked), paste0("about rank 2 of 4 in the median ",
+    "draw. ctModelImprove\\(fit, reduceOnly = TRUE\\)"))
   ranked$corbound_rank$rank <- 4L
   expect_identical(ctsem:::.ctSampleBoundRankNote(ranked), "")
   ranked$corbound_rank <- data.frame(level = c("person", "couple"), k = c(4L, 3L),
     rank = c(2L, 3L))
   note <- ctsem:::.ctSampleBoundRankNote(ranked)
   expect_match(note, "rank 2 of 4 at level person", fixed = TRUE)
+  expect_match(note, "Consider poprank = 2", fixed = TRUE)
   expect_false(grepl("couple", note, fixed = TRUE))
   expect_identical(ctsem:::.ctSampleBoundRankNote(diag(5L, 5L)), "")
 })
@@ -203,8 +204,9 @@ test_that("a sampled fit says what its starting optimisation found before sampli
   bound <- data.frame(matrix = c("population", "population", "T0VAR"),
     level = c(1L, 1L, NA), effect = c("a", "b", "c"), at_bound = TRUE,
     rank = c(6L, 6L, 1L), k = c(10L, 10L, 2L))
-  expect_message(note(list(corbound = bound)),
-    "finds the population covariance near singular, about rank 6 of 10. Consider poprank = 6.")
+  expect_message(note(list(corbound = bound)), paste0("finds the population ",
+    "covariance near singular, about rank 6 of 10. Sampling along such directions is ",
+    "slow. ctModelImprove\\(fit, reduceOnly = TRUE\\)"))
   expect_message(note(list(identifiability = list(nweak = 1L, parameters = "rawcor_a__b"),
     corbound = bound)), "It also finds the population covariance near singular")
 })

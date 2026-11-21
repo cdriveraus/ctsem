@@ -242,8 +242,21 @@
   levels <- length(unique(diagnostics$corbound_rank$level)) > 1L
   paste0(" The population covariance is about rank ", r$rank, " of ", r$k,
     if (levels) paste0(" at level ", r$level) else "",
-    " in the median draw: consider poprank = ", r$rank,
-    " or fewer varying parameters.", collapse = "")
+    " in the median draw. ", vapply(r$rank, .ctCorBoundAdvice, "", levels),
+    collapse = "")
+}
+
+# What to do about a population covariance on the bound. On one level,
+# `ctModelImprove(reduceOnly = TRUE)` refits it with fewer shared dimensions
+# and own variances and keeps the fewest the data allow (`.ctImproveRankStep()`);
+# its rank step is for single level models, so a model with levels is pointed
+# at `poprank` itself.
+.ctCorBoundAdvice <- function(rank, levels = FALSE) {
+  if (isTRUE(levels)) return(paste0("Consider poprank = ", rank,
+    " or fewer varying parameters."))
+  paste0("ctModelImprove(fit, reduceOnly = TRUE) refits it with fewer shared ",
+    "dimensions and own variances (poprank, popunique), and keeps the fewest the ",
+    "data allow.")
 }
 
 # One warning per level with an effect on the bound.
@@ -268,8 +281,8 @@
       attr(report, "bound"), ") for ", paste(r$effect[r$at_bound], collapse = ", "),
       if (length(unique(report$level)) > 1L) paste0(" at level ", lv),
       ": the population covariance is near singular, about rank ", r$rank[1L],
-      " of ", r$k[1L], ". Consider poprank = ", r$rank[1L],
-      " or fewer varying parameters. See fit$corbound.", call. = FALSE)
+      " of ", r$k[1L], ". ", .ctCorBoundAdvice(r$rank[1L],
+        length(unique(report$level)) > 1L), " See fit$corbound.", call. = FALSE)
   }
   invisible(NULL)
 }

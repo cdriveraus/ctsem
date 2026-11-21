@@ -95,16 +95,6 @@
 #' a heterogeneity result, the intercept for a level result), unless a block
 #' already includes it. A block of full rank gains a dimension with it.
 #'
-#' Each random effect the search adds brings correlations with the others,
-#' and with many random effects and few subjects the data no longer determine
-#' them. When a kept change leaves the population covariance poorly
-#' identified (\code{fit$identifiability}), the covariance is refitted at one
-#' rank lower (\code{poprank}), starting from its leading dimensions, and the
-#' lower rank is kept unless the likelihood ratio test needs the dropped
-#' dimension. This repeats until the fit is identified. Later random effects
-#' then load on the shared dimensions, and later heterogeneity results give
-#' own variances. This is for single level models only.
-#'
 #' When the search stops, each change kept is tested again by refitting
 #' without it (\code{prune}), and dropped if the others make it unnecessary.
 #'
@@ -119,6 +109,38 @@
 #' does not count, so the p-values describe the steps the search took and do
 #' not test the final model. A refit that ends below the model it extends has
 #' not reached an optimum, and is recorded as such.
+#'
+#' @section Reducing: Before it screens, and after each change it keeps, the
+#'   search looks at the directions in which the likelihood is flat
+#'   (\code{fit$identifiability}). A parameter is not determined by the data
+#'   when more than half of its variation lies in those directions. For each
+#'   such parameter it tries:
+#'   \describe{
+#'     \item{A model parameter}{Fixed at the ends of its range that are finite,
+#'       such as 0 for an auto-effect or a variance, and at 0 where 0 is inside
+#'       its range. If none of these is kept, fixed at its estimate, which gives
+#'       the same fit with one parameter fewer. For a parameter that varies
+#'       over subjects, a value inside its range fixes the population mean
+#'       and keeps the random effect.}
+#'     \item{A population standard deviation or own variance}{Removed: the
+#'       effect no longer varies, or loses its own variance
+#'       (\code{popunique} in \code{\link{ctFit}}).}
+#'   }
+#'   If the flat directions lie mostly in the population correlations or
+#'   loadings, the covariance is refitted at a lower rank (\code{poprank}). A
+#'   full covariance becomes shared dimensions plus a variance of each
+#'   effect's own (\code{popunique = TRUE}), starting with the fewest shared
+#'   dimensions whose factor model reproduces the fitted correlations to
+#'   within 0.1. The rank goes down one step at a time while the covariance is
+#'   not identified, and up where the likelihood refuses a lower one. Random
+#'   effects the data hold at zero or barely determine are made fixed.
+#'
+#'   Each change is refitted from the current estimates and kept unless the
+#'   model without it is better by \code{criterion}. If several changes for
+#'   one problem are kept, the one with the fewest parameters is used.
+#'   The rank and random effect changes are for single level models only. With
+#'   \code{reduceOnly = TRUE} the search stops there. Each change tried is a
+#'   refit, so this takes several times as long as the original fit.
 #'
 #' @section Error rates: Because the screen and the refit use the same data,
 #'   the error rate is close to \code{alpha} for each decision, and grows with
@@ -209,12 +231,16 @@
 #' @param verbose Report progress: each round's steps, each refit's time, and
 #'   while a refit runs, its iteration, objective and gradient every ten
 #'   minutes.
+#' @param reduceOnly Only remove what the data do not identify (see Reducing),
+#'   with no screening, adequacy checks or pruning. A sampled fit is optimised
+#'   first, since the search compares optimised fits.
 #' @return An object of class \code{ctModelImprove}, containing: \code{fit},
 #'   the final fit; \code{history}, every refit tried, with the round, the
 #'   relaxation, its screening p-value, the change in log likelihood and
 #'   parameters, the criterion's verdict and whether it was kept (a row with
-#'   \code{family} \code{'prune'} says whether the change was dropped, and a
-#'   \code{'rank'} row whether the lower rank was kept); \code{screens}, the
+#'   \code{family} \code{'prune'} says whether the change was dropped, a
+#'   \code{'reduce'} row whether a reduction was kept, and a \code{'rank'} row
+#'   whether the lower rank was kept); \code{screens}, the
 #'   score tests of each round; \code{adequacy}, the final checks;
 #'   \code{confirmation}, with \code{holdout}, each kept change's likelihood
 #'   ratio test on the held-out subjects; and \code{stopped}, why the search
@@ -223,7 +249,10 @@
 #'   \code{close}), \code{'not adequate, no candidate improved'} or
 #'   \code{'not adequate, nothing left to try'} (the checks still detect
 #'   misfit), \code{'nothing indicated'} (with \code{adequacy = FALSE}, the
-#'   screen found nothing) or \code{'maxsteps'}. A refit that failed, or ended
+#'   screen found nothing), \code{'maxsteps'}, or with \code{reduceOnly},
+#'   \code{'reduced'} or \code{'nothing to reduce'}. With \code{reduceOnly},
+#'   \code{findings} lists what the final fit's report still finds, each with
+#'   the parameters involved. A refit that failed, or ended
 #'   below the model it extends, is in \code{history} with a note. With
 #'   \code{holdout}, \code{fit} is the model with the confirmed changes
 #'   refitted to every subject, and \code{selected} is the search's own choice
@@ -237,9 +266,11 @@ ctModelImprove <- function(fit, covariates = NULL,
   criterion = c('LR', 'AIC', 'BIC'), adequacy = TRUE, prune = TRUE,
   close = NULL, holdout = 0, form = 'auto', periods = NULL, nsamples = 100L,
   projection = 'auto', cores = getOption('mc.cores', 2L), checkpoint = NULL,
-  verbose = TRUE) {
+  verbose = TRUE, reduceOnly = FALSE) {
   if (!.ctFitIsJulia(fit)) stop("ctModelImprove() needs a fit from ",
     "ctFit(backend = 'julia').", call. = FALSE)
+  if (isTRUE(reduceOnly) && !identical(holdout, 0)) stop("holdout confirms the ",
+    "changes a search adds; it does not apply with reduceOnly = TRUE.", call. = FALSE)
   if (is.null(.ctFitBaseModel(fit))) stop("This fit does not carry the model it ",
     "was built from; refit it with this version of ctsem.", call. = FALSE)
   .ctBackendResolveThreads(cores)
@@ -269,6 +300,12 @@ ctModelImprove <- function(fit, covariates = NULL,
     say("Holding out ", length(held), " of ", length(ids), " subjects; refitting on the rest")
     fit <- .ctImproveRefit(fit, .ctFitBaseModel(fit), data, cores)
   }
+  # Refits are compared at their optima (`.ctImproveSpec()` optimises them), so
+  # a sampled starting fit is optimised once first, from its placement.
+  if (!is.null(fit$sample)) {
+    say("Optimising the sampled fit: the search compares optimised fits")
+    fit <- .ctImproveRefit(fit, .ctFitBaseModel(fit), data, cores)
+  }
   current <- fit
   startdata <- data
   kept <- list()
@@ -281,11 +318,11 @@ ctModelImprove <- function(fit, covariates = NULL,
   # what the search is, so that a file from another search is not resumed.
   identity <- list(start = .ctImproveFingerprint(fit), relax = relax, alpha = alpha,
     criterion = criterion, ntry = ntry, adequacy = adequacy, close = close,
-    holdout = holdout, candidates = length(candidates))
+    holdout = holdout, candidates = length(candidates), reduceOnly = isTRUE(reduceOnly))
   if (!is.null(changes)) identity$changes <- vapply(changes$proposal, `[[`, '', 'key')
   carried <- c('current', 'data', 'kept', 'extraargs', 'history', 'screens', 'rejected',
     'ad', 'stopped', 'slowest')
-  stage <- list(round = 0L, searched = FALSE, pruned = FALSE)
+  stage <- list(round = 0L, searched = FALSE, pruned = FALSE, reduced = FALSE)
   here <- environment()
   checkpointed <- function() if (!is.null(checkpoint)) .ctImproveCheckpointSave(checkpoint,
     list(identity = identity, stage = stage,
@@ -299,6 +336,29 @@ ctModelImprove <- function(fit, covariates = NULL,
     stage <- saved$stage
     say("Resuming after ", if (stage$pruned) "pruning" else if (stage$searched)
       "the search" else paste0("round ", stage$round), ", from ", checkpoint)
+  }
+  # First, what the starting fit leaves unidentified (`.ctImproveReduce()`):
+  # screens and refits from a fit with flat directions read the ridge as
+  # much as the model.
+  if (!isTRUE(stage$reduced)) {
+    reduced <- .ctImproveReduce(.ctFitBaseModel(fit), current, kept, startdata,
+      covariates, criterion, alpha, cores, say, label = "Reducing: ", round = 0L)
+    history <- c(history, reduced$history)
+    if (reduced$changed) {
+      current <- reduced$current; kept <- reduced$kept; data <- reduced$data
+      if (!is.null(reduced$args)) extraargs <- reduced$args
+    }
+    stage$reduced <- TRUE
+    checkpointed()
+  }
+  if (isTRUE(reduceOnly)) {
+    history <- if (length(history)) do.call(rbind, history) else data.frame()
+    return(structure(list(fit = current, history = history, screens = list(),
+      adequacy = NULL, confirmation = NULL,
+      stopped = if (length(kept)) 'reduced' else 'nothing to reduce', start = fit,
+      selected = NULL, holdout = NULL, findings = .ctReduceFindings(current,
+        candidates = FALSE)),
+      class = 'ctModelImprove'))
   }
   rounds <- if (stage$searched || stage$round >= maxsteps) integer() else
     seq.int(stage$round + 1L, maxsteps)
@@ -417,9 +477,10 @@ ctModelImprove <- function(fit, covariates = NULL,
     history[[length(history) - length(tried) + best]]$kept <- TRUE
     ad <- NULL
     say("Round ", step, ": kept ", tried[[best]]$prop$label)
-    # A kept random effect can leave the population covariance more than the
-    # data determine: then the rank comes down until the likelihood needs it.
-    ranked <- .ctImproveRankStep(.ctFitBaseModel(fit), current, kept, startdata, covariates,
+    # A kept change can leave directions the data do not determine -- a new
+    # random effect, a population covariance with more dimensions than the
+    # subjects identify -- and they are reduced as at the start.
+    ranked <- .ctImproveReduce(.ctFitBaseModel(fit), current, kept, startdata, covariates,
       criterion, alpha, cores, say, label = paste0("Round ", step, ": "), round = step)
     history <- c(history, ranked$history)
     if (ranked$changed) {
@@ -738,20 +799,24 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
     slowest = slowest)
 }
 
-# Whether a fit leaves its population covariance unidentified: a weak or
-# negative direction of its curvature (`fit$identifiability$directions`) made
-# mostly of the covariance's own parameters. With eleven random effects for 40
+# Whether a fit leaves its population covariance unidentified: at least half a
+# dimension of the flat subspace of its curvature
+# (`fit$identifiability$directions`) lies in the covariance's own coordinates
+# (`.ctReduceCovarianceMass()`). With eleven random effects for 40
 # people the Fisher example's search reached a fit whose information along 55
 # correlations was about 2.5 against 4e6 elsewhere, with one direction negative:
 # the estimation correction then took more than each row-level statistic's
 # whole variance, and nothing downstream of that fit could be trusted.
+#
+# A population sd the data hold at zero, or barely determine, is the random
+# effect's own finding (`.ctEffectRows()`, `.ctReduceFindings()`), not a
+# dimension too many, so its coordinate does not count here; nor does an sd or
+# own variance undetermined on its own, which the reduction removes.
 .ctImproveWeakCovariance <- function(fit) {
-  dirs <- fit$identifiability$directions
-  if (!length(dirs)) return(FALSE)
-  any(vapply(dirs, function(d) {
-    p <- as.character(d$parameters)
-    length(p) > 0L && mean(grepl('^(popsd_|rawcor_|poploading_|popunique_)', p)) >= 0.5
-  }, logical(1)))
+  id <- fit$identifiability
+  if (!length(id$directions)) return(FALSE)
+  held <- unlist(lapply(c('zero', 'weak'), function(w) .ctEffectRows(id$effects, w)$coordinate))
+  .ctReduceCovarianceMass(.ctReduceFlat(id, held)$share) >= 0.5
 }
 
 # Rank-r loadings with L L' the best rank-r approximation of the covariance S:
@@ -773,28 +838,88 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
 # by echelon loadings, each row divided by its effect's sdscale, named as the
 # engine names them. Without it every loading would start at zero, the random
 # effects with no spread at all.
-.ctImproveRankStart <- function(current, r) {
-  spec <- current$model_spec
-  module <- .ctJuliaModule(spec$project)
-  est <- .ctFitRawEstimate(current)
-  S <- as.matrix(.ctBackendJuliaValue(module$ctsem_laplace_popcov(
-    .ctJuliaObjective(current), .ctJuliaNumericVector(est), 1L)))
+#
+# With `unique`, the covariance as r shared dimensions plus an own variance for
+# each effect (`popunique`): a factor model of its correlations
+# (`.ctReduceFactor()`), the shared part in echelon loadings and each own sd
+# on the raw sd scale (`.ctImprovePopsdStart()`).
+.ctImproveRankStart <- function(current, r, unique = FALSE) {
+  S <- .ctImprovePopcov(current)
   nm <- as.character(.ctFitRawParNames(current))
-  pars <- sub('^popsd_', '', grep('^popsd_', nm, value = TRUE))
+  pars <- unique(sub('^(popsd|popunique)_', '', grep('^(popsd|popunique)_', nm, value = TRUE)))
   if (length(pars) != nrow(S)) return(NULL)
   model <- .ctFitBaseModel(current)
   scale <- suppressWarnings(as.numeric(model$pars$sdscale[.ctParamRows(model, pars)]))
   scale[!is.finite(scale) | scale <= 0] <- 1
+  own <- NULL
+  if (isTRUE(unique)) {
+    fa <- .ctReduceFactor(S, r)
+    if (!is.null(fa)) {
+      S <- fa$shared
+      own <- unlist(lapply(seq_along(pars), function(i) stats::setNames(
+        .ctImprovePopsdStart(model, pars[i], fa$own[i]), paste0('popunique_', pars[i]))))
+    }
+  }
   L <- .ctImproveEchelonLoadings(S, r) / scale
   out <- unlist(lapply(seq_len(r), function(q) stats::setNames(L[q:nrow(L), q],
     paste0('poploading_', pars[q:nrow(L)], '_dim', q))))
-  out
+  c(out, own)
+}
+
+# A fit's raw-scale population covariance at its estimate, first level.
+.ctImprovePopcov <- function(current) {
+  module <- .ctJuliaModule(current$model_spec$project)
+  as.matrix(.ctBackendJuliaValue(module$ctsem_laplace_popcov(
+    .ctJuliaObjective(current), .ctJuliaNumericVector(.ctFitRawEstimate(current)), 1L)))
+}
+
+# A factor model of covariance S with r shared dimensions: maximum likelihood
+# factor analysis of its correlations (`stats::factanal()`), returned as the
+# shared part's covariance and each effect's own sd, on S's scale. NULL where
+# factanal cannot fit r factors to k effects.
+.ctReduceFactor <- function(S, r) {
+  S <- (S + t(S)) / 2
+  sd <- sqrt(pmax(diag(S), 0))
+  if (any(sd <= 0)) return(NULL)
+  fa <- tryCatch(suppressWarnings(stats::factanal(factors = r,
+    covmat = stats::cov2cor(S), rotation = 'none')), error = function(e) NULL)
+  if (is.null(fa)) return(NULL)
+  lam <- unclass(fa$loadings) * sd
+  list(shared = tcrossprod(lam), own = sd * sqrt(fa$uniquenesses),
+    residual = max(abs((stats::cov2cor(S) - tcrossprod(unclass(fa$loadings)))[
+      lower.tri(S)])))
+}
+
+# The most shared dimensions a level of k effects with own variances can have
+# and still be fewer parameters than the full covariance:
+# k r - r (r - 1) / 2 + k < k (k + 1) / 2.
+.ctReduceFactorMax <- function(k) {
+  r <- 0L
+  while (r + 1L < k && k * (r + 1L) - (r + 1L) * r / 2 + k < k * (k + 1) / 2) r <- r + 1L
+  r
+}
+
+# Where a rank search with own variances starts: the fewest shared dimensions
+# whose factor model reproduces every correlation of the fit's covariance to
+# within 0.1, or the most there can be. Only a start: the likelihood decides
+# each rank tried, from there down while the covariance is not identified and
+# up where a lower rank is refused.
+.ctReduceFactorRank <- function(S) {
+  top <- .ctReduceFactorMax(nrow(S))
+  for (r in seq_len(top)) {
+    fa <- .ctReduceFactor(S, r)
+    if (!is.null(fa) && fa$residual < 0.1) return(r)
+  }
+  top
 }
 
 # The number of parameters varying over subjects in a model.
-.ctImproveNvarying <- function(model) {
-  length(unique(model$pars$param[as.logical(model$pars$indvarying) %in% TRUE &
-    !is.na(model$pars$param)]))
+.ctImproveNvarying <- function(model) length(.ctImproveVarying(model))
+
+# The parameters varying over subjects, by name.
+.ctImproveVarying <- function(model) {
+  unique(model$pars$param[as.logical(model$pars$indvarying) %in% TRUE &
+    !is.na(model$pars$param)])
 }
 
 # A change that sets the population covariance's rank: kept like any other, so
@@ -802,11 +927,26 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
 # so that it sees how many parameters vary by then, and never pruned -- undoing
 # it adds parameters rather than removing them. A rank no longer below the
 # number varying is the full covariance.
-.ctImproveRankChange <- function(r) list(key = 'rank', family = 'rank', p = NA_real_,
-  label = paste0('population covariance of rank ', r), prunable = FALSE,
-  edit = local({ r <- r; function(model, data, covs, args = list()) {
+#
+# `unique`, where given, is the `popunique` the rank goes with: TRUE where a
+# full covariance is reduced to shared dimensions with an own variance for
+# each effect.
+.ctImproveRankChange <- function(r, unique = NULL) list(key = 'rank', family = 'rank',
+  p = NA_real_, label = paste0('population covariance of rank ', r,
+    if (isTRUE(unique)) ' with own variances'), prunable = FALSE,
+  edit = local({ r <- r; unique <- unique; function(model, data, covs, args = list()) {
     k <- .ctImproveNvarying(model)
-    list(model = model, data = data, args = list(poprank = if (r < k) r else NA))
+    a <- list(poprank = if (r < k) r else NA)
+    # Own variances named for parameters that a later change made fixed (a
+    # reduction can) are dropped: ctFit refuses a name that does not vary.
+    if (is.character(unique)) {
+      varying <- .ctImproveVarying(model)
+      matrices <- model$pars$matrix[model$pars$param %in% varying]
+      unique <- unique[unique %in% c(varying, matrices)]
+      if (!length(unique)) unique <- FALSE
+    }
+    if (!is.null(unique) && r < k) a$popunique <- unique
+    list(model = model, data = data, args = a)
   } }))
 
 # The rank a fit's population covariance suggests: the smallest whose dropped
@@ -814,11 +954,13 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
 # Fisher search's eighth round (nine effects) that was 5, where the
 # one-rank-at-a-time step had stopped after four refits, its likelihood ratio
 # tests accepting each.
-.ctImproveRankTarget <- function(current, share = 0.05) {
-  module <- .ctJuliaModule(current$model_spec$project)
-  S <- as.matrix(.ctBackendJuliaValue(module$ctsem_laplace_popcov(
-    .ctJuliaObjective(current), .ctJuliaNumericVector(.ctFitRawEstimate(current)), 1L)))
-  .ctImproveRankFromCov(S, share)
+#
+# With own variances (`unique`), the factor model's rule instead
+# (`.ctReduceFactorRank()`): own variances take the diagonal, so the shared
+# part needs fewer dimensions than the covariance's trace suggests.
+.ctImproveRankTarget <- function(current, share = 0.05, unique = FALSE) {
+  S <- .ctImprovePopcov(current)
+  if (isTRUE(unique)) .ctReduceFactorRank(S) else .ctImproveRankFromCov(S, share)
 }
 
 # The rule `.ctImproveRankTarget` applies to a covariance S.
@@ -834,10 +976,12 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
 # refit goes straight to the rank the covariance suggests
 # (`.ctImproveRankTarget`); if the likelihood refuses that, the ranks above it
 # are tried in turn, up to one below the current. Single-level models only,
-# and not below the varying T0MEANS a rank must keep. Returns the current fit
-# and kept changes, and a history row for each refit.
+# and not below the varying T0MEANS a rank must keep. With `once`, it returns
+# after the first rank it keeps. Returns the current fit and kept changes, and
+# a history row for each refit.
 .ctImproveRankStep <- function(base, current, kept, startdata, covariates, criterion,
-    alpha, cores, say = function(...) invisible(), label = '', round = NA_integer_) {
+    alpha, cores, say = function(...) invisible(), label = '', round = NA_integer_,
+    once = FALSE) {
   history <- list(); data <- NULL; args <- NULL; changed <- FALSE
   refused <- NA_integer_
   repeat {
@@ -851,20 +995,37 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
     if (.ctPopblocksRequested(replay$popblocks)) break
     r <- suppressWarnings(as.integer(replay$poprank))
     if (!length(r) || is.na(r) || r >= k) r <- k
+    # A full covariance goes to shared dimensions with an own variance for
+    # every effect (`popunique = TRUE`): each effect keeps its own spread, and
+    # the shared dimensions carry only what the effects have in common, so it
+    # needs fewer of them than a covariance of that rank alone, and never more
+    # parameters than the full one (`.ctReduceFactorMax()`). On
+    # follhim/dis_ctsem the full covariance of 10 effects was about rank 6 by
+    # its trace, and a rank-7 covariance alone still left four dimensions the
+    # data did not identify. A level already reduced keeps the form it has.
+    # With three effects or fewer no factor model has fewer parameters than
+    # the full covariance, so the rank comes down without own variances.
+    fatop <- if (r >= k) .ctReduceFactorMax(k) else 0L
+    unique <- if (r >= k && fatop >= 1L) TRUE else if (r >= k) NULL else replay$popunique
+    fa <- isTRUE(unique) || (is.character(unique) && length(unique) > 0L)
+    top <- if (r >= k && fatop >= 1L) fatop else r - 1L
     t0 <- sum(as.logical(model$pars$indvarying) %in% TRUE & model$pars$matrix %in% 'T0MEANS')
-    if (r - 1L < max(1L, t0)) break
-    target <- r - 1L
+    if (top < max(1L, t0)) break
+    target <- top
     if (is.na(refused)) {
-      suggested <- tryCatch(.ctImproveRankTarget(current), error = function(e) NA_integer_)
+      suggested <- tryCatch(.ctImproveRankTarget(current, unique = fa),
+        error = function(e) NA_integer_)
       if (isTRUE(suggested < target)) target <- max(suggested, t0, 1L)
     } else target <- refused + 1L
-    change <- .ctImproveRankChange(target)
-    say(label, "the population covariance is not identified; refitting at rank ", target)
+    if (target > top) break
+    change <- .ctImproveRankChange(target, unique)
+    say(label, "the population covariance is not identified; refitting at rank ", target,
+      if (fa) " with own variances")
     nonrank <- Filter(function(p) !identical(p$family, 'rank'), kept)
     rebuilt <- try(.ctImproveRebuild(base, startdata, c(nonrank, list(change)), covariates),
       silent = TRUE)
     start <- if (inherits(rebuilt, 'try-error')) NULL else
-      tryCatch(.ctImproveRankStart(current, target), error = function(e) NULL)
+      tryCatch(.ctImproveRankStart(current, target, unique = fa), error = function(e) NULL)
     refit <- if (inherits(rebuilt, 'try-error')) rebuilt else try(.ctImproveRefit(current,
       rebuilt$model, rebuilt$data, cores, start, rebuilt$args), silent = TRUE)
     verdict <- if (inherits(refit, 'try-error')) list(accept = TRUE, dloglik = NA_real_,
@@ -877,13 +1038,14 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
       dpar = if (is.finite(verdict$dpar)) -verdict$dpar else NA_integer_,
       criterion = verdict$value, kept = lower, note = verdict$note, stringsAsFactors = FALSE)
     if (!lower) {
-      if (target < r - 1L) { refused <- target; next }
+      if (target < top) { refused <- target; next }
       break
     }
     say(label, "kept ", change$label)
     current <- refit; kept <- c(nonrank, list(change)); changed <- TRUE
     data <- rebuilt$data; args <- rebuilt$args
     refused <- NA_integer_
+    if (once) break
   }
   list(current = current, kept = kept, data = data, args = args, history = history,
     changed = changed)
@@ -2046,6 +2208,9 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   args$datalong <- data
   args$cores <- cores
   args$verbose <- 0
+  # Optimised, whatever the fit replayed did: refits are compared at their
+  # optima, and a sampled fit's call would sample every one.
+  args$optimize <- TRUE
   if (is.list(args$optimcontrol)) args$optimcontrol$callback <- NULL
   args$fit <- FALSE
   args$inits <- NULL
@@ -2172,10 +2337,15 @@ print.ctModelImprove <- function(x, digits = 3, ...) {
     h <- x$history
     h[c('screen_p', 'dloglik', 'criterion')] <- lapply(h[c('screen_p', 'dloglik', 'criterion')],
       signif, digits)
-    h$round <- ifelse(is.na(h$round), 'prune', as.character(h$round))
+    h$round <- ifelse(is.na(h$round), 'prune', ifelse(h$round %in% 0L, 'start',
+      as.character(h$round)))
     names(h)[names(h) == 'kept'] <- 'done'
     print(h[, c('round', 'change', 'screen_p', 'dloglik', 'dpar', 'done', 'note')],
       row.names = FALSE)
+  }
+  if (length(x$findings)) {
+    cat("\nThe final fit still leaves unidentified:\n")
+    for (f in x$findings) cat("  ", f$text, "\n", sep = "")
   }
   if (!is.null(x$confirmation)) {
     cat("\nConfirmed on ", length(x$holdout), " held-out subjects:\n", sep = "")
