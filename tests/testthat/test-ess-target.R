@@ -203,8 +203,9 @@ test_that("a sampled fit says what its starting optimisation found before sampli
   bound <- data.frame(matrix = c("population", "population", "T0VAR"),
     level = c(1L, 1L, NA), effect = c("a", "b", "c"), at_bound = TRUE,
     rank = c(6L, 6L, 1L), k = c(10L, 10L, 2L))
-  expect_message(note(list(corbound = bound)),
-    "finds the population covariance near singular, about rank 6 of 10. Consider poprank = 6.")
+  expect_message(note(list(corbound = bound)), paste0("finds the population ",
+    "covariance near singular, about rank 6 of 10. Sampling along such directions is ",
+    "slow. ctModelImprove\\(fit, reduceOnly = TRUE\\)"))
   expect_message(note(list(identifiability = list(nweak = 1L, parameters = "rawcor_a__b"),
     corbound = bound)), "It also finds the population covariance near singular")
 })

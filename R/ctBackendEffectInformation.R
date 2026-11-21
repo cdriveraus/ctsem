@@ -634,10 +634,15 @@
 }
 
 # Said once, when the check is taken during a fit, and nothing when every
-# effect is informed.
+# effect is informed. On a model with one level, where the reduction makes
+# such an effect fixed (`.ctReduceFindings()`), the call that tries it.
 #' @keywords internal
 .ctEffectMessage <- function(effects) {
   lines <- .ctEffectAdvice(effects)
+  table <- if (is.list(effects)) effects[["table"]] else NULL
+  if (length(lines) && is.data.frame(table) && length(unique(table$level)) <= 1L)
+    lines <- c(lines, paste0("ctModelImprove(fit, reduceOnly = TRUE) refits ",
+      "without them, and keeps that where the data allow."))
   if (length(lines)) message(paste(lines, collapse = "\n"))
   invisible(lines)
 }
