@@ -78,7 +78,10 @@ are recognised.}
 \code{ctModelLavaan}, \code{ctModelMplus} and \code{ctModelFormula}
   return a model of class \code{ctStanModel}, as \code{\link{ctModel}} does.
   \code{ctModelSyntax} returns the code that creates the model, as a
-  character string that prints as code.
+  character string that prints as code. Settings that a model holds beside
+  its matrices, such as \code{covmattransform}, are written as assignments
+  after the model is created. A warning says so if the code does not create
+  the same model.
 }
 \description{
 \code{ctModelLavaan}, \code{ctModelMplus} and \code{ctModelFormula} create
@@ -103,6 +106,17 @@ follows \code{\link{ctModel}}:
 }
 Fix or free any of these with the statements below.
 
+\strong{What the statements mean.} An effect between processes is an entry
+of the drift matrix. With \code{type = 'ct'} it is the effect of one process
+on the rate of change of another, and with \code{type = 'dt'} the effect on
+its value at the next occasion. A time dependent predictor acts as an
+impulse, shifting the process at each occasion by the effect times the
+value of the predictor. A covariance that is not written, or is fixed to
+zero, is zero in the fitted model. ctsem builds a covariance matrix from all
+of its cells together, so this is possible only between variables that no
+other covariances connect, and the functions stop where it is not. A quoted
+\code{"0"} sets the cell of the matrix itself, see \code{\link{ctCov}}.
+
 \strong{lavaan style.}
 \preformatted{
 eta1 =~ y1 + y2 + y3        # eta1 is measured by y1, y2, y3
@@ -117,7 +131,9 @@ a ~~ a                      # a varies between subjects
 }
 A number before \code{*} fixes a parameter, a name labels it, and \code{NA}
 frees it. Two parameters with the same label are equal, as are labels
-joined by \code{==}. A variable on the right of \code{~} that is not a
+joined by \code{==}. A label on the first indicator of a process leaves its
+loading at 1, and \code{NA*y1 + a*y1} frees and labels it (\code{y1* (a)} in
+Mplus style). A variable on the right of \code{~} that is not a
 process is a time dependent predictor. \code{level: 2} or
 \code{level: between} starts a block in which an indicator's name stands
 for its intercept and a process's name for its intercept, so that
@@ -140,8 +156,10 @@ s ON age;
 y1@0;                       ! the intercept of y1 does not vary
 }
 \code{@} fixes a parameter, \code{*} frees it, and a name in parentheses
-labels the parameters before it on the same line. A lag written as
-\code{eta1&1} is read as \code{eta1}. If the text has sections, only
+labels the parameters before it on the same line. In a discrete time model
+an effect may be written with its lag, \code{eta1 ON eta1&1}. A continuous
+time model has no lag, and one is refused there, because the value of a
+lagged effect is on another scale. If the text has sections, only
 \code{MODEL:} is read. With nested ids use \code{\%BETWEEN school\%}.
 
 \strong{Formula style.}
@@ -176,7 +194,8 @@ fixes an initial mean, and \code{drift_eta1 ~~ drift_eta1} or
 \code{drift_eta1;} makes an auto effect vary between subjects. A value
 given this way is on the scale ctsem stores, which for variances is a
 standard deviation. Values given with \code{~~}, \code{WITH} or a variance
-statement are variances.
+statement are variances. A name that is close to a parameter name and
+matches none is taken as a misspelling and refused.
 
 \strong{Other ctsem features.} Wherever a label can be written, a quoted
 ctsem cell or a \code{\link{ctPar}} call can be written instead, such as
@@ -190,9 +209,10 @@ Some things belong elsewhere. Start values are given to \code{\link{ctFit}}
 as \code{inits}, and priors with \code{priors = TRUE}. A stationary initial
 state is \code{stationary = TRUE} in \code{\link{ctFit}}. Groups are
 compared with a time independent predictor. Random effects are
-correlated with each other, and \code{poprank} and \code{popblocks} in
-\code{\link{ctFit}} give their covariance a factor structure. Higher order
-lags are added with \code{\link{ctModelHigherOrder}}.
+correlated with each other. \code{poprank} and \code{popblocks} in
+\code{\link{ctFit}} give their covariance a factor structure, and
+\code{poprank = 0} with \code{popunique = TRUE} makes them independent.
+Higher order lags are added with \code{\link{ctModelHigherOrder}}.
 }
 \examples{
 # The same model four ways
