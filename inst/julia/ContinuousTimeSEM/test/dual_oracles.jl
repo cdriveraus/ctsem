@@ -29,7 +29,8 @@ function _oracle_row_scores(objective, values, directions)
     W = ForwardDiff.npartials(S)
     K = size(directions, 2)
     sp = objective.params
-    subjects = objective.subject_objectives
+    # Every row, as `ctsem_row_scores` reports them.
+    subjects = objective.full_subjects
     rows = [size(s.data, 2) for s in subjects]
     out = fill(NaN, sum(rows; init=0), K)
     ws = _DO._init_continuous_ekf_workspace(S, sp)

@@ -168,7 +168,7 @@ isdefined(@__MODULE__, :_LAPLACE_LINEAR_OBJECTIVE) ||
     tol = 1e-4
     out = ContinuousTimeSEM.ctsem_auto_substeps(laplace, θ; tol=tol)
     @test out.finite
-    @test length(out.mesh) == sum(length(s.timesteps) for s in obj.subject_objectives)
+    @test length(out.mesh) == sum(length(s.timesteps) for s in obj.full_subjects)
     @test out.refined > 0
     # The plain objective with each subject at its own vector, built from the
     # modes `ctsem_laplace_modes` reports on the raw scale rather than from the
