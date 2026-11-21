@@ -25,7 +25,8 @@ ctModelImprove(
   projection = "auto",
   cores = getOption("mc.cores", 2L),
   checkpoint = NULL,
-  verbose = TRUE
+  verbose = TRUE,
+  reduceOnly = FALSE
 )
 }
 \arguments{
@@ -99,14 +100,19 @@ round, the change, the iteration and the raw parameters reached.}
 \item{verbose}{Report progress: each round's steps, each refit's time, and
 while a refit runs, its iteration, objective and gradient every ten
 minutes.}
+
+\item{reduceOnly}{Only remove what the data do not identify (see Reducing),
+with no screening, adequacy checks or pruning. A sampled fit is optimised
+first, since the search compares optimised fits.}
 }
 \value{
 An object of class \code{ctModelImprove}, containing: \code{fit},
   the final fit; \code{history}, every refit tried, with the round, the
   relaxation, its screening p-value, the change in log likelihood and
   parameters, the criterion's verdict and whether it was kept (a row with
-  \code{family} \code{'prune'} says whether the change was dropped, and a
-  \code{'rank'} row whether the lower rank was kept); \code{screens}, the
+  \code{family} \code{'prune'} says whether the change was dropped, a
+  \code{'reduce'} row whether a reduction was kept, and a \code{'rank'} row
+  whether the lower rank was kept); \code{screens}, the
   score tests of each round; \code{adequacy}, the final checks;
   \code{confirmation}, with \code{holdout}, each kept change's likelihood
   ratio test on the held-out subjects; and \code{stopped}, why the search
@@ -115,7 +121,10 @@ An object of class \code{ctModelImprove}, containing: \code{fit},
   \code{close}), \code{'not adequate, no candidate improved'} or
   \code{'not adequate, nothing left to try'} (the checks still detect
   misfit), \code{'nothing indicated'} (with \code{adequacy = FALSE}, the
-  screen found nothing) or \code{'maxsteps'}. A refit that failed, or ended
+  screen found nothing), \code{'maxsteps'}, or with \code{reduceOnly},
+  \code{'reduced'} or \code{'nothing to reduce'}. With \code{reduceOnly},
+  \code{findings} lists what the final fit's report still finds, each with
+  the parameters involved. A refit that failed, or ended
   below the model it extends, is in \code{history} with a note. With
   \code{holdout}, \code{fit} is the model with the confirmed changes
   refitted to every subject, and \code{selected} is the search's own choice
@@ -200,16 +209,6 @@ joins the block of the effects it should covary with (the initial means for
 a heterogeneity result, the intercept for a level result), unless a block
 already includes it. A block of full rank gains a dimension with it.
 
-Each random effect the search adds brings correlations with the others,
-and with many random effects and few subjects the data no longer determine
-them. When a kept change leaves the population covariance poorly
-identified (\code{fit$identifiability}), the covariance is refitted at one
-rank lower (\code{poprank}), starting from its leading dimensions, and the
-lower rank is kept unless the likelihood ratio test needs the dropped
-dimension. This repeats until the fit is identified. Later random effects
-then load on the shared dimensions, and later heterogeneity results give
-own variances. This is for single level models only.
-
 When the search stops, each change kept is tested again by refitting
 without it (\code{prune}), and dropped if the others make it unnecessary.
 
@@ -225,6 +224,39 @@ does not count, so the p-values describe the steps the search took and do
 not test the final model. A refit that ends below the model it extends has
 not reached an optimum, and is recorded as such.
 }
+\section{Reducing}{
+ Before it screens, and after each change it keeps, the
+  search looks at the directions the data do not identify
+  (\code{fit$identifiability}) and tries the change that removes each kind
+  it recognises:
+  \describe{
+    \item{A parameter the likelihood does not read}{Fixed at 0.}
+    \item{A process's auto-effect against its intercept}{For a process
+      with no noise of its own, such as a trend, the auto-effect fixed at 0,
+      which makes the intercept a slope. For any, the intercept written as
+      what it adds over one time unit (\code{driftScaled = 'CINT'} in
+      \code{\link{ctModel}}).}
+    \item{A process's auto-effect against its diffusion}{The diffusion
+      written as what it adds over one time unit (\code{driftScaled =
+      'DIFFUSION'}).}
+    \item{Random effects the data hold at zero or barely determine}{Not
+      varying over subjects.}
+    \item{Population standard deviations, correlations or loadings}{A lower
+      rank (\code{poprank}). A full covariance becomes shared dimensions
+      plus a variance of each effect's own (\code{popunique = TRUE} in
+      \code{\link{ctFit}}), starting with the fewest shared dimensions whose
+      factor model reproduces the fitted correlations to within 0.1. The
+      rank goes down while the covariance is not identified, and up where
+      the likelihood refuses a lower one.}
+  }
+  Each change is refitted from the current estimates and kept unless the
+  model without it is better by \code{criterion}. A change that states the
+  same model differently is kept unless its fit ends below the current one.
+  The rank and random effect changes are for single level models only. With
+  \code{reduceOnly = TRUE} the search stops there, which usually takes a few
+  refits.
+}
+
 \section{Error rates}{
  Because the screen and the refit use the same data,
   the error rate is close to \code{alpha} for each decision, and grows with

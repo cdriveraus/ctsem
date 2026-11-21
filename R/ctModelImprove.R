@@ -990,9 +990,12 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
     # follhim/dis_ctsem the full covariance of 10 effects was about rank 6 by
     # its trace, and a rank-7 covariance alone still left four dimensions the
     # data did not identify. A level already reduced keeps the form it has.
-    unique <- if (r >= k) TRUE else replay$popunique
+    # With three effects or fewer no factor model has fewer parameters than
+    # the full covariance, so the rank comes down without own variances.
+    fatop <- if (r >= k) .ctReduceFactorMax(k) else 0L
+    unique <- if (r >= k && fatop >= 1L) TRUE else if (r >= k) NULL else replay$popunique
     fa <- isTRUE(unique) || (is.character(unique) && length(unique) > 0L)
-    top <- if (r >= k) .ctReduceFactorMax(k) else r - 1L
+    top <- if (r >= k && fatop >= 1L) fatop else r - 1L
     t0 <- sum(as.logical(model$pars$indvarying) %in% TRUE & model$pars$matrix %in% 'T0MEANS')
     if (top < max(1L, t0)) break
     target <- top
