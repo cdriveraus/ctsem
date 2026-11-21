@@ -230,11 +230,13 @@ not reached an optimum, and is recorded as such.
   (\code{fit$identifiability}) and tries the change that removes each kind
   it recognises:
   \describe{
-    \item{A parameter the likelihood does not read}{Fixed at 0.}
+    \item{A parameter the likelihood does not read}{Fixed at 0, if it is
+      an off-diagonal, an effect or an auto-effect.}
     \item{A process's auto-effect against its intercept}{For a process
       with no noise of its own, such as a trend, the auto-effect fixed at 0,
-      which makes the intercept a slope. For any, the intercept written as
-      what it adds over one time unit (\code{driftScaled = 'CINT'} in
+      which makes the intercept a slope, and both fixed at 0, which leaves a
+      constant level. For any process, the intercept written as what it adds
+      over one time unit (\code{driftScaled = 'CINT'} in
       \code{\link{ctModel}}).}
     \item{A process's auto-effect against its diffusion}{The diffusion
       written as what it adds over one time unit (\code{driftScaled =
@@ -248,13 +250,16 @@ not reached an optimum, and is recorded as such.
       factor model reproduces the fitted correlations to within 0.1. The
       rank goes down while the covariance is not identified, and up where
       the likelihood refuses a lower one.}
+    \item{Own variances at zero}{Removed from \code{popunique}.}
   }
   Each change is refitted from the current estimates and kept unless the
   model without it is better by \code{criterion}. A change that states the
   same model differently is kept unless its fit ends below the current one.
+  If several changes for one problem are kept, the one with the fewest
+  parameters is used.
   The rank and random effect changes are for single level models only. With
-  \code{reduceOnly = TRUE} the search stops there, which usually takes a few
-  refits.
+  \code{reduceOnly = TRUE} the search stops there. Each change tried is a
+  refit, so this takes several times as long as the original fit.
 }
 
 \section{Error rates}{
