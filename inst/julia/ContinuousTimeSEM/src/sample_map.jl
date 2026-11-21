@@ -1697,6 +1697,63 @@ function _jmap_final(m::CTSEMJointMap, counter::Threads.Atomic{Int}, nchains::In
 end
 
 """
+The map sampler after its first learning window (`ctsem_sample_map` with
+`first_only`): the window's chains, for the same call to go on from
+(`resume`), and where each chain's draws are centred. `distance` is the squared
+length of a chain's mean in theta's latent coordinates under the starting map,
+so its squared distance from the estimate in the metric of the Hessian the
+caller handed in; NaN for a chain that stopped, and with no Hessian, whose
+whitening is not the estimate's marginal covariance. A draw from that
+Hessian's normal has a squared distance near `npar`, whatever the chain's
+width, and the mean of a chain's draws far less: a mean past `bar` says the
+posterior's mass is not centred where the estimate is, which no curvature at
+the estimate can show (R's check for a higher maximum,
+`.ctBackendMaximumCheck()`, climbs the fit's objective from `means`).
+`map` is the starting map and `extra` its cost (`_jmap_build`), kept so that
+going on neither builds it again nor differs by what a second build's mode
+solves would.
+"""
+struct CTSEMMapStart{M}
+    map::M
+    extra::Int
+    results::Vector{_ChainResult}
+    gradients::Int
+    secs::Float64
+    bar::Float64
+    distance::Vector{Float64}
+    means::Matrix{Float64}
+    flagged::Vector{Bool}
+end
+
+function _jmap_start(m::CTSEMJointMap, extra::Int, results::Vector{_ChainResult}, moved,
+    gradients::Int, secs::Float64, bar::Float64, metric::Bool)
+    npar = m.npar
+    means = zeros(npar, length(results))
+    distance = fill(NaN, length(results))
+    for c in eachindex(results)
+        W = view(results[c].draws, 1:npar, :)
+        wbar = vec(sum(W; dims=2)) ./ size(W, 2)
+        means[:, c] .= vec(sum(_jmap_thetas(m, W); dims=2)) ./ size(W, 2)
+        (metric && moved[c]) && (distance[c] = sum(abs2, wbar))
+    end
+    flagged = [bar > 0 && isfinite(d) && d > bar for d in distance]
+    return CTSEMMapStart(m, extra, results, gradients, secs, bar, distance, means, flagged)
+end
+
+"""
+    ctsem_map_centre(start)
+
+What R reads of a `CTSEMMapStart`: the bar, each chain's squared distance and
+whether it is past the bar, the chains' mean theta (a column a chain), and
+what the window cost.
+"""
+ctsem_map_centre(s::CTSEMMapStart) = (bar=s.bar, distance=s.distance, means=s.means,
+    flagged=s.flagged, gradients=s.gradients, secs=s.secs,
+    draws=size(s.results[1].draws, 2), nchains=length(s.results))
+
+export ctsem_map_centre
+
+"""
     ctsem_sample_map(laplace, values; kwargs...)
 
 Sample the joint posterior through a learnt map (this file's header). `laplace`
@@ -1710,6 +1767,13 @@ coupled to the free parameters outside its effects), `report` (the layer's
 objective, whose layout the effects are reported in: a unit whose effects are
 all integrated has no block on the hybrid objective), `theta_map` (theta's
 triangular map learnt; false keeps its whitening alone).
+
+`first_only` returns after the first window's draws, before anything is learnt
+from them, as a `CTSEMMapStart`: where each chain is centred against
+`centre_bar` (`ctsem_map_centre`). The same call with that as `resume` goes on
+from those draws, to the draws an uninterrupted call returns. So a caller can
+act on the first window before the rest is paid for, and a run it lets go on
+loses nothing.
 
 Returns `ctsem_sample`'s record, with the draws of theta and, with
 `save_effects`, of the natural deviations, plus the map's: `gradients` (every
@@ -1729,7 +1793,9 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     progress_sink=nothing, stepsize::Real=0.0, coordinate=nothing,
     windows::Union{Nothing,AbstractVector{<:Integer}}=nothing, nsettle::Integer=25,
     ncheck::Integer=25, maxrows::Integer=400, cross::Bool=true,
-    report::Union{Nothing,CTSEMLaplaceObjective}=nothing, theta_map::Bool=true)
+    report::Union{Nothing,CTSEMLaplaceObjective}=nothing, theta_map::Bool=true,
+    first_only::Bool=false, centre_bar::Real=0.0,
+    resume::Union{Nothing,CTSEMMapStart}=nothing)
 
     t0 = time()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
@@ -1748,19 +1814,26 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     # Names of their own here: `th` and `Ls` again would make the draw loop's
     # below, which a closure there captures, function locals assigned twice,
     # each a `Core.Box`.
-    cov = if hessian === nothing
+    # A call going on from its first window (`resume`) takes that window's map.
+    built = if resume !== nothing
+        resume.map.sampler.laplace === laplace ||
+            throw(ArgumentError("resume is another objective's first window"))
+        (resume.map::CTSEMJointMap{typeof(sampler)}, resume.extra)
+    elseif hessian === nothing
         th0 = _laplace_extend(laplace, theta0)
         Ls0 = _laplace_popchols(th0, laplace.spec)
         _laplace_parallel(laplace, 1:sampler.nunits) do U
             _laplace_solve_unit_mode!(laplace, U, th0, Ls0)
             return true
         end
-        _conditional_population_covariance(sampler, th0, Ls0, nothing)
+        _jmap_build(sampler, theta0,
+            _conditional_population_covariance(sampler, th0, Ls0, nothing); cross=cross)
     else
         H = Matrix{Float64}(hessian)[1:npar, 1:npar]
-        _prior_bounded_covariance(Symmetric(-(H .+ transpose(H)) ./ 2), prec)
+        _jmap_build(sampler, theta0,
+            _prior_bounded_covariance(Symmetric(-(H .+ transpose(H)) ./ 2), prec); cross=cross)
     end
-    m, extra = _jmap_build(sampler, theta0, cov; cross=cross)
+    m, extra = built
     counter = Threads.Atomic{Int}(0)
 
     ranges = UnitRange{Int}[1:npar]
@@ -1773,7 +1846,8 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     end
     metric = _metric_from_covariances(ranges, covs)
     adapt = [b == 1 for b in eachindex(ranges)]
-    verbose && println(_console(), "Sampling through a learnt map: ", nchains, " chain(s), ",
+    (verbose && resume === nothing) && println(_console(), "Sampling through a learnt map: ",
+        nchains, " chain(s), ",
         D, " dimensions (", npar, " population + ", D - npar, " effects), ",
         width, " worker(s) shared")
 
@@ -1799,16 +1873,32 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
         CTSEMCallback(progress_callback; every=0.0), 0, 0, nlearn)
     watch = (verbose || progress_callback !== nothing) ? learning : nothing
     pooled = zeros(npar, 0)
+    # The first window, where the call is asked for that alone or goes on from
+    # one (`CTSEMMapStart`).
+    (first_only && isempty(windows)) && throw(ArgumentError(
+        "first_only returns after the first learning window, and windows is empty"))
+    if resume !== nothing
+        (!isempty(windows) && length(resume.results) == nchains &&
+            size(resume.results[1].draws) == (D, Int(windows[1]))) ||
+            throw(ArgumentError("resume is not this call's first window"))
+        Threads.atomic_add!(counter, resume.gradients - extra)
+    end
     for (w, nw) in enumerate(windows)
         mw = m
         learning.nwarmup = w == 1 ? nwarmup : Int(nsettle)
-        results = _sample_chains(nchains, parallel, seed + 101 * w, centre, metric,
+        results = (w == 1 && resume !== nothing) ? resume.results :
+            _sample_chains(nchains, parallel, seed + 101 * w, centre, metric,
             w == 1 ? nwarmup : Int(nsettle), Int(nw), Int(maxdepth), Float64(target_accept),
             Float64(maxdelta), Float64(init_scale), adapt_metric, adapt,
             c -> CTSEMJointMapDensity(mw, counter); init_eps=eps, starts=starts,
             progress_callback=watch)
         learning.offset += learning.nwarmup + Int(nw)
         moved = _jmap_moved(results, npar)
+        if w == 1 && first_only
+            _progress_break(learning.reporter)
+            return _jmap_start(m, extra, results, moved, counter[] + extra, time() - t0,
+                Float64(centre_bar), hessian !== nothing)
+        end
         Wl = _pool_draws(results[moved], D)
         m2, refit, lambda, rows = _jmap_refit(m, Wl, rng; maxrows=Int(maxrows))
         if learn
@@ -1841,7 +1931,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
             stepsize=eps))
     end
     _progress_done(learning.reporter, @sprintf("%d iterations a chain", learning.total))
-    learned = time() - t0
+    learned = time() - t0 + (resume === nothing ? 0.0 : resume.secs)
     learn_gradients = counter[] + extra
 
     # The kept draws, under the final map, to the targets, judged on theta.

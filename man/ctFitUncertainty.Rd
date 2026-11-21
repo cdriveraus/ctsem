@@ -58,9 +58,9 @@ default), the fit's Kalman filter, or \code{'particle'}, a particle filter
 \code{method = 'is'}, on fits whose random effects are not integrated by
 Laplace (see Methods).}
 
-\item{checks}{Which approximations to check, where the method does not
-replace them itself: \code{TRUE} (the default) for both, \code{FALSE} for
-neither, or one of \code{'randomeffects'} and \code{'intervals'}. The
+\item{checks}{Which checks to run, where the method does not replace them
+itself: \code{TRUE} (the default) for all, \code{FALSE} for none, or any of
+\code{'randomeffects'}, \code{'intervals'} and \code{'maximum'}. The
 random-effects check (julia, \code{intoverpop = 'laplace'}) scores the
 Laplace approximation for each subject or group, and gives a warning
 suggesting \code{intoverpop = 'quadrature'} where integrating the random
@@ -73,7 +73,13 @@ with the posterior's gradients, records the result in
 \code{method = 'sample'}. Both checks usually take seconds. With
 \code{intoverpop = 'quadrature'} the interval check runs on the refined
 fit, and on nested models can take longer than sampling.
-\code{checks = 'randomeffects'} leaves it out.}
+\code{checks = 'randomeffects'} leaves it out. The maximum check (julia,
+\code{method = 'sample'} on the joint posterior) looks at where the
+sampler's first draws are centred. If that is far from the estimate, it
+optimises from there, and gives a warning if this reaches a higher log
+posterior than the estimate's. The point is kept in
+\code{$sample$maximumcheck$raw}. It costs nothing unless the draws are far
+from the estimate.}
 
 \item{finishsamples}{Number of approximate raw parameter draws. If
 \code{NULL}, the number already in the fit's raw posterior

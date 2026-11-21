@@ -3909,9 +3909,9 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' (see \code{\link{ctParticleLik}}). \code{'particle'} works with
 #' \code{method = 'is'}, on fits whose random effects are not integrated by
 #' Laplace (see Methods).
-#' @param checks Which approximations to check, where the method does not
-#' replace them itself: \code{TRUE} (the default) for both, \code{FALSE} for
-#' neither, or one of \code{'randomeffects'} and \code{'intervals'}. The
+#' @param checks Which checks to run, where the method does not replace them
+#' itself: \code{TRUE} (the default) for all, \code{FALSE} for none, or any of
+#' \code{'randomeffects'}, \code{'intervals'} and \code{'maximum'}. The
 #' random-effects check (julia, \code{intoverpop = 'laplace'}) scores the
 #' Laplace approximation for each subject or group, and gives a warning
 #' suggesting \code{intoverpop = 'quadrature'} where integrating the random
@@ -3924,7 +3924,13 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{method = 'sample'}. Both checks usually take seconds. With
 #' \code{intoverpop = 'quadrature'} the interval check runs on the refined
 #' fit, and on nested models can take longer than sampling.
-#' \code{checks = 'randomeffects'} leaves it out.
+#' \code{checks = 'randomeffects'} leaves it out. The maximum check (julia,
+#' \code{method = 'sample'} on the joint posterior) looks at where the
+#' sampler's first draws are centred. If that is far from the estimate, it
+#' optimises from there, and gives a warning if this reaches a higher log
+#' posterior than the estimate's. The point is kept in
+#' \code{$sample$maximumcheck$raw}. It costs nothing unless the draws are far
+#' from the estimate.
 #' @param uncertainty,draws \code{ctOptimUncertainty()} only, with the
 #' argument names of ctsem 3.11.1. \code{uncertainty} is \code{method}, and
 #' \code{draws} (\code{'auto'}, \code{'normal'}, \code{'empirical'} or
@@ -4128,6 +4134,11 @@ ctFitUncertainty <- function(fit,
   if(julia && identical(method, 'hessian')) {
     control$check <- 'intervals' %in% checks
   }
+  # The maximum check, made from the joint sampler's first draws
+  # (R/ctBackendMaximumCheck.R).
+  if(julia && identical(method, 'sample')) {
+    control$maximumcheck <- 'maximum' %in% checks
+  }
   out <- .ctFitUncertaintyImpl(fit, uncertainty=method, draws='auto',
     finishsamples=finishsamples, cores=cores, control=control,
     verbose=verbose)
@@ -4142,15 +4153,17 @@ ctFitUncertainty <- function(fit,
   out
 }
 
-# `checks` for ctFitUncertainty() and `optimcontrol$checks`: TRUE for both,
-# FALSE for neither, or the ones named.
+# `checks` for ctFitUncertainty() and `optimcontrol$checks`: TRUE for all,
+# FALSE for none, or the ones named. 'maximum' is the sampler's
+# (R/ctBackendMaximumCheck.R).
 .ctUncertaintyChecks <- function(checks) {
-  if(isTRUE(checks)) return(c('randomeffects', 'intervals'))
+  all3 <- c('randomeffects', 'intervals', 'maximum')
+  if(isTRUE(checks)) return(all3)
   if(isFALSE(checks)) return(character())
   if(is.character(checks) && length(checks) &&
-      all(checks %in% c('randomeffects', 'intervals'))) return(unique(checks))
-  stop("checks must be TRUE, FALSE, or one or both of 'randomeffects' and ",
-    "'intervals'.", call.=FALSE)
+      all(checks %in% all3)) return(unique(checks))
+  stop("checks must be TRUE, FALSE, or any of 'randomeffects', 'intervals' ",
+    "and 'maximum'.", call.=FALSE)
 }
 
 # Whether a Laplace fit has no random-effects check on record: none made, or
