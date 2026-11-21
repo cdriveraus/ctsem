@@ -1018,13 +1018,15 @@ renumbered with them."""
 function _ctsem_subset_objective(o::CTSEMObjective, idx::AbstractVector{<:Integer})
     renumber = Dict(Int(s) => j for (j, s) in enumerate(idx))
     keep = [k for k in eachindex(o.ti_missing_subject) if haskey(renumber, o.ti_missing_subject[k])]
-    CTSEMObjective(o.params, o.subject_objectives[idx], nothing,
+    subjects = o.subject_objectives[idx]
+    full = o.full_subjects === o.subject_objectives ? subjects : o.full_subjects[idx]
+    CTSEMObjective(o.params, subjects, nothing,
         o.prior_index, o.prior_scale, o.prior_weight,
         o.ti_missing_parameter[keep], o.ti_missing_mu[keep], o.ti_missing_sigma[keep],
         Int[renumber[o.ti_missing_subject[k]] for k in keep],
         isempty(o.subject_weights) ? Float64[] : o.subject_weights[idx], o.corbound,
         o.penalty_index, o.penalty_precision, o.jacobian_index, o.jacobian_value,
-        o.jacobian_slope)
+        o.jacobian_slope, nothing, full)
 end
 _ctsem_subset_objective(o, idx) = nothing
 

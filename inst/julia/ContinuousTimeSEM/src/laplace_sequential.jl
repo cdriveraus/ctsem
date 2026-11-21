@@ -38,37 +38,53 @@ end
 @inline _laplace_sequential_lane(b::Integer, W::Integer) =
     ((b - 1) ÷ W + 1, (b - 1) % W + 1)
 
-"""A truncated copy of a subject's record, rows `1:t`, in place on `so`."""
+"""A truncated copy of a subject's record, rows `1:t` of its every row, in
+place on `so`; the update plan is indexed by row and stays whole."""
 function _laplace_truncate!(so, full, t::Integer)
     so.data = full.data[:, 1:t]
     so.timesteps = full.timesteps[1:t]
     so.tdpreds = full.tdpreds[:, 1:t]
     so.max_timestep = full.max_timestep isa AbstractVector ?
         full.max_timestep[1:t] : full.max_timestep
+    so.relin = full.relin
     return so
 end
 
+"""A subject's record, as `_laplace_truncate!` and `_laplace_unit_restore!`
+read it."""
+_laplace_record(so) = (data=so.data, timesteps=so.timesteps, tdpreds=so.tdpreds,
+    max_timestep=so.max_timestep, relin=so.relin)
+
 """
 What a pass over a prefix of a unit's record overwrites: its retained mode and
-inner-solve flags, and (in `full`) the member's record that
-`_laplace_truncate!` cuts. `_laplace_unit_restore!` puts both back, in a
-`finally`, so a unit is as the objective left it whatever the pass did.
+inner-solve flags, and (in `own`) the member's record as the likelihood reads
+it, which `_laplace_truncate!` replaces. `_laplace_unit_restore!` puts both
+back, in a `finally`, so a unit is as the objective left it whatever the pass
+did. `full` is the member's record with every row (`full_subjects`), which the
+prefixes are cut from: the likelihood's record leaves out rows with nothing to
+filter, and each row is reported.
 """
 function _laplace_unit_saved(laplace, U::Integer, so)
+    fs = laplace.objective.full_subjects[laplace.units.members[U][1]]
     return (mode=copy(laplace.modes[U]), iterations=laplace.inner_iterations[U],
         gradient=laplace.inner_gradient[U], converged=laplace.inner_converged[U],
         hrepaired=laplace.hessian_repaired[U], mrepaired=laplace.mode_repaired[U],
-        floored=laplace.logdet_floored[U],
-        full=(data=so.data, timesteps=so.timesteps, tdpreds=so.tdpreds,
-            max_timestep=so.max_timestep))
+        floored=laplace.logdet_floored[U], own=_laplace_record(so),
+        full=_laplace_record(fs))
+end
+
+"""Put a record (`_laplace_record`) back on `so`."""
+function _laplace_set_record!(so, rec)
+    so.data = rec.data
+    so.timesteps = rec.timesteps
+    so.tdpreds = rec.tdpreds
+    so.max_timestep = rec.max_timestep
+    so.relin = rec.relin
+    return so
 end
 
 function _laplace_unit_restore!(laplace, U::Integer, so, saved)
-    full = saved.full
-    so.data = full.data
-    so.timesteps = full.timesteps
-    so.tdpreds = full.tdpreds
-    so.max_timestep = full.max_timestep
+    _laplace_set_record!(so, saved.own)
     laplace.modes[U] = saved.mode
     laplace.inner_iterations[U] = saved.iterations
     laplace.inner_gradient[U] = saved.gradient
@@ -114,7 +130,7 @@ function ctsem_laplace_sequential(laplace::CTSEMLaplaceObjective, values::Abstra
         "level of random effects"))
     Ls = _laplace_popchols(theta, laplace.spec)
     sp = laplace.objective.params
-    subjects = laplace.objective.subject_objectives
+    subjects = laplace.objective.full_subjects
     ws0 = _init_continuous_ekf_workspace(Float64, sp)
     n = ws0.state_dim
     m = ws0.manifest_dim
@@ -293,7 +309,10 @@ function _laplace_sequential_filtered!(out, laplace::CTSEMLaplaceObjective, U::I
     spec = laplace.spec
     i = laplace.units.members[U][1]
     so = laplace.objective.subject_objectives[i]
-    T = size(so.data, 2)
+    # Every row is reported: the passes run on the full record, which the
+    # subject the likelihood reads holds meanwhile (`_laplace_truncate!`).
+    fs = laplace.objective.full_subjects[i]
+    T = size(fs.data, 2)
     sp = laplace.objective.params
     hyb = sp.hybrid
     lv = spec.levels[1]
@@ -305,21 +324,27 @@ function _laplace_sequential_filtered!(out, laplace::CTSEMLaplaceObjective, U::I
     m = ews.manifest_dim
     W = ForwardDiff.npartials(S)
     traces = CTSEMKalmanTrace{S}[]
-    for pass in 1:max(cld(D, W), 1)
-        x = _laplace_member_values(theta, spec, Ls, S[], laplace.units.offsets[U][1])
-        for c in 1:D
-            zc = _laplace_sequential_seed(S, 0.0, c, (pass - 1) * W)
-            for p in axes(B, 1)
-                b = B[p, c]
-                iszero(b) || (x[lv.re_index[p]] += b * zc)
+    own = _laplace_record(so)
+    try
+        _laplace_truncate!(so, _laplace_record(fs), T)
+        for pass in 1:max(cld(D, W), 1)
+            x = _laplace_member_values(theta, spec, Ls, S[], laplace.units.offsets[U][1])
+            for c in 1:D
+                zc = _laplace_sequential_seed(S, 0.0, c, (pass - 1) * W)
+                for p in axes(B, 1)
+                    b = B[p, c]
+                    iszero(b) || (x[lv.re_index[p]] += b * zc)
+                end
             end
+            trace = CTSEMKalmanTrace(S, n, m, T, 1, length(sp.mutables))
+            trace.offset = 0
+            trace.current_subject = 1
+            _laplace_sequential_pass!(trace, laplace, theta, i, x,
+                clamp(D - (pass - 1) * W, 0, W)) || return nothing
+            push!(traces, trace)
         end
-        trace = CTSEMKalmanTrace(S, n, m, T, 1, length(sp.mutables))
-        trace.offset = 0
-        trace.current_subject = 1
-        _laplace_sequential_pass!(trace, laplace, theta, i, x,
-            clamp(D - (pass - 1) * W, 0, W)) || return nothing
-        push!(traces, trace)
+    finally
+        _laplace_set_record!(so, own)
     end
     trace = traces[1]
     # The posterior given rows 1:t, in information form: H the rows' summed
@@ -339,7 +364,7 @@ function _laplace_sequential_filtered!(out, laplace::CTSEMLaplaceObjective, U::I
             c += ForwardDiff.value(lr)
             p = 0
             for j in 1:m
-                _ctsem_observed(so.data[j, t]) && (p += 1; observed[p] = j)
+                _ctsem_observed(fs.data[j, t]) && (p += 1; observed[p] = j)
             end
             if D > 0
                 @inbounds for a in 1:D

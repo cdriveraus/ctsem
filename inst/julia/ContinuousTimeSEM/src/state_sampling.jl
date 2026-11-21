@@ -444,12 +444,12 @@ function ctsem_state_trajectories(objective::CTSEMObjective, values::AbstractMat
         "starts has $n rows; the model has $(ws.state_dim) states"))
 
     # Predictor vectors as `ctsem_parameter_matrices` builds them.
-    nsubjectti = isempty(objective.subject_objectives) ? 0 :
-        _ctsem_tipred_length(first(objective.subject_objectives).tipreds)
+    nsubjectti = isempty(objective.full_subjects) ? 0 :
+        _ctsem_tipred_length(first(objective.full_subjects).tipreds)
     ntipred = max(length(tipreds), nsubjectti, maximum(sp.ti_predictor_indices; init=0))
     ti = zeros(Float64, ntipred)
     ti[eachindex(tipreds)] .= Float64.(tipreds)
-    ntdpred = size(first(objective.subject_objectives).tdpreds, 1)
+    ntdpred = size(first(objective.full_subjects).tdpreds, 1)
     tdzero = zeros(Float64, ntdpred)
 
     pars = ws.pars
@@ -539,7 +539,7 @@ function _ctsem_state_layout(objective::CTSEMObjective)
     nmanifest = size(pars.LAMBDA, 1)
     ndiffusion = isempty(sp.diffusion_state_indices) ? nlatent :
         length(sp.diffusion_state_indices)
-    subjects = objective.subject_objectives
+    subjects = objective.full_subjects
     zoffsets = Vector{Int}(undef, length(subjects))
     rowoffsets = Vector{Int}(undef, length(subjects))
     at = 0
@@ -1012,7 +1012,7 @@ function ctsem_joint_loglikelihood(objective::CTSEMObjective,
     length(innovations) == layout.ndim || throw(DimensionMismatch(
         "z must have $(layout.ndim) entries for this design, got $(length(innovations))"))
 
-    subjects = objective.subject_objectives
+    subjects = objective.full_subjects
     sp = objective.params
     total = zero(T)
     @inbounds for (i, sub) in enumerate(subjects)
@@ -1120,7 +1120,7 @@ function ctsem_generate_states(objective::CTSEMObjective,
     # subject's own parameters.
     persubject = values isa AbstractMatrix
     if persubject
-        size(values, 1) == length(objective.subject_objectives) ||
+        size(values, 1) == length(objective.full_subjects) ||
             throw(DimensionMismatch(
                 "one row of parameters per subject is required"))
     end
@@ -1137,7 +1137,7 @@ function ctsem_generate_states(objective::CTSEMObjective,
         fill(NaN, layout.nmanifest, layout.nrows),
         zeros(Float64, layout.nlatent, layout.nrows),
         fill(NaN, layout.nrows))
-    subjects = objective.subject_objectives
+    subjects = objective.full_subjects
     loglik = zeros(Float64, length(subjects))
 
     for (i, sub) in enumerate(subjects)
@@ -1321,7 +1321,7 @@ against `[theta; z_i]` alone.
 """
 function _ctsem_joint_subject(o::CTSEMJointObjective, i::Int,
     theta::AbstractVector{T}, z::AbstractVector{T}, offset::Int) where {T}
-    sub = o.objective.subject_objectives[i]
+    sub = o.objective.full_subjects[i]
     ws = _get_or_init_objective_workspace!(sub, T)
     value = _ctsem_state_pass!(ws, theta, sub.data, sub.timesteps,
         o.objective.params, sub.tdpreds,
@@ -1461,7 +1461,7 @@ function _ctsem_joint_record(o::CTSEMJointObjective, x::AbstractVector)
     gen = CTSEMStateGenerate(zeros(Float64, layout.nmanifest, layout.nrows),
         fill(NaN, layout.nmanifest, layout.nrows),
         zeros(Float64, layout.nlatent, layout.nrows), fill(NaN, layout.nrows))
-    for (i, sub) in enumerate(o.objective.subject_objectives)
+    for (i, sub) in enumerate(o.objective.full_subjects)
         gen.offset = layout.rowoffsets[i]
         ws = _get_or_init_objective_workspace!(sub, Float64)
         _ctsem_state_pass!(ws, theta, sub.data, sub.timesteps,
