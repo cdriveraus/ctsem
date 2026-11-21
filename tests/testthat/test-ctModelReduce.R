@@ -146,6 +146,9 @@ test_that("the fit's warning says what each direction is and how to reduce it", 
   expect_warning(ctsem:::.ctBackendIdentifyWarn(fit$identifiability, NULL, NULL),
     'Not estimable as the model stands')
   expect_identical(ctsem:::.ctReduceWarnText(list()), '')
+  # A description that starts with a word starts the sentence.
+  cov <- Filter(function(x) identical(x$kind, 'covariance'), f)
+  expect_match(ctsem:::.ctReduceWarnText(cov), '^The population covariance has more')
 })
 
 test_that("own variances at zero leave the level's own variances, the rank kept", {

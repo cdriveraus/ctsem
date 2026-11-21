@@ -372,8 +372,11 @@
   parts <- vapply(shown, function(f) if (identical(f$kind, 'covariance'))
     paste0(f$text, ' (', paste(utils::head(f$parameters, 2), collapse = ', '),
       if (length(f$parameters) > 2) ', ...' else '', ')') else f$text, '')
-  # Not capitalised: a part can start with a parameter's name.
-  paste0(paste(parts, collapse = '; '), '. ',
+  # Capitalised only where it starts with a word: a part can start with a
+  # parameter's name, which stays as it is.
+  text <- paste(parts, collapse = '; ')
+  if (startsWith(text, 'the ')) text <- paste0('T', substring(text, 2))
+  paste0(text, '. ',
     'ctModelImprove(fit, reduceOnly = TRUE) refits the changes that remove these ',
     'and keeps those the data allow.')
 }
