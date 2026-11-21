@@ -5864,8 +5864,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   callback = NULL, objective = NULL, progress_label = NULL,
   progress_budget = FALSE, pin = NULL, resumed = FALSE, inverse = NULL,
   hessian = NULL, hessian_at = NULL, walked = FALSE, checkpoint = NULL,
-  probed = FALSE, pairs = FALSE) {
+  probed = FALSE, pairs = FALSE, coldstart = NULL) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
+  # Where a run-off escape restarts the coordinates it does not hold: the
+  # fit's start before its warm-up where the caller has one, else this stage's.
+  if (length(coldstart) != length(start)) coldstart <- start
   # A caller may hand in the objective to maximise. `intoverstates=FALSE` does,
   # passing the joint one over `[theta; z]`; everything below is unchanged by
   # that, because `ctsem_optimize` is typed on what the two have in common.
@@ -6567,7 +6570,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       escape = function(r, runoffonly = FALSE) {
         point <- .ctBackendStallEscape(r, optimcontrol, model_spec, verbose,
           escapes = !state_explicit, tried = ranoff, runoffonly = runoffonly,
-          gradient = gradient, cores = cores)
+          gradient = gradient, cores = cores, restart = coldstart)
         if (identical(attr(point, "kind"), "runoff")) {
           ranoff <<- c(ranoff, as.integer(attr(point, "coordinates")))
           if (isTRUE(attr(point, "unusable"))) return(NULL)
@@ -7014,6 +7017,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # Neither the transform metric (off by default since 2026-11-07) nor the
   # short first step replaces it: conditioning and basin selection are
   # different problems.
+  # The start before the warm-up moves it, where a run-off escape restarts the
+  # parameters it does not hold (`.ctBackendStallEscape()`): the warm-up's end
+  # is already in the basin the escape is leaving.
+  coldstart <- start
   careful <- optimcontrol$carefulfit
   if (is.null(careful)) careful <- TRUE
   warmiter <- if (isTRUE(careful)) .ctJuliaWarmCap else
@@ -7168,7 +7175,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     verbose = verbose, callback = optimcontrol$callback,
     objective = jointobjective, checkpoint = checkpoint,
     hessian = checkpoint$hessian, hessian_at = checkpoint$hessian_at,
-    walked = if (walkfirst) "dear" else FALSE, pairs = smoothing))
+    walked = if (walkfirst) "dear" else FALSE, pairs = smoothing,
+    coldstart = coldstart))
   optimum <- as.numeric(result$minimizer)[seq_len(npar)]
   # Its modes and Hessian were the first run's; later runs start from their
   # own (`laplace_known`), and form their own.

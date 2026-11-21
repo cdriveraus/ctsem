@@ -638,7 +638,7 @@
 #' @keywords internal
 .ctBackendStallEscape <- function(result, optimcontrol, model_spec,
     verbose = 0, escapes = TRUE, tried = integer(), runoffonly = FALSE,
-    gradient = "adjoint", cores = NA_integer_) {
+    gradient = "adjoint", cores = NA_integer_, restart = NULL) {
   # `escapes = FALSE` on the state-explicit route, where the joint mode is
   # degenerate: the innovations re-optimise to absorb almost any parameter
   # change, so a pullback can nearly always find something and "not a maximum"
@@ -686,26 +686,25 @@
     return(.ctBackendEscapeCoordinates(point,
       result$overshoot_parameters, npar))
   }
-  # Model parameters run off where the likelihood is flat in them
-  # (`.ctBackendRunOff()`): the one leading them moved to the other side of its
-  # range, as far out as the data start goes, and the others that ran off with
-  # it put back at the default start, where the stage that resumes holds the
-  # lead while the rest settle and then frees it (`stage()` in
-  # `.ctJuliaOptimise()`). Moved and let go at once, it slides back to the
-  # basin it came from: the rest of the model is still arranged for that one.
-  # Only a point the optimiser can start from (`.ctDataStartUsable()`): held
-  # slow beside an intercept that ran off with a fast drift, the dis model's
-  # trend rose without bound and no person's inner mode converged. One lead at
-  # a time, each once a fit (`tried`); a point that cannot be used comes back
-  # marked so, for the caller to count as tried.
+  # A model parameter run off where the likelihood is flat in it
+  # (`.ctBackendRunOff()`): held at the other side of its range, as far out as
+  # the data start goes, with every other coordinate started again from
+  # `restart`, the fit's start before its warm-up, by the stage that resumes
+  # (`stage()` in `.ctJuliaOptimise()`), which then frees it. Moved and let go
+  # at once, it slides back to the basin it came from; held with the rest left
+  # where that basin put them, the rest may make no sense beside it (held slow
+  # beside the intercept that went with a fast drift, the dis model's trend rose
+  # without bound and no person's inner mode converged). Only a point the
+  # optimiser can start from (`.ctDataStartUsable()`). One at a time, each once
+  # a fit (`tried`); a point that cannot be used comes back marked so, for the
+  # caller to count as tried.
   if (!isFALSE(optimcontrol$flatretry)) {
-    runoff <- .ctBackendRunOff(result, model_spec, npar, tried)
-    if (!is.null(runoff)) {
-      from <- as.numeric(result$minimizer)
-      lead <- runoff$lead
-      was <- from[lead]
+    lead <- .ctBackendRunOff(result, model_spec, npar, tried)
+    if (length(lead)) {
+      was <- as.numeric(result$minimizer)[lead]
+      from <- if (length(restart) == npar) as.numeric(restart) else
+        as.numeric(result$minimizer)
       from[lead] <- -sign(was) * .ctDataStartRawBound
-      from[runoff$with] <- 0
       point <- .ctBackendEscapeCoordinates(from, lead, npar)
       attr(point, "kind") <- "runoff"
       if (!.ctDataStartUsable(model_spec, from, gradient, cores)) {
@@ -715,10 +714,8 @@
       if (verbose > 0) {
         message("Raw parameter ", .ctJuliaSaturatedNames(list(p = lead),
           model_spec, npar, "p"), " ran off to ", signif(was, 3), ", where the ",
-          "likelihood is flat in it; refitting with it held at ", from[lead],
-          if (length(runoff$with)) paste0(" and ", paste(.ctJuliaSaturatedNames(
-            list(p = runoff$with), model_spec, npar, "p"), collapse = ", "),
-            " started again at 0"), ", then freed")
+          "likelihood is flat in it; refitting from the start with it held at ",
+          from[lead], ", then freed")
       }
       return(point)
     }
@@ -726,9 +723,8 @@
   NULL
 }
 
-# The coordinates a stage left run off where the likelihood is flat in them:
-# the one to hold at the other side of its range (`lead`) and those that ran
-# off with it (`with`), by raw index, or NULL.
+# The model parameter a stage left run off where the likelihood is flat in it,
+# by raw index, or nothing.
 #
 # A local optimiser settles in the basin its start leads to. Where that basin
 # takes a parameter out to a flat end of its range -- an auto-effect so fast
@@ -740,28 +736,28 @@
 # the linear trend the model reaches with that auto-effect slow; the profile
 # between the two dips by 1.6, which no local step crosses.
 #
-# Run off: past the data start's raw bound (`.ctDataStartRawBound`) and in the
-# directions the stage's finish walked and found flat -- each coordinate's
-# share of them, the reduction's reading (`.ctReduceFlat()`) on the finish's
-# own Hessian, at least 0.1 -- or with its transform saturated. Coordinates
-# run off together move together: the dis trend's intercept and its spread
-# ran off with its auto-effect, keeping each person's level where it was. The
-# lead is a model parameter whose transform has a finite end on some side
-# (`.ctBackendRawEnds()`), an auto-effect or a variance, since that is what
-# has another side to be held at, with at least half its variation in the
-# flat directions or a saturated transform; of several, the largest share,
-# none in `tried`. Population coordinates do not lead: a variance at zero is a
-# model the reduction and the effects report have a change for.
+# Run off: past the data start's raw bound (`.ctDataStartRawBound`), with at
+# least half its variation in the directions the stage's finish walked and
+# found flat -- the share the reduction reads (`.ctReduceFlat()`), here on the
+# finish's own Hessian -- or with its transform saturated. And with another
+# side to be held at: a transform with a finite end somewhere
+# (`.ctBackendRawEnds()`), an auto-effect or a variance; an intercept that ran
+# off has none. Of several, the largest share; none in `tried`. Population
+# coordinates are left to the reduction and the effects report: a variance at
+# zero is a model they have a change for.
 #' @keywords internal
 .ctBackendRunOff <- function(result, model_spec, npar, tried = integer()) {
   x <- suppressWarnings(as.numeric(result$minimizer))
-  if (length(x) < npar) return(NULL)
+  if (length(x) < npar) return(integer())
   x <- x[seq_len(npar)]
   far <- which(is.finite(x) & abs(x) > .ctDataStartRawBound)
-  if (!length(far)) return(NULL)
+  far <- setdiff(far, tried)
+  if (!length(far)) return(integer())
   names <- tryCatch(as.character(.ctBackendRawParameterNames(
     list(model_spec = model_spec), npar)), error = function(e) NULL)
-  if (length(names) != npar) return(NULL)
+  if (length(names) != npar) return(integer())
+  far <- far[!.ctReducePopCoordinate(names[far])]
+  if (!length(far)) return(integer())
   share <- numeric(npar)
   walk <- .ctBackendFlatWalkFields(result, npar)
   if (!is.null(walk) && !is.null(walk$eigenvectors)) {
@@ -770,14 +766,11 @@
       share <- rowSums(walk$eigenvectors[, flat %in% TRUE, drop = FALSE]^2)
   }
   saturated <- suppressWarnings(as.integer(result$saturated_parameters))
-  group <- far[share[far] >= 0.1 | far %in% saturated]
-  lead <- group[!group %in% tried & !.ctReducePopCoordinate(names[group]) &
-    (share[group] >= 0.5 | group %in% saturated)]
-  lead <- lead[vapply(lead, function(k) any(.ctBackendRawEnds(model_spec, k)),
+  far <- far[share[far] >= 0.5 | far %in% saturated]
+  far <- far[vapply(far, function(k) any(.ctBackendRawEnds(model_spec, k)),
     logical(1))]
-  if (!length(lead)) return(NULL)
-  lead <- lead[which.max(share[lead])]
-  list(lead = lead, with = setdiff(group, lead))
+  if (!length(far)) return(integer())
+  far[which.max(share[far])]
 }
 
 # Whether raw coordinate `k`'s transform has a finite end below and above:

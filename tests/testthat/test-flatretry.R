@@ -1,6 +1,6 @@
-# Coordinates a stage left run off where the likelihood is flat: the one
-# leading them is held at the other side of its range, those that ran off with
-# it start again at zero, and the lead is then freed (`.ctBackendRunOff()`,
+# A model parameter a stage left run off where the likelihood is flat is held
+# at the other side of its range while every other coordinate starts again
+# from the fit's start, and is then freed (`.ctBackendRunOff()`,
 # `.ctBackendStallEscape()`, `.ctBackendCorrectResult()`). Fit-free: engine
 # results built by hand, the optimiser and the certification mocked.
 
@@ -33,23 +33,23 @@
   .ctDataStartUsable = function(...) usable,
   .env = env)
 
-test_that("the lead is a flat, run-off parameter with an end; what ran off with it follows", {
+test_that("a flat, run-off parameter with an end qualifies", {
   .runoff_mocks()
   x <- c(-16, 0.4, 9, -20)
   # trend_drift flat and far out; drift_x flat but near the start; cint_trend
-  # far out but not flat; the population sd far out and flat, but no lead.
+  # far out but not flat; the population sd is the reduction's.
   r <- .runoff_result(x, flat = list(c(1, 0, 0, 0), c(0, 1, 0, 0), c(0, 0, 0, 1)))
-  expect_identical(ctsem:::.ctBackendRunOff(r, list(), 4L), list(lead = 1L, with = 4L))
-  expect_null(ctsem:::.ctBackendRunOff(r, list(), 4L, tried = 1L))
+  expect_identical(ctsem:::.ctBackendRunOff(r, list(), 4L), 1L)
+  expect_length(ctsem:::.ctBackendRunOff(r, list(), 4L, tried = 1L), 0L)
   # A saturated transform leads without a flat direction.
   expect_identical(ctsem:::.ctBackendRunOff(.runoff_result(c(-16, 5, 9, -20),
-    saturated = 2L), list(), 4L)$lead, 2L)
-  # A direction shared by the drift and the intercept: the drift, at 0.64,
-  # leads, and the intercept, at 0.36, ran off with it. The intercept has no
-  # end to be held at the other side of, so it never leads.
-  r <- .runoff_result(x, flat = list(c(0.8, 0, 0.6, 0)))
-  expect_identical(ctsem:::.ctBackendRunOff(r, list(), 4L), list(lead = 1L, with = 3L))
-  expect_null(ctsem:::.ctBackendRunOff(r, list(), 4L, tried = 1L))
+    saturated = 2L), list(), 4L), 2L)
+  # Two directions spanning the drift and the intercept: both have all their
+  # variation there, but the intercept has no end to be held at the other
+  # side of.
+  r <- .runoff_result(x, flat = list(c(0.8, 0, 0.6, 0), c(-0.6, 0, 0.8, 0)))
+  expect_identical(ctsem:::.ctBackendRunOff(r, list(), 4L), 1L)
+  expect_length(ctsem:::.ctBackendRunOff(r, list(), 4L, tried = 1L), 0L)
 })
 
 test_that("a transform's ends are read off its text", {
@@ -62,14 +62,17 @@ test_that("a transform's ends are read off its text", {
   expect_identical(ctsem:::.ctBackendRawEnds(spec, 9L), c(FALSE, FALSE))
 })
 
-test_that("the escape point holds the lead at the other side and restarts the rest", {
+test_that("the escape point holds the parameter at the other side and restarts the rest", {
   .runoff_mocks()
   r <- .runoff_result(c(-16, 0.4, 9, -20), flat = list(c(0.8, 0, 0.6, 0)))
-  p <- ctsem:::.ctBackendStallEscape(r, list(), list())
+  p <- ctsem:::.ctBackendStallEscape(r, list(), list(), restart = c(0.1, 0.2, 0.3, 0.4))
   expect_identical(attr(p, 'kind'), 'runoff')
   expect_identical(attr(p, 'coordinates'), 1L)
-  expect_equal(as.numeric(p), c(ctsem:::.ctDataStartRawBound, 0.4, 0, -20))
+  expect_equal(as.numeric(p), c(ctsem:::.ctDataStartRawBound, 0.2, 0.3, 0.4))
   expect_null(attr(p, 'unusable'))
+  # Without a start to go back to, from where the stage ended.
+  expect_equal(as.numeric(ctsem:::.ctBackendStallEscape(r, list(), list())),
+    c(ctsem:::.ctDataStartRawBound, 0.4, 9, -20))
   # Off by its control, and a measured better point goes first.
   expect_null(ctsem:::.ctBackendStallEscape(r, list(flatretry = FALSE), list()))
   o <- r
