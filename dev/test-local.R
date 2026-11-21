@@ -10,6 +10,8 @@
 # a change that cuts across many areas, not for every change: run tt_fast()
 # and the core set of each area the change touches (tt_area(), listed in
 # dev/test-areas.csv), and add the area's extended set when the change is deep.
+# Each of these also runs the `source` area, the checks that read the tree's
+# source (the fork ratchet, the Rd parse), which take a second or two.
 #
 # Files run side by side in worker sessions, each an R session with its own
 # Julia engine: at least ten, or about 80% of the cores no other process is
@@ -186,15 +188,30 @@ message("ready. tt('pattern'), tt_changed(), tt_fast(), tt_area('area')")
   invisible(res)
 }
 
-#' Run test files whose name matches a pattern.
+#' Run test files whose name matches a pattern, and the source checks.
 tt <- function(pattern = NULL, workers = NULL) {
   f <- .tt_files()
   if (!is.null(pattern)) f <- grep(pattern, f, value = TRUE)
   .tt_go(f, workers)
 }
 
+# Every run also takes the checks that read the package's source rather than
+# run it: the `source` area of dev/test-areas.csv (the fork ratchet, the Rd
+# parse, ...). They take a second or two and look at the whole tree, so a
+# narrow run without them can pass a branch that CI fails: the model syntax
+# merge (2026-11-20) added two forks against the ratchet, and fast-tests
+# stayed red through the next four merges. Workers are sized for the files
+# asked for, so one file and the checks still run in this session.
 .tt_go <- function(files, workers) {
-  if (is.null(workers)) .tt_run(files) else .tt_run(files, workers)
+  if (!length(files)) return(.tt_run(files))
+  if (is.null(workers)) workers <- .tt_workers(length(files))
+  .tt_run(union(files, .tt_source_files()), workers)
+}
+
+.tt_source_files <- function() {
+  if (!file.exists("dev/test-areas.csv")) return(character())
+  map <- utils::read.csv("dev/test-areas.csv", stringsAsFactors = FALSE)
+  intersect(.tt_files(), map$file[map$area == "source"])
 }
 
 #' Run the test files most likely to cover the R files you have edited.
