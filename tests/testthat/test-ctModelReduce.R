@@ -27,11 +27,11 @@
 # The ranges `.ctReduceValues()` would read off the transforms: an auto-effect
 # ends at 0, an intercept or loading spans 0, a variance ends at 0.
 .reduce_values <- function(fit, params) {
-  out <- list(trend_drift = list(ends = 0, zero = FALSE, estimate = -0.8),
-    drift_x = list(ends = 0, zero = FALSE, estimate = -0.5),
-    cint_trend = list(ends = numeric(), zero = TRUE, estimate = 1.3),
-    mvar21 = list(ends = numeric(), zero = TRUE, estimate = 0.1),
-    mvar2 = list(ends = 0, zero = FALSE, estimate = 0.2))
+  out <- list(trend_drift = list(ends = 0, zero = FALSE),
+    drift_x = list(ends = 0, zero = FALSE),
+    cint_trend = list(ends = numeric(), zero = TRUE),
+    mvar21 = list(ends = numeric(), zero = TRUE),
+    mvar2 = list(ends = 0, zero = FALSE))
   out[intersect(params, names(out))]
 }
 
@@ -73,10 +73,8 @@ test_that("findings follow the shares, whatever the parameters are", {
   expect_identical(f[[1]]$text, paste('mvar21 is not read by the likelihood;',
     'trend_drift is not determined by the data'))
   labels <- vapply(f[[1]]$candidates, `[[`, '', 'label')
-  expect_identical(labels, c('mvar21 fixed at 0', 'trend_drift fixed at 0',
-    'mvar21 fixed at its estimate, 0.1'))
-  expect_identical(vapply(f[[1]]$candidates, function(x) isTRUE(x$fallback), TRUE),
-    c(FALSE, FALSE, TRUE))
+  # Simple values only: fixed at the estimate would state no simpler model.
+  expect_identical(labels, c('mvar21 fixed at 0', 'trend_drift fixed at 0'))
   expect_length(f[[2]]$candidates, 0L)
   expect_true(f[[2]]$reducible)
   # A warning reads the kinds without evaluating any range.
@@ -91,8 +89,7 @@ test_that("the changes edit the model as they say", {
   f <- ctsem:::.ctReduceFindings(.reduce_fit(list(.reduce_dir(c('trend_drift',
     'cint_trend'), c(0.6, 0.8))), model = m))
   cand <- f[[1]]$candidates
-  expect_identical(vapply(cand, `[[`, '', 'label'), c("cint_trend's mean fixed at 0",
-    "cint_trend's mean fixed at its estimate, 1.3"))
+  expect_identical(vapply(cand, `[[`, '', 'label'), "cint_trend's mean fixed at 0")
   # A varying parameter's mean is stated, its random effect kept.
   edited <- cand[[1]]$edit(m, NULL, NULL)$model
   expect_equal(edited$fixedpopmeans, c(cint_trend = 0))
@@ -121,7 +118,6 @@ test_that("a parameter's simple values are read off its transform", {
   # An auto-effect ends at 0 above and nowhere below.
   expect_identical(v$d$ends, 0)
   expect_false(v$d$zero)
-  expect_equal(v$d$estimate, signif(drift(0.5), 6))
   # An intercept has no end and spans zero.
   expect_length(v$c$ends, 0L)
   expect_true(v$c$zero)
@@ -170,7 +166,7 @@ test_that("random effects the data hold at zero or barely determine are made fix
     list(.reduce_dir('popsd_drift_x')), effects = effects, model = m)))
 })
 
-test_that("the stage keeps the smallest change allowed, its fallback only if none", {
+test_that("a parameter whose simple values are refused stays free", {
   calls <- character()
   first <- function(model, m) model$pars$param[model$pars$matrix == m &
     model$pars$row == 1 & model$pars$col == 1]
@@ -179,14 +175,10 @@ test_that("the stage keeps the smallest change allowed, its fallback only if non
     .ctImproveRefit = function(current, model, data, cores, start = NULL, args = NULL) {
       if (!is.null(model$fixedpopmeans)) stop('no mean stated here')
       fixed <- is.na(first(model, 'DRIFT'))
-      value <- as.numeric(model$pars$value[model$pars$matrix == 'DRIFT' &
-        model$pars$row == 1 & model$pars$col == 1])
-      calls <<- c(calls, if (!fixed) 'none' else if (value == 0) 'zero' else 'estimate')
-      # Fixed at 0 the trend ends far below; fixed at its estimate it restates
-      # the fit. Either way the report still shows the direction, which the
-      # stage must not refit again.
-      .reduce_fit(if (fixed && value == 0) list() else list(.reduce_dir('trend_drift')),
-        loglik = if (fixed && value == 0) -110 else -100, npar = 9L)
+      calls <<- c(calls, if (fixed) 'zero' else 'none')
+      # Fixed at 0 the trend ends far below and is refused. The current fit's
+      # report still shows the direction, which the stage must not refit again.
+      .reduce_fit(list(), loglik = -110, npar = 9L)
     },
     .ctImproveCompare = .reduce_compare,
     .ctImproveRankStep = function(base, current, kept, ...) list(current = current,
@@ -194,12 +186,13 @@ test_that("the stage keeps the smallest change allowed, its fallback only if non
   start <- .reduce_fit(list(.reduce_dir('trend_drift')))
   out <- ctsem:::.ctImproveReduce(.reduce_model(), start, list(), NULL, NULL, 'LR',
     0.05, 1L)
-  expect_identical(calls, c('zero', 'estimate'))
+  expect_identical(calls, 'zero')
+  expect_false(out$changed)
+  expect_length(out$kept, 0L)
   h <- do.call(rbind, out$history)
-  expect_identical(h$kept, c(FALSE, TRUE))
-  expect_identical(vapply(out$kept, `[[`, '', 'key'), 'reduce:fix:trend_drift=-0.8')
+  expect_identical(h$kept, FALSE)
 
-  # Where a simple value is kept, the estimate is not tried.
+  # Where a simple value is kept, the change is the model's.
   calls <- character()
   testthat::local_mocked_bindings(.ctImproveCompare = function(current, refit, ...)
     list(accept = FALSE, dloglik = 0, dpar = 1L, value = 0, score = 0, note = 'by mock'))

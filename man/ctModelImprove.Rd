@@ -233,10 +233,9 @@ not reached an optimum, and is recorded as such.
   \describe{
     \item{A model parameter}{Fixed at the ends of its range that are finite,
       such as 0 for an auto-effect or a variance, and at 0 where 0 is inside
-      its range. If none of these is kept, fixed at its estimate, which gives
-      the same fit with one parameter fewer. For a parameter that varies
-      over subjects, a value inside its range fixes the population mean
-      and keeps the random effect.}
+      its range. If none of these is kept, the parameter stays free. For a
+      parameter that varies over subjects, a value inside its range fixes
+      the population mean and keeps the random effect.}
     \item{A population standard deviation or own variance}{Removed: the
       effect no longer varies, or loses its own variance
       (\code{popunique} in \code{\link{ctFit}}).}
