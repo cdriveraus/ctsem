@@ -81,7 +81,8 @@
 # carrying the record instead of warned about.
 #' @keywords internal
 .ctBackendMaximumCheck <- function(fit, centre, cores = 1L, verbose = 0,
-  progress = .ctVerboseOn(verbose), stop = FALSE, maxiter = NULL) {
+  progress = .ctVerboseOn(verbose), stop = FALSE, maxiter = NULL,
+  finish = isTRUE(stop)) {
   flagged <- as.logical(centre[["flagged"]])
   flagged[is.na(flagged)] <- FALSE
   record <- list(bar = as.numeric(centre[["bar"]])[1L],
@@ -117,13 +118,23 @@
   }, add = TRUE)
   if (is.null(maxiter)) maxiter <- .ctJuliaOr(fit$args$input$optimcontrol$maxiter, 1000L)
   held <- .ctMaximumHeldValue(fit, cores)
-  climb <- .ctBackendWithMaxChunks(cores, .ctJuliaGet(module$ctsem_climb_above(
-    objective, .ctJuliaPut(means[, flagged, drop = FALSE]),
+  # The estimate's covariance by its Hessian is each climb's first metric, as
+  # it is a certification's resume's: the starts are in another basin, but
+  # most of the curvature is the same there (the pilot's standard errors at
+  # its two maxima differed by 2-3 per cent at the quartiles).
+  arguments <- list(objective, .ctJuliaPut(means[, flagged, drop = FALSE]),
     .ctJuliaNumericVector(estimate), value = held, margin = .ctMaximumMargin,
     maxiter = as.integer(maxiter)[1L], verbose = isTRUE(progress),
     progress_overwrite = .ctProgressOverwrite(verbose),
     progress_sink = if (isTRUE(progress)) .ctProgressSink(
-      .ctProgressOverwrite(verbose)) else NULL)))
+      .ctProgressOverwrite(verbose)) else NULL, finish = isTRUE(finish))
+  inverse <- .ctBackendResumeInverse(list(hessian = fit$uncertainty$hessian))
+  if (!is.null(inverse) && nrow(inverse) == npar) {
+    storage.mode(inverse) <- "double"
+    arguments$inverse <- .ctJuliaPut(inverse)
+  }
+  climb <- .ctBackendWithMaxChunks(cores,
+    .ctJuliaGet(do.call(module$ctsem_climb_above, arguments)))
 
   record$climbed <- TRUE
   record$higher <- isTRUE(climb[["higher"]])
@@ -136,6 +147,10 @@
   record$end_values <- as.numeric(climb[["end_values"]])
   record$iterations <- as.integer(climb[["iterations"]])
   record$climb_secs <- as.numeric(climb[["secs"]])
+  record$ends <- matrix(as.numeric(climb[["ends"]]), nrow = npar)
+  record$passed <- as.integer(climb[["passed"]])
+  record$passed_secs <- as.numeric(climb[["passed_secs"]])
+  record$metric <- isTRUE(climb[["metric"]])
   if (!record$higher) {
     if (isTRUE(progress)) message("No higher maximum was found from there ",
       "(the highest log posterior reached is ", format(round(-record$gain, 2)),
@@ -146,7 +161,8 @@
   warning("The estimate is not the highest maximum. Optimising from where the ",
     "sampler's first draws are centred reached a log posterior ",
     format(round(record$gain, 2)), " above the estimate's after ",
-    sum(record$iterations), " iterations, and was stopped there. The fit's ",
+    sum(record$iterations), " iterations",
+    if (isTRUE(finish)) "" else ", and was stopped there", ". The fit's ",
     "estimate and standard errors describe the lower maximum. The sampled ",
     "posterior does not depend on it. ctFitUpdate(fit, inits = ",
     "fit$sample$maximumcheck$raw) fits from the higher point.", call. = FALSE)

@@ -541,6 +541,24 @@ test_that("the maximum check climbs from where the chains are centred, and says 
     max(abs(moved$estimate$raw - fit$estimate$raw) / se) / 2)
   # The sample itself does not depend on where the estimate was.
   expect_true(all(is.finite(far$estimate$rawposterior)))
+  # The climb started on the estimate's covariance, and says when it passed.
+  expect_true(mc$metric)
+  expect_true(all(mc$passed[mc$iterations > 0] >= 1L))
+  # Asked to finish, it climbs every start to its own end and keeps each end:
+  # what a sampled fit's check does before the fit is made again from the
+  # highest.
+  centre <- list(bar = mc$bar, distance = mc$distance, flagged = mc$flagged,
+    means = cbind((fit$estimate$raw + moved$estimate$raw) / 2, mc$raw),
+    draws = 40L, secs = 0, gradients = 0)
+  ended <- suppressWarnings(ctsem:::.ctBackendMaximumCheck(moved, centre,
+    cores = 1, progress = FALSE, finish = TRUE))
+  expect_true(ended$higher)
+  expect_equal(dim(ended$ends), c(npar, 2L))
+  expect_true(all(is.finite(ended$ends)))
+  expect_true(all(ended$passed >= 1L))
+  expect_true(all(ended$end_values > ended$reference + ctsem:::.ctMaximumMargin))
+  expect_equal(ended$value, max(ended$end_values))
+  expect_gte(ended$value, mc$value - 1e-6)
 })
 
 test_that("ctFit(optimize = FALSE) fits again from a higher point before it samples", {

@@ -38,20 +38,44 @@ function _ctsem_searched_value(objective::CTSEMOptimisable, x::Vector{Float64},
     return trial.valid ? Float64(trial.evaluated.value) : NaN
 end
 
-# One climb, in a function of its own: its `stop` closure captures `seen`
-# and `bar`, each assigned once here.
+# One climb, in a function of its own: what its `stop` closure captures is
+# assigned once here.
+#
+# `inverse` is the reference's covariance, L-BFGS's first metric
+# (`lbfgs_inverse`). Without one the climb learns each coordinate's scale from
+# its own steps, and its gap rule reads that model: on the affect pilot's tied
+# fit (819 parameters, 2026-11-21) such a climb took 427 iterations to pass the
+# estimate's value from 124 nats below it, and its gap rule read under 0.005
+# nats left at its 174th, 24 below, where only a mode search that moved the
+# objective sent it on.
+#
+# With `finish` it does not stop at the bar: it ends by its own gap rule, and
+# `passed`, `passed_secs` say when it went past.
 function _ctsem_climb(objective::CTSEMOptimisable, start::Vector{Float64}, bar::Float64,
     maxiter::Int, gap_tol::Float64, verbose::Bool, progress_overwrite::Bool,
-    progress_sink, gradient_method::Symbol)
+    progress_sink, gradient_method::Symbol, inverse::Union{Nothing,Matrix{Float64}},
+    finish::Bool)
     seen = Ref(-Inf)
+    passed = Ref(0)
+    passed_secs = Ref(NaN)
+    t0 = time()
     t = @elapsed res = ctsem_optimize(objective, start; maxiter=maxiter,
         gap_tol=gap_tol, verbose=verbose, progress_overwrite=progress_overwrite,
         progress_sink=progress_sink, progress_label="climb",
         gradient_method=gradient_method, overshoot_probe=:off,
-        stop=st -> (seen[] = max(seen[], -Float64(st.value)); seen[] > bar))
+        lbfgs_inverse=inverse,
+        stop=st -> begin
+            seen[] = max(seen[], -Float64(st.value))
+            if seen[] > bar && passed[] == 0
+                passed[] = max(1, Int(st.iteration))
+                passed_secs[] = time() - t0
+            end
+            !finish && seen[] > bar
+        end)
     value = max(seen[], Float64(res.maximum_loglik))
     return (point=collect(Float64, res.minimizer), value=value,
-        iterations=Int(res.iterations), secs=t)
+        iterations=Int(res.iterations), secs=t, passed=passed[],
+        passed_secs=passed_secs[])
 end
 
 """
@@ -66,22 +90,35 @@ The starts are climbed in the order of their own values, highest first, each
 by L-BFGS with no finish and no Hessian, stopped once it is past the bar, by
 its own gap rule (`gap_tol`, a tenth of a standard error: the end is no
 estimate) or at `maxiter`; the first to pass ends the search. A start the route
-refuses is left out.
+refuses is left out. `inverse` is the reference's covariance, each climb's
+first metric (`lbfgs_inverse`); one that is not positive definite is not used.
+
+With `finish` every start is climbed to its own gap rule's end, past the bar
+or not, and the highest end is the point: what a caller that goes on to fit
+from the point wants, since the climb's steps are then the fit's first, and
+since the first start to pass need not lead to the highest maximum.
 
 Returns `higher`, the reference's value and the bar, the highest end's
 `value` and `point`, and per start, in the order of `starts`, its value, its
-climb's end value, iterations and seconds (NaN, 0 where it was not climbed).
+climb's end value, end point (`ends`), iterations and seconds (NaN, 0 where it
+was not climbed), and the iteration and seconds at which it first passed the bar (0, NaN where
+it did not).
 """
 function ctsem_climb_above(objective::CTSEMOptimisable, starts::AbstractMatrix,
     reference::AbstractVector; value::Real=-Inf, margin::Real=1.92,
     maxiter::Integer=1000, gap_tol::Real=_CTSEM_RESOLUTION_CAP, verbose::Bool=false,
-    progress_overwrite::Bool=true, progress_sink=nothing, gradient_method=:adjoint)
+    progress_overwrite::Bool=true, progress_sink=nothing, gradient_method=:adjoint,
+    inverse=nothing, finish::Bool=false)
     x0 = collect(Float64, reference)
     S = Matrix{Float64}(starts)
     size(S, 1) == length(x0) || throw(ArgumentError(string("starts has ", size(S, 1),
         " rows and the reference ", length(x0), " parameters")))
     method = Symbol(gradient_method)
     n = size(S, 2)
+    metric = _ctsem_lbfgs_inverse(inverse, length(x0))
+    passed = zeros(Int, n)
+    passed_secs = fill(NaN, n)
+    ends = fill(NaN, length(x0), n)
     searched = _ctsem_searched_value(objective, x0, method)
     ref = isfinite(searched) ? max(Float64(value), searched) : Float64(value)
     isfinite(ref) || throw(ArgumentError(
@@ -98,8 +135,9 @@ function ctsem_climb_above(objective::CTSEMOptimisable, starts::AbstractMatrix,
     for j in order
         isfinite(startvalues[j]) || continue
         # A start already past the bar needs no climb.
-        if startvalues[j] > bar
+        if startvalues[j] > bar && !finish
             endvalues[j] = startvalues[j]
+            ends[:, j] .= view(S, :, j)
             best = startvalues[j]
             point = S[:, j]
             higher = true
@@ -109,25 +147,31 @@ function ctsem_climb_above(objective::CTSEMOptimisable, starts::AbstractMatrix,
             "climb: from start %d of %d, %.2f below the reference; the bar is %.2f above it",
             j, n, ref - startvalues[j], Float64(margin))); flush(_console()))
         climb = _ctsem_climb(objective, S[:, j], bar, Int(maxiter), Float64(gap_tol),
-            verbose, progress_overwrite, progress_sink, method)
+            verbose, progress_overwrite, progress_sink, method, metric, finish)
         endvalues[j] = climb.value
         iterations[j] = climb.iterations
         secs[j] = climb.secs
+        passed[j] = climb.passed
+        passed_secs[j] = climb.passed_secs
+        ends[:, j] .= climb.point
         if climb.value > best
             best = climb.value
             point = climb.point
         end
         verbose && (println(_console(), @sprintf(
-            "climb: start %d ended %+.2f against the reference after %d iterations, %.0f s",
-            j, climb.value - ref, climb.iterations, climb.secs)); flush(_console()))
+            "climb: start %d ended %+.2f against the reference after %d iterations, %.0f s%s",
+            j, climb.value - ref, climb.iterations, climb.secs,
+            climb.passed > 0 ? @sprintf("; past the bar at iteration %d, %.0f s",
+                climb.passed, climb.passed_secs) : "")); flush(_console()))
         if climb.value > bar
             higher = true
-            break
+            finish || break
         end
     end
     return (higher=higher, reference=ref, searched=searched, bar=bar, value=best,
         point=point, start_values=startvalues, end_values=endvalues,
-        iterations=iterations, secs=secs)
+        iterations=iterations, secs=secs, passed=passed, passed_secs=passed_secs,
+        ends=ends, metric=metric !== nothing)
 end
 
 export ctsem_climb_above
