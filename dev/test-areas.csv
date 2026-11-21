@@ -69,6 +69,7 @@
 "test-julia-saem.R","optimiser","core"
 "test-knownFits.R","optimiser","core"
 "test-stan-julia-parity.R","optimiser","core"
+"test-flatretry.R","optimiser","core"
 "test-backend-controlsurface.R","optimiser","extended"
 "test-backend-priors-scores.R","optimiser","extended"
 "test-ctFitUpdate.R","optimiser","extended"

@@ -52,6 +52,13 @@ is a misspelled name. Settings left unset take the backend's default.
  ordinal indicators. If the objective cannot be evaluated there, the fit
  starts from the default values and says so. Supplied \code{inits} are
  always used as given.}
+ \item{\code{flatretry}}{Julia. Default TRUE. When a model parameter ends
+ far out where the likelihood hardly changes with it, such as an auto-effect
+ so fast or so slow that its value no longer matters, the model is refitted
+ with that parameter held at the other side of its range until the other
+ parameters settle, then refitted with it free. The better of the two fits is
+ kept, and \code{fit$flatretry} records what was tried. This can take
+ two more fits for each such parameter.}
  \item{\code{carefulfit}}{Both. Default TRUE. A first pass with ctsem's
  \code{normal(0,1)} priors on every raw parameter, to find starting values,
  after which the fit's own objective is maximised. Skipped with

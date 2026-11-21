@@ -107,6 +107,11 @@
     msg = paste0("reads starting values off the data through the julia ",
       "parameter table, which the stan path does not build. Pass inits, or ",
       "optimcontrol$initsd for the scale of the random start")),
+  flatretry = list(only = 'julia',
+    inert = function(v) isFALSE(v),
+    msg = paste0("refits a julia fit with a parameter held at the other side of ",
+      "its range, where the parameter ran off where the likelihood is flat. ",
+      "The stan path has no equivalent")),
   precondition = list(only = 'julia',
     inert = function(v) !isTRUE(v),
     msg = paste0("starts the julia optimiser's per-parameter scaling from the ",
@@ -1687,14 +1692,24 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       if(intoverpop) 'augmented' else
         if(!optimize && .ctAnyVarying(ctm)) 'none' else
           'augmented'
-    juliafit <- .ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
+    # A parameter the fit leaves run off where the likelihood is flat is
+    # refitted held at the other side of its range, then freed
+    # (R/ctFitFlatRetry.R). The fit's warnings wait until it is known which
+    # fit is kept.
+    flatretry <- isTRUE(fit) && isTRUE(optimize) && !isFALSE(optimcontrol$flatretry)
+    warned <- list()
+    juliafit <- withCallingHandlers(.ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
       cores=cores, optimcontrol=optimcontrol, forcerecompile=forcerecompile,
       verbose=verbose, fit=fit, priors=priors, priorscope=priorscope,
       optimize=optimize,
       chains=if(chainsgiven) chains else NULL, iter=iter, control=control,
       intoverpop=juliaintoverpop, intoverstates=intoverstates, weights=weights,
       exactmarginal=!isTRUE(optimize) && identical(juliaintoverpop, 'none') &&
-        !is.na(intoverpopreason) && isTRUE(intoverstates))
+        !is.na(intoverpopreason) && isTRUE(intoverstates)),
+      warning = function(w) if (flatretry) {
+        warned[[length(warned) + 1L]] <<- w
+        invokeRestart('muffleWarning')
+      })
     if(!identical(juliaintoverpop, .ctBackendIntOverPop(.ctBackendSpec(juliafit)))){
       argsresolved$intoverpop <- .ctBackendIntOverPop(.ctBackendSpec(juliafit))
       argsresolved$intoverpopreason <- paste0("optimize=FALSE samples the ",
@@ -1733,6 +1748,12 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # accessor reads through `.ctBackendSpec()`; replacing it with the prepared
     # list left ctKalman() on a subset of subjects finding no subjects at all.
     if(isTRUE(fit)) juliafit$data <- .ctStandataNA(standata)
+    if (flatretry) {
+      retried <- tryCatch(.ctFitFlatRetry(juliafit, warned, cores, verbose),
+        error = function(e) list(fit = juliafit, warnings = warned))
+      juliafit <- retried$fit
+      for (w in retried$warnings) warning(w)
+    }
     # `plot` draws the trace *after* the fit here, not during it.
     #
     # The Stan path can plot live because it writes sample files a second
