@@ -671,7 +671,7 @@ function ctsem_kalman(objective::CTSEMObjective, values::AbstractVecOrMat;
 
     sp = objective.params
     persubject = values isa AbstractMatrix
-    persubject && size(values, 1) == length(objective.subject_objectives) ||
+    persubject && size(values, 1) == length(objective.full_subjects) ||
         persubject && throw(DimensionMismatch(
             "one row of parameters per subject is required"))
     raw = persubject ? Vector{Float64}(view(values, 1, :)) : Vector{Float64}(values)
@@ -682,7 +682,7 @@ function ctsem_kalman(objective::CTSEMObjective, values::AbstractVecOrMat;
     n = ws.state_dim
     m = ws.manifest_dim
     nall = length(sp.mutables)
-    subjects = objective.subject_objectives
+    subjects = objective.full_subjects
     nrows = sum(size(sub.data, 2) for sub in subjects)
 
     trace = CTSEMKalmanTrace(Float64, n, m, nrows, length(subjects), nall)
@@ -973,7 +973,7 @@ end
 function _ctsem_generate(ws, objective::CTSEMObjective, values::AbstractVecOrMat,
     base::AbstractMatrix, seed::Integer)
     sp = objective.params
-    subjects = objective.subject_objectives
+    subjects = objective.full_subjects
     persubject = values isa AbstractMatrix
     persubject && size(values, 1) == length(subjects) ||
         persubject && throw(DimensionMismatch(

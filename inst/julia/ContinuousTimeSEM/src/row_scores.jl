@@ -36,6 +36,8 @@ function ctsem_row_scores(objective::CTSEMObjective, values::AbstractVector,
     theta = collect(Float64, values)
     size(directions, 1) == length(theta) || throw(DimensionMismatch(
         "directions needs one row per raw parameter"))
+    # Every row of the data, including those the likelihood leaves out.
+    objective = _ctsem_full_rows(objective)
     K = size(directions, 2)
     rows = [size(s.data, 2) for s in objective.subject_objectives]
     out = fill(NaN, sum(rows; init=0), K)
@@ -70,7 +72,7 @@ function ctsem_row_scores(laplace::CTSEMLaplaceObjective, values::AbstractVector
         "row scores need every subject to be its own unit: a single level of " *
         "random effects"))
     K = size(directions, 2)
-    subjects = laplace.objective.subject_objectives
+    subjects = laplace.objective.full_subjects
     rows = [size(s.data, 2) for s in subjects]
     first_row = cumsum(vcat(0, rows[1:(end - 1)]))
     out = fill(NaN, sum(rows; init=0), K)

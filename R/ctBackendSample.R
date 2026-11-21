@@ -1989,6 +1989,50 @@
   if (length(target) && !is.na(target) && target > 1) target else 1.01
 }
 
+# What the placement fit finds about the model itself, said before the
+# sampling it slows. The placement's warnings are kept rather than raised,
+# since they judge an optimisation that only placed the chains, so without
+# this a sampled fit never mentions them. Along a direction the data do not
+# identify, or a population covariance held on its correlation bound, the
+# posterior is the prior's, and where such a direction curves -- rotations
+# among a reduced-rank level's empty dimensions, correlations pressed on the
+# bound -- the sampler crawls. On an ESM model (follhim/dis_ctsem, 2026-11-21)
+# a rank-7 population with empty dimensions, and the full-rank one on the
+# bound, learnt the map at 0.1 draws a second, where rank 2 with own variances
+# sampled to its targets in under three hours. A variance near zero is not
+# such a direction: the map non-centres its effects at every draw, and the two
+# own variances near zero there mixed best of all the parameters.
+.ctSamplePlacementNote <- function(fit) {
+  identify <- fit$identifiability
+  weak <- if (isTRUE(identify$nweak > 0L)) identify$parameters else character()
+  bound <- fit$corbound
+  if (!is.null(bound)) {
+    bound <- bound[bound$matrix %in% "population", , drop = FALSE]
+    nlevels <- length(unique(bound$level))
+    bound <- bound[bound$at_bound, , drop = FALSE]
+  }
+  if (!length(weak) && !NROW(bound)) return(invisible(NULL))
+  name5 <- function(x) paste0(paste(utils::head(x, 5), collapse = ", "),
+    if (length(x) > 5) ", ..." else "")
+  parts <- "The optimisation that starts the sampler finds"
+  if (length(weak)) {
+    parts <- c(parts, paste0(identify$nweak, " direction",
+      if (identify$nweak > 1L) "s" else "", " of this model that the data do not ",
+      "identify (", name5(weak), "). See fit$identifiability."))
+  }
+  for (lv in unique(bound$level)) {
+    r <- bound[bound$level == lv, , drop = FALSE]
+    parts <- c(parts, if (length(weak) || lv != bound$level[1L]) "It also finds",
+      paste0("the population covariance",
+        if (nlevels > 1L) paste0(" at level ", lv) else "",
+        " near singular, about rank ", r$rank[1L], " of ", r$k[1L],
+        ". Consider poprank = ", r$rank[1L], "."))
+  }
+  message(paste(parts, collapse = " "), " Sampling along such directions is ",
+    "slow, and a model without them samples faster.")
+  invisible(NULL)
+}
+
 # The three failures worth interrupting for, in the order a user should read
 # them. Deliberately not silent: a divergent transition means the sampler could
 # not follow the geometry there, and a posterior summarised over draws it could
@@ -2413,6 +2457,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
   if (length(placementwarnings)) {
     placementfit$optim$placement_warnings <- unique(placementwarnings)
   }
+  .ctSamplePlacementNote(placementfit)
 
   # From here, sampling is exactly `ctFitUncertainty(placementfit, 'sample')`:
   # one function for both entry points (`.ctBackendUncertaintySample()`,

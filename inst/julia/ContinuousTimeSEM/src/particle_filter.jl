@@ -80,7 +80,7 @@ function ctsem_particle_loglik(objective::CTSEMObjective, values::AbstractVector
     0 < resample_threshold <= 1 || throw(ArgumentError("resample_threshold must be in (0, 1]"))
     trans = _ctsem_transition(transition)
     x = Vector{Float64}(values)
-    subjects = objective.subject_objectives
+    subjects = objective.full_subjects
     nsubjects = length(subjects)
     results = Vector{Tuple{Float64,Vector{Float64},Float64,Float64}}(undef, nsubjects)
     nchunks = _ctsem_nchunks(nsubjects)
@@ -120,7 +120,7 @@ end
 # nothing in the loop body can rebind a caller's local.
 function _ctsem_particle_run!(results, i::Int, objective, x, N, nsubsteps, trans,
     threshold, seed)
-    results[i] = _ctsem_particle_subject!(objective.subject_objectives[i],
+    results[i] = _ctsem_particle_subject!(objective.full_subjects[i],
         objective.params, x, N, nsubsteps, trans, threshold,
         _ctsem_particle_rng(seed, i))
     return nothing

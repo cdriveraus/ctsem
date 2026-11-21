@@ -20,6 +20,7 @@
 "test-backend-discretetime.R","filter","core"
 "test-datastart.R","filter","core"
 "test-dtVct.R","filter","core"
+"test-julia-emptyrows.R","filter","core"
 "test-julia-prediction-scale.R","filter","core"
 "test-julia-trace.R","filter","core"
 "test-julia-explosive.R","filter","core"

@@ -187,8 +187,10 @@ function _tangent_test_model(; driftscale=1.0, max_timestep=Inf, perrow=false, t
         td ? reduce(hcat, tdcolumns) : zeros(0, length(times)), tipreds, max_timestep;
         prior_index=collect(1:npar), prior_scale=fill(2.0, npar),
         subject_weights=[1.0, 2.0, 0.5, 1.0, 0.0, 1.5], missing_kw...)
+    # Each subject once: where rows were left out of the likelihood, the full
+    # copies are other objects.
     plan >= 0 && foreach(so -> append!(so.relin, fill(plan, length(so.timesteps))),
-        objective.subject_objectives)
+        unique(vcat(objective.subject_objectives, objective.full_subjects)))
     values = [0.3, 0.15, -0.1, 0.2, -0.4, 0.2, -0.3, 0.1, -0.2, 0.6, 0.05, -0.1,
         0.15, -1.0, -0.8, -1.2, 0.1, 0.2, -0.1, 0.0, 0.3, -0.5]
     ti && append!(values, [0.1, -0.15, 0.2, 0.05, -0.1, 0.12, 0.08, -0.2, 0.15])
@@ -350,9 +352,11 @@ end
         objective, values = make(; opts...)
         dirs = [sin(1.7i + 0.9j) for i in eachindex(values), j in 1:15]
         hand = ctsem_row_scores(objective, values, dirs)
-        rows = [size(s.data, 2) for s in objective.subject_objectives]
+        # Every row, as `ctsem_row_scores` reports them.
+        full = ContinuousTimeSEM._ctsem_full_rows(objective)
+        rows = [size(s.data, 2) for s in full.subject_objectives]
         H = fill(NaN, sum(rows), 15)
-        ContinuousTimeSEM._tan_row_scores!(H, objective, collect(values), dirs, rows)
+        ContinuousTimeSEM._tan_row_scores!(H, full, collect(values), dirs, rows)
         @test isequal(H, hand)
         dual = _oracle_row_scores(objective, values, dirs)
         @test all(isfinite, dual)

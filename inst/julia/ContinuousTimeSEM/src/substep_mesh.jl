@@ -197,7 +197,7 @@ function ctsem_auto_substeps(objective::CTSEMObjective, values::AbstractVecOrMat
     tol > 0 || throw(ArgumentError("tol must be positive"))
     max_substeps >= 1 || throw(ArgumentError("max_substeps must be at least 1"))
     floor_rule > 0 || throw(ArgumentError("floor_rule must be positive"))
-    subjects = objective.subject_objectives
+    subjects = objective.full_subjects
     persubject = values isa AbstractMatrix
     persubject && size(values, 1) != length(subjects) && throw(DimensionMismatch(
         "one row of parameters per subject is required"))
@@ -299,14 +299,14 @@ end
 # subject is filtered at, so a caller that would work to find those values --
 # the Laplace route, a mode for every unit -- asks first.
 function _ctsem_relin_planned(objective::CTSEMObjective)
-    subjects = objective.subject_objectives
+    subjects = objective.full_subjects
     (isempty(subjects) || !_CTSEM_RELINEARISE[]) && return false
     return _get_or_init_objective_workspace!(first(subjects), Float64).relinearise
 end
 
 _ctsem_mesh_measured(objective::CTSEMObjective) = any(sub ->
     !isempty(_get_or_init_objective_workspace!(sub, Float64).predict_param_indices),
-    objective.subject_objectives)
+    objective.full_subjects)
 
 """
     ctsem_relin_plan(objective, values)
@@ -332,7 +332,7 @@ vector, which JuliaConnectoR cannot carry back to R.
 """
 function ctsem_relin_plan(objective::CTSEMObjective, values::AbstractVecOrMat)
     _ctsem_relin_planned(objective) || return nothing
-    subjects = objective.subject_objectives
+    subjects = objective.full_subjects
     persubject = values isa AbstractMatrix
     persubject && size(values, 1) != length(subjects) && throw(DimensionMismatch(
         "one row of parameters per subject is required"))

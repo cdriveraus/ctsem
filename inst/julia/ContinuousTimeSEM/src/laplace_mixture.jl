@@ -348,7 +348,7 @@ function ctsem_laplace_sequential_mixture(laplace::CTSEMLaplaceObjective,
     m = ws0.manifest_dim
     types = ws0.sp.manifesttype
     Ls = _laplace_popchols(theta, laplace.spec)
-    subjects = laplace.objective.subject_objectives
+    subjects = laplace.objective.full_subjects
     rows = [size(s.data, 2) for s in subjects]
     first_row = cumsum(vcat(0, rows[1:(end - 1)]))
     nrows = sum(rows)
@@ -378,7 +378,10 @@ function _laplace_mixture_unit!(out, laplace::CTSEMLaplaceObjective, U::Integer,
     i = units.members[U][1]
     so = laplace.objective.subject_objectives[i]
     sp = laplace.objective.params
-    T = size(so.data, 2)
+    # Mode solves read `so`, cut from the full record; the draws' passes
+    # filter the full record, so every row is reported.
+    fso = laplace.objective.full_subjects[i]
+    T = size(fso.data, 2)
     d = units.dims[U]
     # The proposal's components: the prior, and the Laplace posterior given the
     # record cut at rows T/8, T/4, T/2 and T, each solved as the objective
@@ -450,14 +453,14 @@ function _laplace_mixture_unit!(out, laplace::CTSEMLaplaceObjective, U::Integer,
     ws = _init_continuous_ekf_workspace(Float64, sp)
     ws.hyb.mode = _HYBRID_FULL
     tr = CTSEMMixtureTrace(n, m, T, sp.hybrid)
-    tr.data = map(v -> ismissing(v) ? NaN : Float64(v), so.data)
-    timesteps = collect(so.timesteps)
+    tr.data = map(v -> ismissing(v) ? NaN : Float64(v), fso.data)
+    timesteps = collect(fso.timesteps)
     pass! = function (k)
         x = _laplace_member_values(theta, spec, Ls, draws[k], units.offsets[U][1])
         tr.values = collect(Float64, x)
-        ll = _extended_kalman_filter_continuous!(ws, x, so.data, timesteps, sp,
-            so.tdpreds, _ctsem_tipred_vector(so.tipreds, x), i, so.max_timestep, tr,
-            nothing, nothing, so.relin)
+        ll = _extended_kalman_filter_continuous!(ws, x, fso.data, timesteps, sp,
+            fso.tdpreds, _ctsem_tipred_vector(fso.tipreds, x), i, fso.max_timestep, tr,
+            nothing, nothing, fso.relin)
         return isfinite(ll)
     end
 

@@ -112,9 +112,19 @@ mutable struct CTSEMObjective{P,O} <: CTSEMOptimisable
     # whatever lets a weighted few of them stand in for all; built when first
     # asked for, `nothing` until then.
     unit_sum::Any
+    # Each subject with all its rows. `subject_objectives` holds only the rows
+    # the likelihood needs (`_ctsem_likelihood_rows`), which every evaluation,
+    # gradient, Hessian, mode solve and sampler reads; whatever reports or
+    # simulates row by row -- the Kalman output, generation, row scores, the
+    # sequential predictions, the state-explicit path, the substep mesh and
+    # update plan, the particle filter -- reads these, so its rows are the
+    # data's. The same vector as `subject_objectives` where no row was left
+    # out.
+    full_subjects::O
 end
 
-# Without its unit-sum view, which is built when first asked for.
+# Without its unit-sum view, which is built when first asked for, and with
+# every row of each subject in the likelihood.
 CTSEMObjective(params, subject_objectives, adjoint_ws, prior_index, prior_scale,
     prior_weight, ti_missing_parameter, ti_missing_mu, ti_missing_sigma,
     ti_missing_subject, subject_weights, corbound::Vector{CTSEMCorBound},
@@ -122,7 +132,25 @@ CTSEMObjective(params, subject_objectives, adjoint_ws, prior_index, prior_scale,
     CTSEMObjective(params, subject_objectives, adjoint_ws, prior_index, prior_scale,
         prior_weight, ti_missing_parameter, ti_missing_mu, ti_missing_sigma,
         ti_missing_subject, subject_weights, corbound, penalty_index,
-        penalty_precision, jacobian_index, jacobian_value, jacobian_slope, nothing)
+        penalty_precision, jacobian_index, jacobian_value, jacobian_slope, nothing,
+        subject_objectives)
+
+"""
+    _ctsem_full_rows(objective)
+
+The objective over every row of its subjects: itself where no row was left out,
+otherwise the same model and settings on `full_subjects`, for a caller that
+reads its subjects row by row through code the likelihood shares (the row
+scores' sweeps).
+"""
+function _ctsem_full_rows(o::CTSEMObjective)
+    o.full_subjects === o.subject_objectives && return o
+    return CTSEMObjective(o.params, o.full_subjects, nothing, o.prior_index,
+        o.prior_scale, o.prior_weight, o.ti_missing_parameter, o.ti_missing_mu,
+        o.ti_missing_sigma, o.ti_missing_subject, o.subject_weights, o.corbound,
+        o.penalty_index, o.penalty_precision, o.jacobian_index, o.jacobian_value,
+        o.jacobian_slope, nothing, o.full_subjects)
+end
 
 CTSEMObjective(params, subject_objectives) =
     CTSEMObjective(params, subject_objectives, nothing, Int[], Float64[], 1.0,
@@ -647,9 +675,86 @@ stays none."""
 _ctsem_subject_relin(plan::AbstractVector, r) =
     isempty(plan) ? Int[] : Int[Int(k) for k in view(plan, r)]
 
+"""Whether rows with nothing to filter may leave the likelihood
+(`ctsem_set_skip_empty_rows!`)."""
+const _CTSEM_SKIP_EMPTY_ROWS = Ref(true)
+
+"""
+    ctsem_set_skip_empty_rows!(on::Bool)
+
+Whether objectives built from now on leave out of the likelihood the rows where
+nothing is observed and no TD predictor acts (`_ctsem_likelihood_rows`). Off,
+every row is filtered, which is the oracle. Returns the previous setting.
+"""
+function ctsem_set_skip_empty_rows!(on::Bool)
+    old = _CTSEM_SKIP_EMPTY_ROWS[]
+    _CTSEM_SKIP_EMPTY_ROWS[] = on
+    return old
+end
+export ctsem_set_skip_empty_rows!
+
+"""
+Whether a model's prediction across rows with nothing to filter is the
+prediction over the whole interval. It is where the dynamics are linear and the
+same at every row -- no predict-group cell is evaluated per row, so DRIFT, CINT
+and DIFFUSION read no state or TD predictor -- since then `exp(A s) exp(A t) =
+exp(A (s + t))` and the process covariances compose likewise, as do the
+filter's integrated deviations. In discrete time each row is a step of the
+process, so no row may be left out.
+"""
+_ctsem_rows_mergeable(params::EKFParameters) = _CTSEM_SKIP_EMPTY_ROWS[] &&
+    params.continuous_time && !any(params.predict_transforms_indices)
+
+"""
+    _ctsem_likelihood_rows(data, tdpreds)
+
+The rows of one subject the likelihood needs: the first, where the initial
+state sits, and each later row with an observed manifest value or a TD
+predictor input. A row with neither updates nothing, and on a model whose rows
+merge (`_ctsem_rows_mergeable`) its prediction is part of the next kept row's.
+Trailing rows with neither contribute nothing at all.
+"""
+function _ctsem_likelihood_rows(data::AbstractMatrix, tdpreds::AbstractMatrix)
+    keep = Int[1]
+    @inbounds for t in 2:size(data, 2)
+        informative = false
+        for i in axes(data, 1)
+            _ctsem_observed(data[i, t]) && (informative = true; break)
+        end
+        if !informative
+            for j in axes(tdpreds, 1)
+                iszero(tdpreds[j, t]) || (informative = true; break)
+            end
+        end
+        informative && push!(keep, t)
+    end
+    return keep
+end
+
+"""
+A subject with only its rows `keep` (`_ctsem_likelihood_rows`). A kept row's
+interval runs from the kept row before it, and where a mesh gives substep counts
+it takes the most of any interval it spans: on dynamics that merge, substeps
+change nothing but the rounding.
+"""
+function _ctsem_keep_rows(sub::ContinuousEKFObjective, keep::Vector{Int})
+    rule = sub.max_timestep
+    if rule isa AbstractVector
+        mesh = ones(Int, length(keep))
+        @inbounds for j in 2:length(keep)
+            mesh[j] = maximum(view(rule, (keep[j - 1] + 1):keep[j]))
+        end
+        rule = mesh
+    end
+    return ContinuousEKFObjective(sub.params, sub.data[:, keep], sub.timesteps[keep];
+        tdpreds=sub.tdpreds[:, keep], tipreds=sub.tipreds, subject=sub.subject,
+        max_timestep=rule,
+        relin_steps=isempty(sub.relin) ? Int[] : sub.relin[keep])
+end
+
 function _ctsem_row_loglikelihood(objective::CTSEMObjective, values::AbstractVector)
     contributions = Vector{eltype(values)}()
-    for subject_objective in objective.subject_objectives
+    for subject_objective in objective.full_subjects
         previous = zero(eltype(values))
         nrows = size(subject_objective.data, 2)
         for row in 1:nrows
@@ -761,6 +866,21 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
             relin_steps=_ctsem_subject_relin(relin_steps, r))
         for (i, r) in enumerate(ranges)
     ]
+    # The likelihood's subjects: without the rows that have nothing to filter,
+    # where leaving them out is exact (`_ctsem_rows_mergeable`). In ESM data
+    # unanswered prompts are often a third of the rows, and each cost a full
+    # prediction at every evaluation. `similar`, so both vectors are one type.
+    full = objects
+    if _ctsem_rows_mergeable(params)
+        kept = [_ctsem_likelihood_rows(s.data, s.tdpreds) for s in full]
+        if any(i -> length(kept[i]) < size(full[i].data, 2), eachindex(full))
+            objects = similar(full)
+            for i in eachindex(full)
+                objects[i] = length(kept[i]) == size(full[i].data, 2) ? full[i] :
+                    _ctsem_keep_rows(full[i], kept[i])
+            end
+        end
+    end
     length(prior_index) == length(prior_scale) ||
         throw(DimensionMismatch("prior index and scale vectors must have equal length"))
     return CTSEMObjective(params, objects, nothing, Int.(prior_index),
@@ -769,7 +889,8 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
         Float64.(subject_weights),
         _ctsem_corbound_blocks(corbound_k, corbound_code, corbound_index, corbound_fixed),
         Int.(penalty_index), Float64.(penalty_precision), Int.(jacobian_index),
-        _ctsem_natural_exprs(jacobian_value), _ctsem_natural_exprs(jacobian_slope))
+        _ctsem_natural_exprs(jacobian_value), _ctsem_natural_exprs(jacobian_slope),
+        nothing, full)
 end
 
 """The natural-scale prior's expressions, from the text R writes: each in the
