@@ -2040,6 +2040,7 @@
   identify <- fit$identifiability
   weak <- if (isTRUE(identify$nweak > 0L)) identify$parameters else character()
   bound <- fit$corbound
+  nlevels <- 1L
   if (!is.null(bound)) {
     bound <- bound[bound$matrix %in% "population", , drop = FALSE]
     nlevels <- length(unique(bound$level))
@@ -2059,11 +2060,17 @@
     parts <- c(parts, if (length(weak) || lv != bound$level[1L]) "It also finds",
       paste0("the population covariance",
         if (nlevels > 1L) paste0(" at level ", lv) else "",
-        " near singular, about rank ", r$rank[1L], " of ", r$k[1L],
-        ". Consider poprank = ", r$rank[1L], "."))
+        " near singular, about rank ", r$rank[1L], " of ", r$k[1L], "."),
+      if (nlevels > 1L) .ctCorBoundAdvice(r$rank[1L], TRUE))
   }
-  message(paste(parts, collapse = " "), " Sampling along such directions is ",
-    "slow, and a model without them samples faster.")
+  # Where the reduction has a change for any of them, the call that tries it.
+  findings <- tryCatch(.ctReduceFindings(fit, candidates = FALSE),
+    error = function(e) list())
+  reducible <- (nlevels <= 1L && NROW(bound) > 0L) ||
+    any(vapply(findings, function(f) isTRUE(f$reducible), logical(1)))
+  message(paste(parts, collapse = " "), " Sampling along such directions is slow.",
+    if (reducible) paste0(" ctModelImprove(fit, reduceOnly = TRUE) refits the changes ",
+      "that remove them and keeps those the data allow."))
   invisible(NULL)
 }
 

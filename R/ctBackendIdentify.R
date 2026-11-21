@@ -886,7 +886,9 @@
       repairs), call. = FALSE)
     return(invisible(NULL))
   }
-  .ctBackendIdentifyWarn(identify, fit$collapsedScales, intervals)
+  .ctBackendIdentifyWarn(identify, fit$collapsedScales, intervals,
+    findings = if (isTRUE(identify$nweak > 0L))
+      tryCatch(.ctReduceFindings(fit, candidates = FALSE), error = function(e) list()))
   said <- isTRUE(identify$nweak > 0L) || isTRUE(intervals$nflagged > 0L) ||
     isTRUE(intervals$nunidentified > 0L)
   if (length(repairs) && !said) warning(repairs[1L], call. = FALSE)
@@ -920,8 +922,12 @@
 # `standard_errors = FALSE` keeps only the collapsed-scale message, for a fit
 # whose verdict carries the rest (`.ctBackendFitWarnings()`).
 #' @keywords internal
+#
+# `findings` (`.ctReduceFindings()`) says what kinds of direction these are,
+# where they are of a kind `ctModelImprove(fit, reduceOnly = TRUE)` has a
+# change for: said in place of the bare list of parameters, with that call.
 .ctBackendIdentifyWarn <- function(identify, collapsed, intervals = NULL,
-  standard_errors = TRUE) {
+  standard_errors = TRUE, findings = list()) {
   if (!isTRUE(standard_errors)) {
     identify <- NULL
     intervals <- NULL
@@ -939,13 +945,22 @@
     # dropped is explanation, not content: every parameter and every piece of
     # advice is still named, and `fit$identifiability` carries the rest.
     partition <- .ctIdentifyPartition(identify$directions)
+    advice <- .ctIdentifyAdvice(partition, brief = TRUE,
+      zero = .ctEffectRows(identify[["effects"]], "zero"))
+    reduce <- .ctReduceWarnText(findings)
+    if (nzchar(reduce)) {
+      other <- unlist(lapply(Filter(function(f) identical(f$kind, "other"), findings),
+        `[[`, "parameters"))
+      advice <- c(advice[!startsWith(advice, "Not estimable as the model stands")],
+        if (length(other)) paste0("Also not estimable as the model stands: ",
+          paste(utils::head(other, 4), collapse = ", "), "."), reduce)
+    }
     warning("The data do not identify ", identify$nweak, " direction",
       if (identify$nweak > 1L) "s" else "", " of this model; the estimates ",
       "stand but the standard error",
       if (identify$nweak > 1L) "s along them do" else " along it does",
       " not. ",
-      paste(.ctIdentifyAdvice(partition, brief = TRUE,
-        zero = .ctEffectRows(identify[["effects"]], "zero")), collapse = " "),
+      paste(advice, collapse = " "),
       if (!length(partition$partial) && !length(partition$structural))
         paste0("Parameters involved: ",
           paste(utils::head(identify$parameters, 6), collapse = ", "),
