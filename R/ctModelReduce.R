@@ -166,13 +166,14 @@
     if (!is.null(d$partial)) next
     p <- setdiff(as.character(d$parameters), held)
     if (!length(p)) next
-    # An effect's own variance, or its sd, alone at zero curvature: held at
-    # the floor of its transform, where every smaller value is as good. On
-    # follhim/dis_ctsem two own variances of a rank-5 covariance sat there.
-    if (length(p) == 1L && isTRUE(abs(d$relative) < 1e-12) &&
-        grepl('^(popunique|popsd)_[^.]+$', p)) {
-      if (startsWith(p, 'popunique_')) zeroown <- c(zeroown, sub('^popunique_', '', p)) else
-        zerosd <- c(zerosd, sub('^popsd_', '', p))
+    # Own variances or sds alone at zero curvature: held at the floor of
+    # their transforms, where every smaller value is as good. Several at once
+    # span a flat space whose basis mixes them, so a direction of only such
+    # coordinates names each. On follhim/dis_ctsem two own variances of a
+    # rank-5 covariance sat there, and at rank 3 two more shared directions.
+    if (isTRUE(abs(d$relative) < 1e-12) && all(grepl('^(popunique|popsd)_[^.]+$', p))) {
+      zeroown <- unique(c(zeroown, sub('^popunique_', '', grep('^popunique_', p, value = TRUE))))
+      zerosd <- unique(c(zerosd, sub('^popsd_', '', grep('^popsd_', p, value = TRUE))))
       next
     }
     pop <- .ctReducePopCoordinate(p)

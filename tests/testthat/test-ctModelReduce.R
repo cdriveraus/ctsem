@@ -228,8 +228,10 @@ test_that("own variances at zero leave the level's own variances, the rank kept"
   m$pars$indvarying[m$pars$param %in% c('cint_trend', 'drift_x', 'diff_x', 'trend_drift')] <- TRUE
   testthat::local_mocked_bindings(.ctReduceOwnVariances = function(fit, model)
     list(rank = 2L, own = c('cint_trend', 'drift_x', 'diff_x', 'trend_drift')))
-  f <- ctsem:::.ctReduceFindings(.reduce_fit(list(.reduce_dir('popunique_drift_x', 1e-15),
-    .reduce_dir('popunique_diff_x', -1e-15)), model = m))
+  # Two at zero span a flat plane, whose directions mix them.
+  f <- ctsem:::.ctReduceFindings(.reduce_fit(list(.reduce_dir(c('popunique_drift_x',
+    'popunique_diff_x'), 1e-22), .reduce_dir(c('popunique_diff_x', 'popunique_drift_x'),
+    -1e-24)), model = m))
   expect_identical(vapply(f, `[[`, '', 'kind'), 'own variance at zero')
   expect_match(f[[1]]$text, 'the own variances of drift_x, diff_x are at zero')
   ch <- f[[1]]$candidates[[1]]
