@@ -198,11 +198,10 @@
 #'  responsiveness a transform must have lost to count as the reason the fit
 #'  stopped, and how many iterations the check waits after finding a fit slow
 #'  but not stuck.}
-#'  \item{\code{escapesaturated}}{Default FALSE. Refit a fit that stalled on a
-#'  saturated transform, with that parameter reset to zero, and keep the
-#'  better result.}
-#'  \item{\code{escapepin}}{Default FALSE. Hold the reset parameters fixed
-#'  while the others are optimised, then free them.}
+#'  \item{\code{escapepin}}{Default FALSE. When the optimiser restarts from a
+#'  point where it pulled some parameters back, hold those parameters fixed
+#'  while the others are optimised, then free them. The \code{flatretry}
+#'  restart always does this.}
 #' }
 #'
 #' @section Laplace approximation (julia, \code{intoverpop = 'laplace'}):

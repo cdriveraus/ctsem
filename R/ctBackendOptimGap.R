@@ -624,16 +624,17 @@
 # here would cost `8 * npar` objective evaluations for an answer already in
 # hand, which on a laplace fit near a degenerate corner is a couple of minutes.
 #
-# The fallback is for a fit that finished normally and is nonetheless sitting
-# somewhere it should not be: zero the coordinates whose transforms have gone
-# flat and refit. That cannot be decided cheaply -- the zeroed point is
-# deliberately *worse* on the spot, 9.5 nats down on the fit it was measured
-# on, and a refit from it landed 7.2 nats up -- so it costs a fit and is off by
-# default. `optimcontrol$escapesaturated = TRUE` turns it on.
-#
-# Zeroing is not neutral and is not claimed to be: raw zero is a correlation of
-# 0 but a drift of -0.693 and an sd of 0.693. It is a starting value for a
-# refit, not an answer, and the refit is kept only if it wins.
+# Both of those judge a move with every other coordinate where it is. The
+# run-off escape is for a stage that finished normally and is nonetheless
+# sitting where a coordinate has run off into flat space, in a basin whose
+# alternative needs the rest of the model rearranged first
+# (`.ctBackendRunOff()`): on the spot that point is worse (1257 nats on the
+# dis model), so it is held while the rest re-optimise, then freed, and kept
+# only if it wins. It replaced an opt-in escape (`escapesaturated`) that set
+# saturated coordinates to raw zero and refitted unpinned: zero is no simpler
+# value (a drift of -1.39, an sd of 0.69), a coordinate flat for a reason
+# other than its transform was never tried, and unpinned the rest of the
+# model slid it back.
 #' @keywords internal
 .ctBackendStallEscape <- function(result, optimcontrol, model_spec,
     verbose = 0, escapes = TRUE, tried = integer(), runoffonly = FALSE) {
@@ -708,19 +709,7 @@
       return(point)
     }
   }
-  if (runoffonly || !isTRUE(optimcontrol$escapesaturated)) return(NULL)
-  flat <- suppressWarnings(as.integer(result$saturated_parameters))
-  flat <- flat[!is.na(flat) & flat >= 1L & flat <= npar]
-  if (!length(flat)) return(NULL)
-  from <- as.numeric(result$minimizer)
-  from[flat] <- 0
-  if (verbose > 0) {
-    message("Saturated with no pullback available; zeroing raw parameter(s) ",
-      paste(.ctJuliaSaturatedNames(list(p = result$saturated_parameters),
-        model_spec, npar, "p"), collapse = ", "),
-      " and refitting from there to see whether it beats this")
-  }
-  .ctBackendEscapeCoordinates(from, flat, npar)
+  NULL
 }
 
 # The model parameter a stage left run off where the likelihood is flat in it,
@@ -1300,6 +1289,11 @@
 #   `2 npar` gradients on the Laplace route for nothing a resume from the
 #   point does not give. Resuming rather than continuing, because L-BFGS's
 #   curvature history describes the region the fit just left.
+# - A coordinate run off where the likelihood is flat in it, the same
+#   function's run-off escape (`.ctBackendRunOff()`), is held at the other
+#   side of its range and then freed. It takes nothing from the budget and is
+#   asked for when the budget is spent (`escape(result, runoffonly = TRUE)`);
+#   one that does not win leaves the stage to the rules below.
 # - Otherwise, where the fit certifies, `suboptimal` or `notmaximum` with
 #   budget left resumes from the point it reached, under the same rules as the
 #   first stage, except that its stall watch stops it once it stops gaining
