@@ -914,9 +914,12 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
 }
 
 # The number of parameters varying over subjects in a model.
-.ctImproveNvarying <- function(model) {
-  length(unique(model$pars$param[as.logical(model$pars$indvarying) %in% TRUE &
-    !is.na(model$pars$param)]))
+.ctImproveNvarying <- function(model) length(.ctImproveVarying(model))
+
+# The parameters varying over subjects, by name.
+.ctImproveVarying <- function(model) {
+  unique(model$pars$param[as.logical(model$pars$indvarying) %in% TRUE &
+    !is.na(model$pars$param)])
 }
 
 # A change that sets the population covariance's rank: kept like any other, so
@@ -934,6 +937,14 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   edit = local({ r <- r; unique <- unique; function(model, data, covs, args = list()) {
     k <- .ctImproveNvarying(model)
     a <- list(poprank = if (r < k) r else NA)
+    # Own variances named for parameters that a later change made fixed (a
+    # reduction can) are dropped: ctFit refuses a name that does not vary.
+    if (is.character(unique)) {
+      varying <- .ctImproveVarying(model)
+      matrices <- model$pars$matrix[model$pars$param %in% varying]
+      unique <- unique[unique %in% c(varying, matrices)]
+      if (!length(unique)) unique <- FALSE
+    }
     if (!is.null(unique) && r < k) a$popunique <- unique
     list(model = model, data = data, args = a)
   } }))

@@ -6,16 +6,20 @@
 #
 #   unread        a parameter the likelihood does not read (a measurement
 #                 error covariance between items scored one at a time, before
-#                 that was refused): curvature exactly zero along it alone.
-#                 Fixed at zero.
+#                 that was refused, or an auto-effect at its transform's bound
+#                 near zero): curvature exactly zero along it alone. Fixed at
+#                 zero where zero is a model (an off-diagonal, an effect, an
+#                 auto-effect).
 #   drift-intercept / drift-diffusion
 #                 a latent's auto-effect against its intercept or its
-#                 diffusion: the process settles faster than the data
-#                 resolve, so only their ratio is determined. A latent
-#                 without noise (a trend) is refitted as a linear trend, its
-#                 auto-effect fixed at zero; any is refitted with its
-#                 intercept or diffusion scaled by the drift (`driftScaled`),
-#                 which states the same model along the ratio.
+#                 diffusion, with their spread over subjects: the process
+#                 settles faster than the data resolve, so only their ratio is
+#                 determined. A latent without noise (a trend) is refitted at
+#                 both ends of its auto-effect, as a linear trend (auto-effect
+#                 fixed at zero) and as a constant level (auto-effect and
+#                 intercept fixed at zero); any is refitted with its intercept
+#                 or diffusion scaled by the drift (`driftScaled`), which
+#                 states the same model along the ratio.
 #   covariance    population sds, correlations or loadings: the covariance
 #                 has more dimensions than the subjects identify. Refitted at
 #                 lower ranks (`.ctImproveRankStep()`), from full rank with
@@ -26,8 +30,8 @@
 #
 # `ctModelImprove(fit, reduceOnly = TRUE)` refits each change from the current
 # estimate and keeps it unless the fuller model is better by the search's
-# criterion; the full search does the same before it screens and after each
-# change it keeps. On follhim/dis_ctsem (2026-11-21) the original fit's report
+# criterion, the one with fewest parameters where several are kept; the full
+# search does the same before it screens and after each change it keeps. On follhim/dis_ctsem (2026-11-21) the original fit's report
 # held all four kinds at once: an ignored error covariance, a stress trend
 # whose auto-effect had run to -37 an hour along its intercept (fixed at zero
 # it fitted 21.6 nats better with three fewer parameters), and a 10 x 10
@@ -55,6 +59,25 @@
       !grepl('^[A-Za-z][A-Za-z0-9_.]*$', pars$param[r])) return(NA_character_)
   pars$param[r]
 }
+
+# The effect a population coordinate is the spread of: its sd, own variance or
+# loadings; '' for a correlation, which is the spread of no one effect. A level
+# above the subject is a suffix (`popsd_<parameter>.<level>`).
+.ctReduceCoordinateEffect <- function(p, model) {
+  levels <- model$groupIDnames
+  if (length(levels)) p <- sub(paste0('\\.(', paste(levels, collapse = '|'), ')$'), '', p)
+  if (grepl('^poploading_.+_dim[0-9]+$', p)) return(sub('^poploading_(.+)_dim[0-9]+$', '\\1', p))
+  if (grepl('^(popsd|popunique)_', p)) return(sub('^(popsd|popunique)_', '', p))
+  ''
+}
+
+# A latent's auto-effect fixed at zero: a linear trend where the latent has no
+# noise of its own, a random walk where it has. One key for both readings, so a
+# change refused under one finding is not refitted under another.
+.ctReduceDriftZero <- function(model, drift, i) .ctReduceProposal(
+  paste0('reduce:drift0:', drift), paste0(drift, ' fixed at 0 (',
+    if (.ctReduceNoNoise(model, i)) 'a linear trend' else 'a random walk', ')'),
+  .ctReduceFixEdit(drift, 0))
 
 # Whether latent i has no noise of its own: every DIFFUSION cell in its row and
 # column fixed at zero.
@@ -152,38 +175,49 @@
       next
     }
     pop <- .ctReducePopCoordinate(p)
-    if (mean(pop) >= 0.5) {
-      add(list(key = 'covariance', kind = 'covariance', parameters = p,
-        text = 'the population covariance has more dimensions than the subjects identify',
-        candidates = list()))
-      next
-    }
     mp <- p[!pop]
+    # The effect each population coordinate is the spread of; a correlation
+    # names two, and is the spread of neither alone.
+    own <- vapply(p[pop], .ctReduceCoordinateEffect, '', model = model)
     cells <- .ctReduceCells(model, mp)
-    found <- FALSE
     if (length(p) == 1L && isTRUE(abs(d$relative) < 1e-12) && !is.na(cells$matrix[1L])) {
       # Zero curvature, to roundoff, along one parameter alone: nothing the
       # likelihood computes reads it (`.ctOptimIdentifiedInverse()`'s 1e-12 for
-      # a direction with no width at all). An off-diagonal or an effect is
-      # fixed at zero; any other cell is named, not changed.
-      offdiag <- cells$row[1L] != cells$col[1L] ||
-        cells$matrix[1L] %in% c('TDPREDEFFECT', 'LAMBDA')
+      # a direction with no width at all), or it sits where its transform is
+      # flat. An off-diagonal, an effect or an auto-effect is fixed at zero (an
+      # auto-effect at its bound near zero is a linear trend, or a random walk
+      # where the latent has noise); any other cell is named, not changed.
+      cand <- list()
+      if (cells$matrix[1L] %in% 'DRIFT' && cells$row[1L] == cells$col[1L]) {
+        cand <- list(.ctReduceDriftZero(model, mp, cells$row[1L]))
+      } else if (cells$row[1L] != cells$col[1L] ||
+          cells$matrix[1L] %in% c('TDPREDEFFECT', 'LAMBDA')) {
+        cand <- list(.ctReduceProposal(paste0('reduce:fix:', mp),
+          paste0(mp, ' fixed at 0'), .ctReduceFixEdit(mp, 0)))
+      }
       add(list(key = paste0('unread:', mp), kind = 'unread', parameters = mp,
-        text = paste0(mp, ' is not read by the likelihood'),
-        candidates = if (offdiag) list(.ctReduceProposal(paste0('reduce:fix:', mp),
-          paste0(mp, ' fixed at 0'), .ctReduceFixEdit(mp, 0))) else list()))
+        text = paste0(mp, ' is not read by the likelihood'), candidates = cand))
       next
     }
+    # A latent's auto-effect with its intercept, or with its diffusion: the
+    # spread of the intercept or diffusion over subjects scales with it too, so
+    # its own population coordinates belong to the same finding. On the dis
+    # model reduced to rank 3, the stress trend's one flat direction was its
+    # auto-effect, its intercept and the intercept's three loadings and own
+    # variance -- two thirds population coordinates, and no covariance problem.
+    explained <- character()
     for (i in unique(cells$row[cells$matrix %in% 'DRIFT' & cells$row == cells$col])) {
       drift <- cells$param[cells$matrix %in% 'DRIFT' & cells$row == i & cells$col == i][1L]
       cint <- .ctReduceCellParam(model, 'CINT', i, 1L)
       diffusion <- .ctReduceCellParam(model, 'DIFFUSION', i, i)
-      if (!is.na(cint) && cint %in% mp) {
-        found <- TRUE
+      spread <- function(x) names(own)[own %in% x]
+      if (!is.na(cint) && (cint %in% mp || length(spread(cint)))) {
+        explained <- c(explained, drift, cint, spread(cint))
         cand <- list()
-        if (.ctReduceNoNoise(model, i)) cand[[length(cand) + 1L]] <- .ctReduceProposal(
-          paste0('reduce:lineartrend:', drift), paste0(drift, ' fixed at 0 (a linear trend)'),
-          .ctReduceFixEdit(drift, 0))
+        if (.ctReduceNoNoise(model, i)) cand <- list(.ctReduceDriftZero(model, drift, i),
+          .ctReduceProposal(paste0('reduce:level:', drift), paste0(latent(i),
+            ' a constant level (', drift, ' and ', cint, ' fixed at 0)'),
+            .ctReduceFixEdit(c(drift, cint), 0)))
         if (!'CINT' %in% model$driftScaled) cand[[length(cand) + 1L]] <- .ctReduceProposal(
           'reduce:driftscaled:CINT', "intercepts scaled by the drift (driftScaled = 'CINT')",
           .ctReduceDriftScaledEdit('CINT'))
@@ -192,8 +226,8 @@
             ' trade off: ', latent(i), ' settles faster than the data resolve'),
           candidates = cand))
       }
-      if (!is.na(diffusion) && diffusion %in% mp) {
-        found <- TRUE
+      if (!is.na(diffusion) && (diffusion %in% mp || length(spread(diffusion)))) {
+        explained <- c(explained, drift, diffusion, spread(diffusion))
         add(list(key = paste0('driftdiffusion:', i), kind = 'drift-diffusion',
           parameters = c(drift, diffusion), text = paste0(drift, ' and ', diffusion,
             ' trade off: ', latent(i), ' forgets its state faster than the data resolve'),
@@ -203,9 +237,20 @@
               .ctReduceDriftScaledEdit('DIFFUSION')))))
       }
     }
-    if (!found) add(list(key = paste0('other:', paste(sort(p), collapse = ',')),
-      kind = 'other', parameters = p, text = paste(utils::head(p, 4), collapse = ', '),
-      candidates = list()))
+    # What no pattern accounts for: mostly population coordinates is a
+    # covariance with more dimensions than the subjects identify, which the
+    # rank step reduces; anything else is named. The flat directions of one
+    # fit span a space whose basis is arbitrary, so one direction can carry two
+    # problems: a trend's trade-off beside a covariance's surplus dimensions.
+    rest <- setdiff(p, explained)
+    if (length(rest) && mean(.ctReducePopCoordinate(rest)) >= 0.5) {
+      add(list(key = 'covariance', kind = 'covariance',
+        parameters = rest[.ctReducePopCoordinate(rest)],
+        text = 'the population covariance has more dimensions than the subjects identify',
+        candidates = list()))
+    } else if (!length(explained)) add(list(key = paste0('other:', paste(sort(p),
+      collapse = ',')), kind = 'other', parameters = p,
+      text = paste(utils::head(p, 4), collapse = ', '), candidates = list()))
   }
   single <- !length(model$groupIDnames)
   # Own variances at zero leave the level's own variances, the rank kept: a
@@ -302,7 +347,7 @@
 .ctImproveReduce <- function(base, current, kept, startdata, covariates, criterion,
     alpha, cores, say = function(...) invisible(), label = '', round = NA_integer_) {
   st <- list(current = current, kept = kept, data = NULL, args = NULL, history = list(),
-    changed = FALSE, refused = character())
+    changed = FALSE, tried = character())
   repeat {
     st <- .ctReduceFindingsStep(st, base, startdata, covariates, criterion, alpha,
       cores, say, label, round)
@@ -316,12 +361,18 @@
   st[c('current', 'kept', 'data', 'args', 'history', 'changed')]
 }
 
-# The findings part of a reduction stage, on its state `st`.
+# The findings part of a reduction stage, on its state `st`. A change refused
+# once is not refitted, under the same finding or another that proposes it
+# (`st$tried`, by key and label).
 .ctReduceFindingsStep <- function(st, base, startdata, covariates, criterion, alpha,
     cores, say, label, round) {
+  id <- function(cand) paste0(cand$key, '|', cand$label)
   repeat {
-    findings <- Filter(function(f) length(f$candidates) && !f$key %in% st$refused,
-      .ctReduceFindings(st$current))
+    findings <- lapply(.ctReduceFindings(st$current), function(f) {
+      f$candidates <- Filter(function(cand) !id(cand) %in% st$tried, f$candidates)
+      f
+    })
+    findings <- Filter(function(f) length(f$candidates), findings)
     if (!length(findings)) return(st)
     f <- findings[[1L]]
     say(label, f$text)
@@ -340,15 +391,16 @@
         family = 'reduce', change = cand$label, screen_p = NA_real_,
         dloglik = verdict$dloglik, dpar = verdict$dpar, criterion = verdict$value,
         kept = FALSE, note = verdict$note, stringsAsFactors = FALSE)
-      if (isTRUE(verdict$keep) && (is.null(best) ||
-          .ctFitOptimisedLoglik(refit) > .ctFitOptimisedLoglik(best$refit)))
+      st$tried <- c(st$tried, id(cand))
+      # Of the changes kept, the one with fewest parameters, then the higher
+      # likelihood: a restatement only where nothing smaller is allowed.
+      better <- is.null(best) || verdict$dpar < best$dpar || (verdict$dpar == best$dpar &&
+        .ctFitOptimisedLoglik(refit) > .ctFitOptimisedLoglik(best$refit))
+      if (isTRUE(verdict$keep) && isTRUE(better))
         best <- list(cand = cand, refit = refit, rebuilt = rebuilt,
-          row = length(st$history), prior = prior)
+          row = length(st$history), prior = prior, dpar = verdict$dpar)
     }
-    if (is.null(best)) {
-      st$refused <- c(st$refused, f$key)
-      next
-    }
+    if (is.null(best)) next
     st$history[[best$row]]$kept <- TRUE
     say(label, "kept ", best$cand$label)
     st$current <- best$refit
