@@ -741,10 +741,12 @@
 # found flat -- the share the reduction reads (`.ctReduceFlat()`), here on the
 # finish's own Hessian -- or with its transform saturated. And with another
 # side to be held at: a transform with a finite end somewhere
-# (`.ctBackendRawEnds()`), an auto-effect or a variance; an intercept that ran
-# off has none. Of several, the largest share; none in `tried`. Population
-# coordinates are left to the reduction and the effects report: a variance at
-# zero is a model they have a change for.
+# (`.ctBackendRawEnds()`), an auto-effect, a variance, a random effect's sd or
+# own variance; an intercept or a loading that ran off has none. A variance at
+# zero is a simpler model the reduction offers, and can also be where a fit
+# stopped short of a basin in which the variance is positive and the rest of
+# the model arranged around it, which only this finds. Of several, the
+# largest share; none in `tried`.
 #' @keywords internal
 .ctBackendRunOff <- function(result, model_spec, npar, tried = integer()) {
   x <- suppressWarnings(as.numeric(result$minimizer))
@@ -756,8 +758,6 @@
   names <- tryCatch(as.character(.ctBackendRawParameterNames(
     list(model_spec = model_spec), npar)), error = function(e) NULL)
   if (length(names) != npar) return(integer())
-  far <- far[!.ctReducePopCoordinate(names[far])]
-  if (!length(far)) return(integer())
   share <- numeric(npar)
   walk <- .ctBackendFlatWalkFields(result, npar)
   if (!is.null(walk) && !is.null(walk$eigenvectors)) {
@@ -767,8 +767,8 @@
   }
   saturated <- suppressWarnings(as.integer(result$saturated_parameters))
   far <- far[share[far] >= 0.5 | far %in% saturated]
-  far <- far[vapply(far, function(k) any(.ctBackendRawEnds(model_spec, k)),
-    logical(1))]
+  far <- far[vapply(far, function(k) any(.ctBackendRawEnds(model_spec, k,
+    names[k])), logical(1))]
   if (!length(far)) return(integer())
   far[which.max(share[far])]
 }
@@ -778,8 +778,12 @@
 # `.ctReduceValues()` reads a fitted parameter's range. From the
 # specification's parameter table, through the transform text the data start
 # inverts (`.ctDataStartInvert()`); FALSE, FALSE where there is none to read.
+# A random effect's sd or own variance (`name`) is no cell of the table: the
+# engine takes it as `log1p_exp(2 * raw - 1) * sdscale` (laplace.jl), zero
+# below.
 #' @keywords internal
-.ctBackendRawEnds <- function(model_spec, k) {
+.ctBackendRawEnds <- function(model_spec, k, name = NA_character_) {
+  if (isTRUE(grepl("^(popsd|popunique)_", name))) return(c(TRUE, FALSE))
   pt <- model_spec$parameter_table
   none <- c(FALSE, FALSE)
   if (is.null(pt) || is.null(pt$parnumber) || is.null(pt$transform)) return(none)

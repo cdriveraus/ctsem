@@ -53,10 +53,11 @@ is a misspelled name. Settings left unset take the backend's default.
  starts from the default values and says so. Supplied \code{inits} are
  always used as given.}
  \item{\code{flatretry}}{Julia. Default TRUE. When the optimiser leaves a
- model parameter far out where the likelihood hardly changes with it, such
- as an auto-effect so fast or so slow that its value no longer matters, it
- optimises again with that parameter held at the other side of its range
- until the other parameters settle, then lets it go. The better of the two
+ parameter far out where the likelihood hardly changes with it, such as an
+ auto-effect so fast or so slow that its value no longer matters, or a
+ variance or random effect standard deviation at zero, it optimises again
+ from the starting values with that parameter held at the other side of its
+ range, then lets it go. The better of the two
  results is kept. This happens before the standard errors are computed, and
  costs up to two more optimisations for each such parameter.}
  \item{\code{carefulfit}}{Both. Default TRUE. A first pass with ctsem's

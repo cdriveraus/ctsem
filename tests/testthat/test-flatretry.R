@@ -29,7 +29,7 @@
   .ctBackendRawParameterNames = function(fit, npar) .runoff_names[seq_len(npar)],
   .ctJuliaSaturatedNames = function(result, model_spec, npar, field)
     .runoff_names[as.integer(result[[field]])],
-  .ctBackendRawEnds = function(model_spec, k) if (k == 3L) c(FALSE, FALSE) else c(FALSE, TRUE),
+  .ctBackendRawEnds = function(model_spec, k, name = NA) if (k == 3L) c(FALSE, FALSE) else c(FALSE, TRUE),
   .ctDataStartUsable = function(...) usable,
   .env = env)
 
@@ -37,10 +37,11 @@ test_that("a flat, run-off parameter with an end qualifies", {
   .runoff_mocks()
   x <- c(-16, 0.4, 9, -20)
   # trend_drift flat and far out; drift_x flat but near the start; cint_trend
-  # far out but not flat; the population sd is the reduction's.
+  # far out but not flat; the random effect's sd flat and at zero.
   r <- .runoff_result(x, flat = list(c(1, 0, 0, 0), c(0, 1, 0, 0), c(0, 0, 0, 1)))
   expect_identical(ctsem:::.ctBackendRunOff(r, list(), 4L), 1L)
-  expect_length(ctsem:::.ctBackendRunOff(r, list(), 4L, tried = 1L), 0L)
+  expect_identical(ctsem:::.ctBackendRunOff(r, list(), 4L, tried = 1L), 4L)
+  expect_length(ctsem:::.ctBackendRunOff(r, list(), 4L, tried = c(1L, 4L)), 0L)
   # A saturated transform leads without a flat direction.
   expect_identical(ctsem:::.ctBackendRunOff(.runoff_result(c(-16, 5, 9, -20),
     saturated = 2L), list(), 4L), 2L)
@@ -60,6 +61,10 @@ test_that("a transform's ends are read off its text", {
   expect_identical(ctsem:::.ctBackendRawEnds(spec, 2L), c(FALSE, FALSE))
   expect_identical(ctsem:::.ctBackendRawEnds(spec, 3L), c(TRUE, FALSE))
   expect_identical(ctsem:::.ctBackendRawEnds(spec, 9L), c(FALSE, FALSE))
+  # A random effect's sd or own variance is the engine's, zero below.
+  expect_identical(ctsem:::.ctBackendRawEnds(spec, 9L, 'popsd_drift'), c(TRUE, FALSE))
+  expect_identical(ctsem:::.ctBackendRawEnds(spec, 9L, 'popunique_cint'), c(TRUE, FALSE))
+  expect_identical(ctsem:::.ctBackendRawEnds(spec, 9L, 'poploading_cint_dim1'), c(FALSE, FALSE))
 })
 
 test_that("the escape point holds the parameter at the other side and restarts the rest", {
