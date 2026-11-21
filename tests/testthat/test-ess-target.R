@@ -186,3 +186,25 @@ test_that("a sampler with no R-hat is not judged or reported by one", {
   expect_true(any(grepl("smallest effective sample size", printed)))
   expect_false(any(grepl("rhat", printed)))
 })
+
+test_that("a sampled fit says what its starting optimisation found before sampling", {
+  note <- ctsem:::.ctSamplePlacementNote
+  # Nothing to say: no unidentified direction, no covariance on its bound.
+  expect_no_message(note(list(identifiability = list(nweak = 0L),
+    corbound = data.frame(matrix = "population", level = 1L, effect = "a",
+      at_bound = FALSE, rank = 3L, k = 3L))))
+  expect_no_message(note(list()))
+  # Directions the data do not identify, named.
+  expect_message(note(list(identifiability = list(nweak = 2L,
+    parameters = c("poploading_x_dim3", "poploading_y_dim3")))),
+    "2 directions of this model that the data do not identify \\(poploading_x_dim3")
+  # A population covariance on its bound, with the rank it points to; a
+  # model matrix on its bound (T0VAR here) is not the population's.
+  bound <- data.frame(matrix = c("population", "population", "T0VAR"),
+    level = c(1L, 1L, NA), effect = c("a", "b", "c"), at_bound = TRUE,
+    rank = c(6L, 6L, 1L), k = c(10L, 10L, 2L))
+  expect_message(note(list(corbound = bound)),
+    "finds the population covariance near singular, about rank 6 of 10. Consider poprank = 6.")
+  expect_message(note(list(identifiability = list(nweak = 1L, parameters = "rawcor_a__b"),
+    corbound = bound)), "It also finds the population covariance near singular")
+})
