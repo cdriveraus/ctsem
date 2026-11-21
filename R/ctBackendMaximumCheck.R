@@ -147,7 +147,7 @@
     "sampler's first draws are centred reached a log posterior ",
     format(round(record$gain, 2)), " above the estimate's after ",
     sum(record$iterations), " iterations, and was stopped there. The fit's ",
-    "estimate and standard errors describe the lower maximum; the sampled ",
+    "estimate and standard errors describe the lower maximum. The sampled ",
     "posterior does not depend on it. ctFitUpdate(fit, inits = ",
     "fit$sample$maximumcheck$raw) fits from the higher point.", call. = FALSE)
   record
