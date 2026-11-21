@@ -2477,14 +2477,16 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # placement it runs no iterations at all, and "no progress from its
   # starting values ... Treat this fit as failed" came with every default
   # sampled fit. The sampler's diagnostics are what judge a sampled fit.
-  place <- function(inits, cores) {
+  # `resume`: the modes that go with `inits`, where the maximum check found
+  # the point (its record's `modes`).
+  place <- function(inits, cores, resume = NULL) {
     placementwarnings <- character()
     placementfit <- withCallingHandlers(.ctJuliaOptimiseFit(model_spec = model_spec,
       datalong = datalong, model = model, prepared_data = prepared_data,
       inits = inits, cores = cores,
       optimcontrol = placementcontrol, verbose = verbose, priors = priors,
       priorscope = priorscope, intoverpop = intoverpop, intoverstates = TRUE,
-      gradient = gradient, correctlaplace = FALSE),
+      gradient = gradient, correctlaplace = FALSE, resume = resume),
       warning = function(w) {
         placementwarnings <<- c(placementwarnings, conditionMessage(w))
         invokeRestart("muffleWarning")
@@ -2531,7 +2533,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
     message("A log posterior ", format(round(found$gain, 2)), " above the ",
       "estimate's was reached from where the sampler's first draws are ",
       "centred. Fitting again from there before sampling.")
-    placementfit <- place(found$raw, cores)
+    placementfit <- place(found$raw, cores, resume = found$modes)
   }
   # How often the fit was made again, with the check's record.
   if (!is.null(out$sample$maximumcheck)) out$sample$maximumcheck$rounds <- rounds

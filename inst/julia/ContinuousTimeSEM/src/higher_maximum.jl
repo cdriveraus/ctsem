@@ -23,20 +23,36 @@
 # higher point (a fit from it) is the caller's.
 
 # The objective at `x` as a run that starts there reads it: each unit's inner
-# solve searched at `x` (`_ctsem_anchor_start!`), which is how the climbs'
-# values are read too. NaN where the route refuses the point.
-function _ctsem_searched_value(objective::CTSEMOptimisable, x::Vector{Float64},
-    gradient_method::Symbol)
+# solve searched at `x` (`_ctsem_anchor_start!`), from the origin, the probes
+# and the objective's known modes. NaN where the route refuses the point.
+#
+# With `modes`, also the maxima that search ended on (`_ctsem_anchor_modes`,
+# `nothing` on a route without them): what a fit started at `x` takes as its
+# opening search's further starts (`resume_units`), so that it reads `x` at
+# this value. A run's found modes stay on the objective it ran on
+# (`_ctsem_merge_modes!` puts the maxima it followed that a search missed in
+# the known modes), and a fit from its end is another objective, built from
+# the model: on the affect pilot's tied fit a fit from a climb's end read the
+# point 6.7 nats below the climb's value, and a second climb's end read 14
+# lower searched on a new objective than on its own (review/OPEN.md,
+# 2026-11-21).
+function _ctsem_searched(objective::CTSEMOptimisable, x::Vector{Float64},
+    gradient_method::Symbol; modes::Bool=false)
     _ctsem_optimise_setup!(objective)
+    held = nothing
     trial = try
         _ctsem_anchor_start!(objective, x)
-        _ctsem_optimise_trial(objective, x, false, gradient_method,
+        t = _ctsem_optimise_trial(objective, x, false, gradient_method,
             sqrt(floatmax(Float64)), _ctsem_optimise_log(objective, false))
+        modes && (held = _ctsem_anchor_modes(objective; known=false))
+        t
     finally
         ctsem_laplace_clear_anchors!(objective)
     end
-    return trial.valid ? Float64(trial.evaluated.value) : NaN
+    return (value=trial.valid ? Float64(trial.evaluated.value) : NaN, modes=held)
 end
+_ctsem_searched_value(objective::CTSEMOptimisable, x::Vector{Float64},
+    gradient_method::Symbol) = _ctsem_searched(objective, x, gradient_method).value
 
 # One climb, in a function of its own: what its `stop` closure captures is
 # assigned once here.
@@ -98,10 +114,20 @@ or not, and the highest end is the point: what a caller that goes on to fit
 from the point wants, since the climb's steps are then the fit's first, and
 since the first start to pass need not lead to the highest maximum.
 
+An end's value is the objective searched there, as the reference's and the
+starts' are, on this objective, which holds what the climbs found; `higher` is
+judged on it, and the maxima that search ended on come back with the point
+(`mode_units`, `mode_values`) for a fit from it to start its own search from
+(`_ctsem_searched`). A climb stopped at the bar ended without a search, so its
+own value can rest on maxima a search does not find: where its end is not past
+the bar searched, it goes on to its own end before it is judged.
+
 Returns `higher`, the reference's value and the bar, the highest end's
-`value` and `point`, and per start, in the order of `starts`, its value, its
-climb's end value, end point (`ends`), iterations and seconds (NaN, 0 where it
-was not climbed), and the iteration and seconds at which it first passed the bar (0, NaN where
+`value`, `point` and modes (`mode_units` `[0]` where there are none), and per
+start, in the order of `starts`, its value, its end's value (`end_values`,
+searched) and its climb's own there (`climb_values`), end point (`ends`),
+iterations and seconds (NaN, 0 where it was not climbed), and the iteration
+and seconds at which the climb's own value first passed the bar (0, NaN where
 it did not).
 """
 function ctsem_climb_above(objective::CTSEMOptimisable, starts::AbstractMatrix,
@@ -126,6 +152,8 @@ function ctsem_climb_above(objective::CTSEMOptimisable, starts::AbstractMatrix,
     bar = ref + Float64(margin)
     startvalues = [_ctsem_searched_value(objective, S[:, j], method) for j in 1:n]
     endvalues = fill(NaN, n)
+    climbvalues = fill(NaN, n)
+    modes = nothing
     iterations = zeros(Int, n)
     secs = zeros(Float64, n)
     best = -Inf
@@ -137,9 +165,11 @@ function ctsem_climb_above(objective::CTSEMOptimisable, starts::AbstractMatrix,
         # A start already past the bar needs no climb.
         if startvalues[j] > bar && !finish
             endvalues[j] = startvalues[j]
+            climbvalues[j] = startvalues[j]
             ends[:, j] .= view(S, :, j)
             best = startvalues[j]
             point = S[:, j]
+            modes = _ctsem_searched(objective, point, method; modes=true).modes
             higher = true
             break
         end
@@ -148,30 +178,49 @@ function ctsem_climb_above(objective::CTSEMOptimisable, starts::AbstractMatrix,
             j, n, ref - startvalues[j], Float64(margin))); flush(_console()))
         climb = _ctsem_climb(objective, S[:, j], bar, Int(maxiter), Float64(gap_tol),
             verbose, progress_overwrite, progress_sink, method, metric, finish)
-        endvalues[j] = climb.value
+        endpoint = climb.point
+        followed = climb.value
         iterations[j] = climb.iterations
         secs[j] = climb.secs
         passed[j] = climb.passed
         passed_secs[j] = climb.passed_secs
-        ends[:, j] .= climb.point
-        if climb.value > best
-            best = climb.value
-            point = climb.point
+        read = _ctsem_searched(objective, endpoint, method; modes=true)
+        if !finish && followed > bar && !(read.value > bar)
+            more = _ctsem_climb(objective, endpoint, bar, Int(maxiter), Float64(gap_tol),
+                verbose, progress_overwrite, progress_sink, method, metric, true)
+            endpoint = more.point
+            followed = more.value
+            iterations[j] += more.iterations
+            secs[j] += more.secs
+            read = _ctsem_searched(objective, endpoint, method; modes=true)
+        end
+        endvalues[j] = read.value
+        climbvalues[j] = followed
+        ends[:, j] .= endpoint
+        reached = isfinite(read.value) ? read.value : -Inf
+        if reached > best
+            best = reached
+            point = endpoint
+            modes = read.modes
         end
         verbose && (println(_console(), @sprintf(
-            "climb: start %d ended %+.2f against the reference after %d iterations, %.0f s%s",
-            j, climb.value - ref, climb.iterations, climb.secs,
-            climb.passed > 0 ? @sprintf("; past the bar at iteration %d, %.0f s",
+            "climb: start %d ended %+.2f against the reference (%+.2f on the climb's own modes) after %d iterations, %.0f s%s",
+            j, read.value - ref, followed - ref, iterations[j], secs[j],
+            climb.passed > 0 ? @sprintf("; its own value past the bar at iteration %d, %.0f s",
                 climb.passed, climb.passed_secs) : "")); flush(_console()))
-        if climb.value > bar
+        if reached > bar
             higher = true
             finish || break
         end
     end
+    # None as `[0]` and a one-entry matrix, as `_ctsem_found_columns`.
+    mode_units, mode_values = modes === nothing ? ([0], zeros(1, 1)) :
+        (collect(Int, modes.units), Matrix{Float64}(modes.values))
     return (higher=higher, reference=ref, searched=searched, bar=bar, value=best,
         point=point, start_values=startvalues, end_values=endvalues,
-        iterations=iterations, secs=secs, passed=passed, passed_secs=passed_secs,
-        ends=ends, metric=metric !== nothing)
+        climb_values=climbvalues, iterations=iterations, secs=secs, passed=passed,
+        passed_secs=passed_secs, ends=ends, metric=metric !== nothing,
+        mode_units=mode_units, mode_values=mode_values)
 end
 
 export ctsem_climb_above

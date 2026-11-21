@@ -36,6 +36,15 @@
 #     `ctFitUncertainty(fit, 'sample')`, which was handed its estimate, warns,
 #     keeps the point (`$sample$maximumcheck$raw`) and samples on.
 #
+# A point's value rests on which of each unit's maxima its run found. A fit
+# keeps its run's as its specification's known modes; a climb's stay on the
+# engine objective it ran on. So an end is read by a search on that objective
+# (`end_values`), `higher` is judged on that, and the maxima the search ended
+# on come back as `modes`, which the fit made again takes as its first
+# search's further starts (`.ctJuliaOptimiseFit()`'s `resume`, the route a
+# checkpoint's modes take) and so starts on the value the check read. Without
+# them the pilot's fit from a climb's end started 6.7 nats below the climb.
+#
 # It finds a maximum the sampler's chains reach in their first window. One
 # behind a region of low mass is not found, and neither is anything where the
 # first draws stay centred on the estimate.
@@ -76,9 +85,11 @@
 # record). Returns its record: the bar, each chain's distance, and, where a
 # chain was past the bar, the climb -- `higher`, the estimate's value
 # (`reference`), the highest value reached (`value`), `gain`, the point
-# (`raw`), and per start its value, its end's, iterations and seconds. With
-# `stop`, a higher point is signalled as a `ctHigherMaximum` condition
-# carrying the record instead of warned about.
+# (`raw`) and the maxima a search there ended on (`modes`: `units`, one per
+# column of `values`; absent where the route has none), and per start its
+# value, its end's (`end_values`, searched; `climb_values` the climb's own),
+# iterations and seconds. With `stop`, a higher point is signalled as a
+# `ctHigherMaximum` condition carrying the record instead of warned about.
 #' @keywords internal
 .ctBackendMaximumCheck <- function(fit, centre, cores = 1L, verbose = 0,
   progress = .ctVerboseOn(verbose), stop = FALSE, maxiter = NULL,
@@ -145,6 +156,12 @@
   record$starts <- which(flagged)
   record$start_values <- as.numeric(climb[["start_values"]])
   record$end_values <- as.numeric(climb[["end_values"]])
+  record$climb_values <- as.numeric(climb[["climb_values"]])
+  units <- as.integer(climb[["mode_units"]])
+  values <- as.matrix(climb[["mode_values"]])
+  if (length(units) && all(units > 0L) && ncol(values) == length(units)) {
+    record$modes <- list(units = units, values = values)
+  }
   record$iterations <- as.integer(climb[["iterations"]])
   record$climb_secs <- as.numeric(climb[["secs"]])
   record$ends <- matrix(as.numeric(climb[["ends"]]), nrow = npar)

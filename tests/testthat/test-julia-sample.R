@@ -544,6 +544,22 @@ test_that("the maximum check climbs from where the chains are centred, and says 
   # The climb started on the estimate's covariance, and says when it passed.
   expect_true(mc$metric)
   expect_true(all(mc$passed[mc$iterations > 0] >= 1L))
+  # Its end is read by a search there, and the maxima that search ended on
+  # come back with the point, a column a unit's mode.
+  climbed <- mc$iterations > 0
+  expect_true(all(is.finite(mc$end_values[climbed])))
+  expect_true(all(is.finite(mc$climb_values[climbed])))
+  expect_equal(mc$value, max(mc$end_values, na.rm = TRUE))
+  expect_gte(length(mc$modes$units), 1L)
+  expect_true(all(mc$modes$units >= 1L))
+  expect_equal(ncol(mc$modes$values), length(mc$modes$units))
+  expect_true(all(is.finite(mc$modes$values[1L, ])))
+  # A run from the point with those modes among its first search's starts
+  # begins at the value the check read there.
+  begun <- suppressWarnings(suppressMessages(ctsem:::.ctJuliaOptimise(
+    moved$model_spec, mc$raw, optimcontrol = list(estonly = TRUE), cores = 1,
+    maxiter = 0L, resume = mc$modes)))
+  expect_equal(as.numeric(begun$maximum_loglik), mc$value, tolerance = 1e-6)
   # Asked to finish, it climbs every start to its own end and keeps each end:
   # what a sampled fit's check does before the fit is made again from the
   # highest.
@@ -575,8 +591,11 @@ test_that("ctFit(optimize = FALSE) fits again from a higher point before it samp
     .ctBackendMaximumCheck = function(fit, centre, ..., stop = FALSE) {
       calls <<- calls + 1L
       stops <<- c(stops, isTRUE(stop))
+      # With a mode for its first unit, as a climb's record has them for
+      # every unit: the fit made again takes it to its first search.
       if (calls == 1L) base::stop(ctsem:::.ctMaximumCondition(list(higher = TRUE,
-        gain = 5, raw = as.numeric(fit$estimate$raw) + 0.01)))
+        gain = 5, raw = as.numeric(fit$estimate$raw) + 0.01,
+        modes = list(units = 1L, values = matrix(0, 1L, 1L)))))
       real(fit, centre, ..., stop = stop)
     })
   said <- testthat::capture_messages(fit <- suppressWarnings(ctFit(
