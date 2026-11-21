@@ -155,3 +155,7 @@
 "test-julia-weights.R","uncertainty","core"
 "test-julia-coreset.R","uncertainty","core"
 "test-julia-corbound.R","laplace","core"
+"test-duplication-ratchet.R","source","core"
+"test-matsetup-freerows.R","source","core"
+"test-optimcontrol-names.R","source","core"
+"test-rd-parse.R","source","core"
