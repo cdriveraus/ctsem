@@ -97,6 +97,14 @@ function ctsem_climb_above(objective::CTSEMOptimisable, starts::AbstractMatrix,
     order = sortperm([isfinite(v) ? v : -Inf for v in startvalues]; rev=true)
     for j in order
         isfinite(startvalues[j]) || continue
+        # A start already past the bar needs no climb.
+        if startvalues[j] > bar
+            endvalues[j] = startvalues[j]
+            best = startvalues[j]
+            point = S[:, j]
+            higher = true
+            break
+        end
         verbose && (println(_console(), @sprintf(
             "climb: from start %d of %d, %.2f below the reference; the bar is %.2f above it",
             j, n, ref - startvalues[j], Float64(margin))); flush(_console()))

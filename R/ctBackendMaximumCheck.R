@@ -96,9 +96,12 @@
   npar <- nrow(means)
   estimate <- as.numeric(fit$estimate$raw)
   if (length(estimate) != npar) return(record)
-  message("The sampler's first draws are centred away from the estimate ",
-    "(squared distance ", paste(format(round(record$distance[flagged])),
-      collapse = ", "), " where under ", format(round(record$bar)),
+  # Said to someone watching, since a climb on a large model takes a while;
+  # a climb that finds nothing is otherwise only on record.
+  if (isTRUE(progress)) message("The sampler's first draws are centred away ",
+    "from the estimate (squared distance ",
+    paste(format(round(record$distance[flagged])), collapse = ", "),
+    " where under ", format(round(record$bar)),
     " is expected). Looking for a higher maximum from there.")
 
   objective <- .ctJuliaObjective(fit, hybrid = TRUE)
@@ -134,8 +137,9 @@
   record$iterations <- as.integer(climb[["iterations"]])
   record$climb_secs <- as.numeric(climb[["secs"]])
   if (!record$higher) {
-    message("No higher maximum was found from there (the highest point reached is ",
-      format(round(-record$gain, 2)), " below the estimate). Sampling goes on.")
+    if (isTRUE(progress)) message("No higher maximum was found from there ",
+      "(the highest log posterior reached is ", format(round(-record$gain, 2)),
+      " below the estimate's). Sampling goes on.")
     return(record)
   }
   if (isTRUE(stop)) base::stop(.ctMaximumCondition(record))

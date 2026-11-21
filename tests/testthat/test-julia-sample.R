@@ -471,6 +471,107 @@ test_that("the map sampler draws a fit without random effects", {
   expect_lt(.map_z(map, ref), 4)
 })
 
+# The maximum check (R/ctBackendMaximumCheck.R) on the random-drift fixture,
+# whose units keep a coordinate each.
+.maximum_fixture <- function() fit_cached("map fixture: random drift", {
+  model <- laplace_fixture_model()
+  model$pars$indvarying[model$pars$matrix == "DRIFT"] <- TRUE
+  suppressWarnings(suppressMessages(ctsem::ctFit(laplace_fixture_data(), model,
+    backend = "julia", cores = 1, intoverpop = "laplace", priors = TRUE,
+    optimcontrol = list(finishsamples = 20))))
+})
+
+test_that("the maximum check reads the map's first window and costs a centred run nothing", {
+  skip_without_julia()
+  fit <- .maximum_fixture()
+  ask <- function(...) suppressWarnings(suppressMessages(ctFitUncertainty(fit,
+    method = "sample", intoverpop = "none", cores = 1, ...,
+    control = list(chains = 2, draws = 60L, minESS = 0, processes = FALSE))))
+  on <- ask()
+  off <- ask(checks = c("randomeffects", "intervals"))
+  # Chains started at the estimate of a posterior centred there: each mean
+  # inside the bar, no climb.
+  mc <- on$sample$maximumcheck
+  expect_identical(on$sample$sampler, "map")
+  expect_length(mc$distance, 2L)
+  expect_true(all(is.finite(mc$distance)))
+  expect_true(all(mc$distance < mc$bar))
+  expect_equal(mc$bar, stats::qchisq(0.999, length(fit$estimate$raw)))
+  expect_false(any(mc$flagged))
+  expect_false(mc$climbed)
+  expect_null(off$sample$maximumcheck)
+  # The run went on from the window it was read at, to the draws of a run
+  # that was not read.
+  expect_equal(on$estimate$rawposterior, off$estimate$rawposterior)
+  expect_identical(on$sample$draws, off$sample$draws)
+  expect_error(ctFitUncertainty(fit, method = "sample", checks = "maxima"),
+    "'maximum'", fixed = TRUE)
+})
+
+test_that("the maximum check climbs from where the chains are centred, and says what it found", {
+  skip_without_julia()
+  fit <- .maximum_fixture()
+  npar <- length(fit$estimate$raw)
+  # An estimate that is not the maximum, with the maximum's Hessian: moved
+  # along the widest direction to four times the bar, so the chains, which go
+  # to where the posterior is, are centred about that far from it.
+  moved <- fit
+  e <- eigen(as.matrix(fit$estimate$cov), symmetric = TRUE)
+  moved$estimate$raw <- fit$estimate$raw +
+    sqrt(4 * ctsem:::.ctMaximumBar(npar) * e$values[1]) * e$vectors[, 1]
+  warned <- character()
+  far <- suppressMessages(withCallingHandlers(
+    ctFitUncertainty(moved, method = "sample", intoverpop = "none", cores = 1,
+      control = list(chains = 2, draws = 40L, minESS = 0, processes = FALSE)),
+    warning = function(w) {
+      warned <<- c(warned, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    }))
+  mc <- far$sample$maximumcheck
+  expect_true(all(mc$flagged))
+  expect_true(all(mc$distance > mc$bar))
+  expect_true(mc$climbed)
+  expect_true(mc$higher)
+  expect_gt(mc$gain, ctsem:::.ctMaximumMargin)
+  expect_length(mc$raw, npar)
+  expect_true(any(grepl("not the highest maximum", warned, fixed = TRUE)))
+  # The climb's end is far nearer the maximum than the moved estimate is.
+  se <- sqrt(diag(as.matrix(fit$estimate$cov)))
+  expect_lt(max(abs(mc$raw - fit$estimate$raw) / se),
+    max(abs(moved$estimate$raw - fit$estimate$raw) / se) / 2)
+  # The sample itself does not depend on where the estimate was.
+  expect_true(all(is.finite(far$estimate$rawposterior)))
+})
+
+test_that("ctFit(optimize = FALSE) fits again from a higher point before it samples", {
+  skip_without_julia()
+  # The check's verdict is put in its place, once: a higher point a little
+  # from the placement's estimate. The fit is then made again from that
+  # point, and the second check is the real one.
+  model <- laplace_fixture_model()
+  model$pars$indvarying[model$pars$matrix == "DRIFT"] <- TRUE
+  real <- ctsem:::.ctBackendMaximumCheck
+  calls <- 0L
+  stops <- logical()
+  testthat::local_mocked_bindings(.package = "ctsem",
+    .ctBackendMaximumCheck = function(fit, centre, ..., stop = FALSE) {
+      calls <<- calls + 1L
+      stops <<- c(stops, isTRUE(stop))
+      if (calls == 1L) base::stop(ctsem:::.ctMaximumCondition(list(higher = TRUE,
+        gain = 5, raw = as.numeric(fit$estimate$raw) + 0.01)))
+      real(fit, centre, ..., stop = stop)
+    })
+  said <- testthat::capture_messages(fit <- suppressWarnings(ctFit(
+    laplace_fixture_data(), model, backend = "julia", cores = 1, optimize = FALSE,
+    priors = TRUE, sampleControl = list(chains = 2, draws = 40L, minESS = 0))))
+  expect_identical(calls, 2L)
+  expect_identical(stops, c(TRUE, TRUE))
+  expect_identical(fit$sample$maximumcheck$rounds, 1L)
+  expect_false(fit$sample$maximumcheck$climbed)
+  expect_true(any(grepl("Fitting again from there before sampling", said, fixed = TRUE)))
+  expect_true(all(is.finite(fit$estimate$rawposterior)))
+})
+
 test_that("placement = 'fit' starts the chains around the fit's own estimate", {
   skip_without_julia()
   fit <- .sample_fixture()

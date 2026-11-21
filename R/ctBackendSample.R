@@ -1453,12 +1453,14 @@
 
   # The maximum check (R/ctBackendMaximumCheck.R): the map's first learning
   # window alone, read for where its chains are centred, and the same call
-  # then goes on from that window. Where the map is whitened by a Hessian,
-  # which is what the distance is measured in, and not in a worker process,
-  # which holds one chain of several.
+  # then goes on from that window. Where the map starts at the fit's estimate
+  # and is whitened by a Hessian, which is what the distance is from and is
+  # measured in, and not in a worker process, which holds one chain of
+  # several.
   maximumcheck <- NULL
   if (mapped && isTRUE(control$maximumcheck) && !is.null(metric) &&
-      is.null(coordinate)) {
+      is.null(coordinate) && identical(as.numeric(start),
+        as.numeric(target$estimate))) {
     first <- .ctBackendWithMaxChunks(cores, do.call(entry, c(arguments,
       list(first_only = TRUE, centre_bar = .ctMaximumBar(target$npar)))))
     maximumcheck <- .ctBackendMaximumCheck(fit,
@@ -2531,6 +2533,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
       "centred. Fitting again from there before sampling.")
     placementfit <- place(found$raw, cores)
   }
-  if (rounds > 0L && !is.null(out$sample)) out$sample$maximumrounds <- rounds
+  # How often the fit was made again, with the check's record.
+  if (!is.null(out$sample$maximumcheck)) out$sample$maximumcheck$rounds <- rounds
   out
 }
