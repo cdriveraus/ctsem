@@ -74,9 +74,11 @@ test_that("flat directions are sorted into the kinds the reduction has changes f
     'rawcor_a__c', 'rawcor_b__c', 'trend_drift', 'popsd_cint_trend')))))
   expect_identical(vapply(mixed, `[[`, '', 'kind'), c('drift-intercept', 'covariance'))
   expect_identical(mixed[[2]]$parameters, c('rawcor_a__b', 'rawcor_a__c', 'rawcor_b__c'))
-  # The intercept's spread in a direction of its own is the trade-off's too.
+  # The intercept's spread in a direction of its own is the trade-off's too,
+  # and so is the spread of the latent's start.
   apart <- ctsem:::.ctReduceFindings(.reduce_fit(list(.reduce_dir(c('trend_drift',
-    'cint_trend')), .reduce_dir(c('poploading_cint_trend_dim2', 'popunique_cint_trend')))))
+    'cint_trend')), .reduce_dir(c('poploading_cint_trend_dim2', 'popunique_cint_trend')),
+    .reduce_dir(c('popunique_T0m_trend', 'trend_drift', 'popunique_cint_trend')))))
   expect_identical(vapply(apart, `[[`, '', 'kind'), 'drift-intercept')
 
   # The augmented route's own ridge is not the model's.

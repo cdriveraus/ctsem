@@ -214,8 +214,12 @@
       diffusion <- .ctReduceCellParam(model, 'DIFFUSION', i, i)
       spread <- function(x) names(own)[own %in% x]
       if (!is.na(cint) && (cint %in% mp || length(spread(cint)))) {
-        spreadof <- c(spreadof, cint)
-        explained <- c(explained, drift, cint, spread(cint))
+        # The latent's start sets its path with the two, so its spread moves
+        # with them too: on the dis model at rank 3, the distress trend's slow
+        # auto-effect shared a direction with its start's own variance.
+        t0 <- .ctReduceCellParam(model, 'T0MEANS', i, 1L)
+        spreadof <- c(spreadof, cint, t0[!is.na(t0)])
+        explained <- c(explained, drift, cint, spread(cint), spread(t0))
         cand <- list()
         if (.ctReduceNoNoise(model, i)) cand <- list(.ctReduceDriftZero(model, drift, i),
           .ctReduceProposal(paste0('reduce:level:', drift), paste0(latent(i),
