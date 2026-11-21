@@ -115,7 +115,12 @@ test_that("the number of two-implementation forks does not grow", {
   # 'model' (.ctScoreBoot); ctFitUncertainty()'s julia branch hands 'is' with
   # a quadrature or particle likelihood to .ctBackendUncertaintyLikelihood()
   # (c50bffd3); ctTracePlot() draws a sampled fit's chains (.ctTracePlotChains).
-  expect_lte(nforks, 35L)
+  # 37 since the model syntaxes (fb538739, 2026-11-20), two case dispatches in
+  # R/ctModelSyntax.R that answer different cases rather than one question
+  # twice: .ctSynMod reads a quoted cell through .ctSynModCell, which its
+  # ctPar() branch shares, and .ctSynDescribe writes a fixed PARS, ASYMPTOTES
+  # or RESPONSE cell as its number (.ctSynNumber).
+  expect_lte(nforks, 37L)
 })
 
 test_that("the duplication detectors are present and runnable", {
