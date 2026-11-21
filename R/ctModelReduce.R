@@ -121,7 +121,11 @@
 # saying what it is, and the changes that would remove it (`candidates`; none
 # for a kind the rank step handles or for a direction of no known kind).
 .ctReduceFindings <- function(fit) {
+  # The model as written; while ctFit() is still assembling the fit, which is
+  # when its warnings are made, the one the engine ran (`.ctFitModelObject()`),
+  # whose parameters and cells are the same.
   model <- .ctFitBaseModel(fit)
+  if (is.null(model)) model <- tryCatch(.ctFitModelObject(fit), error = function(e) NULL)
   id <- fit$identifiability
   if (is.null(model) || is.null(id)) return(list())
   zero <- .ctEffectRows(id$effects, 'zero')
@@ -130,6 +134,7 @@
   out <- list()
   add <- function(f) if (!f$key %in% vapply(out, `[[`, '', 'key')) out[[length(out) + 1L]] <<- f
   latent <- function(i) model$latentNames[i]
+  zeroown <- character(); zerosd <- character()
   for (d in id$directions) {
     # A ridge of the augmented route between a population sd and its
     # correlations (`$partial`) is that route's, which the Laplace route
@@ -137,6 +142,15 @@
     if (!is.null(d$partial)) next
     p <- setdiff(as.character(d$parameters), held)
     if (!length(p)) next
+    # An effect's own variance, or its sd, alone at zero curvature: held at
+    # the floor of its transform, where every smaller value is as good. On
+    # follhim/dis_ctsem two own variances of a rank-5 covariance sat there.
+    if (length(p) == 1L && isTRUE(abs(d$relative) < 1e-12) &&
+        grepl('^(popunique|popsd)_[^.]+$', p)) {
+      if (startsWith(p, 'popunique_')) zeroown <- c(zeroown, sub('^popunique_', '', p)) else
+        zerosd <- c(zerosd, sub('^popsd_', '', p))
+      next
+    }
     pop <- .ctReducePopCoordinate(p)
     if (mean(pop) >= 0.5) {
       add(list(key = 'covariance', kind = 'covariance', parameters = p,
@@ -193,9 +207,32 @@
       kind = 'other', parameters = p, text = paste(utils::head(p, 4), collapse = ', '),
       candidates = list()))
   }
+  single <- !length(model$groupIDnames)
+  # Own variances at zero leave the level's own variances, the rank kept: a
+  # rank change (`.ctImproveRankChange()`) that replaces the level's.
+  if (length(zeroown)) {
+    own <- .ctReduceOwnVariances(fit, model)
+    cand <- list()
+    if (single && !is.null(own) && isTRUE(own$rank >= 1L) && all(zeroown %in% own$own)) {
+      rest <- setdiff(own$own, zeroown)
+      ch <- .ctImproveRankChange(own$rank, if (length(rest)) rest else FALSE)
+      ch$label <- paste0('no own variance for ', paste(zeroown, collapse = ', '))
+      cand <- list(ch)
+    }
+    add(list(key = paste0('zeroown:', paste(sort(zeroown), collapse = ',')),
+      kind = 'own variance at zero', parameters = paste0('popunique_', zeroown),
+      text = paste0('the own variance', if (length(zeroown) > 1L) 's', ' of ',
+        paste(zeroown, collapse = ', '), if (length(zeroown) > 1L) ' are' else ' is',
+        ' at zero'), candidates = cand))
+  }
+  if (length(zerosd) && single) add(list(key = paste0('zerosd:',
+      paste(sort(zerosd), collapse = ',')), kind = 'sd at zero', parameters = zerosd,
+    text = paste0(paste(zerosd, collapse = ', '), ': the data hold their individual ',
+      'differences at zero'), candidates = list(.ctReduceProposal(paste0('reduce:fixed:',
+      paste(sort(zerosd), collapse = ',')), paste0(paste(zerosd, collapse = ', '),
+      ' not varying over subjects'), .ctReduceFixedEffectsEdit(zerosd)))))
   # Random effects the data hold at zero, or barely determine: on a model with
   # one level only, where `indvarying = FALSE` means what it says.
-  single <- !length(model$groupIDnames)
   for (w in list(list(rows = zero, kind = 'no spread',
       text = ': the data hold their individual differences at zero'),
     list(rows = weak, kind = 'weak', text = ': the data barely determine their individual differences'))) {
@@ -208,6 +245,22 @@
         .ctReduceFixedEffectsEdit(eff)))))
   }
   out
+}
+
+# Which effects have an own variance on a fit's level, and its rank, from the
+# call the fit replays: `popunique` TRUE is every varying parameter, names are
+# parameters or matrices. NULL where the call cannot be read or is by level.
+.ctReduceOwnVariances <- function(fit, model) {
+  replay <- tryCatch(.ctFitReplayArgs(fit), error = function(e) NULL)
+  if (is.null(replay)) return(NULL)
+  pu <- replay$popunique
+  rank <- suppressWarnings(as.integer(replay$poprank))
+  pars <- model$pars
+  varying <- unique(pars$param[as.logical(pars$indvarying) %in% TRUE & !is.na(pars$param)])
+  own <- if (isTRUE(pu)) varying else if (is.character(pu) && is.null(names(pu)))
+    varying[varying %in% pu | pars$matrix[match(varying, pars$param)] %in% pu] else
+      return(NULL)
+  list(rank = if (length(rank) == 1L) rank else NA_integer_, own = own)
 }
 
 # Whether to keep a reduction: unless the model it reduces is better by the
@@ -226,61 +279,84 @@
   if (!is.finite(ll1)) return(fail('log likelihood not finite'))
   tol <- 0.01 * max(1, sqrt(abs(ll0)) / 10)
   out <- list(dloglik = ll1 - ll0, dpar = k1 - k0)
+  # Said, not refused: a reduced fit that has not reached its maximum only
+  # understates what the reduction gains.
+  saddle <- if (isTRUE(reduced$identifiability$negative > 0L)) '; not at a maximum' else ''
   if (k1 >= k0) return(c(out, list(keep = ll1 >= ll0 - tol, value = NA_real_,
-    note = if (ll1 >= ll0 - tol) 'restates the model' else
-      sprintf('restated, %.3g below', ll0 - ll1))))
+    note = paste0(if (ll1 >= ll0 - tol) 'restates the model' else
+      sprintf('restated, %.3g below', ll0 - ll1), saddle))))
   if (ll1 > ll0 + tol) return(c(out, list(keep = TRUE, value = NA_real_,
-    note = sprintf('%.3g better with fewer parameters', ll1 - ll0))))
+    note = paste0(sprintf('%.3g better with fewer parameters', ll1 - ll0), saddle))))
   v <- .ctImproveCompare(reduced, current, criterion, alpha, cores)
   if (!is.finite(v$dloglik)) return(fail(v$note))
-  c(out, list(keep = !isTRUE(v$accept), value = v$value, note = v$note))
+  c(out, list(keep = !isTRUE(v$accept), value = v$value, note = paste0(v$note, saddle)))
 }
 
 # The reduction stage: while the current fit's report has a finding with a
 # change not yet refused, refit each of its changes, keep the best the
-# criterion allows, and read the new fit's report; then lower the population
-# covariance's rank while it is not identified (`.ctImproveRankStep()`).
-# Returns as `.ctImproveRankStep()` does.
+# criterion allows, and read the new fit's report (`.ctReduceFindingsStep()`);
+# then lower the population covariance's rank while it is not identified
+# (`.ctImproveRankStep()`), and where that keeps a rank, look again: a lower
+# rank can leave own variances at zero, which the findings drop. Every change
+# reduces, so this ends. Returns as `.ctImproveRankStep()` does.
 .ctImproveReduce <- function(base, current, kept, startdata, covariates, criterion,
     alpha, cores, say = function(...) invisible(), label = '', round = NA_integer_) {
-  history <- list(); data <- NULL; args <- NULL; changed <- FALSE
-  refused <- character()
+  st <- list(current = current, kept = kept, data = NULL, args = NULL, history = list(),
+    changed = FALSE, refused = character())
   repeat {
-    findings <- Filter(function(f) length(f$candidates) && !f$key %in% refused,
-      .ctReduceFindings(current))
-    if (!length(findings)) break
+    st <- .ctReduceFindingsStep(st, base, startdata, covariates, criterion, alpha,
+      cores, say, label, round)
+    ranked <- .ctImproveRankStep(base, st$current, st$kept, startdata, covariates,
+      criterion, alpha, cores, say, label = label, round = round)
+    st$history <- c(st$history, ranked$history)
+    if (!ranked$changed) break
+    st[c('current', 'kept', 'data', 'args')] <- ranked[c('current', 'kept', 'data', 'args')]
+    st$changed <- TRUE
+  }
+  st[c('current', 'kept', 'data', 'args', 'history', 'changed')]
+}
+
+# The findings part of a reduction stage, on its state `st`.
+.ctReduceFindingsStep <- function(st, base, startdata, covariates, criterion, alpha,
+    cores, say, label, round) {
+  repeat {
+    findings <- Filter(function(f) length(f$candidates) && !f$key %in% st$refused,
+      .ctReduceFindings(st$current))
+    if (!length(findings)) return(st)
     f <- findings[[1L]]
     say(label, f$text)
     best <- NULL
     for (cand in f$candidates) {
       say(label, "refitting with ", cand$label)
-      rebuilt <- try(.ctImproveRebuild(base, startdata, c(kept, list(cand)), covariates),
+      # A rank change replaces the level's (as `.ctImproveRankStep()` does).
+      prior <- if (identical(cand$family, 'rank'))
+        Filter(function(p) !identical(p$family, 'rank'), st$kept) else st$kept
+      rebuilt <- try(.ctImproveRebuild(base, startdata, c(prior, list(cand)), covariates),
         silent = TRUE)
-      refit <- if (inherits(rebuilt, 'try-error')) rebuilt else try(.ctImproveRefit(current,
-        rebuilt$model, rebuilt$data, cores, NULL, rebuilt$args), silent = TRUE)
-      verdict <- .ctReduceVerdict(current, refit, criterion, alpha, cores)
-      history[[length(history) + 1L]] <- data.frame(round = round, family = 'reduce',
-        change = cand$label, screen_p = NA_real_, dloglik = verdict$dloglik,
-        dpar = verdict$dpar, criterion = verdict$value, kept = FALSE,
-        note = verdict$note, stringsAsFactors = FALSE)
+      refit <- if (inherits(rebuilt, 'try-error')) rebuilt else try(.ctImproveRefit(
+        st$current, rebuilt$model, rebuilt$data, cores, NULL, rebuilt$args), silent = TRUE)
+      verdict <- .ctReduceVerdict(st$current, refit, criterion, alpha, cores)
+      st$history[[length(st$history) + 1L]] <- data.frame(round = round,
+        family = 'reduce', change = cand$label, screen_p = NA_real_,
+        dloglik = verdict$dloglik, dpar = verdict$dpar, criterion = verdict$value,
+        kept = FALSE, note = verdict$note, stringsAsFactors = FALSE)
       if (isTRUE(verdict$keep) && (is.null(best) ||
           .ctFitOptimisedLoglik(refit) > .ctFitOptimisedLoglik(best$refit)))
-        best <- list(cand = cand, refit = refit, rebuilt = rebuilt, row = length(history))
+        best <- list(cand = cand, refit = refit, rebuilt = rebuilt,
+          row = length(st$history), prior = prior)
     }
-    if (is.null(best)) { refused <- c(refused, f$key); next }
-    history[[best$row]]$kept <- TRUE
+    if (is.null(best)) {
+      st$refused <- c(st$refused, f$key)
+      next
+    }
+    st$history[[best$row]]$kept <- TRUE
     say(label, "kept ", best$cand$label)
-    current <- best$refit; kept <- c(kept, list(best$cand)); changed <- TRUE
-    data <- best$rebuilt$data; args <- best$rebuilt$args
+    st$current <- best$refit
+    st$kept <- c(best$prior, list(best$cand))
+    st$data <- best$rebuilt$data
+    st$args <- best$rebuilt$args
+    st$changed <- TRUE
   }
-  ranked <- .ctImproveRankStep(base, current, kept, startdata, covariates, criterion,
-    alpha, cores, say, label = label, round = round)
-  if (ranked$changed) {
-    current <- ranked$current; kept <- ranked$kept; data <- ranked$data
-    args <- ranked$args; changed <- TRUE
-  }
-  list(current = current, kept = kept, data = data, args = args,
-    history = c(history, ranked$history), changed = changed)
 }
 
 # The findings of the kinds in `describe`, in a sentence for a warning, the
@@ -289,7 +365,8 @@
 # lines (`.ctIdentifyAdvice()`, `.ctEffectAdvice()`), so they are not
 # described here. '' where no finding has a change to try.
 .ctReduceWarnText <- function(findings,
-    describe = c('unread', 'drift-intercept', 'drift-diffusion', 'covariance')) {
+    describe = c('unread', 'drift-intercept', 'drift-diffusion', 'covariance',
+      'own variance at zero', 'sd at zero')) {
   shown <- Filter(function(f) f$kind %in% describe, findings)
   if (!length(shown)) return('')
   parts <- vapply(shown, function(f) if (identical(f$kind, 'covariance'))
