@@ -1,5 +1,6 @@
-# A model parameter a stage left run off where the likelihood is flat is held
-# at the other side of its range, then freed (`.ctBackendRunOff()`,
+# Coordinates a stage left run off where the likelihood is flat: the one
+# leading them is held at the other side of its range, those that ran off with
+# it start again at zero, and the lead is then freed (`.ctBackendRunOff()`,
 # `.ctBackendStallEscape()`, `.ctBackendCorrectResult()`). Fit-free: engine
 # results built by hand, the optimiser and the certification mocked.
 
@@ -23,46 +24,68 @@
     newton_flat_evaluations = 0L, newton_flat_complete = TRUE)
 }
 
-.runoff_mocks <- function() testthat::local_mocked_bindings(
+# The auto-effects end at zero, the sd at zero; the intercept has no end.
+.runoff_mocks <- function(usable = TRUE, env = parent.frame()) testthat::local_mocked_bindings(
   .ctBackendRawParameterNames = function(fit, npar) .runoff_names[seq_len(npar)],
   .ctJuliaSaturatedNames = function(result, model_spec, npar, field)
     .runoff_names[as.integer(result[[field]])],
-  .env = parent.frame())
+  .ctBackendRawEnds = function(model_spec, k) if (k == 3L) c(FALSE, FALSE) else c(FALSE, TRUE),
+  .ctDataStartUsable = function(...) usable,
+  .env = env)
 
-test_that("a coordinate qualifies where it is flat and has run past the start's bound", {
+test_that("the lead is a flat, run-off parameter with an end; what ran off with it follows", {
   .runoff_mocks()
   x <- c(-16, 0.4, 9, -20)
   # trend_drift flat and far out; drift_x flat but near the start; cint_trend
-  # far out but not flat; the population sd is the reduction's.
+  # far out but not flat; the population sd far out and flat, but no lead.
   r <- .runoff_result(x, flat = list(c(1, 0, 0, 0), c(0, 1, 0, 0), c(0, 0, 0, 1)))
-  expect_identical(ctsem:::.ctBackendRunOff(r, list(), 4L), 1L)
-  expect_length(ctsem:::.ctBackendRunOff(r, list(), 4L, tried = 1L), 0L)
-  # A saturated transform qualifies without a flat direction.
-  expect_identical(ctsem:::.ctBackendRunOff(.runoff_result(x, saturated = 3L),
-    list(), 4L), 3L)
-  # A direction shared by two coordinates splits its share: 0.64 qualifies,
-  # 0.36 does not. Two such directions span both.
+  expect_identical(ctsem:::.ctBackendRunOff(r, list(), 4L), list(lead = 1L, with = 4L))
+  expect_null(ctsem:::.ctBackendRunOff(r, list(), 4L, tried = 1L))
+  # A saturated transform leads without a flat direction.
+  expect_identical(ctsem:::.ctBackendRunOff(.runoff_result(c(-16, 5, 9, -20),
+    saturated = 2L), list(), 4L)$lead, 2L)
+  # A direction shared by the drift and the intercept: the drift, at 0.64,
+  # leads, and the intercept, at 0.36, ran off with it. The intercept has no
+  # end to be held at the other side of, so it never leads.
   r <- .runoff_result(x, flat = list(c(0.8, 0, 0.6, 0)))
-  expect_identical(ctsem:::.ctBackendRunOff(r, list(), 4L), 1L)
-  expect_length(ctsem:::.ctBackendRunOff(r, list(), 4L, tried = 1L), 0L)
-  r <- .runoff_result(x, flat = list(c(0.8, 0, 0.6, 0), c(-0.6, 0, 0.8, 0)))
-  expect_identical(ctsem:::.ctBackendRunOff(r, list(), 4L, tried = 1L), 3L)
+  expect_identical(ctsem:::.ctBackendRunOff(r, list(), 4L), list(lead = 1L, with = 3L))
+  expect_null(ctsem:::.ctBackendRunOff(r, list(), 4L, tried = 1L))
 })
 
-test_that("the escape point holds the coordinate at the other side of its range", {
+test_that("a transform's ends are read off its text", {
+  spec <- list(parameter_table = data.frame(parnumber = c(1L, 2L, 3L),
+    transform = c('-(1e-6 + 2 * log1p_exp(-2 * param[1]))', 'param[2] * 10',
+      'exp(param[3])'), stringsAsFactors = FALSE))
+  expect_identical(ctsem:::.ctBackendRawEnds(spec, 1L), c(FALSE, TRUE))
+  expect_identical(ctsem:::.ctBackendRawEnds(spec, 2L), c(FALSE, FALSE))
+  expect_identical(ctsem:::.ctBackendRawEnds(spec, 3L), c(TRUE, FALSE))
+  expect_identical(ctsem:::.ctBackendRawEnds(spec, 9L), c(FALSE, FALSE))
+})
+
+test_that("the escape point holds the lead at the other side and restarts the rest", {
   .runoff_mocks()
-  r <- .runoff_result(c(-16, 0.4, 9, -20), flat = list(c(1, 0, 0, 0)))
+  r <- .runoff_result(c(-16, 0.4, 9, -20), flat = list(c(0.8, 0, 0.6, 0)))
   p <- ctsem:::.ctBackendStallEscape(r, list(), list())
   expect_identical(attr(p, 'kind'), 'runoff')
   expect_identical(attr(p, 'coordinates'), 1L)
-  expect_equal(as.numeric(p), c(ctsem:::.ctDataStartRawBound, 0.4, 9, -20))
+  expect_equal(as.numeric(p), c(ctsem:::.ctDataStartRawBound, 0.4, 0, -20))
+  expect_null(attr(p, 'unusable'))
   # Off by its control, and a measured better point goes first.
   expect_null(ctsem:::.ctBackendStallEscape(r, list(flatretry = FALSE), list()))
-  r$overshot <- TRUE
-  r$overshoot_point <- c(-15, 0.4, 9, -20)
-  r$overshoot_parameters <- 1L
-  r$overshoot_gain <- 1
-  expect_null(attr(ctsem:::.ctBackendStallEscape(r, list(), list()), 'kind'))
+  o <- r
+  o$overshot <- TRUE
+  o$overshoot_point <- c(-15, 0.4, 9, -20)
+  o$overshoot_parameters <- 1L
+  o$overshoot_gain <- 1
+  expect_null(attr(ctsem:::.ctBackendStallEscape(o, list(), list()), 'kind'))
+})
+
+test_that("a point the optimiser cannot start from is marked, for the caller to skip", {
+  .runoff_mocks(usable = FALSE)
+  r <- .runoff_result(c(-16, 0.4, 9, -20), flat = list(c(1, 0, 0, 0)))
+  p <- ctsem:::.ctBackendStallEscape(r, list(), list())
+  expect_true(attr(p, 'unusable'))
+  expect_identical(attr(p, 'coordinates'), 1L)
 })
 
 # The correction loop with its optimiser and certification mocked: `stages`
@@ -76,9 +99,6 @@ test_that("the escape point holds the coordinate at the other side of its range"
     stages[[i]]
   }
   testthat::local_mocked_bindings(
-    .ctBackendRawParameterNames = function(fit, npar) .runoff_names[seq_len(npar)],
-    .ctJuliaSaturatedNames = function(result, model_spec, npar, field)
-      .runoff_names[as.integer(result[[field]])],
     .ctJuliaRunCounts = function(r) c(newton_hessians = 0),
     .ctBackendEndgameOf = function(r, npar) NULL,
     .ctJuliaHoldModes = function(...) NULL,
@@ -89,6 +109,7 @@ test_that("the escape point holds the coordinate at the other side of its range"
 }
 
 test_that("a run-off escape that wins is kept, and one that loses leaves the stage", {
+  .runoff_mocks()
   first <- .runoff_result(c(-16, 0.4, 9, -20), flat = list(c(1, 0, 0, 0)))
   tried <- integer()
   escape <- function(r, runoffonly = FALSE) {
@@ -114,6 +135,7 @@ test_that("a run-off escape that wins is kept, and one that loses leaves the sta
   expect_length(run$calls, 1L)
   expect_equal(as.numeric(run$out$result$maximum_loglik), -100)
   expect_false(run$out$corrections[[1]]$resumed)
+  expect_equal(run$out$corrections[[1]]$loglik, -120)
   expect_length(run$said, 0L)
 })
 

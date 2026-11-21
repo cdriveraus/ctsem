@@ -637,7 +637,8 @@
 # model slid it back.
 #' @keywords internal
 .ctBackendStallEscape <- function(result, optimcontrol, model_spec,
-    verbose = 0, escapes = TRUE, tried = integer(), runoffonly = FALSE) {
+    verbose = 0, escapes = TRUE, tried = integer(), runoffonly = FALSE,
+    gradient = "adjoint", cores = NA_integer_) {
   # `escapes = FALSE` on the state-explicit route, where the joint mode is
   # degenerate: the innovations re-optimise to absorb almost any parameter
   # change, so a pullback can nearly always find something and "not a maximum"
@@ -685,35 +686,49 @@
     return(.ctBackendEscapeCoordinates(point,
       result$overshoot_parameters, npar))
   }
-  # A model parameter run off where the likelihood is flat in it
-  # (`.ctBackendRunOff()`): moved to the other side of its range, as far out
-  # as the data start goes, where the stage that resumes holds it while the
-  # rest settle and then frees it (`stage()` in `.ctJuliaOptimise()`). Moved
-  # and let go at once, it slides back to the basin it came from: the rest of
-  # the model is still arranged for that one. One at a time, each once a fit
-  # (`tried`).
+  # Model parameters run off where the likelihood is flat in them
+  # (`.ctBackendRunOff()`): the one leading them moved to the other side of its
+  # range, as far out as the data start goes, and the others that ran off with
+  # it put back at the default start, where the stage that resumes holds the
+  # lead while the rest settle and then frees it (`stage()` in
+  # `.ctJuliaOptimise()`). Moved and let go at once, it slides back to the
+  # basin it came from: the rest of the model is still arranged for that one.
+  # Only a point the optimiser can start from (`.ctDataStartUsable()`): held
+  # slow beside an intercept that ran off with a fast drift, the dis model's
+  # trend rose without bound and no person's inner mode converged. One lead at
+  # a time, each once a fit (`tried`); a point that cannot be used comes back
+  # marked so, for the caller to count as tried.
   if (!isFALSE(optimcontrol$flatretry)) {
     runoff <- .ctBackendRunOff(result, model_spec, npar, tried)
-    if (length(runoff)) {
+    if (!is.null(runoff)) {
       from <- as.numeric(result$minimizer)
-      was <- from[runoff]
-      from[runoff] <- -sign(was) * .ctDataStartRawBound
-      if (verbose > 0) {
-        message("Raw parameter ", .ctJuliaSaturatedNames(list(p = runoff),
-          model_spec, npar, "p"), " ran off to ", signif(was, 3), ", where the ",
-          "likelihood is flat in it; refitting with it held at ", from[runoff],
-          ", then freed")
-      }
-      point <- .ctBackendEscapeCoordinates(from, runoff, npar)
+      lead <- runoff$lead
+      was <- from[lead]
+      from[lead] <- -sign(was) * .ctDataStartRawBound
+      from[runoff$with] <- 0
+      point <- .ctBackendEscapeCoordinates(from, lead, npar)
       attr(point, "kind") <- "runoff"
+      if (!.ctDataStartUsable(model_spec, from, gradient, cores)) {
+        attr(point, "unusable") <- TRUE
+        return(point)
+      }
+      if (verbose > 0) {
+        message("Raw parameter ", .ctJuliaSaturatedNames(list(p = lead),
+          model_spec, npar, "p"), " ran off to ", signif(was, 3), ", where the ",
+          "likelihood is flat in it; refitting with it held at ", from[lead],
+          if (length(runoff$with)) paste0(" and ", paste(.ctJuliaSaturatedNames(
+            list(p = runoff$with), model_spec, npar, "p"), collapse = ", "),
+            " started again at 0"), ", then freed")
+      }
       return(point)
     }
   }
   NULL
 }
 
-# The model parameter a stage left run off where the likelihood is flat in it,
-# by raw index, or nothing.
+# The coordinates a stage left run off where the likelihood is flat in them:
+# the one to hold at the other side of its range (`lead`) and those that ran
+# off with it (`with`), by raw index, or NULL.
 #
 # A local optimiser settles in the basin its start leads to. Where that basin
 # takes a parameter out to a flat end of its range -- an auto-effect so fast
@@ -725,26 +740,28 @@
 # the linear trend the model reaches with that auto-effect slow; the profile
 # between the two dips by 1.6, which no local step crosses.
 #
-# A coordinate qualifies when it is past the data start's raw bound
-# (`.ctDataStartRawBound`) and either has at least half its variation in the
-# directions the stage's finish walked and found flat -- the share the
-# reduction reads (`.ctReduceFlat()`), here on the finish's own Hessian -- or
-# its transform saturated. Population coordinates are left to the reduction and
-# the effects report: a variance at zero is a model they have a change for.
-# Of several, the one with the largest share; none in `tried`.
+# Run off: past the data start's raw bound (`.ctDataStartRawBound`) and in the
+# directions the stage's finish walked and found flat -- each coordinate's
+# share of them, the reduction's reading (`.ctReduceFlat()`) on the finish's
+# own Hessian, at least 0.1 -- or with its transform saturated. Coordinates
+# run off together move together: the dis trend's intercept and its spread
+# ran off with its auto-effect, keeping each person's level where it was. The
+# lead is a model parameter whose transform has a finite end on some side
+# (`.ctBackendRawEnds()`), an auto-effect or a variance, since that is what
+# has another side to be held at, with at least half its variation in the
+# flat directions or a saturated transform; of several, the largest share,
+# none in `tried`. Population coordinates do not lead: a variance at zero is a
+# model the reduction and the effects report have a change for.
 #' @keywords internal
 .ctBackendRunOff <- function(result, model_spec, npar, tried = integer()) {
   x <- suppressWarnings(as.numeric(result$minimizer))
-  if (length(x) < npar) return(integer())
+  if (length(x) < npar) return(NULL)
   x <- x[seq_len(npar)]
   far <- which(is.finite(x) & abs(x) > .ctDataStartRawBound)
-  far <- setdiff(far, tried)
-  if (!length(far)) return(integer())
+  if (!length(far)) return(NULL)
   names <- tryCatch(as.character(.ctBackendRawParameterNames(
     list(model_spec = model_spec), npar)), error = function(e) NULL)
-  if (length(names) != npar) return(integer())
-  far <- far[!.ctReducePopCoordinate(names[far])]
-  if (!length(far)) return(integer())
+  if (length(names) != npar) return(NULL)
   share <- numeric(npar)
   walk <- .ctBackendFlatWalkFields(result, npar)
   if (!is.null(walk) && !is.null(walk$eigenvectors)) {
@@ -753,9 +770,42 @@
       share <- rowSums(walk$eigenvectors[, flat %in% TRUE, drop = FALSE]^2)
   }
   saturated <- suppressWarnings(as.integer(result$saturated_parameters))
-  far <- far[share[far] >= 0.5 | far %in% saturated]
-  if (!length(far)) return(integer())
-  far[which.max(share[far])]
+  group <- far[share[far] >= 0.1 | far %in% saturated]
+  lead <- group[!group %in% tried & !.ctReducePopCoordinate(names[group]) &
+    (share[group] >= 0.5 | group %in% saturated)]
+  lead <- lead[vapply(lead, function(k) any(.ctBackendRawEnds(model_spec, k)),
+    logical(1))]
+  if (!length(lead)) return(NULL)
+  lead <- lead[which.max(share[lead])]
+  list(lead = lead, with = setdiff(group, lead))
+}
+
+# Whether raw coordinate `k`'s transform has a finite end below and above:
+# its value at raw -40 and -30 (+30 and +40) the same to 1e-6, as
+# `.ctReduceValues()` reads a fitted parameter's range. From the
+# specification's parameter table, through the transform text the data start
+# inverts (`.ctDataStartInvert()`); FALSE, FALSE where there is none to read.
+#' @keywords internal
+.ctBackendRawEnds <- function(model_spec, k) {
+  pt <- model_spec$parameter_table
+  none <- c(FALSE, FALSE)
+  if (is.null(pt) || is.null(pt$parnumber) || is.null(pt$transform)) return(none)
+  text <- pt$transform[!is.na(pt$parnumber) & pt$parnumber == k]
+  text <- text[!is.na(text) & nzchar(text)]
+  if (!length(text)) return(none)
+  expr <- try(parse(text = gsub("param\\s*\\[\\s*\\d+\\s*\\]", "param",
+    as.character(text[1L]))), silent = TRUE)
+  if (inherits(expr, "try-error")) return(none)
+  env <- new.env(parent = asNamespace("ctsem"))
+  at <- function(p) {
+    env$param <- p
+    v <- try(eval(expr[[1L]], envir = env), silent = TRUE)
+    if (inherits(v, "try-error") || length(v) != 1L) NA_real_ else as.numeric(v)
+  }
+  v <- vapply(c(-40, -30, 30, 40), at, numeric(1))
+  still <- function(a, b) is.finite(a) && is.finite(b) &&
+    abs(a - b) <= 1e-6 * max(1, abs(a))
+  c(still(v[1], v[2]), still(v[3], v[4]))
 }
 
 # Which coordinates the escape moved, carried on the point it returns.
@@ -1492,7 +1542,12 @@
       # stop on progress -- a resume that stopped gaining -- that stopped it.
       stop_reason = if (ok) as.character(.ctJuliaOr(resumed$stop_reason,
         NA_character_))[1L] else NA_character_,
-      stopped_progress = if (ok) isTRUE(resumed$stopped_by_progress) else NA)
+      stopped_progress = if (ok) isTRUE(resumed$stopped_by_progress) else NA,
+      # Where a stage that was not kept ended, or why it failed.
+      loglik = if (inherits(resumed, "try-error")) NA_real_ else
+        as.numeric(resumed$maximum_loglik)[1L],
+      error = if (inherits(resumed, "try-error"))
+        conditionMessage(attr(resumed, "condition")) else NA_character_)
     # The certification above, if any, describes the result this keeps. A
     # run-off escape that did not win leaves the stage as it was, to be
     # certified or resumed as any other.

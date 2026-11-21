@@ -6566,9 +6566,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       optimise = stage,
       escape = function(r, runoffonly = FALSE) {
         point <- .ctBackendStallEscape(r, optimcontrol, model_spec, verbose,
-          escapes = !state_explicit, tried = ranoff, runoffonly = runoffonly)
-        if (identical(attr(point, "kind"), "runoff"))
+          escapes = !state_explicit, tried = ranoff, runoffonly = runoffonly,
+          gradient = gradient, cores = cores)
+        if (identical(attr(point, "kind"), "runoff")) {
           ranoff <<- c(ranoff, as.integer(attr(point, "coordinates")))
+          if (isTRUE(attr(point, "unusable"))) return(NULL)
+        }
         point
       },
       certify = isTRUE(common$certify) && !isTRUE(walked) &&
