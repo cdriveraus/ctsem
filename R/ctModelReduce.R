@@ -158,6 +158,7 @@
   add <- function(f) if (!f$key %in% vapply(out, `[[`, '', 'key')) out[[length(out) + 1L]] <<- f
   latent <- function(i) model$latentNames[i]
   zeroown <- character(); zerosd <- character()
+  spreadof <- character(); rest <- list()
   for (d in id$directions) {
     # A ridge of the augmented route between a population sd and its
     # correlations (`$partial`) is that route's, which the Laplace route
@@ -212,6 +213,7 @@
       diffusion <- .ctReduceCellParam(model, 'DIFFUSION', i, i)
       spread <- function(x) names(own)[own %in% x]
       if (!is.na(cint) && (cint %in% mp || length(spread(cint)))) {
+        spreadof <- c(spreadof, cint)
         explained <- c(explained, drift, cint, spread(cint))
         cand <- list()
         if (.ctReduceNoNoise(model, i)) cand <- list(.ctReduceDriftZero(model, drift, i),
@@ -227,6 +229,7 @@
           candidates = cand))
       }
       if (!is.na(diffusion) && (diffusion %in% mp || length(spread(diffusion)))) {
+        spreadof <- c(spreadof, diffusion)
         explained <- c(explained, drift, diffusion, spread(diffusion))
         add(list(key = paste0('driftdiffusion:', i), kind = 'drift-diffusion',
           parameters = c(drift, diffusion), text = paste0(drift, ' and ', diffusion,
@@ -237,20 +240,28 @@
               .ctReduceDriftScaledEdit('DIFFUSION')))))
       }
     }
-    # What no pattern accounts for: mostly population coordinates is a
-    # covariance with more dimensions than the subjects identify, which the
-    # rank step reduces; anything else is named. The flat directions of one
-    # fit span a space whose basis is arbitrary, so one direction can carry two
-    # problems: a trend's trade-off beside a covariance's surplus dimensions.
-    rest <- setdiff(p, explained)
-    if (length(rest) && mean(.ctReducePopCoordinate(rest)) >= 0.5) {
+    rest[[length(rest) + 1L]] <- list(p = p, rest = setdiff(p, explained),
+      explained = length(explained) > 0L)
+  }
+  # What no pattern accounts for: mostly population coordinates is a
+  # covariance with more dimensions than the subjects identify, which the rank
+  # step reduces; anything else is named. The flat directions of one fit span a
+  # space whose basis is arbitrary, so one direction can carry two problems (a
+  # trend's trade-off beside a covariance's surplus dimensions), and the spread
+  # of an intercept in a trade-off can lie in a direction of its own: on the dis
+  # model at rank 3, the intercept's loadings and own variance alone. So the
+  # spread of an effect in any trade-off is the trade-off's, in every direction.
+  for (r in rest) {
+    left <- r$rest[!vapply(r$rest, function(x) .ctReduceCoordinateEffect(x, model) %in%
+      spreadof, logical(1))]
+    if (length(left) && mean(.ctReducePopCoordinate(left)) >= 0.5) {
       add(list(key = 'covariance', kind = 'covariance',
-        parameters = rest[.ctReducePopCoordinate(rest)],
+        parameters = left[.ctReducePopCoordinate(left)],
         text = 'the population covariance has more dimensions than the subjects identify',
         candidates = list()))
-    } else if (!length(explained)) add(list(key = paste0('other:', paste(sort(p),
-      collapse = ',')), kind = 'other', parameters = p,
-      text = paste(utils::head(p, 4), collapse = ', '), candidates = list()))
+    } else if (!r$explained && length(left)) add(list(key = paste0('other:',
+      paste(sort(r$p), collapse = ',')), kind = 'other', parameters = r$p,
+      text = paste(utils::head(r$p, 4), collapse = ', '), candidates = list()))
   }
   single <- !length(model$groupIDnames)
   # Own variances at zero leave the level's own variances, the rank kept: a
