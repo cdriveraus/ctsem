@@ -115,7 +115,11 @@ test_that("the number of two-implementation forks does not grow", {
   # 'model' (.ctScoreBoot); ctFitUncertainty()'s julia branch hands 'is' with
   # a quadrature or particle likelihood to .ctBackendUncertaintyLikelihood()
   # (c50bffd3); ctTracePlot() draws a sampled fit's chains (.ctTracePlotChains).
-  expect_lte(nforks, 35L)
+  # 37 since fb538739: two early returns in R/ctModelSyntax.R that the walk
+  # reads as forks, a fixed cell's value formatted (.ctSynDescribe ->
+  # .ctSynNumber) and a quoted cell read again without its quotes (.ctSynMod ->
+  # .ctSynModCell). Neither is a second implementation.
+  expect_lte(nforks, 37L)
 })
 
 test_that("the duplication detectors are present and runnable", {
