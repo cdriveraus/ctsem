@@ -1,110 +1,120 @@
-# Hold-then-free for a model parameter a fit left run off where the likelihood
-# is flat (R/ctFitFlatRetry.R). Fit-free: a model, a hand-built report, and the
-# refits mocked.
+# A model parameter a stage left run off where the likelihood is flat is held
+# at the other side of its range, then freed (`.ctBackendRunOff()`,
+# `.ctBackendStallEscape()`, `.ctBackendCorrectResult()`). Fit-free: engine
+# results built by hand, the optimiser and the certification mocked.
 
-.retry_model <- function() suppressMessages(ctModel(type = 'ct',
-  manifestNames = c('y1', 'y2'), latentNames = c('trend', 'x'), LAMBDA = diag(2),
-  DRIFT = matrix(c('trend_drift', 0, 0, 'drift_x'), 2),
-  CINT = matrix(c('cint_trend', 0), 2),
-  DIFFUSION = matrix(c(0, 0, 0, 'diff_x'), 2),
-  MANIFESTVAR = matrix(c('mvar1', 0, 0, 'mvar2'), 2),
-  MANIFESTMEANS = matrix(0, 2)))
+.runoff_names <- c('trend_drift', 'drift_x', 'cint_trend', 'popsd_drift_x')
 
-.retry_raw <- c(trend_drift = -16, drift_x = 0.4, cint_trend = 9, diff_x = 0.2,
-  mvar1 = -0.5, mvar2 = 0.1)
-
-.retry_fit <- function(raw = .retry_raw, directions = list(), saturated = character(),
-    loglik = -100) {
-  structure(list(modelbase = .retry_model(),
-    estimate = list(loglik = loglik, raw = unname(raw)),
-    optim = list(saturated_parameters = saturated),
-    identifiability = list(nweak = length(directions), directions = directions),
-    args = list(input = list(tag = 'the call'), resolved = list())),
-    class = 'ctJuliaFit', rawnames = names(raw))
+# An engine result whose finish walked the flat directions `flat` (each a
+# vector over the coordinates), at `x`.
+.runoff_result <- function(x, flat = list(), saturated = 0L, loglik = -100) {
+  n <- length(x)
+  vectors <- diag(n)
+  isflat <- rep(FALSE, n)
+  for (j in seq_along(flat)) {
+    vectors[, j] <- flat[[j]] / sqrt(sum(flat[[j]]^2))
+    isflat[j] <- TRUE
+  }
+  list(minimizer = x, maximum_loglik = loglik, saturated_parameters = saturated,
+    newton_flat_ran = TRUE, newton_flat_at = x, newton_flat_eigenvalues = numeric(n),
+    newton_flat_eigenvectors = vectors, newton_flat_candidates = seq_len(n),
+    newton_flat_change = numeric(n), newton_flat_flat = isflat,
+    newton_flat_gain = 0, newton_flat_point = 0, newton_flat_direction = 0L,
+    newton_flat_evaluations = 0L, newton_flat_complete = TRUE)
 }
 
-.retry_dir <- function(p) list(parameters = p, loadings = rep(1, length(p)) /
-  sqrt(length(p)), relative = 1e-9)
+.runoff_mocks <- function() testthat::local_mocked_bindings(
+  .ctBackendRawParameterNames = function(fit, npar) .runoff_names[seq_len(npar)],
+  .ctJuliaSaturatedNames = function(result, model_spec, npar, field)
+    .runoff_names[as.integer(result[[field]])],
+  .env = parent.frame())
 
-.retry_names <- function(fit, raw) stats::setNames(as.numeric(raw), attr(fit, 'rawnames'))
-
-test_that("a parameter qualifies where it is flat and has run past the start's bound", {
-  testthat::local_mocked_bindings(.ctFitNameRaw = .retry_names)
-  # trend_drift undetermined and far out; drift_x undetermined but near the
-  # start, not run off; cint_trend far out but determined.
-  fit <- .retry_fit(directions = list(.retry_dir('trend_drift'), .retry_dir('drift_x')))
-  expect_identical(ctsem:::.ctFitFlatRetryParameters(fit), 'trend_drift')
-  # A saturated transform qualifies too.
-  fit <- .retry_fit(saturated = 'cint_trend')
-  expect_identical(ctsem:::.ctFitFlatRetryParameters(fit), 'cint_trend')
-  expect_length(ctsem:::.ctFitFlatRetryParameters(.retry_fit()), 0L)
+test_that("a coordinate qualifies where it is flat and has run past the start's bound", {
+  .runoff_mocks()
+  x <- c(-16, 0.4, 9, -20)
+  # trend_drift flat and far out; drift_x flat but near the start; cint_trend
+  # far out but not flat; the population sd is the reduction's.
+  r <- .runoff_result(x, flat = list(c(1, 0, 0, 0), c(0, 1, 0, 0), c(0, 0, 0, 1)))
+  expect_identical(ctsem:::.ctBackendRunOff(r, list(), 4L), 1L)
+  expect_length(ctsem:::.ctBackendRunOff(r, list(), 4L, tried = 1L), 0L)
+  # A saturated transform qualifies without a flat direction.
+  expect_identical(ctsem:::.ctBackendRunOff(.runoff_result(x, saturated = 3L),
+    list(), 4L), 3L)
+  # A direction shared by two coordinates splits its share: 0.64 qualifies,
+  # 0.36 does not. Two such directions span both.
+  r <- .runoff_result(x, flat = list(c(0.8, 0, 0.6, 0)))
+  expect_identical(ctsem:::.ctBackendRunOff(r, list(), 4L), 1L)
+  expect_length(ctsem:::.ctBackendRunOff(r, list(), 4L, tried = 1L), 0L)
+  r <- .runoff_result(x, flat = list(c(0.8, 0, 0.6, 0), c(-0.6, 0, 0.8, 0)))
+  expect_identical(ctsem:::.ctBackendRunOff(r, list(), 4L, tried = 1L), 3L)
 })
 
-test_that("the parameter is held at the other side, then freed, and the better fit kept", {
+test_that("the escape point holds the coordinate at the other side of its range", {
+  .runoff_mocks()
+  r <- .runoff_result(c(-16, 0.4, 9, -20), flat = list(c(1, 0, 0, 0)))
+  p <- ctsem:::.ctBackendStallEscape(r, list(), list())
+  expect_identical(attr(p, 'kind'), 'runoff')
+  expect_identical(attr(p, 'coordinates'), 1L)
+  expect_equal(as.numeric(p), c(ctsem:::.ctDataStartRawBound, 0.4, 9, -20))
+  # Off by its control, and a measured better point goes first.
+  expect_null(ctsem:::.ctBackendStallEscape(r, list(flatretry = FALSE), list()))
+  r$overshot <- TRUE
+  r$overshoot_point <- c(-15, 0.4, 9, -20)
+  r$overshoot_parameters <- 1L
+  r$overshoot_gain <- 1
+  expect_null(attr(ctsem:::.ctBackendStallEscape(r, list(), list()), 'kind'))
+})
+
+# The correction loop with its optimiser and certification mocked: `stages`
+# are the results the optimiser returns in turn.
+.runoff_loop <- function(first, stages, escape) {
   calls <- list()
-  refit <- function(current, model, data, cores, start = NULL, optimcontrol = list()) {
-    pars <- model$pars
-    cell <- pars[pars$matrix == 'DRIFT' & pars$row == 1 & pars$col == 1, ]
-    held <- is.na(cell$param)
-    calls[[length(calls) + 1L]] <<- list(held = held, value = as.numeric(cell$value),
-      start = start, optimcontrol = optimcontrol)
-    # The held fit has no trend_drift coordinate; the freed one lands higher,
-    # with the drift at its slow end and nothing left to retry.
-    raw <- if (held) .retry_raw[names(.retry_raw) != 'trend_drift'] else
-      replace(.retry_raw, 'trend_drift', 9)
-    f <- .retry_fit(raw = raw, loglik = if (held) -95 else -80)
-    list(fit = f, warnings = list(simpleWarning(if (held) 'held' else 'freed')))
+  i <- 0L
+  optimise <- function(from, endgame) {
+    calls[[length(calls) + 1L]] <<- from
+    i <<- i + 1L
+    stages[[i]]
   }
   testthat::local_mocked_bindings(
-    .ctFitNameRaw = .retry_names,
-    .ctFitRawEstimate = function(fit) fit$estimate$raw,
-    .ctFitRawParNames = function(fit) attr(fit, 'rawnames'),
-    .ctFitLongData = function(fit) data.frame(id = 1, time = 0, y1 = 0, y2 = 0),
-    .ctFitOptimisedLoglik = function(fit) fit$estimate$loglik,
-    .ctFitReplayArgs = function(fit) list(optimcontrol = list()),
-    .ctFitFlatRetryValue = function(fit, param, rawvalue) -0.005 * sign(rawvalue),
-    .ctFitFlatRetryRefit = refit)
-  fit <- .retry_fit(directions = list(.retry_dir('trend_drift')))
-  said <- testthat::capture_messages(out <- ctsem:::.ctFitFlatRetry(fit,
-    list(simpleWarning('original')), cores = 1L))
-  expect_true(any(grepl('held at', said)))
-  expect_true(any(grepl('Kept the refit', said)))
-  # Held at the other side of its range, without a Hessian.
-  expect_true(calls[[1]]$held)
-  expect_equal(calls[[1]]$value, -0.005)
-  expect_true(isTRUE(calls[[1]]$optimcontrol$estonly))
-  # Freed from there: the parameter's raw start on the held side, a full fit.
-  expect_false(calls[[2]]$held)
-  expect_equal(calls[[2]]$start[['trend_drift']], 3)
-  expect_false(isTRUE(calls[[2]]$optimcontrol$estonly))
-  # The freed fit is kept, with its own warnings and the caller's call.
-  expect_equal(out$fit$estimate$loglik, -80)
-  expect_identical(vapply(out$warnings, conditionMessage, ''), 'freed')
-  expect_identical(out$fit$args$input$tag, 'the call')
-  expect_identical(out$fit$flatretry$parameter, 'trend_drift')
-  expect_true(out$fit$flatretry$kept)
-  # Tried once: the freed fit leaves the drift saturated at its other end,
-  # and it is not sent back.
-  expect_length(calls, 2L)
-})
+    .ctBackendRawParameterNames = function(fit, npar) .runoff_names[seq_len(npar)],
+    .ctJuliaSaturatedNames = function(result, model_spec, npar, field)
+      .runoff_names[as.integer(result[[field]])],
+    .ctJuliaRunCounts = function(r) c(newton_hessians = 0),
+    .ctBackendEndgameOf = function(r, npar) NULL,
+    .ctJuliaHoldModes = function(...) NULL,
+    .ctBackendEndgameAt = function(...) NULL)
+  said <- testthat::capture_messages(out <- ctsem:::.ctBackendCorrectResult(first,
+    list(), npar = 4L, optimise = optimise, escape = escape, maxtries = 0L))
+  list(out = out, calls = calls, said = said)
+}
 
-test_that("a refit that ends lower leaves the fit and its warnings", {
-  testthat::local_mocked_bindings(
-    .ctFitNameRaw = .retry_names,
-    .ctFitRawEstimate = function(fit) fit$estimate$raw,
-    .ctFitRawParNames = function(fit) attr(fit, 'rawnames'),
-    .ctFitLongData = function(fit) data.frame(id = 1, time = 0, y1 = 0, y2 = 0),
-    .ctFitOptimisedLoglik = function(fit) fit$estimate$loglik,
-    .ctFitReplayArgs = function(fit) list(optimcontrol = list()),
-    .ctFitFlatRetryValue = function(fit, param, rawvalue) -0.005,
-    .ctFitFlatRetryRefit = function(current, model, ...) list(
-      fit = .retry_fit(loglik = -120), warnings = list(simpleWarning('refit'))))
-  fit <- .retry_fit(directions = list(.retry_dir('trend_drift')))
-  out <- suppressMessages(ctsem:::.ctFitFlatRetry(fit, list(simpleWarning('original')),
-    cores = 1L))
-  expect_equal(out$fit$estimate$loglik, -100)
-  expect_identical(vapply(out$warnings, conditionMessage, ''), 'original')
-  expect_false(out$fit$flatretry$kept)
+test_that("a run-off escape that wins is kept, and one that loses leaves the stage", {
+  first <- .runoff_result(c(-16, 0.4, 9, -20), flat = list(c(1, 0, 0, 0)))
+  tried <- integer()
+  escape <- function(r, runoffonly = FALSE) {
+    p <- ctsem:::.ctBackendStallEscape(r, list(), list(), tried = tried,
+      runoffonly = runoffonly)
+    if (identical(attr(p, 'kind'), 'runoff')) tried <<- c(tried, attr(p, 'coordinates'))
+    p
+  }
+  # Freed, the drift runs off to the other end, flat again, and is not sent back.
+  better <- .runoff_result(c(12, 0.4, 0.1, -20), flat = list(c(1, 0, 0, 0)), loglik = -80)
+  run <- .runoff_loop(first, list(better), escape)
+  # The escape runs with no budget for stall escapes or resumes (maxtries 0).
+  expect_length(run$calls, 1L)
+  expect_identical(attr(run$calls[[1]], 'kind'), 'runoff')
+  expect_equal(as.numeric(run$out$result$maximum_loglik), -80)
+  expect_identical(run$out$escapes, 1L)
+  expect_true(any(grepl('trend_drift had run off', run$said)))
+  expect_identical(run$out$corrections[[1]]$status, 'runoff')
+
+  tried <- integer()
+  worse <- .runoff_result(c(12, 0.4, 0.1, -20), loglik = -120)
+  run <- .runoff_loop(first, list(worse), escape)
+  expect_length(run$calls, 1L)
+  expect_equal(as.numeric(run$out$result$maximum_loglik), -100)
+  expect_false(run$out$corrections[[1]]$resumed)
+  expect_length(run$said, 0L)
 })
 
 test_that("the retry is a julia control", {

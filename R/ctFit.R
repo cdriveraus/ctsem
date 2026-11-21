@@ -1692,24 +1692,14 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       if(intoverpop) 'augmented' else
         if(!optimize && .ctAnyVarying(ctm)) 'none' else
           'augmented'
-    # A parameter the fit leaves run off where the likelihood is flat is
-    # refitted held at the other side of its range, then freed
-    # (R/ctFitFlatRetry.R). The fit's warnings wait until it is known which
-    # fit is kept.
-    flatretry <- isTRUE(fit) && isTRUE(optimize) && !isFALSE(optimcontrol$flatretry)
-    warned <- list()
-    juliafit <- withCallingHandlers(.ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
+    juliafit <- .ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
       cores=cores, optimcontrol=optimcontrol, forcerecompile=forcerecompile,
       verbose=verbose, fit=fit, priors=priors, priorscope=priorscope,
       optimize=optimize,
       chains=if(chainsgiven) chains else NULL, iter=iter, control=control,
       intoverpop=juliaintoverpop, intoverstates=intoverstates, weights=weights,
       exactmarginal=!isTRUE(optimize) && identical(juliaintoverpop, 'none') &&
-        !is.na(intoverpopreason) && isTRUE(intoverstates)),
-      warning = function(w) if (flatretry) {
-        warned[[length(warned) + 1L]] <<- w
-        invokeRestart('muffleWarning')
-      })
+        !is.na(intoverpopreason) && isTRUE(intoverstates))
     if(!identical(juliaintoverpop, .ctBackendIntOverPop(.ctBackendSpec(juliafit)))){
       argsresolved$intoverpop <- .ctBackendIntOverPop(.ctBackendSpec(juliafit))
       argsresolved$intoverpopreason <- paste0("optimize=FALSE samples the ",
@@ -1748,12 +1738,6 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # accessor reads through `.ctBackendSpec()`; replacing it with the prepared
     # list left ctKalman() on a subset of subjects finding no subjects at all.
     if(isTRUE(fit)) juliafit$data <- .ctStandataNA(standata)
-    if (flatretry) {
-      retried <- tryCatch(.ctFitFlatRetry(juliafit, warned, cores, verbose),
-        error = function(e) list(fit = juliafit, warnings = warned))
-      juliafit <- retried$fit
-      for (w in retried$warnings) warning(w)
-    }
     # `plot` draws the trace *after* the fit here, not during it.
     #
     # The Stan path can plot live because it writes sample files a second

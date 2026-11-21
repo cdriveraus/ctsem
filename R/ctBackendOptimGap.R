@@ -636,7 +636,7 @@
 # refit, not an answer, and the refit is kept only if it wins.
 #' @keywords internal
 .ctBackendStallEscape <- function(result, optimcontrol, model_spec,
-    verbose = 0, escapes = TRUE) {
+    verbose = 0, escapes = TRUE, tried = integer(), runoffonly = FALSE) {
   # `escapes = FALSE` on the state-explicit route, where the joint mode is
   # degenerate: the innovations re-optimise to absorb almost any parameter
   # change, so a pullback can nearly always find something and "not a maximum"
@@ -645,7 +645,9 @@
   if (!isTRUE(escapes)) return(NULL)
   npar <- length(as.numeric(result$minimizer))
   point <- suppressWarnings(as.numeric(result$stall_point))
-  if (isTRUE(result$stopped_by_stall) && length(point) == npar &&
+  # With the stall escapes' budget spent, only a run-off escape, which has its
+  # own bound (`runoffonly`, `.ctBackendCorrectResult()`).
+  if (!runoffonly && isTRUE(result$stopped_by_stall) && length(point) == npar &&
       all(is.finite(point))) {
     if (verbose > 0) {
       message("Stopped on a boundary; pulling raw parameter(s) ",
@@ -669,7 +671,7 @@
   # transform: 188 iterations, not converged, 169 nats short, and the progress
   # test never fired once.
   point <- suppressWarnings(as.numeric(result$overshoot_point))
-  if (isTRUE(result$overshot) && length(point) == npar &&
+  if (!runoffonly && isTRUE(result$overshot) && length(point) == npar &&
       all(is.finite(point))) {
     if (verbose > 0) {
       message("Stopped somewhere that is not a maximum; pulling raw ",
@@ -682,7 +684,31 @@
     return(.ctBackendEscapeCoordinates(point,
       result$overshoot_parameters, npar))
   }
-  if (!isTRUE(optimcontrol$escapesaturated)) return(NULL)
+  # A model parameter run off where the likelihood is flat in it
+  # (`.ctBackendRunOff()`): moved to the other side of its range, as far out
+  # as the data start goes, where the stage that resumes holds it while the
+  # rest settle and then frees it (`stage()` in `.ctJuliaOptimise()`). Moved
+  # and let go at once, it slides back to the basin it came from: the rest of
+  # the model is still arranged for that one. One at a time, each once a fit
+  # (`tried`).
+  if (!isFALSE(optimcontrol$flatretry)) {
+    runoff <- .ctBackendRunOff(result, model_spec, npar, tried)
+    if (length(runoff)) {
+      from <- as.numeric(result$minimizer)
+      was <- from[runoff]
+      from[runoff] <- -sign(was) * .ctDataStartRawBound
+      if (verbose > 0) {
+        message("Raw parameter ", .ctJuliaSaturatedNames(list(p = runoff),
+          model_spec, npar, "p"), " ran off to ", signif(was, 3), ", where the ",
+          "likelihood is flat in it; refitting with it held at ", from[runoff],
+          ", then freed")
+      }
+      point <- .ctBackendEscapeCoordinates(from, runoff, npar)
+      attr(point, "kind") <- "runoff"
+      return(point)
+    }
+  }
+  if (runoffonly || !isTRUE(optimcontrol$escapesaturated)) return(NULL)
   flat <- suppressWarnings(as.integer(result$saturated_parameters))
   flat <- flat[!is.na(flat) & flat >= 1L & flat <= npar]
   if (!length(flat)) return(NULL)
@@ -695,6 +721,52 @@
       " and refitting from there to see whether it beats this")
   }
   .ctBackendEscapeCoordinates(from, flat, npar)
+}
+
+# The model parameter a stage left run off where the likelihood is flat in it,
+# by raw index, or nothing.
+#
+# A local optimiser settles in the basin its start leads to. Where that basin
+# takes a parameter out to a flat end of its range -- an auto-effect so fast
+# that its process is white noise at the observation interval, or so slow that
+# it is a random walk -- the gradient no longer brings it back, its value says
+# nothing, and the basin on the other side is never compared. On
+# follhim/dis_ctsem (2026-11-21) a trend's auto-effect ran off to -64 per hour,
+# the trend collapsing into each person's level, 24 log likelihood units below
+# the linear trend the model reaches with that auto-effect slow; the profile
+# between the two dips by 1.6, which no local step crosses.
+#
+# A coordinate qualifies when it is past the data start's raw bound
+# (`.ctDataStartRawBound`) and either has at least half its variation in the
+# directions the stage's finish walked and found flat -- the share the
+# reduction reads (`.ctReduceFlat()`), here on the finish's own Hessian -- or
+# its transform saturated. Population coordinates are left to the reduction and
+# the effects report: a variance at zero is a model they have a change for.
+# Of several, the one with the largest share; none in `tried`.
+#' @keywords internal
+.ctBackendRunOff <- function(result, model_spec, npar, tried = integer()) {
+  x <- suppressWarnings(as.numeric(result$minimizer))
+  if (length(x) < npar) return(integer())
+  x <- x[seq_len(npar)]
+  far <- which(is.finite(x) & abs(x) > .ctDataStartRawBound)
+  far <- setdiff(far, tried)
+  if (!length(far)) return(integer())
+  names <- tryCatch(as.character(.ctBackendRawParameterNames(
+    list(model_spec = model_spec), npar)), error = function(e) NULL)
+  if (length(names) != npar) return(integer())
+  far <- far[!.ctReducePopCoordinate(names[far])]
+  if (!length(far)) return(integer())
+  share <- numeric(npar)
+  walk <- .ctBackendFlatWalkFields(result, npar)
+  if (!is.null(walk) && !is.null(walk$eigenvectors)) {
+    flat <- as.logical(walk$flat)
+    if (length(flat) == ncol(walk$eigenvectors) && any(flat %in% TRUE))
+      share <- rowSums(walk$eigenvectors[, flat %in% TRUE, drop = FALSE]^2)
+  }
+  saturated <- suppressWarnings(as.integer(result$saturated_parameters))
+  far <- far[share[far] >= 0.5 | far %in% saturated]
+  if (!length(far)) return(integer())
+  far[which.max(share[far])]
 }
 
 # Which coordinates the escape moved, carried on the point it returns.
@@ -1338,8 +1410,9 @@
     # With the budget spent nothing is asked for a point to resume from: the
     # result is certified where it stands and the loop ends.
     spent <- attempt >= budget || !is.function(optimise)
-    from <- if (!spent && is.function(escape)) escape(result) else NULL
-    kind <- "escape"
+    from <- if (is.function(optimise) && is.function(escape)) escape(result,
+      runoffonly = spent) else NULL
+    kind <- if (identical(attr(from, "kind"), "runoff")) "runoff" else "escape"
     gap <- NULL
     stage_endgame <- NULL
     endgame <- NULL
@@ -1388,7 +1461,7 @@
     }
     attempt <- attempt + 1L
     value <- as.numeric(result$maximum_loglik)[1L]
-    if (verbose > 0 && !identical(kind, "escape")) {
+    if (verbose > 0 && !kind %in% c("escape", "runoff")) {
       message("Not yet a certified maximum (", kind, ", predicted ",
         signif(gap$gap, 3), "); resuming the optimiser")
     }
@@ -1396,11 +1469,25 @@
     ok <- !inherits(resumed, "try-error") &&
       is.finite(as.numeric(resumed$maximum_loglik)[1L]) &&
       as.numeric(resumed$maximum_loglik)[1L] >= value
+    # A run-off escape tries each coordinate once a fit
+    # (`.ctBackendRunOff()`), which bounds it: it takes nothing from the
+    # budget the stall escapes and certification resumes share.
+    if (identical(kind, "runoff")) {
+      attempt <- attempt - 1L
+      coords <- as.integer(attr(from, "coordinates"))
+      name <- paste(.ctJuliaSaturatedNames(list(p = coords), spec, npar, "p"),
+        collapse = ", ")
+      if (ok) message(name, " had run off to ", signif(as.numeric(
+        result$minimizer)[coords], 3), " (raw), where the likelihood is flat ",
+        "in it. Refitted with it held at the other side of its range, then ",
+        "freed: log likelihood ", format(value, nsmall = 2), " -> ",
+        format(as.numeric(resumed$maximum_loglik)[1L], nsmall = 2), ".")
+    }
     if (!inherits(resumed, "try-error")) totals <- totals + .ctJuliaRunCounts(resumed)
     history[[length(history) + 1L]] <- list(attempt = attempt,
       status = kind,
       # Which coordinates an escape moved (`.ctBackendEscapeCoordinates()`).
-      coordinates = if (identical(kind, "escape")) {
+      coordinates = if (kind %in% c("escape", "runoff")) {
         as.integer(attr(from, "coordinates")) } else integer(0),
       predicted = if (is.null(gap)) NA_real_ else gap$gap,
       total_gain = if (ok) as.numeric(resumed$maximum_loglik)[1L] - value else
@@ -1412,9 +1499,12 @@
       stop_reason = if (ok) as.character(.ctJuliaOr(resumed$stop_reason,
         NA_character_))[1L] else NA_character_,
       stopped_progress = if (ok) isTRUE(resumed$stopped_by_progress) else NA)
-    # The certification above, if any, describes the result this keeps.
+    # The certification above, if any, describes the result this keeps. A
+    # run-off escape that did not win leaves the stage as it was, to be
+    # certified or resumed as any other.
+    if (!ok && identical(kind, "runoff")) next
     if (!ok) break
-    if (identical(kind, "escape")) escapes <- escapes + 1L
+    if (kind %in% c("escape", "runoff")) escapes <- escapes + 1L
     result <- resumed
   }
   # The final point's certification, where the loop ended on a stage it had

@@ -6320,8 +6320,15 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     common$overshoot_probe <- "cleared"
   }
   optimise_once <- function(from, pin = default_pin,
-      resumed = FALSE, endgame = NULL) {
+      resumed = FALSE, endgame = NULL, finish = TRUE) {
     args <- common
+    # A stage that only settles the rest of the model around held coordinates
+    # (a run-off escape's, in `stage()` below) forms no Hessian and probes for
+    # no overshoot: the stage that frees them does both where it ends.
+    if (!finish) {
+      args$newton <- FALSE
+      args$overshoot_probe <- "off"
+    }
     # A resumed stage (`.ctBackendCorrectResult()`): on the full data -- it
     # starts where the full objective already brought the fit, so a first
     # batch of a few units only walks it away again (on the SNSF pilot, 493
@@ -6524,8 +6531,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # after zeroing it the refit needs that coordinate to *travel*.
   stage <- function(from, endgame = NULL) {
     coordinates <- attr(from, "coordinates")
+    # A run-off escape always pins (`.ctBackendStallEscape()`): its point is
+    # on the other side of the coordinate's range, not a measured improvement,
+    # and the rest of the model has to move first.
+    runoff <- identical(attr(from, "kind"), "runoff")
     from <- as.numeric(from)
-    if (isTRUE(optimcontrol$escapepin) && length(coordinates)) {
+    if ((isTRUE(optimcontrol$escapepin) || runoff) && length(coordinates)) {
       inside <- coordinates >= 1L & coordinates <= length(from)
       coordinates <- coordinates[inside]
       # Merged with `default_pin` rather than replacing it: a profile point's
@@ -6535,7 +6546,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
           coordinates),
         value = c(if (length(default_pin$index)) as.numeric(default_pin$value),
           from[coordinates]))
-      staged <- optimise_once(from, pin = escape_pin, resumed = TRUE)
+      staged <- optimise_once(from, pin = escape_pin, resumed = TRUE,
+        finish = !runoff)
       return(.ctJuliaAddRunCounts(optimise_once(as.numeric(staged$minimizer),
         resumed = TRUE, endgame = endgame), staged))
     }
@@ -6544,14 +6556,21 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # Not for a run that ended on a jump: its point is on no continuous
   # objective, so a certification there has nothing to judge, and a resume
   # from it meets the same jump.
+  # The coordinates a run-off escape has moved, each once a fit.
+  ranoff <- integer()
   if (is.null(result[["jumprecord"]])) {
     retried <- .ctBackendCorrectResult(result, model_spec,
       npar = length(as.numeric(start)),
       tolerance = .ctBackendConvergeTol(optimcontrol),
       maxtries = .ctJuliaOr(optimcontrol$stallretries, 2L), gradient = gradient,
       optimise = stage,
-      escape = function(r) .ctBackendStallEscape(r, optimcontrol, model_spec,
-        verbose, escapes = !state_explicit),
+      escape = function(r, runoffonly = FALSE) {
+        point <- .ctBackendStallEscape(r, optimcontrol, model_spec, verbose,
+          escapes = !state_explicit, tried = ranoff, runoffonly = runoffonly)
+        if (identical(attr(point, "kind"), "runoff"))
+          ranoff <<- c(ranoff, as.integer(attr(point, "coordinates")))
+        point
+      },
       certify = isTRUE(common$certify) && !isTRUE(walked) &&
         is.null(.ctJuliaWalkedHessian(result)), verbose = verbose,
       cores = cores)
