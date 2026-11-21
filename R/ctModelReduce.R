@@ -9,9 +9,10 @@
 #   subspace: its share, the squared length of its axis projected on an
 #   orthonormal basis of the directions, is at least a half. An undetermined
 #   model parameter is refitted at the simple values its range offers (each
-#   finite end, and zero where zero is inside) and, where none of those is
-#   kept, at its estimate, which states the same fit with one parameter fewer.
-#   An undetermined population sd or own variance is refitted without it, zero
+#   finite end, and zero where zero is inside). Where the data refuse every one
+#   of them it stays free: the likelihood does read it, only weakly near the
+#   estimate, and fixing it at the estimate would state no simpler model, just
+#   hide its uncertainty where the optimiser happened to stop. An undetermined population sd or own variance is refitted without it, zero
 #   being the end of a variance's range.
 #
 #   A flat subspace that lies mostly in the other population coordinates is a
@@ -146,14 +147,14 @@
   sum(share[pop & !alone])
 }
 
-# The values a parameter's range offers as simpler models, and its estimate,
-# on the parameter's own scale: its cells evaluated at the estimate with its
-# raw coordinate moved far out each way (`.ctBackendPopMeanSamples()`). An end
-# is finite where the transform has stopped moving there; one within 1e-4 of
-# zero is zero, since a transform keeps a variance or an auto-effect that far
-# from it only to stay inside its range. Zero is offered too where it lies
-# inside the range. A named list by parameter, each with `ends`, `zero` and
-# `estimate`; parameters it cannot evaluate are left out.
+# The values a parameter's range offers as simpler models, on the parameter's
+# own scale: its cells evaluated at the estimate with its raw coordinate moved
+# far out each way (`.ctBackendPopMeanSamples()`). An end is finite where the
+# transform has stopped moving there; one within 1e-4 of zero is zero, since a
+# transform keeps a variance or an auto-effect that far from it only to stay
+# inside its range. Zero is offered too where it lies inside the range. A named
+# list by parameter, each with `ends` and `zero`; parameters it cannot evaluate
+# are left out.
 .ctReduceValues <- function(fit, params) {
   raw <- .ctFitNameRaw(fit, fit$estimate$raw)
   index <- match(params, names(raw))
@@ -181,17 +182,15 @@
     ends <- unique(ifelse(abs(ends) < 1e-4, 0, signif(ends, 6)))
     lo <- min(v[2], v[5]); hi <- max(v[2], v[5])
     out[[params[i]]] <- list(ends = ends,
-      zero = is.finite(lo) && is.finite(hi) && lo < 0 && hi > 0 && !0 %in% ends,
-      estimate = signif(v[1], 6))
+      zero = is.finite(lo) && is.finite(hi) && lo < 0 && hi > 0 && !0 %in% ends)
   }
   out
 }
 
 # The changes for undetermined model parameters: each fixed at its range's
-# simple values, then, as the fallback, the first (the largest share) at its
-# estimate. A parameter varying over subjects keeps its random effect where
-# its mean is stated inside its range; at an end, where no mean can be stated,
-# it is fixed and not varying.
+# simple values. A parameter varying over subjects keeps its random effect
+# where its mean is stated inside its range; at an end, where no mean can be
+# stated, it is fixed and not varying.
 .ctReduceParameterChanges <- function(fit, model, params) {
   values <- .ctReduceValues(fit, params)
   varying <- .ctImproveVarying(model)
@@ -207,16 +206,6 @@
         .ctReduceStateEdit(p, 0)) else
       .ctReduceProposal(paste0('reduce:fix:', p, '=0'), paste0(p, ' fixed at 0'),
         .ctReduceFixEdit(p, 0))
-  }
-  first <- intersect(params, names(values))[1L]
-  if (!is.na(first)) {
-    x <- values[[first]]$estimate
-    out[[length(out) + 1L]] <- if (first %in% varying)
-      .ctReduceProposal(paste0('reduce:mean:', first, '=', x), paste0(first,
-        "'s mean fixed at its estimate, ", num(x)), .ctReduceStateEdit(first, x),
-        fallback = TRUE) else
-      .ctReduceProposal(paste0('reduce:fix:', first, '=', x), paste0(first,
-        ' fixed at its estimate, ', num(x)), .ctReduceFixEdit(first, x), fallback = TRUE)
   }
   out
 }
