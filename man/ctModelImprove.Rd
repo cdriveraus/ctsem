@@ -226,37 +226,33 @@ not reached an optimum, and is recorded as such.
 }
 \section{Reducing}{
  Before it screens, and after each change it keeps, the
-  search looks at the directions the data do not identify
-  (\code{fit$identifiability}) and tries the change that removes each kind
-  it recognises:
+  search looks at the directions in which the likelihood is flat
+  (\code{fit$identifiability}). A parameter is not determined by the data
+  when more than half of its variation lies in those directions. For each
+  such parameter it tries:
   \describe{
-    \item{A parameter the likelihood does not read}{Fixed at 0, if it is
-      an off-diagonal, an effect or an auto-effect.}
-    \item{A process's auto-effect against its intercept}{For a process
-      with no noise of its own, such as a trend, the auto-effect fixed at 0,
-      which makes the intercept a slope, and both fixed at 0, which leaves a
-      constant level. For any process, the intercept written as what it adds
-      over one time unit (\code{driftScaled = 'CINT'} in
-      \code{\link{ctModel}}).}
-    \item{A process's auto-effect against its diffusion}{The diffusion
-      written as what it adds over one time unit (\code{driftScaled =
-      'DIFFUSION'}).}
-    \item{Random effects the data hold at zero or barely determine}{Not
-      varying over subjects.}
-    \item{Population standard deviations, correlations or loadings}{A lower
-      rank (\code{poprank}). A full covariance becomes shared dimensions
-      plus a variance of each effect's own (\code{popunique = TRUE} in
-      \code{\link{ctFit}}), starting with the fewest shared dimensions whose
-      factor model reproduces the fitted correlations to within 0.1. The
-      rank goes down while the covariance is not identified, and up where
-      the likelihood refuses a lower one.}
-    \item{Own variances at zero}{Removed from \code{popunique}.}
+    \item{A model parameter}{Fixed at the ends of its range that are finite,
+      such as 0 for an auto-effect or a variance, and at 0 where 0 is inside
+      its range. If none of these is kept, fixed at its estimate, which gives
+      the same fit with one parameter fewer. For a parameter that varies
+      over subjects, a value inside its range fixes the population mean
+      and keeps the random effect.}
+    \item{A population standard deviation or own variance}{Removed: the
+      effect no longer varies, or loses its own variance
+      (\code{popunique} in \code{\link{ctFit}}).}
   }
+  If the flat directions lie mostly in the population correlations or
+  loadings, the covariance is refitted at a lower rank (\code{poprank}). A
+  full covariance becomes shared dimensions plus a variance of each
+  effect's own (\code{popunique = TRUE}), starting with the fewest shared
+  dimensions whose factor model reproduces the fitted correlations to
+  within 0.1. The rank goes down one step at a time while the covariance is
+  not identified, and up where the likelihood refuses a lower one. Random
+  effects the data hold at zero or barely determine are made fixed.
+
   Each change is refitted from the current estimates and kept unless the
-  model without it is better by \code{criterion}. A change that states the
-  same model differently is kept unless its fit ends below the current one.
-  If several changes for one problem are kept, the one with the fewest
-  parameters is used.
+  model without it is better by \code{criterion}. If several changes for
+  one problem are kept, the one with the fewest parameters is used.
   The rank and random effect changes are for single level models only. With
   \code{reduceOnly = TRUE} the search stops there. Each change tried is a
   refit, so this takes several times as long as the original fit.

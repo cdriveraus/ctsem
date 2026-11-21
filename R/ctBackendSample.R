@@ -2030,9 +2030,10 @@
       if (nlevels > 1L) .ctCorBoundAdvice(r$rank[1L], TRUE))
   }
   # Where the reduction has a change for any of them, the call that tries it.
-  findings <- tryCatch(.ctReduceFindings(fit), error = function(e) list())
-  reducible <- (nlevels <= 1L && NROW(bound) > 0L) || any(vapply(findings, function(f)
-    length(f$candidates) > 0L || identical(f$kind, "covariance"), logical(1)))
+  findings <- tryCatch(.ctReduceFindings(fit, candidates = FALSE),
+    error = function(e) list())
+  reducible <- (nlevels <= 1L && NROW(bound) > 0L) ||
+    any(vapply(findings, function(f) isTRUE(f$reducible), logical(1)))
   message(paste(parts, collapse = " "), " Sampling along such directions is slow.",
     if (reducible) paste0(" ctModelImprove(fit, reduceOnly = TRUE) refits the changes ",
       "that remove them and keeps those the data allow."))

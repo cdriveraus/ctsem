@@ -1,6 +1,6 @@
-# What ctModelImprove(reduceOnly = TRUE) recognises in a fit's identifiability
+# What ctModelImprove(reduceOnly = TRUE) reads off a fit's identifiability
 # report, the changes it proposes, and how it judges them. Fit-free: a model,
-# a hand-built report, and refits mocked where the stage decides.
+# a hand-built report, and the engine calls and refits mocked.
 
 .reduce_model <- function() suppressMessages(ctModel(type = 'ct',
   manifestNames = c('y1', 'y2'), latentNames = c('trend', 'x'), LAMBDA = diag(2),
@@ -19,7 +19,21 @@
       effects = effects)), class = 'ctJuliaFit')
 }
 
-.reduce_dir <- function(p, relative = 1e-6) list(parameters = p, relative = relative)
+# A flat direction: its coordinates, their loadings (normalised), and its
+# curvature relative to the largest.
+.reduce_dir <- function(p, loadings = rep(1, length(p)), relative = 1e-6)
+  list(parameters = p, loadings = loadings / sqrt(sum(loadings^2)), relative = relative)
+
+# The ranges `.ctReduceValues()` would read off the transforms: an auto-effect
+# ends at 0, an intercept or loading spans 0, a variance ends at 0.
+.reduce_values <- function(fit, params) {
+  out <- list(trend_drift = list(ends = 0, zero = FALSE, estimate = -0.8),
+    drift_x = list(ends = 0, zero = FALSE, estimate = -0.5),
+    cint_trend = list(ends = numeric(), zero = TRUE, estimate = 1.3),
+    mvar21 = list(ends = numeric(), zero = TRUE, estimate = 0.1),
+    mvar2 = list(ends = 0, zero = FALSE, estimate = 0.2))
+  out[intersect(params, names(out))]
+}
 
 # The criterion, as the verdict asks it (the reduced fit first): the fuller
 # model is better where it fits more than 3 log likelihood units higher.
@@ -28,82 +42,117 @@
   list(accept = d > 3, dloglik = d, dpar = 1L, value = d, score = d, note = 'by mock')
 }
 
-test_that("flat directions are sorted into the kinds the reduction has changes for", {
-  fit <- .reduce_fit(list(
-    .reduce_dir('mvar21', 1e-15),
-    .reduce_dir(c('trend_drift', 'cint_trend', 'popsd_cint_trend')),
-    .reduce_dir(c('drift_x', 'diff_x')),
-    .reduce_dir(c('rawcor_a__b', 'rawcor_a__c', 'popsd_a')),
-    .reduce_dir('mvar2', 1e-6)))
-  f <- ctsem:::.ctReduceFindings(fit)
-  kinds <- vapply(f, `[[`, '', 'kind')
-  expect_identical(kinds, c('unread', 'drift-intercept', 'drift-diffusion',
-    'covariance', 'other'))
-  labels <- lapply(f, function(x) vapply(x$candidates, `[[`, '', 'label'))
-  expect_identical(labels[[1]], 'mvar21 fixed at 0')
-  # The trend has no noise of its own, so it can be a linear trend or a
-  # constant level. The intercept's sd goes with the finding.
-  expect_identical(labels[[2]], c('trend_drift fixed at 0 (a linear trend)',
-    'trend a constant level (trend_drift and cint_trend fixed at 0)',
-    "intercepts scaled by the drift (driftScaled = 'CINT')"))
-  expect_identical(labels[[3]], "diffusions scaled by the drift (driftScaled = 'DIFFUSION')")
-  # The rank step handles the covariance; nothing is known for the rest.
-  expect_length(labels[[4]], 0L)
-  expect_length(labels[[5]], 0L)
-  expect_match(f[[2]]$text, 'trend_drift and cint_trend trade off: trend settles faster')
-
-  # A zero-curvature direction on a variance is named, not changed; on an
-  # auto-effect (at its bound near zero) it is fixed there.
-  diag <- ctsem:::.ctReduceFindings(.reduce_fit(list(.reduce_dir('mvar2', 1e-15),
-    .reduce_dir('trend_drift', -1e-15), .reduce_dir('drift_x', 1e-15))))
-  expect_identical(vapply(diag, `[[`, '', 'kind'), rep('unread', 3))
-  expect_length(diag[[1]]$candidates, 0L)
-  expect_identical(diag[[2]]$candidates[[1]]$label, 'trend_drift fixed at 0 (a linear trend)')
-  expect_identical(diag[[3]]$candidates[[1]]$label, 'drift_x fixed at 0 (a random walk)')
-  # The same change under the trade-off and alone has one key.
-  expect_identical(diag[[2]]$candidates[[1]]$key, f[[2]]$candidates[[1]]$key)
-
-  # A trade-off carrying its intercept's spread is the trend's, not a
-  # covariance's (the dis model at rank 3); one beside a covariance's surplus
-  # dimensions is both.
-  spread <- c('trend_drift', 'poploading_cint_trend_dim1', 'cint_trend',
-    'popunique_cint_trend', 'poploading_cint_trend_dim2', 'poploading_cint_trend_dim3')
-  expect_identical(vapply(ctsem:::.ctReduceFindings(.reduce_fit(list(.reduce_dir(spread)))),
-    `[[`, '', 'kind'), 'drift-intercept')
-  mixed <- ctsem:::.ctReduceFindings(.reduce_fit(list(.reduce_dir(c('rawcor_a__b',
-    'rawcor_a__c', 'rawcor_b__c', 'trend_drift', 'popsd_cint_trend')))))
-  expect_identical(vapply(mixed, `[[`, '', 'kind'), c('drift-intercept', 'covariance'))
-  expect_identical(mixed[[2]]$parameters, c('rawcor_a__b', 'rawcor_a__c', 'rawcor_b__c'))
-  # The intercept's spread in a direction of its own is the trade-off's too,
-  # and so is the spread of the latent's start.
-  apart <- ctsem:::.ctReduceFindings(.reduce_fit(list(.reduce_dir(c('trend_drift',
-    'cint_trend')), .reduce_dir(c('poploading_cint_trend_dim2', 'popunique_cint_trend')),
-    .reduce_dir(c('popunique_T0m_trend', 'trend_drift', 'popunique_cint_trend')))))
-  expect_identical(vapply(apart, `[[`, '', 'kind'), 'drift-intercept')
-
-  # The augmented route's own ridge is not the model's.
+test_that("a coordinate is undetermined by its share of the flat subspace", {
+  # The report lists a direction twice where two eigenvalues are equal; the
+  # shares are taken on an orthonormal basis, so each counts once.
+  flat <- ctsem:::.ctReduceFlat(list(directions = list(
+    .reduce_dir(c('a', 'b'), c(0.8, 0.6)),
+    .reduce_dir(c('c', 'd'), c(1, 1), relative = 1e-22),
+    .reduce_dir(c('d', 'c'), c(1, 1), relative = -1e-24),
+    .reduce_dir('e', relative = 1e-15))))
+  expect_equal(unname(flat$share[c('a', 'b', 'c', 'd', 'e')]), c(0.64, 0.36, 0.5, 0.5, 1))
+  expect_identical(flat$unread, 'e')
+  # An augmented route's own ridge is not the model's.
   partial <- .reduce_dir(c('popsd_a', 'rawcor_a__b'))
   partial$partial <- list(parameters = 'a')
-  expect_length(ctsem:::.ctReduceFindings(.reduce_fit(list(partial))), 0L)
+  expect_length(ctsem:::.ctReduceFlat(list(directions = list(partial)))$share, 0L)
+})
+
+test_that("findings follow the shares, whatever the parameters are", {
+  testthat::local_mocked_bindings(.ctReduceValues = .reduce_values)
+  fit <- .reduce_fit(list(
+    .reduce_dir('mvar21', relative = 1e-15),
+    .reduce_dir(c('trend_drift', 'cint_trend'), c(0.8, 0.6)),
+    .reduce_dir(c('rawcor_a__b', 'rawcor_a__c', 'rawcor_b__c', 'popsd_a'))))
+  f <- ctsem:::.ctReduceFindings(fit)
+  expect_identical(vapply(f, `[[`, '', 'kind'), c('parameters', 'covariance'))
+  # cint_trend has 0.36 of its variation in the flat subspace: determined
+  # mostly, so not offered. The covariance has a dimension in its coordinates
+  # with no one coordinate undetermined.
+  expect_identical(f[[1]]$parameters, c('mvar21', 'trend_drift'))
+  expect_identical(f[[1]]$text, paste('mvar21 is not read by the likelihood;',
+    'trend_drift is not determined by the data'))
+  labels <- vapply(f[[1]]$candidates, `[[`, '', 'label')
+  expect_identical(labels, c('mvar21 fixed at 0', 'trend_drift fixed at 0',
+    'mvar21 fixed at its estimate, 0.1'))
+  expect_identical(vapply(f[[1]]$candidates, function(x) isTRUE(x$fallback), TRUE),
+    c(FALSE, FALSE, TRUE))
+  expect_length(f[[2]]$candidates, 0L)
+  expect_true(f[[2]]$reducible)
+  # A warning reads the kinds without evaluating any range.
+  testthat::local_mocked_bindings(.ctReduceValues = function(...) stop('evaluated'))
+  expect_length(ctsem:::.ctReduceFindings(fit, candidates = FALSE)[[1]]$candidates, 0L)
 })
 
 test_that("the changes edit the model as they say", {
+  testthat::local_mocked_bindings(.ctReduceValues = .reduce_values)
   m <- .reduce_model()
-  f <- ctsem:::.ctReduceFindings(.reduce_fit(list(.reduce_dir('mvar21', 1e-15),
-    .reduce_dir(c('trend_drift', 'cint_trend')), .reduce_dir(c('drift_x', 'diff_x')))))
-  edit <- function(i, j) f[[i]]$candidates[[j]]$edit(m, NULL, NULL)$model$pars
-  cell <- function(p, mat, r, c) p[p$matrix == mat & p$row == r & p$col == c, ]
-  fixed <- cell(edit(1, 1), 'MANIFESTVAR', 2, 1)
-  expect_true(is.na(fixed$param))
-  expect_equal(as.numeric(fixed$value), 0)
-  trend <- cell(edit(2, 1), 'DRIFT', 1, 1)
-  expect_true(is.na(trend$param))
-  expect_equal(as.numeric(trend$value), 0)
-  scaled <- f[[2]]$candidates[[3]]$edit(m, NULL, NULL)$model
-  expect_identical(scaled$driftScaled, 'CINT')
-  expect_match(cell(scaled$pars, 'CINT', 1, 1)$param, 'DRIFT\\[1,1\\] / expm1')
-  expect_match(cell(f[[3]]$candidates[[1]]$edit(m, NULL, NULL)$model$pars, 'DIFFUSION',
-    2, 2)$param, 'DRIFT\\[2,2\\]')
+  m$pars$indvarying[m$pars$param %in% 'cint_trend'] <- TRUE
+  f <- ctsem:::.ctReduceFindings(.reduce_fit(list(.reduce_dir(c('trend_drift',
+    'cint_trend'), c(0.6, 0.8))), model = m))
+  cand <- f[[1]]$candidates
+  expect_identical(vapply(cand, `[[`, '', 'label'), c("cint_trend's mean fixed at 0",
+    "cint_trend's mean fixed at its estimate, 1.3"))
+  # A varying parameter's mean is stated, its random effect kept.
+  edited <- cand[[1]]$edit(m, NULL, NULL)$model
+  expect_equal(edited$fixedpopmeans, c(cint_trend = 0))
+  expect_true(any(as.logical(edited$pars$indvarying[edited$pars$param %in% 'cint_trend'])))
+  # At an end of its range no mean can be stated: fixed, and not varying.
+  m$pars$indvarying[m$pars$param %in% 'trend_drift'] <- TRUE
+  g <- ctsem:::.ctReduceFindings(.reduce_fit(list(.reduce_dir(c('trend_drift',
+    'cint_trend'), c(0.8, 0.6))), model = m))
+  expect_identical(g[[1]]$candidates[[1]]$label, 'trend_drift fixed at 0, not varying')
+  pars <- g[[1]]$candidates[[1]]$edit(m, NULL, NULL)$model$pars
+  cell <- pars[pars$matrix == 'DRIFT' & pars$row == 1 & pars$col == 1, ]
+  expect_true(is.na(cell$param))
+  expect_equal(as.numeric(cell$value), 0)
+})
+
+test_that("a parameter's simple values are read off its transform", {
+  drift <- function(x) -(1e-6 + 2 * log1p(exp(-2 * x)))
+  fit <- .reduce_fit(list(), npar = 3L)
+  fit$estimate$raw <- c(0.5, 1, -2)
+  testthat::local_mocked_bindings(
+    .ctFitNameRaw = function(fit, raw) stats::setNames(as.numeric(raw), c('d', 'c', 'v')),
+    .ctBackendPopMeanSamples = function(fit, samples) list(parnumber = 1:3,
+      values = cbind(drift(samples[, 1]), samples[, 2], exp(samples[, 3]))))
+  v <- ctsem:::.ctReduceValues(fit, c('d', 'c', 'v', 'missing'))
+  expect_identical(names(v), c('d', 'c', 'v'))
+  # An auto-effect ends at 0 above and nowhere below.
+  expect_identical(v$d$ends, 0)
+  expect_false(v$d$zero)
+  expect_equal(v$d$estimate, signif(drift(0.5), 6))
+  # An intercept has no end and spans zero.
+  expect_length(v$c$ends, 0L)
+  expect_true(v$c$zero)
+  # A variance ends at 0 below.
+  expect_identical(v$v$ends, 0)
+})
+
+test_that("undetermined sds and own variances are removed, together first", {
+  m <- .reduce_model()
+  m$pars$indvarying[m$pars$param %in% c('cint_trend', 'drift_x', 'diff_x', 'trend_drift')] <- TRUE
+  testthat::local_mocked_bindings(.ctReduceOwnVariances = function(fit, model)
+    list(rank = 2L, own = c('cint_trend', 'drift_x', 'diff_x', 'trend_drift')))
+  # Two at their floor span a flat plane, whose directions mix them.
+  f <- ctsem:::.ctReduceFindings(.reduce_fit(list(
+    .reduce_dir(c('popunique_drift_x', 'popunique_diff_x'), c(0.6, 0.8), 1e-22),
+    .reduce_dir(c('popunique_diff_x', 'popunique_drift_x'), c(0.6, -0.8), -1e-24),
+    .reduce_dir('popsd_cint_trend')), model = m))
+  expect_identical(vapply(f, `[[`, '', 'kind'), c('own variances', 'sds'))
+  expect_match(f[[1]]$text, 'the data do not determine the own variances of')
+  cand <- f[[1]]$candidates
+  expect_length(cand, 2L)
+  expect_identical(cand[[1]]$family, 'rank')
+  expect_false(isTRUE(cand[[1]]$fallback))
+  expect_true(cand[[2]]$fallback)
+  both <- cand[[1]]$edit(m, NULL, NULL)$args
+  expect_identical(both$poprank, 2L)
+  expect_setequal(both$popunique, c('cint_trend', 'trend_drift'))
+  expect_identical(f[[2]]$candidates[[1]]$label, 'cint_trend not varying over subjects')
+  # Their coordinates are not a covariance with a dimension too many.
+  expect_false(ctsem:::.ctImproveWeakCovariance(.reduce_fit(list(
+    .reduce_dir(c('popunique_drift_x', 'popunique_diff_x'))), model = m)))
 })
 
 test_that("random effects the data hold at zero or barely determine are made fixed", {
@@ -121,70 +170,43 @@ test_that("random effects the data hold at zero or barely determine are made fix
     list(.reduce_dir('popsd_drift_x')), effects = effects, model = m)))
 })
 
-test_that("the stage keeps the best change the criterion allows and stops", {
-  start <- .reduce_fit(list(.reduce_dir(c('trend_drift', 'cint_trend'))))
-  testthat::local_mocked_bindings(
-    .ctImproveRefit = function(current, model, data, cores, start = NULL, args = NULL) {
-      drift <- model$pars[model$pars$matrix == 'DRIFT' & model$pars$row == 1 &
-        model$pars$col == 1, ]
-      linear <- is.na(drift$param)
-      level <- linear && is.na(model$pars$param[model$pars$matrix == 'CINT' &
-        model$pars$row == 1])
-      # The linear trend fits better with a parameter fewer; the constant level
-      # ends far below; the restated model ends a little below the start.
-      .reduce_fit(list(), loglik = if (level) -110 else if (linear) -95 else -100.5,
-        npar = if (level) 8L else if (linear) 9L else 10L, model = model)
-    },
-    .ctImproveCompare = .reduce_compare,
-    .ctImproveRankStep = function(base, current, kept, ...) list(current = current,
-      kept = kept, data = NULL, args = NULL, history = list(), changed = FALSE))
-  out <- ctsem:::.ctImproveReduce(.reduce_model(), start, list(), NULL, NULL, 'LR',
-    0.05, 1L)
-  expect_true(out$changed)
-  expect_equal(out$current$estimate$loglik, -95)
-  h <- do.call(rbind, out$history)
-  # The constant level ends far below and is refused by the criterion.
-  expect_identical(h$kept, c(TRUE, FALSE, FALSE))
-  expect_match(h$note[1], 'better with fewer parameters')
-  expect_match(h$note[3], 'restated')
-  expect_identical(vapply(out$kept, `[[`, '', 'key'), 'reduce:drift0:trend_drift')
-})
-
-test_that("of the changes kept, the smallest wins, and none is refitted twice", {
-  start <- .reduce_fit(list(.reduce_dir(c('trend_drift', 'cint_trend'))))
+test_that("the stage keeps the smallest change allowed, its fallback only if none", {
   calls <- character()
+  first <- function(model, m) model$pars$param[model$pars$matrix == m &
+    model$pars$row == 1 & model$pars$col == 1]
   testthat::local_mocked_bindings(
+    .ctReduceValues = .reduce_values,
     .ctImproveRefit = function(current, model, data, cores, start = NULL, args = NULL) {
-      first <- function(m) model$pars$param[model$pars$matrix == m &
-        model$pars$row == 1 & model$pars$col == 1]
-      linear <- is.na(first('DRIFT')); level <- linear && is.na(first('CINT'))
-      calls <<- c(calls, if (level) 'level' else if (linear) 'linear' else 'scaled')
-      # Both reductions cost little; the restatement is as good as the start.
-      # Once reduced, the fit still shows the trade-off, so the stage would
-      # propose the same changes again.
-      .reduce_fit(list(.reduce_dir(c('trend_drift', 'cint_trend'))),
-        loglik = if (level) -100.5 else if (linear) -100.2 else -100,
-        npar = if (level) 8L else if (linear) 9L else 10L, model = .reduce_model())
+      if (!is.null(model$fixedpopmeans)) stop('no mean stated here')
+      fixed <- is.na(first(model, 'DRIFT'))
+      value <- as.numeric(model$pars$value[model$pars$matrix == 'DRIFT' &
+        model$pars$row == 1 & model$pars$col == 1])
+      calls <<- c(calls, if (!fixed) 'none' else if (value == 0) 'zero' else 'estimate')
+      # Fixed at 0 the trend ends far below; fixed at its estimate it restates
+      # the fit. Either way the report still shows the direction, which the
+      # stage must not refit again.
+      .reduce_fit(if (fixed && value == 0) list() else list(.reduce_dir('trend_drift')),
+        loglik = if (fixed && value == 0) -110 else -100, npar = 9L)
     },
     .ctImproveCompare = .reduce_compare,
     .ctImproveRankStep = function(base, current, kept, ...) list(current = current,
       kept = kept, data = NULL, args = NULL, history = list(), changed = FALSE))
+  start <- .reduce_fit(list(.reduce_dir('trend_drift')))
   out <- ctsem:::.ctImproveReduce(.reduce_model(), start, list(), NULL, NULL, 'LR',
     0.05, 1L)
-  expect_identical(calls, c('linear', 'level', 'scaled'))
-  expect_identical(vapply(out$kept, `[[`, '', 'key'), 'reduce:level:trend_drift')
-})
+  expect_identical(calls, c('zero', 'estimate'))
+  h <- do.call(rbind, out$history)
+  expect_identical(h$kept, c(FALSE, TRUE))
+  expect_identical(vapply(out$kept, `[[`, '', 'key'), 'reduce:fix:trend_drift=-0.8')
 
-test_that("a rank change drops own variances of parameters no longer varying", {
-  m <- .reduce_model()
-  m$pars$indvarying <- m$pars$param %in% c('cint_trend', 'drift_x', 'diff_x', 'trend_drift')
-  ch <- ctsem:::.ctImproveRankChange(2L, c('cint_trend', 'drift_x', 'diff_x'))
-  m$pars$indvarying[m$pars$param %in% 'drift_x'] <- FALSE
-  expect_identical(ch$edit(m, NULL, NULL)$args,
-    list(poprank = 2L, popunique = c('cint_trend', 'diff_x')))
-  m$pars$indvarying[m$pars$param %in% c('cint_trend', 'diff_x')] <- FALSE
-  # One varying parameter left: the rank is no longer below it.
-  expect_identical(ch$edit(m, NULL, NULL)$args, list(poprank = NA))
+  # Where a simple value is kept, the estimate is not tried.
+  calls <- character()
+  testthat::local_mocked_bindings(.ctImproveCompare = function(current, refit, ...)
+    list(accept = FALSE, dloglik = 0, dpar = 1L, value = 0, score = 0, note = 'by mock'))
+  out <- ctsem:::.ctImproveReduce(.reduce_model(), start, list(), NULL, NULL, 'LR',
+    0.05, 1L)
+  expect_identical(calls, 'zero')
+  expect_identical(vapply(out$kept, `[[`, '', 'key'), 'reduce:fix:trend_drift=0')
 })
 
 test_that("a full covariance goes to shared dimensions with own variances", {
@@ -207,15 +229,27 @@ test_that("a full covariance goes to shared dimensions with own variances", {
   expect_identical(ch$edit(m, NULL, NULL)$args, list(poprank = 3L, popunique = TRUE))
 })
 
-test_that("the fit's warning says what each direction is and how to reduce it", {
-  dirs <- list(.reduce_dir('mvar21', 1e-15), .reduce_dir(c('trend_drift', 'cint_trend')),
-    .reduce_dir(c('rawcor_a__b', 'popsd_a')))
+test_that("a rank change drops own variances of parameters no longer varying", {
+  m <- .reduce_model()
+  m$pars$indvarying <- m$pars$param %in% c('cint_trend', 'drift_x', 'diff_x', 'trend_drift')
+  ch <- ctsem:::.ctImproveRankChange(2L, c('cint_trend', 'drift_x', 'diff_x'))
+  m$pars$indvarying[m$pars$param %in% 'drift_x'] <- FALSE
+  expect_identical(ch$edit(m, NULL, NULL)$args,
+    list(poprank = 2L, popunique = c('cint_trend', 'diff_x')))
+  m$pars$indvarying[m$pars$param %in% c('cint_trend', 'diff_x')] <- FALSE
+  # One varying parameter left: the rank is no longer below it.
+  expect_identical(ch$edit(m, NULL, NULL)$args, list(poprank = NA))
+})
+
+test_that("the fit's warning says what is flat and how to reduce it", {
+  dirs <- list(.reduce_dir('mvar21', relative = 1e-15), .reduce_dir('trend_drift'),
+    .reduce_dir(c('rawcor_a__b', 'rawcor_a__c', 'rawcor_b__c', 'popsd_a')))
   fit <- .reduce_fit(dirs)
-  f <- ctsem:::.ctReduceFindings(fit)
+  f <- ctsem:::.ctReduceFindings(fit, candidates = FALSE)
   expect_warning(ctsem:::.ctBackendIdentifyWarn(fit$identifiability, NULL, NULL,
-    findings = f), paste0('mvar21 is not read by the likelihood; trend_drift and ',
-    'cint_trend trade off.*more dimensions than the subjects identify.*',
-    'ctModelImprove\\(fit, reduceOnly = TRUE\\)'))
+    findings = f), paste0('mvar21 is not read by the likelihood; trend_drift is not ',
+    'determined by the data; the population covariance has more dimensions than ',
+    'the subjects identify.*ctModelImprove\\(fit, reduceOnly = TRUE\\)'))
   # Without findings, the bare list as before.
   expect_warning(ctsem:::.ctBackendIdentifyWarn(fit$identifiability, NULL, NULL),
     'Not estimable as the model stands')
@@ -223,22 +257,4 @@ test_that("the fit's warning says what each direction is and how to reduce it", 
   # A description that starts with a word starts the sentence.
   cov <- Filter(function(x) identical(x$kind, 'covariance'), f)
   expect_match(ctsem:::.ctReduceWarnText(cov), '^The population covariance has more')
-})
-
-test_that("own variances at zero leave the level's own variances, the rank kept", {
-  m <- .reduce_model()
-  m$pars$indvarying[m$pars$param %in% c('cint_trend', 'drift_x', 'diff_x', 'trend_drift')] <- TRUE
-  testthat::local_mocked_bindings(.ctReduceOwnVariances = function(fit, model)
-    list(rank = 2L, own = c('cint_trend', 'drift_x', 'diff_x', 'trend_drift')))
-  # Two at zero span a flat plane, whose directions mix them.
-  f <- ctsem:::.ctReduceFindings(.reduce_fit(list(.reduce_dir(c('popunique_drift_x',
-    'popunique_diff_x'), 1e-22), .reduce_dir(c('popunique_diff_x', 'popunique_drift_x'),
-    -1e-24)), model = m))
-  expect_identical(vapply(f, `[[`, '', 'kind'), 'own variance at zero')
-  expect_match(f[[1]]$text, 'the own variances of drift_x, diff_x are at zero')
-  ch <- f[[1]]$candidates[[1]]
-  expect_identical(ch$family, 'rank')
-  expect_identical(ch$label, 'no own variance for drift_x, diff_x')
-  expect_identical(ch$edit(m, NULL, NULL)$args,
-    list(poprank = 2L, popunique = c('cint_trend', 'trend_drift')))
 })

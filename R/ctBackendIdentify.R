@@ -888,7 +888,7 @@
   }
   .ctBackendIdentifyWarn(identify, fit$collapsedScales, intervals,
     findings = if (isTRUE(identify$nweak > 0L))
-      tryCatch(.ctReduceFindings(fit), error = function(e) list()))
+      tryCatch(.ctReduceFindings(fit, candidates = FALSE), error = function(e) list()))
   said <- isTRUE(identify$nweak > 0L) || isTRUE(intervals$nflagged > 0L) ||
     isTRUE(intervals$nunidentified > 0L)
   if (length(repairs) && !said) warning(repairs[1L], call. = FALSE)

@@ -1,44 +1,45 @@
 # Reducing a model whose fit leaves directions the data do not identify.
 #
-# A fit's identifiability report (`fit$identifiability$directions`) lists the
-# directions along which the likelihood is flat, each with the parameters it
-# is made of. A few kinds recur, and each has a model change that removes it:
+# Nothing here knows what a model's parameters mean. The fit's identifiability
+# report (`fit$identifiability$directions`) gives the directions along which
+# the likelihood is flat, and each parameter's transform gives its range. From
+# those alone:
 #
-#   unread        a parameter the likelihood does not read (a measurement
-#                 error covariance between items scored one at a time, before
-#                 that was refused, or an auto-effect at its transform's bound
-#                 near zero): curvature exactly zero along it alone. Fixed at
-#                 zero where zero is a model (an off-diagonal, an effect, an
-#                 auto-effect).
-#   drift-intercept / drift-diffusion
-#                 a latent's auto-effect against its intercept or its
-#                 diffusion, with their spread over subjects: the process
-#                 settles faster than the data resolve, so only their ratio is
-#                 determined. A latent without noise (a trend) is refitted at
-#                 both ends of its auto-effect, as a linear trend (auto-effect
-#                 fixed at zero) and as a constant level (auto-effect and
-#                 intercept fixed at zero); any is refitted with its intercept
-#                 or diffusion scaled by the drift (`driftScaled`), which
-#                 states the same model along the ratio.
-#   covariance    population sds, correlations or loadings: the covariance
-#                 has more dimensions than the subjects identify. Refitted at
-#                 lower ranks (`.ctImproveRankStep()`), from full rank with
-#                 own variances (`popunique`).
-#   no spread / weak
-#                 random effects the data hold at zero, or barely determine
-#                 (`fit$identifiability$effects`). Made fixed.
+#   A coordinate is undetermined where most of its variation lies in the flat
+#   subspace: its share, the squared length of its axis projected on an
+#   orthonormal basis of the directions, is at least a half. An undetermined
+#   model parameter is refitted at the simple values its range offers (each
+#   finite end, and zero where zero is inside) and, where none of those is
+#   kept, at its estimate, which states the same fit with one parameter fewer.
+#   An undetermined population sd or own variance is refitted without it, zero
+#   being the end of a variance's range.
+#
+#   A flat subspace that lies mostly in the other population coordinates is a
+#   covariance with more dimensions than the subjects identify, even where no
+#   one correlation or loading is undetermined: refitted at lower ranks
+#   (`.ctImproveRankStep()`), from full rank with own variances (`popunique`).
+#
+#   Random effects the effects report holds at zero or barely determines are
+#   made fixed.
 #
 # `ctModelImprove(fit, reduceOnly = TRUE)` refits each change from the current
-# estimate and keeps it unless the fuller model is better by the search's
-# criterion, the one with fewest parameters where several are kept; the full
-# search does the same before it screens and after each change it keeps. On follhim/dis_ctsem (2026-11-21) the original fit's report
-# held all four kinds at once: an ignored error covariance, a stress trend
-# whose auto-effect had run to -37 an hour along its intercept (fixed at zero
-# it fitted 21.6 nats better with three fewer parameters), and a 10 x 10
-# random-effects covariance of about rank 6.
+# estimate, keeps it unless the fuller model is better by the search's
+# criterion (of several kept, the one with fewest parameters), and reads the
+# new fit's report again; the full search does the same before it screens and
+# after each change it keeps.
+#
+# Rules written for the ridges one model showed do not carry to the next. On
+# follhim/dis_ctsem (2026-11-21) a rule for an auto-effect against its
+# intercept fired on the original fit by coincidence: that auto-effect had
+# 0.003 of its variation in the flat subspace, which lay in the covariance's
+# correlations (none with more than 0.28 of its own there). It became
+# undetermined only once the rank was lowered, and the shares then said so.
 
 # A raw coordinate of a population covariance.
 .ctReducePopCoordinate <- function(p) grepl('^(popsd_|rawcor_|poploading_|popunique_)', p)
+
+# A population sd or own variance at the subject level.
+.ctReduceSpreadCoordinate <- function(p) grepl('^(popsd|popunique)_[^.]+$', p)
 
 # The cells of model parameters, by name: matrix, row and column of the cell
 # that holds each (`.ctParamRows()`), NA where the name is not a parameter of
@@ -50,48 +51,12 @@
     col = pars$col[rows], stringsAsFactors = FALSE)
 }
 
-# The parameter name of a model cell, or NA where the cell is fixed or an
-# expression.
-.ctReduceCellParam <- function(model, matrix, row, col) {
-  pars <- model$pars
-  r <- which(pars$matrix == matrix & pars$row == row & pars$col == col)
-  if (length(r) != 1L || is.na(pars$param[r]) || !is.na(pars$value[r]) ||
-      !grepl('^[A-Za-z][A-Za-z0-9_.]*$', pars$param[r])) return(NA_character_)
-  pars$param[r]
-}
-
-# The effect a population coordinate is the spread of: its sd, own variance or
-# loadings; '' for a correlation, which is the spread of no one effect. A level
-# above the subject is a suffix (`popsd_<parameter>.<level>`).
-.ctReduceCoordinateEffect <- function(p, model) {
-  levels <- model$groupIDnames
-  if (length(levels)) p <- sub(paste0('\\.(', paste(levels, collapse = '|'), ')$'), '', p)
-  if (grepl('^poploading_.+_dim[0-9]+$', p)) return(sub('^poploading_(.+)_dim[0-9]+$', '\\1', p))
-  if (grepl('^(popsd|popunique)_', p)) return(sub('^(popsd|popunique)_', '', p))
-  ''
-}
-
-# A latent's auto-effect fixed at zero: a linear trend where the latent has no
-# noise of its own, a random walk where it has. One key for both readings, so a
-# change refused under one finding is not refitted under another.
-.ctReduceDriftZero <- function(model, drift, i) .ctReduceProposal(
-  paste0('reduce:drift0:', drift), paste0(drift, ' fixed at 0 (',
-    if (.ctReduceNoNoise(model, i)) 'a linear trend' else 'a random walk', ')'),
-  .ctReduceFixEdit(drift, 0))
-
-# Whether latent i has no noise of its own: every DIFFUSION cell in its row and
-# column fixed at zero.
-.ctReduceNoNoise <- function(model, i) {
-  pars <- model$pars
-  r <- which(pars$matrix == 'DIFFUSION' & (pars$row == i | pars$col == i))
-  length(r) > 0L && all(is.na(pars$param[r]) &
-    suppressWarnings(as.numeric(pars$value[r])) %in% 0)
-}
-
 # A reduction as `.ctImproveRebuild()` applies it: an edit of the model, never
-# pruned (undoing it adds back what the data did not identify).
-.ctReduceProposal <- function(key, label, edit) list(key = key, family = 'reduce',
-  label = label, p = NA_real_, rank = 0, prunable = FALSE, edit = edit)
+# pruned (undoing it adds back what the data did not identify). A `fallback`
+# is tried only where no other change for its finding was kept.
+.ctReduceProposal <- function(key, label, edit, fallback = FALSE) list(key = key,
+  family = 'reduce', label = label, p = NA_real_, rank = 0, prunable = FALSE,
+  edit = edit, fallback = fallback)
 
 # `params` fixed at `value` in every cell that holds them, with no random or
 # predictor effect.
@@ -105,6 +70,18 @@
     pars$transform[r] <- NA_character_
     model$pars <- pars
     model <- .ctReduceNoVariation(model, r)
+    list(model = model, data = data, args = list())
+  }
+}
+
+# A varying parameter's population mean stated at `value`
+# (`model$fixedpopmeans`), its random effect kept.
+.ctReduceStateEdit <- function(param, value) {
+  force(param); force(value)
+  function(model, data, covs, args = list()) {
+    means <- model$fixedpopmeans
+    model$fixedpopmeans <- c(means[setdiff(names(means), param)],
+      stats::setNames(value, param))
     list(model = model, data = data, args = list())
   }
 }
@@ -128,22 +105,132 @@
   }
 }
 
-# A matrix's cells written as what they accrue over one time unit
-# (`.ctModelDriftScaled()`), beside any already so.
-.ctReduceDriftScaledEdit <- function(which) {
-  force(which)
-  function(model, data, covs, args = list()) {
-    model <- suppressMessages(.ctModelDriftScaled(model,
-      unique(c(model$driftScaled, which))))
-    list(model = model, data = data, args = list())
+# The flat subspace of an identifiability report: each coordinate's share of
+# it, and the coordinates with zero curvature alone, which nothing the
+# likelihood computes reads. The share is taken on an orthonormal basis of the
+# directions' loadings, since the report lists a direction twice where two
+# eigenvalues are equal to roundoff (two own variances at zero on the dis model
+# came as four directions) and keeps only the loadings above
+# `.ctNullMassBar()`. Coordinates in `held` (random effects the effects report
+# has a line for) are left out.
+.ctReduceFlat <- function(id, held = character()) {
+  dirs <- Filter(function(d) is.null(d$partial), id$directions)
+  params <- setdiff(unique(unlist(lapply(dirs, function(d) as.character(d$parameters)))),
+    held)
+  out <- list(share = stats::setNames(numeric(), character()), unread = character())
+  if (!length(params)) return(out)
+  V <- matrix(0, length(params), length(dirs), dimnames = list(params, NULL))
+  for (j in seq_along(dirs)) {
+    p <- as.character(dirs[[j]]$parameters)
+    l <- as.numeric(dirs[[j]]$loadings)
+    if (length(l) != length(p) || !all(is.finite(l))) l <- rep(1, length(p))
+    keep <- p %in% params
+    V[p[keep], j] <- l[keep]
   }
+  q <- qr(V, tol = 1e-6)
+  Q <- qr.Q(q)[, seq_len(q$rank), drop = FALSE]
+  out$share <- stats::setNames(pmin(rowSums(Q^2), 1), params)
+  out$unread <- unique(unlist(lapply(dirs, function(d) {
+    p <- setdiff(as.character(d$parameters), held)
+    if (length(p) == 1L && isTRUE(abs(d$relative) < 1e-12)) p
+  })))
+  out
 }
 
-# What a fit's identifiability report says, sorted into the kinds above: one
-# finding per kind and latent, each with the parameters involved, a phrase
-# saying what it is, and the changes that would remove it (`candidates`; none
-# for a kind the rank step handles or for a direction of no known kind).
-.ctReduceFindings <- function(fit) {
+# How much of the flat subspace lies in population coordinates other than the
+# sds and own variances undetermined on their own: at least half a dimension
+# is a covariance with more dimensions than the subjects identify.
+.ctReduceCovarianceMass <- function(share) {
+  pop <- .ctReducePopCoordinate(names(share))
+  alone <- .ctReduceSpreadCoordinate(names(share)) & share >= 0.5
+  sum(share[pop & !alone])
+}
+
+# The values a parameter's range offers as simpler models, and its estimate,
+# on the parameter's own scale: its cells evaluated at the estimate with its
+# raw coordinate moved far out each way (`.ctBackendPopMeanSamples()`). An end
+# is finite where the transform has stopped moving there; one within 1e-4 of
+# zero is zero, since a transform keeps a variance or an auto-effect that far
+# from it only to stay inside its range. Zero is offered too where it lies
+# inside the range. A named list by parameter, each with `ends`, `zero` and
+# `estimate`; parameters it cannot evaluate are left out.
+.ctReduceValues <- function(fit, params) {
+  raw <- .ctFitNameRaw(fit, fit$estimate$raw)
+  index <- match(params, names(raw))
+  params <- params[!is.na(index)]; index <- index[!is.na(index)]
+  if (!length(params)) return(list())
+  far <- c(-40, -30, 30, 40)
+  rows <- do.call(rbind, lapply(index, function(k) {
+    m <- matrix(raw, nrow = 1L + length(far), ncol = length(raw), byrow = TRUE)
+    m[-1L, k] <- far
+    m
+  }))
+  mapped <- tryCatch(.ctBackendPopMeanSamples(fit, samples = rows), error = function(e) NULL)
+  if (is.null(mapped) || is.null(mapped$values)) return(list())
+  values <- as.matrix(mapped$values)
+  out <- list()
+  for (i in seq_along(params)) {
+    column <- match(index[i], as.integer(mapped$parnumber))
+    if (is.na(column)) next
+    v <- values[(i - 1L) * (1L + length(far)) + seq_len(1L + length(far)), column]
+    still <- function(a, b) is.finite(a) && is.finite(b) &&
+      abs(a - b) <= 1e-6 * max(1, abs(a))
+    ends <- numeric()
+    if (still(v[2], v[3])) ends <- c(ends, v[2])
+    if (still(v[5], v[4])) ends <- c(ends, v[5])
+    ends <- unique(ifelse(abs(ends) < 1e-4, 0, signif(ends, 6)))
+    lo <- min(v[2], v[5]); hi <- max(v[2], v[5])
+    out[[params[i]]] <- list(ends = ends,
+      zero = is.finite(lo) && is.finite(hi) && lo < 0 && hi > 0 && !0 %in% ends,
+      estimate = signif(v[1], 6))
+  }
+  out
+}
+
+# The changes for undetermined model parameters: each fixed at its range's
+# simple values, then, as the fallback, the first (the largest share) at its
+# estimate. A parameter varying over subjects keeps its random effect where
+# its mean is stated inside its range; at an end, where no mean can be stated,
+# it is fixed and not varying.
+.ctReduceParameterChanges <- function(fit, model, params) {
+  values <- .ctReduceValues(fit, params)
+  varying <- .ctImproveVarying(model)
+  num <- function(x) format(x, digits = 3)
+  out <- list()
+  for (p in names(values)) {
+    v <- values[[p]]
+    for (x in v$ends) out[[length(out) + 1L]] <- .ctReduceProposal(
+      paste0('reduce:fix:', p, '=', x), paste0(p, ' fixed at ', num(x),
+        if (p %in% varying) ', not varying'), .ctReduceFixEdit(p, x))
+    if (isTRUE(v$zero)) out[[length(out) + 1L]] <- if (p %in% varying)
+      .ctReduceProposal(paste0('reduce:mean:', p, '=0'), paste0(p, "'s mean fixed at 0"),
+        .ctReduceStateEdit(p, 0)) else
+      .ctReduceProposal(paste0('reduce:fix:', p, '=0'), paste0(p, ' fixed at 0'),
+        .ctReduceFixEdit(p, 0))
+  }
+  first <- intersect(params, names(values))[1L]
+  if (!is.na(first)) {
+    x <- values[[first]]$estimate
+    out[[length(out) + 1L]] <- if (first %in% varying)
+      .ctReduceProposal(paste0('reduce:mean:', first, '=', x), paste0(first,
+        "'s mean fixed at its estimate, ", num(x)), .ctReduceStateEdit(first, x),
+        fallback = TRUE) else
+      .ctReduceProposal(paste0('reduce:fix:', first, '=', x), paste0(first,
+        ' fixed at its estimate, ', num(x)), .ctReduceFixEdit(first, x), fallback = TRUE)
+  }
+  out
+}
+
+# `x is` or `x, y are`, for a sentence.
+.ctReduceAre <- function(x) paste(paste(x, collapse = ', '),
+  if (length(x) > 1L) 'are' else 'is')
+
+# What a fit's identifiability report says, sorted by the rules above into
+# findings, each with the coordinates involved, a phrase saying what it is,
+# whether `ctModelImprove(fit, reduceOnly = TRUE)` has a change for it
+# (`reducible`), and, with `candidates`, those changes (which evaluates the
+# parameters' ranges, so a warning leaves them out).
+.ctReduceFindings <- function(fit, candidates = TRUE) {
   # The model as written; while ctFit() is still assembling the fit, which is
   # when its warnings are made, the one the engine ran (`.ctFitModelObject()`),
   # whose parameters and cells are the same.
@@ -154,144 +241,77 @@
   zero <- .ctEffectRows(id$effects, 'zero')
   weak <- .ctEffectRows(id$effects, 'weak')
   held <- c(if (!is.null(zero)) zero$coordinate, if (!is.null(weak)) weak$coordinate)
-  out <- list()
-  add <- function(f) if (!f$key %in% vapply(out, `[[`, '', 'key')) out[[length(out) + 1L]] <<- f
-  latent <- function(i) model$latentNames[i]
-  zeroown <- character(); zerosd <- character()
-  spreadof <- character(); rest <- list()
-  for (d in id$directions) {
-    # A ridge of the augmented route between a population sd and its
-    # correlations (`$partial`) is that route's, which the Laplace route
-    # identifies (`.ctIdentifyAdvice()`): no change to the model.
-    if (!is.null(d$partial)) next
-    p <- setdiff(as.character(d$parameters), held)
-    if (!length(p)) next
-    # Own variances or sds alone at zero curvature: held at the floor of
-    # their transforms, where every smaller value is as good. Several at once
-    # span a flat space whose basis mixes them, so a direction of only such
-    # coordinates names each. On follhim/dis_ctsem two own variances of a
-    # rank-5 covariance sat there, and at rank 3 two more shared directions.
-    if (isTRUE(abs(d$relative) < 1e-12) && all(grepl('^(popunique|popsd)_[^.]+$', p))) {
-      zeroown <- unique(c(zeroown, sub('^popunique_', '', grep('^popunique_', p, value = TRUE))))
-      zerosd <- unique(c(zerosd, sub('^popsd_', '', grep('^popsd_', p, value = TRUE))))
-      next
-    }
-    pop <- .ctReducePopCoordinate(p)
-    mp <- p[!pop]
-    # The effect each population coordinate is the spread of; a correlation
-    # names two, and is the spread of neither alone.
-    own <- vapply(p[pop], .ctReduceCoordinateEffect, '', model = model)
-    cells <- .ctReduceCells(model, mp)
-    if (length(p) == 1L && isTRUE(abs(d$relative) < 1e-12) && !is.na(cells$matrix[1L])) {
-      # Zero curvature, to roundoff, along one parameter alone: nothing the
-      # likelihood computes reads it (`.ctOptimIdentifiedInverse()`'s 1e-12 for
-      # a direction with no width at all), or it sits where its transform is
-      # flat. An off-diagonal, an effect or an auto-effect is fixed at zero (an
-      # auto-effect at its bound near zero is a linear trend, or a random walk
-      # where the latent has noise); any other cell is named, not changed.
-      cand <- list()
-      if (cells$matrix[1L] %in% 'DRIFT' && cells$row[1L] == cells$col[1L]) {
-        cand <- list(.ctReduceDriftZero(model, mp, cells$row[1L]))
-      } else if (cells$row[1L] != cells$col[1L] ||
-          cells$matrix[1L] %in% c('TDPREDEFFECT', 'LAMBDA')) {
-        cand <- list(.ctReduceProposal(paste0('reduce:fix:', mp),
-          paste0(mp, ' fixed at 0'), .ctReduceFixEdit(mp, 0)))
-      }
-      add(list(key = paste0('unread:', mp), kind = 'unread', parameters = mp,
-        text = paste0(mp, ' is not read by the likelihood'), candidates = cand))
-      next
-    }
-    # A latent's auto-effect with its intercept, or with its diffusion: the
-    # spread of the intercept or diffusion over subjects scales with it too, so
-    # its own population coordinates belong to the same finding. On the dis
-    # model reduced to rank 3, the stress trend's one flat direction was its
-    # auto-effect, its intercept and the intercept's three loadings and own
-    # variance -- two thirds population coordinates, and no covariance problem.
-    explained <- character()
-    for (i in unique(cells$row[cells$matrix %in% 'DRIFT' & cells$row == cells$col])) {
-      drift <- cells$param[cells$matrix %in% 'DRIFT' & cells$row == i & cells$col == i][1L]
-      cint <- .ctReduceCellParam(model, 'CINT', i, 1L)
-      diffusion <- .ctReduceCellParam(model, 'DIFFUSION', i, i)
-      spread <- function(x) names(own)[own %in% x]
-      if (!is.na(cint) && (cint %in% mp || length(spread(cint)))) {
-        # The latent's start sets its path with the two, so its spread moves
-        # with them too: on the dis model at rank 3, the distress trend's slow
-        # auto-effect shared a direction with its start's own variance.
-        t0 <- .ctReduceCellParam(model, 'T0MEANS', i, 1L)
-        spreadof <- c(spreadof, cint, t0[!is.na(t0)])
-        explained <- c(explained, drift, cint, spread(cint), spread(t0))
-        cand <- list()
-        if (.ctReduceNoNoise(model, i)) cand <- list(.ctReduceDriftZero(model, drift, i),
-          .ctReduceProposal(paste0('reduce:level:', drift), paste0(latent(i),
-            ' a constant level (', drift, ' and ', cint, ' fixed at 0)'),
-            .ctReduceFixEdit(c(drift, cint), 0)))
-        if (!'CINT' %in% model$driftScaled) cand[[length(cand) + 1L]] <- .ctReduceProposal(
-          'reduce:driftscaled:CINT', "intercepts scaled by the drift (driftScaled = 'CINT')",
-          .ctReduceDriftScaledEdit('CINT'))
-        add(list(key = paste0('driftcint:', i), kind = 'drift-intercept',
-          parameters = c(drift, cint), text = paste0(drift, ' and ', cint,
-            ' trade off: ', latent(i), ' settles faster than the data resolve'),
-          candidates = cand))
-      }
-      if (!is.na(diffusion) && (diffusion %in% mp || length(spread(diffusion)))) {
-        spreadof <- c(spreadof, diffusion)
-        explained <- c(explained, drift, diffusion, spread(diffusion))
-        add(list(key = paste0('driftdiffusion:', i), kind = 'drift-diffusion',
-          parameters = c(drift, diffusion), text = paste0(drift, ' and ', diffusion,
-            ' trade off: ', latent(i), ' forgets its state faster than the data resolve'),
-          candidates = if ('DIFFUSION' %in% model$driftScaled) list() else
-            list(.ctReduceProposal('reduce:driftscaled:DIFFUSION',
-              "diffusions scaled by the drift (driftScaled = 'DIFFUSION')",
-              .ctReduceDriftScaledEdit('DIFFUSION')))))
-      }
-    }
-    rest[[length(rest) + 1L]] <- list(p = p, rest = setdiff(p, explained),
-      explained = length(explained) > 0L)
-  }
-  # What no pattern accounts for: mostly population coordinates is a
-  # covariance with more dimensions than the subjects identify, which the rank
-  # step reduces; anything else is named. The flat directions of one fit span a
-  # space whose basis is arbitrary, so one direction can carry two problems (a
-  # trend's trade-off beside a covariance's surplus dimensions), and the spread
-  # of an intercept in a trade-off can lie in a direction of its own: on the dis
-  # model at rank 3, the intercept's loadings and own variance alone. So the
-  # spread of an effect in any trade-off is the trade-off's, in every direction.
-  for (r in rest) {
-    left <- r$rest[!vapply(r$rest, function(x) .ctReduceCoordinateEffect(x, model) %in%
-      spreadof, logical(1))]
-    if (length(left) && mean(.ctReducePopCoordinate(left)) >= 0.5) {
-      add(list(key = 'covariance', kind = 'covariance',
-        parameters = left[.ctReducePopCoordinate(left)],
-        text = 'the population covariance has more dimensions than the subjects identify',
-        candidates = list()))
-    } else if (!r$explained && length(left)) add(list(key = paste0('other:',
-      paste(sort(r$p), collapse = ',')), kind = 'other', parameters = r$p,
-      text = paste(utils::head(r$p, 4), collapse = ', '), candidates = list()))
-  }
+  flat <- .ctReduceFlat(id, held)
+  share <- flat$share
+  coords <- names(share)
   single <- !length(model$groupIDnames)
-  # Own variances at zero leave the level's own variances, the rank kept: a
-  # rank change (`.ctImproveRankChange()`) that replaces the level's.
-  if (length(zeroown)) {
-    own <- .ctReduceOwnVariances(fit, model)
-    cand <- list()
-    if (single && !is.null(own) && isTRUE(own$rank >= 1L) && all(zeroown %in% own$own)) {
-      rest <- setdiff(own$own, zeroown)
-      ch <- .ctImproveRankChange(own$rank, if (length(rest)) rest else FALSE)
-      ch$label <- paste0('no own variance for ', paste(zeroown, collapse = ', '))
-      cand <- list(ch)
-    }
-    add(list(key = paste0('zeroown:', paste(sort(zeroown), collapse = ',')),
-      kind = 'own variance at zero', parameters = paste0('popunique_', zeroown),
-      text = paste0('the own variance', if (length(zeroown) > 1L) 's', ' of ',
-        paste(zeroown, collapse = ', '), if (length(zeroown) > 1L) ' are' else ' is',
-        ' at zero'), candidates = cand))
+  out <- list()
+  finding <- function(key, kind, parameters, text, cand = list(), reducible = TRUE)
+    out[[length(out) + 1L]] <<- list(key = key, kind = kind, parameters = parameters,
+      text = text, candidates = cand, reducible = reducible)
+
+  pop <- .ctReducePopCoordinate(coords)
+  undetermined <- share >= 0.5 | coords %in% flat$unread
+  incell <- !is.na(.ctReduceCells(model, coords)$matrix)
+  mp <- coords[!pop & incell & undetermined]
+  mp <- mp[order(-share[mp], match(mp, coords))]
+  if (length(mp)) {
+    unread <- intersect(mp, flat$unread)
+    rest <- setdiff(mp, unread)
+    finding('parameters', 'parameters', mp, paste(c(
+      if (length(unread)) paste(.ctReduceAre(unread), 'not read by the likelihood'),
+      if (length(rest)) paste(.ctReduceAre(rest), 'not determined by the data')),
+      collapse = '; '), if (candidates) .ctReduceParameterChanges(fit, model, mp))
   }
-  if (length(zerosd) && single) add(list(key = paste0('zerosd:',
-      paste(sort(zerosd), collapse = ',')), kind = 'sd at zero', parameters = zerosd,
-    text = paste0(paste(zerosd, collapse = ', '), ': the data hold their individual ',
-      'differences at zero'), candidates = list(.ctReduceProposal(paste0('reduce:fixed:',
-      paste(sort(zerosd), collapse = ',')), paste0(paste(zerosd, collapse = ', '),
-      ' not varying over subjects'), .ctReduceFixedEffectsEdit(zerosd)))))
+  # Undetermined coordinates no change reaches: a predictor effect, a cell
+  # written as an expression.
+  other <- coords[!pop & !incell & undetermined]
+  if (length(other)) finding(paste0('other:', paste(sort(other), collapse = ',')),
+    'other', other, paste(.ctReduceAre(other), 'not determined by the data'),
+    reducible = FALSE)
+
+  # Undetermined own variances leave the level's own variances, the rank kept:
+  # a rank change (`.ctImproveRankChange()`) that replaces the level's. All of
+  # them at once, then, as the fallback, the one with the largest share.
+  spread <- coords[.ctReduceSpreadCoordinate(coords) & undetermined]
+  spread <- spread[order(-share[spread])]
+  own <- sub('^popunique_', '', grep('^popunique_', spread, value = TRUE))
+  if (length(own)) {
+    info <- .ctReduceOwnVariances(fit, model)
+    able <- single && !is.null(info) && isTRUE(info$rank >= 1L) && all(own %in% info$own)
+    cand <- list()
+    if (candidates && able) for (drop in unique(list(own, own[1L]))) {
+      rest <- setdiff(info$own, drop)
+      ch <- .ctImproveRankChange(info$rank, if (length(rest)) rest else FALSE)
+      ch$label <- paste0('no own variance for ', paste(drop, collapse = ', '))
+      ch$fallback <- length(cand) > 0L
+      cand[[length(cand) + 1L]] <- ch
+    }
+    finding(paste0('own:', paste(sort(own), collapse = ',')), 'own variances',
+      paste0('popunique_', own), paste0('the data do not determine the own variance',
+        if (length(own) > 1L) 's', ' of ', paste(own, collapse = ', ')), cand,
+      reducible = able)
+  }
+  sds <- sub('^popsd_', '', grep('^popsd_', spread, value = TRUE))
+  if (length(sds)) {
+    cand <- list()
+    if (candidates && single) for (drop in unique(list(sds, sds[1L])))
+      cand[[length(cand) + 1L]] <- .ctReduceProposal(paste0('reduce:fixed:',
+        paste(sort(drop), collapse = ',')), paste0(paste(drop, collapse = ', '),
+        ' not varying over subjects'), .ctReduceFixedEffectsEdit(drop),
+        fallback = length(cand) > 0L)
+    finding(paste0('sds:', paste(sort(sds), collapse = ',')), 'sds',
+      paste0('popsd_', sds), paste0('the data do not determine how much ',
+        paste(sds, collapse = ', '), if (length(sds) > 1L) ' vary' else ' varies',
+        ' over subjects'), cand, reducible = single)
+  }
+  # The covariance: the rank step's (`.ctImproveWeakCovariance()`).
+  if (.ctReduceCovarianceMass(share) >= 0.5) {
+    covs <- coords[pop & !(coords %in% spread)]
+    finding('covariance', 'covariance', covs[order(-share[covs])],
+      'the population covariance has more dimensions than the subjects identify',
+      reducible = single)
+  }
   # Random effects the data hold at zero, or barely determine: on a model with
   # one level only, where `indvarying = FALSE` means what it says.
   for (w in list(list(rows = zero, kind = 'no spread',
@@ -299,11 +319,11 @@
     list(rows = weak, kind = 'weak', text = ': the data barely determine their individual differences'))) {
     if (is.null(w$rows) || !nrow(w$rows) || !single) next
     eff <- unique(as.character(w$rows$effect))
-    add(list(key = paste0(w$kind, ':', paste(sort(eff), collapse = ',')), kind = w$kind,
-      parameters = eff, text = paste0(paste(eff, collapse = ', '), w$text),
-      candidates = list(.ctReduceProposal(paste0('reduce:fixed:', paste(sort(eff), collapse = ',')),
-        paste0(paste(eff, collapse = ', '), ' not varying over subjects'),
-        .ctReduceFixedEffectsEdit(eff)))))
+    finding(paste0(w$kind, ':', paste(sort(eff), collapse = ',')), w$kind, eff,
+      paste0(paste(eff, collapse = ', '), w$text),
+      if (candidates) list(.ctReduceProposal(paste0('reduce:fixed:', paste(sort(eff),
+        collapse = ',')), paste0(paste(eff, collapse = ', '), ' not varying over subjects'),
+        .ctReduceFixedEffectsEdit(eff))))
   }
   out
 }
@@ -356,10 +376,13 @@
 # The reduction stage: while the current fit's report has a finding with a
 # change not yet refused, refit each of its changes, keep the best the
 # criterion allows, and read the new fit's report (`.ctReduceFindingsStep()`);
-# then lower the population covariance's rank while it is not identified
-# (`.ctImproveRankStep()`), and where that keeps a rank, look again: a lower
-# rank can leave own variances at zero, which the findings drop. Every change
-# reduces, so this ends. Returns as `.ctImproveRankStep()` does.
+# then lower the population covariance's rank by one step if it is not
+# identified (`.ctImproveRankStep()`), and where that keeps a rank, look again:
+# a lower rank can leave a parameter or an own variance undetermined, which is
+# removed before the next rank. On the dis model the stress trend's
+# auto-effect became undetermined at rank 5 and walked to raw -760 through
+# three more rank refits, each of which took several times as long. Every
+# change reduces, so this ends. Returns as `.ctImproveRankStep()` does.
 .ctImproveReduce <- function(base, current, kept, startdata, covariates, criterion,
     alpha, cores, say = function(...) invisible(), label = '', round = NA_integer_) {
   st <- list(current = current, kept = kept, data = NULL, args = NULL, history = list(),
@@ -368,7 +391,7 @@
     st <- .ctReduceFindingsStep(st, base, startdata, covariates, criterion, alpha,
       cores, say, label, round)
     ranked <- .ctImproveRankStep(base, st$current, st$kept, startdata, covariates,
-      criterion, alpha, cores, say, label = label, round = round)
+      criterion, alpha, cores, say, label = label, round = round, once = TRUE)
     st$history <- c(st$history, ranked$history)
     if (!ranked$changed) break
     st[c('current', 'kept', 'data', 'args')] <- ranked[c('current', 'kept', 'data', 'args')]
@@ -394,6 +417,7 @@
     say(label, f$text)
     best <- NULL
     for (cand in f$candidates) {
+      if (isTRUE(cand$fallback) && !is.null(best)) next
       say(label, "refitting with ", cand$label)
       # A rank change replaces the level's (as `.ctImproveRankStep()` does).
       prior <- if (identical(cand$family, 'rank'))
@@ -427,15 +451,15 @@
   }
 }
 
-# The findings of the kinds in `describe`, in a sentence for a warning, the
-# covariance naming two of its parameters, and the call that tries the changes
-# for them. Random effects held at zero or barely determined have their own
-# lines (`.ctIdentifyAdvice()`, `.ctEffectAdvice()`), so they are not
-# described here. '' where no finding has a change to try.
+# The findings of the kinds in `describe` that the reduction has changes for,
+# in a sentence for a warning, the covariance naming two of its coordinates,
+# and the call that tries the changes. Random effects held at zero or barely
+# determined have their own lines (`.ctIdentifyAdvice()`,
+# `.ctEffectAdvice()`), so they are not described here. '' where no finding
+# has a change to try.
 .ctReduceWarnText <- function(findings,
-    describe = c('unread', 'drift-intercept', 'drift-diffusion', 'covariance',
-      'own variance at zero', 'sd at zero')) {
-  shown <- Filter(function(f) f$kind %in% describe, findings)
+    describe = c('parameters', 'own variances', 'sds', 'covariance')) {
+  shown <- Filter(function(f) f$kind %in% describe && isTRUE(f$reducible), findings)
   if (!length(shown)) return('')
   parts <- vapply(shown, function(f) if (identical(f$kind, 'covariance'))
     paste0(f$text, ' (', paste(utils::head(f$parameters, 2), collapse = ', '),

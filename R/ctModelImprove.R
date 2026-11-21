@@ -111,37 +111,33 @@
 #' not reached an optimum, and is recorded as such.
 #'
 #' @section Reducing: Before it screens, and after each change it keeps, the
-#'   search looks at the directions the data do not identify
-#'   (\code{fit$identifiability}) and tries the change that removes each kind
-#'   it recognises:
+#'   search looks at the directions in which the likelihood is flat
+#'   (\code{fit$identifiability}). A parameter is not determined by the data
+#'   when more than half of its variation lies in those directions. For each
+#'   such parameter it tries:
 #'   \describe{
-#'     \item{A parameter the likelihood does not read}{Fixed at 0, if it is
-#'       an off-diagonal, an effect or an auto-effect.}
-#'     \item{A process's auto-effect against its intercept}{For a process
-#'       with no noise of its own, such as a trend, the auto-effect fixed at 0,
-#'       which makes the intercept a slope, and both fixed at 0, which leaves a
-#'       constant level. For any process, the intercept written as what it adds
-#'       over one time unit (\code{driftScaled = 'CINT'} in
-#'       \code{\link{ctModel}}).}
-#'     \item{A process's auto-effect against its diffusion}{The diffusion
-#'       written as what it adds over one time unit (\code{driftScaled =
-#'       'DIFFUSION'}).}
-#'     \item{Random effects the data hold at zero or barely determine}{Not
-#'       varying over subjects.}
-#'     \item{Population standard deviations, correlations or loadings}{A lower
-#'       rank (\code{poprank}). A full covariance becomes shared dimensions
-#'       plus a variance of each effect's own (\code{popunique = TRUE} in
-#'       \code{\link{ctFit}}), starting with the fewest shared dimensions whose
-#'       factor model reproduces the fitted correlations to within 0.1. The
-#'       rank goes down while the covariance is not identified, and up where
-#'       the likelihood refuses a lower one.}
-#'     \item{Own variances at zero}{Removed from \code{popunique}.}
+#'     \item{A model parameter}{Fixed at the ends of its range that are finite,
+#'       such as 0 for an auto-effect or a variance, and at 0 where 0 is inside
+#'       its range. If none of these is kept, fixed at its estimate, which gives
+#'       the same fit with one parameter fewer. For a parameter that varies
+#'       over subjects, a value inside its range fixes the population mean
+#'       and keeps the random effect.}
+#'     \item{A population standard deviation or own variance}{Removed: the
+#'       effect no longer varies, or loses its own variance
+#'       (\code{popunique} in \code{\link{ctFit}}).}
 #'   }
+#'   If the flat directions lie mostly in the population correlations or
+#'   loadings, the covariance is refitted at a lower rank (\code{poprank}). A
+#'   full covariance becomes shared dimensions plus a variance of each
+#'   effect's own (\code{popunique = TRUE}), starting with the fewest shared
+#'   dimensions whose factor model reproduces the fitted correlations to
+#'   within 0.1. The rank goes down one step at a time while the covariance is
+#'   not identified, and up where the likelihood refuses a lower one. Random
+#'   effects the data hold at zero or barely determine are made fixed.
+#'
 #'   Each change is refitted from the current estimates and kept unless the
-#'   model without it is better by \code{criterion}. A change that states the
-#'   same model differently is kept unless its fit ends below the current one.
-#'   If several changes for one problem are kept, the one with the fewest
-#'   parameters is used.
+#'   model without it is better by \code{criterion}. If several changes for
+#'   one problem are kept, the one with the fewest parameters is used.
 #'   The rank and random effect changes are for single level models only. With
 #'   \code{reduceOnly = TRUE} the search stops there. Each change tried is a
 #'   refit, so this takes several times as long as the original fit.
@@ -360,7 +356,8 @@ ctModelImprove <- function(fit, covariates = NULL,
     return(structure(list(fit = current, history = history, screens = list(),
       adequacy = NULL, confirmation = NULL,
       stopped = if (length(kept)) 'reduced' else 'nothing to reduce', start = fit,
-      selected = NULL, holdout = NULL, findings = .ctReduceFindings(current)),
+      selected = NULL, holdout = NULL, findings = .ctReduceFindings(current,
+        candidates = FALSE)),
       class = 'ctModelImprove'))
   }
   rounds <- if (stage$searched || stage$round >= maxsteps) integer() else
@@ -802,9 +799,10 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
     slowest = slowest)
 }
 
-# Whether a fit leaves its population covariance unidentified: a weak or
-# negative direction of its curvature (`fit$identifiability$directions`) made
-# mostly of the covariance's own parameters. With eleven random effects for 40
+# Whether a fit leaves its population covariance unidentified: at least half a
+# dimension of the flat subspace of its curvature
+# (`fit$identifiability$directions`) lies in the covariance's own coordinates
+# (`.ctReduceCovarianceMass()`). With eleven random effects for 40
 # people the Fisher example's search reached a fit whose information along 55
 # correlations was about 2.5 against 4e6 elsewhere, with one direction negative:
 # the estimation correction then took more than each row-level statistic's
@@ -812,16 +810,13 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
 #
 # A population sd the data hold at zero, or barely determine, is the random
 # effect's own finding (`.ctEffectRows()`, `.ctReduceFindings()`), not a
-# dimension too many, so its coordinate does not count here.
+# dimension too many, so its coordinate does not count here; nor does an sd or
+# own variance undetermined on its own, which the reduction removes.
 .ctImproveWeakCovariance <- function(fit) {
-  dirs <- fit$identifiability$directions
-  if (!length(dirs)) return(FALSE)
-  effects <- fit$identifiability$effects
-  held <- unlist(lapply(c('zero', 'weak'), function(w) .ctEffectRows(effects, w)$coordinate))
-  any(vapply(dirs, function(d) {
-    p <- setdiff(as.character(d$parameters), held)
-    length(p) > 0L && mean(.ctReducePopCoordinate(p)) >= 0.5
-  }, logical(1)))
+  id <- fit$identifiability
+  if (!length(id$directions)) return(FALSE)
+  held <- unlist(lapply(c('zero', 'weak'), function(w) .ctEffectRows(id$effects, w)$coordinate))
+  .ctReduceCovarianceMass(.ctReduceFlat(id, held)$share) >= 0.5
 }
 
 # Rank-r loadings with L L' the best rank-r approximation of the covariance S:
@@ -981,10 +976,12 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
 # refit goes straight to the rank the covariance suggests
 # (`.ctImproveRankTarget`); if the likelihood refuses that, the ranks above it
 # are tried in turn, up to one below the current. Single-level models only,
-# and not below the varying T0MEANS a rank must keep. Returns the current fit
-# and kept changes, and a history row for each refit.
+# and not below the varying T0MEANS a rank must keep. With `once`, it returns
+# after the first rank it keeps. Returns the current fit and kept changes, and
+# a history row for each refit.
 .ctImproveRankStep <- function(base, current, kept, startdata, covariates, criterion,
-    alpha, cores, say = function(...) invisible(), label = '', round = NA_integer_) {
+    alpha, cores, say = function(...) invisible(), label = '', round = NA_integer_,
+    once = FALSE) {
   history <- list(); data <- NULL; args <- NULL; changed <- FALSE
   refused <- NA_integer_
   repeat {
@@ -1048,6 +1045,7 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
     current <- refit; kept <- c(nonrank, list(change)); changed <- TRUE
     data <- rebuilt$data; args <- rebuilt$args
     refused <- NA_integer_
+    if (once) break
   }
   list(current = current, kept = kept, data = data, args = args, history = history,
     changed = changed)
