@@ -58,6 +58,14 @@
 #'  ordinal indicators. If the objective cannot be evaluated there, the fit
 #'  starts from the default values and says so. Supplied \code{inits} are
 #'  always used as given.}
+#'  \item{\code{flatretry}}{Julia. Default TRUE. When the optimiser leaves a
+#'  parameter far out where the likelihood hardly changes with it, such as an
+#'  auto-effect so fast or so slow that its value no longer matters, or a
+#'  variance or random effect standard deviation at zero, it optimises again
+#'  from the starting values with that parameter held at the other side of its
+#'  range, then lets it go. The better of the two
+#'  results is kept. This happens before the standard errors are computed, and
+#'  costs up to two more optimisations for each such parameter.}
 #'  \item{\code{carefulfit}}{Both. Default TRUE. A first pass with ctsem's
 #'  \code{normal(0,1)} priors on every raw parameter, to find starting values,
 #'  after which the fit's own objective is maximised. Skipped with
@@ -191,11 +199,10 @@
 #'  responsiveness a transform must have lost to count as the reason the fit
 #'  stopped, and how many iterations the check waits after finding a fit slow
 #'  but not stuck.}
-#'  \item{\code{escapesaturated}}{Default FALSE. Refit a fit that stalled on a
-#'  saturated transform, with that parameter reset to zero, and keep the
-#'  better result.}
-#'  \item{\code{escapepin}}{Default FALSE. Hold the reset parameters fixed
-#'  while the others are optimised, then free them.}
+#'  \item{\code{escapepin}}{Default FALSE. When the optimiser restarts from a
+#'  point where it pulled some parameters back, hold those parameters fixed
+#'  while the others are optimised, then free them. The \code{flatretry}
+#'  restart always does this.}
 #' }
 #'
 #' @section Laplace approximation (julia, \code{intoverpop = 'laplace'}):

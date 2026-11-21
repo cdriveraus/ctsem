@@ -564,8 +564,8 @@ test_that("a measured better point is resumed from before anything is certified,
   better <- .fake_result(-diag(c(4, 25)), c(2, 5), value = -90, x = c(1, 0))
   done <- .fake_result(-diag(c(4, 25)), c(0, 0), value = -89, x = c(0.5, 0.2))
   offered <- 0L
-  escape <- function(r) {
-    if (identical(r, short)) {
+  escape <- function(r, runoffonly = FALSE) {
+    if (!runoffonly && identical(r, short)) {
       offered <<- offered + 1L
       return(structure(c(1, 0), coordinates = 1L))
     }
