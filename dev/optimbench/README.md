@@ -18,8 +18,9 @@ plus the build it runs against (a label, see below).
   `nonlin`, `small`, `bigp`), the carefulfit/gaptol design (`cf_gaussian`,
   `cf_binary`, `cf_ordinal`, `cf_mixed`), the gated-gaps configs (`gA1`-`gA16`,
   `gB1`-`gB8`, `gC1`-`gC8`, `gD1`-`gD4`, `gN1`-`gN4`), AnomAuth (`anomS1`,
-  `anomS2`), and three test fixtures (`acnonlin`, `mvmix`, `jflat`). Each says
-  where it came from.
+  `anomS2`), three test fixtures (`acnonlin`, `mvmix`, `jflat`), and factor
+  models whose free loadings can cross zero in the first steps (`flip*`,
+  `grids/flipcells.txt`). Each says where it came from.
 - **data** is the simulator's seed, or `cfg` for a problem that fixes its own.
   No simulator calls `ctGenerate` (its draw stream moves under unrelated
   commits). Data are simulated once into the store (`~/dev/ctsem-bench-data`)
@@ -162,6 +163,9 @@ writes `summary.md` and `summary.csv`. The first directory is the baseline;
 cells present in both are paired. The report prints the contamination check
 first, then whether each fit's warm-up flag says what ran, then medians by
 model, route and variant, the reference checks, and every cell.
+`pair_variants.R <summary.csv>` pairs each variant with the `default` run of
+the same cell in one grid: score changes, gradient and time ratios, and the
+cells that moved.
 
 Summaries that are kept go in the CT-SEM root repository under `review/bench/`
 (the raw `.rds` gitignored there).

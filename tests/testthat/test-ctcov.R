@@ -113,6 +113,72 @@ test_that("ctCov writes a zero covariance as a cell of zero", {
   }
 })
 
+# Correlation matrices with a pattern of zeros, built without the construction:
+# a hollow matrix with heavy-tailed entries of both signs on the open cells,
+# shifted on the diagonal so that the correlation matrix's smallest eigenvalue
+# is `lmin`, by bisection on the log of the distance from singular.
+.cc_target <- function(open, lmin) {
+  d <- nrow(open)
+  smallest <- function(X) min(eigen(X, symmetric = TRUE, only.values = TRUE)$values)
+  B <- matrix(0, d, d)
+  B[open] <- stats::rnorm(sum(open)) * exp(stats::rnorm(sum(open), 0, 0.7))
+  B <- B + t(B)
+  edge <- -smallest(B)
+  at <- function(u) stats::cov2cor(B + (edge + exp(u)) * diag(d))
+  lo <- -700
+  hi <- 0
+  while (smallest(at(hi)) < lmin) hi <- hi + 1
+  for (it in 1:100) {
+    mid <- (lo + hi) / 2
+    if (smallest(at(mid)) < lmin) lo <- mid else hi <- mid
+  }
+  R <- at(hi)
+  R <- (R + t(R)) / 2
+  diag(R) <- 1
+  R
+}
+
+test_that("under 'z' the open cells reach every correlation matrix with the zeros", {
+  # The claim is that, for any pattern, the open cells reach every positive
+  # definite matrix with those zeros, however strong its other correlations.
+  # Each target is written as cells by ctCov's inverse, which solves no zero
+  # cell, and put back through the forward map, which solves them.
+  forward <- ctsem:::.ctCovForward
+  chain <- function(d) abs(row(diag(d)) - col(diag(d))) == 1
+  star <- function(d) row(diag(d)) == 1 | col(diag(d)) == 1
+  blocks <- function(d) {
+    h <- d %/% 2
+    open <- outer(1:d <= h, 1:d <= h, "==")
+    open[h + 2, 1] <- TRUE
+    open
+  }
+  set.seed(12)
+  half <- matrix(stats::runif(36) < 0.5, 6, 6)
+  patterns <- list(chain = chain(12), star = star(8), blocks = blocks(10),
+    random = half | t(half))
+  for (name in names(patterns)) for (lmin in c(0.1, 1e-3, 1e-6)) {
+    open <- patterns[[name]] & lower.tri(patterns[[name]])
+    zero <- lower.tri(open) & !open
+    R <- .cc_target(open, lmin)
+    sd <- exp(stats::rnorm(nrow(R)))
+    S <- R * outer(sd, sd)
+    cells <- ctsem:::.ctCovCells(S, "z")
+    info <- paste(name, lmin)
+    expect_true(all(cells[zero] == 0), info = info)
+    back <- forward(cells, "z", ctsem:::.ctCovZeroCells(cells))
+    expect_true(all(back[zero] == 0), info = info)
+    expect_equal(back / outer(sd, sd), R, tolerance = 1e-9, info = info)
+    # The forward map's solve of the zero cells lands where the inverse's
+    # hollow log has them.
+    A <- ctsem:::.ctCovHollowLog(R)
+    expect_lt(max(abs(diag(A))), 1e-12)
+    A0 <- A
+    A0[zero | t(zero)] <- 0
+    solved <- ctsem:::.ctCovZeroSolve(A0, ctsem:::.ctCovLinkedZeros(zero))
+    expect_equal(solved[zero], A[zero], tolerance = 1e-6, info = info)
+  }
+})
+
 test_that("summary's note says an estimated parameter near zero is not a zero covariance", {
   note <- ctsem:::.ctCovParameterNote(c("d21", "t21"), c("DIFFUSION", "T0VAR"))
   expect_match(note, "are not correlations; T0cor, DIFFUSIONcor", fixed = TRUE)
