@@ -541,7 +541,7 @@ function _jmap_tri_embed(p::Vector{Float64}, P::Vector{Int}, Q::Vector{Int})
 end
 
 """
-    _jmap_tri_fit(U; weights, iters)
+    _jmap_tri_fit(U; weights, iters, parallel, progress)
 
 The triangular map fitted to whitened draws `U` (a column each, weighted by
 `weights` where given) by maximum likelihood, a component at a time. Each
@@ -1760,7 +1760,7 @@ end
 ################################################################################
 
 """
-    _JMapLearnReport(reporter, callback, offset, nwarmup, total)
+    _JMapLearnReport(reporter, callback, offset, nwarmup, total, logp, retuned)
 
 The learning windows' progress, reported as one phase counted over the whole
 schedule (`total` iterations a chain). It is the callback chain 1 of each
