@@ -1488,3 +1488,37 @@ end
         end
     end
 end
+
+@testset "a batch stage's anchors follow its steps, and the full objective takes them" begin
+    # While a batch smaller than the data takes the steps, the full objective
+    # is not evaluated, so moved from its own modes its anchors stood at the
+    # run's start, and every batch, and the full objective once the batch was
+    # the data, started each unit's Newton there and followed it from the
+    # start's parameters (`_ctsem_batch_anchor_here!`). A drift by row, so
+    # each unit's solve iterates.
+    C = ContinuousTimeSEM
+    laplace, x0 = _fresh_nonlinear()
+    C._ctsem_anchor_start!(laplace, x0)
+    start = deepcopy(laplace.anchors)
+    keep = [2, 4]; rest = [1, 3, 5]
+    stage = C._ctsem_subset_objective(laplace, keep)
+    batch = C.CTSEMBatch(laplace, stage, [4, 2, 1, 3, 5], 2, 5, 5, 0.25, nothing,
+        [2], [0], nothing, Float64[])
+    x1 = x0 .+ 0.3 .* sin.(1:length(x0))
+    @test isfinite(ctsem_laplace_evaluate(stage, x1; gradient=true).value)
+    C._ctsem_batch_anchor_here!(batch)
+    @test stage.anchors == stage.modes
+    @test laplace.anchors[keep] == stage.modes
+    @test laplace.anchors[rest] == start[rest]
+    @test all(v -> v == x1, laplace.anchor_values[keep])
+    @test all(v -> v == x0, laplace.anchor_values[rest])
+    # A grown batch takes them.
+    @test C._ctsem_subset_objective(laplace, [1, 2, 4]).anchors[2:3] == stage.modes
+    # The full objective at the batch's point: the batch's units start at
+    # their modes there, one iteration; the others from the run's start.
+    r = ctsem_laplace_evaluate(laplace, x1; gradient=false)
+    @test all(==(1), laplace.inner_iterations[keep])
+    @test all(>(1), laplace.inner_iterations[rest])
+    fresh, _ = _fresh_nonlinear()
+    @test abs(r.value - ctsem_laplace_evaluate(fresh, x1; gradient=false).value) <= 1e-9
+end

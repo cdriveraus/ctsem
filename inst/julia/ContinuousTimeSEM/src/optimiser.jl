@@ -1126,6 +1126,30 @@ function _ctsem_batch_plan(objective, fg!; theta::Real=0.25, n0::Integer=0,
 end
 
 _ctsem_batch_full(b::CTSEMBatch) = b.m >= b.nunits
+
+"""
+    _ctsem_batch_anchor_here!(batch)
+
+`_ctsem_anchor_here!` for a step the batch took: the batch's own objective's
+anchors moved to the modes its evaluation at the accepted point left, and the
+full objective's set to the same for the units the batch holds
+(`_ctsem_anchor_take!`). The full objective is not evaluated while the batch
+is smaller than the data, so moved from its own modes, as a run without a
+batch moves them, its anchors stayed at the run's start: each batch, which
+takes its anchors from the full objective (`_ctsem_subset_objective`), and the
+full objective once the batch was the data, started every unit's Newton at its
+mode there, and followed the unit's maxima from the start's parameters
+(`_laplace_follow_one`), at every evaluation of the batch stage. A unit a grown
+batch adds starts from the run's start still, the last point it was evaluated
+at.
+"""
+function _ctsem_batch_anchor_here!(b::CTSEMBatch)
+    _ctsem_batch_full(b) && return _ctsem_anchor_here!(b.full)
+    _ctsem_anchor_here!(b.stage)
+    _ctsem_anchor_take!(b.full, b.stage, sort(b.perm[1:b.m]))
+    return nothing
+end
+
 _ctsem_batch_scale(b::CTSEMBatch) = b.nsubjects / _ctsem_batch_nsubjects(b.stage)
 
 # The stage objective on the minimised scale, with its likelihood scaled to the

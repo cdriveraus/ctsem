@@ -29,6 +29,12 @@ each, nearly all of them refused by the first screening gradient, and kept 2
 better modes from 9 Newton solves: the screen's gradients were most of the
 evaluation.
 
+The `inner_*` counts are the Laplace inner solve's Newton
+(`_laplace_newton_unit_mode`): solves, their iterations, and the exact unit
+curvatures they formed. Their ratios say how far a solve's start was from its
+mode: an anchored solve one step from its anchor takes one iteration and one
+curvature, a search from the origin several.
+
 The `overshoot_*` counts are the overshoot probe's (`_ctsem_overshot`): trial
 points, sets it skipped as already tried, full evaluations of a trial, the
 screen's gradients at the estimate (`CTSEMProbeScreen`), its sampled
@@ -59,6 +65,9 @@ const _CTSEM_OPCOUNT = (
     probe_nongaussian = Ref(0),
     probe_newtons = Ref(0),
     probe_better = Ref(0),
+    inner_solves = Ref(0),
+    inner_iterations = Ref(0),
+    inner_curvatures = Ref(0),
     overshoot_trials = Ref(0),
     overshoot_repeats = Ref(0),
     overshoot_values = Ref(0),

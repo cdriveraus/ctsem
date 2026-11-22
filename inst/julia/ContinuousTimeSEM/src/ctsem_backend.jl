@@ -3742,8 +3742,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     watch = function (state)
         latest = state isa AbstractVector ? last(state) : state
         copyto!(current_x, latest.x)
-        # After an accepted step, whose point the last evaluation was.
-        _ctsem_anchor_here!(objective)
+        # After an accepted step, whose point the last evaluation was: the
+        # batch's while one smaller than the data takes the steps, but not the
+        # sgd phase's, which steps on the whole objective.
+        (batching() && !in_sgd[]) ? _ctsem_batch_anchor_here!(batcher) :
+            _ctsem_anchor_here!(objective)
         _record!(trace, latest.iteration, -latest.value, latest.g_norm,
             _ctsem_predicted_gain(directional), directional.discrepancy,
             _ctsem_optimise_trace_values(objective)...)
@@ -3921,6 +3924,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             callback=watch)
         in_sgd[] = false
         lbfgs_start = sgd_result.minimizer
+        # The batch took the full objective's anchors where it was planned,
+        # at the start, and the sgd phase has moved them since.
+        batcher === nothing || (batcher.stage =
+            _ctsem_subset_objective(objective, sort(batcher.perm[1:batcher.m])))
     end
     sgd_iterations = sgd_result === nothing ? 0 : sgd_result.iterations
     # See optimiser.jl for why this is not Optim any more.
