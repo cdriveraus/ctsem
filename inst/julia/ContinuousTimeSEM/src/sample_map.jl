@@ -1659,6 +1659,16 @@ function _jmap_moved(results::Vector{_ChainResult}, npar::Int)
     return moved
 end
 
+"""The chains' step sizes over a window, smallest and largest, and the deepest
+of their mean tree depths: a window lasts as long as its slowest chain, and on
+a simulated analogue of the hc-wellbeing reanalysis three chains finished a
+window 15 minutes after the first."""
+function _jmap_chain_spread(results::Vector{_ChainResult})
+    steps = [r.stepsize for r in results]
+    depth = maximum(r -> isempty(r.depth) ? 0.0 : sum(r.depth) / length(r.depth), results)
+    return (step_min=minimum(steps), step_max=maximum(steps), depth_max=Float64(depth))
+end
+
 """Each chain's start under `m2`: a chain that moved goes on from its last
 state, a stopped one from a random draw of those that moved."""
 function _jmap_restarts(m::CTSEMJointMap, m2::CTSEMJointMap, results, moved, Wl, rng)
@@ -2158,13 +2168,16 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
         starts = _jmap_restarts(m, m2, results, moved, Wl, rng)
         eps = median([r.stepsize for r in results[moved]])
         retuned = learning.retuned[] - before
+        spread = _jmap_chain_spread(results)
         push!(windowlog, (window=Int(nw), stopped=count(!, moved), refit=refit,
             shrink=lambda, stepsize=eps, retuned=retuned, refit_secs=refit_secs,
-            map_secs=map_secs))
+            map_secs=map_secs, spread...))
         verbose && println(_console(), "  map window ", w, " of ", length(windows), ": ",
             nw, " draws a chain, ", count(!, moved), " chain(s) restarted, ",
             retuned > 0 ? string(retuned, " step size(s) retuned, ") : "", refit,
-            " summaries refitted, step ", round(eps; sigdigits=3))
+            " summaries refitted, step ", round(eps; sigdigits=3), " (chains ",
+            round(spread.step_min; sigdigits=3), " to ", round(spread.step_max; sigdigits=3),
+            ", tree depth up to ", round(spread.depth_max; digits=1), " on average)")
         m = m2
     end
     if checking
@@ -2181,7 +2194,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
         eps = median([r.stepsize for r in results[moved]])
         push!(windowlog, (window=0, stopped=count(!, moved), refit=0, shrink=NaN,
             stepsize=eps, retuned=learning.retuned[] - before, refit_secs=0.0,
-            map_secs=0.0))
+            map_secs=0.0, _jmap_chain_spread(results)...))
     end
     _progress_done(learning.reporter, @sprintf("%d iterations a chain", learning.total))
     learned = time() - t0 + (resume === nothing ? 0.0 : resume.secs)

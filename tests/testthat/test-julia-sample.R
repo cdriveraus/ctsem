@@ -416,8 +416,8 @@ test_that("the map sampler draws the joint posterior with the filter's effects i
   expect_equal(unique(total), max(at))
   expect_setequal(unique(phase[-schedule]), c("warmup", "sampling"))
   # And the record says what each window's refit cost.
-  expect_true(all(c("retuned", "refit_secs", "map_secs") %in%
-    names(out$sample$map$windows)))
+  expect_true(all(c("retuned", "refit_secs", "map_secs", "step_min", "step_max",
+    "depth_max") %in% names(out$sample$map$windows)))
   # Announced as what it does, and recorded so: the map takes no NUTS warmup
   # of 200, and its chains ran the whole schedule and a final warm-up first.
   expect_true(any(grepl("learning the map first, then 20 draws each", said,
