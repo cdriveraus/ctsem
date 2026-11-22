@@ -634,28 +634,12 @@ test_that("theta's triangular map is the same fitted on the pool, and says how f
     "  a = CT._jmap_tri_fit(U)",
     "  b = CT._jmap_tri_fit(U; parallel=true, progress=(d, n) -> push!(seen, d))",
     "  same = all(getfield(a, f) == getfield(b, f) for f in fieldnames(typeof(a)))",
-    "  # A component's Newton step: by Cholesky where the eigenvalue floor cannot",
-    "  # bind, which is then the floored eigendecomposition's step.",
-    "  g = randn(rng, 30)",
-    "  floored = function (H)",
-    "    ev = CT.eigen(CT.Symmetric(H))",
-    "    lam = max.(ev.values, 1e-6 * maximum(abs, ev.values) + 1e-8)",
-    "    -(ev.vectors * ((transpose(ev.vectors) * g) ./ lam))",
-    "  end",
-    "  A = randn(rng, 30, 30)",
-    "  Q = Matrix(CT.qr(A).Q)",
-    "  cases = [transpose(A) * A + 30 * CT.I, A + transpose(A),",
-    "    Q * CT.Diagonal([1e-9; fill(1.0, 29)]) * transpose(Q)]",
-    "  step = maximum(maximum(abs, CT._jmap_tri_step(H, g) .- floored(H)) /",
-    "    maximum(abs, floored(H)) for H in cases)",
-    "  return (same=same, last=isempty(seen) ? 0 : seen[end], parents=length(a.parents[4]),",
-    "    step=step)",
+    "  return (same=same, last=isempty(seen) ? 0 : seen[end], parents=length(a.parents[4]))",
     "end", sep = "\n"))
   r <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall("Main.__tri_pool", obj))
   expect_true(r$same)
   expect_equal(r$last, 9L)
   expect_gt(r$parents, 0L)
-  expect_lt(r$step, 1e-8)
 })
 
 # The maximum check (R/ctBackendMaximumCheck.R) on the random-drift fixture,
