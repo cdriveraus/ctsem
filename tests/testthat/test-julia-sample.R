@@ -663,11 +663,11 @@ test_that("the maximum check reads the map's first window, climbs only past its 
   # This fixture's posterior is centred at the estimate (its mean 8.6 of a
   # bar of 27.9 away), but its sds are 1.5 to 4.6 times the Hessian's, most
   # along the ridge between the initial and manifest means, which the chains
-  # cross slowly. A window's chain mean is then near one draw, and passed the
-  # bar for 6 chains of 42 and in 11 runs of 40 (seeds 1-41, Julia 1.13.3,
-  # dev2), each climb finding nothing. Which chains pass depends on the seed
-  # and the platform's last bits, so the test reads the check's rule, never
-  # whether this run's chains passed.
+  # cross slowly, so a window's chain mean is near one draw. In the Hessian's
+  # metric alone it passed the bar in 23 runs of 80; against the window's own
+  # spread too, in none, the largest 26.1 (seeds 1-80, Julia 1.13.3, dev2).
+  # Which chains pass depends on the seed and the platform's last bits, so
+  # the test reads the check's rule, never whether this run's chains passed.
   mc <- on$sample$maximumcheck
   expect_identical(on$sample$sampler, "map")
   expect_length(mc$distance, 2L)
@@ -687,13 +687,63 @@ test_that("the maximum check reads the map's first window, climbs only past its 
     "'maximum'", fixed = TRUE)
 })
 
+test_that("the maximum check reads a chain's mean against the wider of the Hessian's normal and the window's spread", {
+  skip_without_julia()
+  ctsem:::.ctJuliaEval(paste0("_ctsem_test_window_distances(X, k, spread) = ",
+    "ContinuousTimeSEM._jmap_window_distances(",
+    "[X[:, (c - 1) * div(size(X, 2), k) .+ (1:div(size(X, 2), k))] for c in 1:k], collect(Bool, spread))"))
+  distances <- function(chains, spread = rep(TRUE, length(chains))) as.numeric(
+    ctsem:::.ctBackendJuliaValue(ctsem:::.ctJuliaCall("_ctsem_test_window_distances",
+      do.call(cbind, chains), length(chains), spread)))
+  # Each mean against the within-chain covariance of the chains whose spread
+  # counts, pooled, its eigenvalues floored at the Hessian's (the identity in
+  # these whitened coordinates).
+  reference <- function(chains, spread = rep(TRUE, length(chains))) {
+    S <- Reduce(`+`, lapply(chains[spread], function(W) stats::cov(t(W)))) / sum(spread)
+    e <- eigen(S, symmetric = TRUE)
+    vapply(chains, function(W) {
+      z <- crossprod(e$vectors, rowMeans(W))
+      sum(z^2 / pmax(e$values, 1))
+    }, 0)
+  }
+  hessian <- function(chains) vapply(chains, function(W) sum(rowMeans(W)^2), 0)
+  set.seed(4)
+  npar <- 5L
+  n <- 40L
+  narrow <- function(first = 0) {
+    W <- matrix(stats::rnorm(npar * n, 0, 0.3), npar)
+    W[1, ] <- W[1, ] + first
+    W
+  }
+  # Wide along the first coordinate (sd 4) and 5 out along it: far less than
+  # its 25 in the Hessian's metric.
+  wide <- narrow()
+  wide[1, ] <- stats::rnorm(n, 5, 4)
+  still <- narrow()
+  d <- distances(list(wide, still))
+  expect_equal(d, reference(list(wide, still)), tolerance = 1e-10)
+  expect_lt(d[1], hessian(list(wide, still))[1] / 3)
+  # Narrower than the Hessian's normal everywhere: its metric, whole.
+  away <- narrow(5)
+  expect_equal(distances(list(away, still)), hessian(list(away, still)), tolerance = 1e-10)
+  # Chains apart from each other, each narrow: the spread between them does
+  # not count, so each that left is as far as the Hessian's metric says.
+  apart <- list(narrow(5), narrow(-5))
+  expect_equal(distances(apart), hessian(apart), tolerance = 1e-10)
+  # A chain whose spread is not counted (one that stopped) widens nothing.
+  expect_equal(distances(list(away, wide), c(TRUE, FALSE)),
+    hessian(list(away, wide)), tolerance = 1e-10)
+})
+
 test_that("the maximum check climbs from where the chains are centred, and says what it found", {
   skip_without_julia()
   fit <- .maximum_fixture()
   npar <- length(fit$estimate$raw)
   # An estimate that is not the maximum, with the maximum's Hessian: moved
   # along the widest direction to four times the bar, so the chains, which go
-  # to where the posterior is, are centred about that far from it.
+  # to where the posterior is, are centred about that far from it in the
+  # Hessian's metric, and past the bar still against their own spread (the
+  # nearest of 40 chains, seeds 1-20 on Julia 1.13.3, at 35 of 27.9).
   moved <- fit
   e <- eigen(as.matrix(fit$estimate$cov), symmetric = TRUE)
   moved$estimate$raw <- fit$estimate$raw +

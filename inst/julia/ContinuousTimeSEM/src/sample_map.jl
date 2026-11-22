@@ -1920,16 +1920,16 @@ end
 """
 The map sampler after its first learning window (`ctsem_sample_map` with
 `first_only`): the window's chains, for the same call to go on from
-(`resume`), and where each chain's draws are centred. `distance` is the squared
-length of a chain's mean in theta's latent coordinates under the starting map,
-so its squared distance from the estimate in the metric of the Hessian the
-caller handed in; NaN for a chain that stopped, and with no Hessian, whose
-whitening is not the estimate's marginal covariance. A draw from that
-Hessian's normal has a squared distance near `npar`, whatever the chain's
-width, and the mean of a chain's draws far less: a mean past `bar` says the
-posterior's mass is not centred where the estimate is, which no curvature at
-the estimate can show (R's check for a higher maximum,
-`.ctBackendMaximumCheck()`, climbs the fit's objective from `means`).
+(`resume`), and where each chain's draws are centred. `distance` is a chain
+mean's squared distance from the estimate, in theta's latent coordinates under
+the starting map, whitened by the Hessian the caller handed in, and in the
+wider of that Hessian's normal and the window's own spread
+(`_jmap_window_distances`); NaN for a chain that stopped, and with no Hessian,
+whose whitening is not the estimate's marginal covariance. A mean past `bar`
+lies where neither reaches: the posterior's mass is centred away from the
+estimate, which no curvature at the estimate can show (R's check for a higher
+maximum, `.ctBackendMaximumCheck()`, climbs the fit's objective from
+`means`).
 `map` is the starting map and `extra` its cost (`_jmap_build`), kept so that
 going on neither builds it again nor differs by what a second build's mode
 solves would.
@@ -1951,14 +1951,62 @@ function _jmap_start(m::CTSEMJointMap, extra::Int, results::Vector{_ChainResult}
     npar = m.npar
     means = zeros(npar, length(results))
     distance = fill(NaN, length(results))
+    windows = Matrix{Float64}[Matrix{Float64}(view(r.draws, 1:npar, :)) for r in results]
     for c in eachindex(results)
-        W = view(results[c].draws, 1:npar, :)
-        wbar = vec(sum(W; dims=2)) ./ size(W, 2)
-        means[:, c] .= vec(sum(_jmap_thetas(m, W); dims=2)) ./ size(W, 2)
-        (metric && moved[c]) && (distance[c] = sum(abs2, wbar))
+        means[:, c] .= vec(sum(_jmap_thetas(m, windows[c]); dims=2)) ./ size(windows[c], 2)
+    end
+    if metric
+        within = _jmap_window_distances(windows, collect(Bool, moved))
+        for c in eachindex(results)
+            moved[c] && (distance[c] = within[c])
+        end
     end
     flagged = [bar > 0 && isfinite(d) && d > bar for d in distance]
     return CTSEMMapStart(m, extra, results, gradients, secs, bar, distance, means, flagged)
+end
+
+"""
+Each chain's squared distance from the estimate over a window, from its draws
+in latent coordinates whitened at the estimate (`windows`, a matrix a chain):
+its mean against the wider, direction by direction, of the Hessian's normal
+there (the identity) and the window's spread within the chains that moved
+(`spread`), i.e. `m' (V max(L, 1) V')^-1 m` for that spread's eigenvectors `V`
+and eigenvalues `L`. The bar on it (R's `.ctMaximumBar()`, the 0.999 point of a
+draw of the Hessian's normal) holds for the mean of any number of a chain's
+draws while the posterior is no wider than that normal; where it is wider
+along a direction the chains cross slowly, the mean is near one draw of it and
+the Hessian's metric alone put it past the bar often. On test-julia-sample.R's
+random-drift fixture (centred at the estimate, sds up to 4.6 times the
+Hessian's) that metric flagged 23 runs of 80 and this one none, its largest
+26.1 of 27.9; on the affect pilot's window (a higher maximum 41.6 nats up) the
+two chains read about 2,400 and 3,000 of 950 here against 4,500 and 5,400
+(review/OPEN.md, 2026-11-22). The spread between chains is left out, so that
+one chain that finds another basin while the others stay counts as found.
+"""
+function _jmap_window_distances(windows::Vector{Matrix{Float64}}, spread::AbstractVector{Bool})
+    means = Vector{Float64}[vec(sum(W; dims=2)) ./ size(W, 2) for W in windows]
+    distance = Float64[sum(abs2, w) for w in means]
+    blocks = Matrix{Float64}[]
+    for c in eachindex(windows)
+        n = size(windows[c], 2)
+        (spread[c] && n > 1) || continue
+        push!(blocks, (windows[c] .- means[c]) ./ sqrt(n - 1))
+    end
+    isempty(blocks) && return distance
+    X = reduce(hcat, blocks) ./ sqrt(length(blocks))
+    all(isfinite, X) || return distance
+    F = svd(X)
+    for c in eachindex(means)
+        z = transpose(F.U) * means[c]
+        inside = 0.0
+        scaled = 0.0
+        for j in eachindex(z)
+            inside += z[j]^2
+            scaled += z[j]^2 / max(F.S[j]^2, 1.0)
+        end
+        distance[c] = max(distance[c] - inside, 0.0) + scaled
+    end
+    return distance
 end
 
 """
