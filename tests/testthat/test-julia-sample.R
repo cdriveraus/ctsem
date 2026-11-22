@@ -590,6 +590,34 @@ test_that("a stalled chain in a learning window finds its step size again", {
   expect_lt(on$stepsize, 2)
 })
 
+test_that("theta's triangular map is the same fitted on the pool, and says how far it is", {
+  skip_without_julia()
+  # Its components depend on the draws alone, so the window-end refit fits
+  # them on the pool (`_jmap_tri_fit(parallel = true)`); on the reanalysis
+  # 2,868 of them were fitted one after another with nothing said.
+  fit <- .sample_fixture()
+  obj <- ctsem:::.ctJuliaObjective(fit, hybrid = TRUE)
+  ctsem:::.ctJuliaEval(paste(
+    "function __tri_pool(laplace)",
+    "  CT = ContinuousTimeSEM",
+    "  CT._laplace_ensure_pool!(laplace)",
+    "  rng = CT.Random.Xoshiro(11)",
+    "  U = randn(rng, 9, 240)",
+    "  U[4, :] .+= 0.8 .* tanh.(U[1, :]) .+ 0.3 .* U[2, :] .^ 2",
+    "  U[7, :] .*= exp.(0.4 .* U[3, :])",
+    "  seen = Int[]",
+    "  a = CT._jmap_tri_fit(U)",
+    "  b = CT._jmap_tri_fit(U; parallel=true, progress=(d, n) -> push!(seen, d))",
+    "  same = all(getfield(a, f) == getfield(b, f) for f in fieldnames(typeof(a)))",
+    "  return (same=same, last=isempty(seen) ? 0 : seen[end], parents=length(a.parents[4]),",
+    "    width=Threads.nthreads())",
+    "end", sep = "\n"))
+  r <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall("Main.__tri_pool", obj))
+  expect_true(r$same)
+  expect_equal(r$last, 9L)
+  expect_gt(r$parents, 0L)
+})
+
 # The maximum check (R/ctBackendMaximumCheck.R) on the random-drift fixture,
 # whose units keep a coordinate each.
 .maximum_fixture <- function() fit_cached("map fixture: random drift", {
