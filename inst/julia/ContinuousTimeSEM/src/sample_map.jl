@@ -1793,10 +1793,17 @@ the counts would restart eight times; reported not at all, as until
 2026-11-18, the line was blank from the sampler's start to its kept draws --
 hours on a hard model -- and a run in worker processes showed nothing then.
 
-The log density and divergences are chain 1's, so the line also counts the
-chains of every window that stalled and found their step size again
-(`retuned`, `_ChainRetune`): a stalled chain 1 shows as one log density held
-for many iterations, another chain not at all.
+Every chain reports (`_JMapChainWatch`, `_run_chains`' `chain_callback`), one
+at a time under `lock`, and the count is the chains' mean position: a window
+ends when its last chain does, and chain 1 alone, as it reported until
+2026-11-22, fell silent whenever it finished first -- 15 minutes on a
+simulated analogue of the hc-wellbeing reanalysis while three chains finished
+window 2, and on the reanalysis itself hours that read as a silent refit.
+Beside it the line gives the log density of the chain furthest behind, the
+window's divergences over every chain, each chain's iterations into the
+window where they differ, and the step sizes retuned where a chain stalled
+(`retuned`, `_ChainRetune`), which no log density shows of a chain that is
+not the one printed.
 """
 mutable struct _JMapLearnReport
     reporter::CTSEMProgress
@@ -1806,18 +1813,53 @@ mutable struct _JMapLearnReport
     total::Int
     logp::Float64
     retuned::Threads.Atomic{Int}
+    at::Vector{Int}
+    lps::Vector{Float64}
+    divs::Vector{Int}
+    lock::ReentrantLock
 end
 
-function (r::_JMapLearnReport)(phase, iteration, total, logp, divergent)
-    at = r.offset + Int(iteration) + (phase == "sampling" ? r.nwarmup : 0)
-    r.logp = Float64(logp)
-    n = r.retuned[]
-    _due(r.reporter) && _progress_line(r.reporter, at, r.total,
-        @sprintf("logp %11.2f", logp), @sprintf("div %d", divergent),
-        n > 0 ? @sprintf("retuned %d", n) : "")
-    _invoke_callback(r.callback, "learning", at, r.total, logp, divergent)
+_JMapLearnReport(reporter::CTSEMProgress, callback::CTSEMCallback, total::Int,
+    nchains::Int) = _JMapLearnReport(reporter, callback, 0, 0, total, NaN,
+        Threads.Atomic{Int}(0), zeros(Int, nchains), fill(NaN, nchains),
+        zeros(Int, nchains), ReentrantLock())
+
+"""A window's start: every chain at the schedule's `offset`, none diverged."""
+function _jmap_learn_window!(r::_JMapLearnReport, nwarmup::Int)
+    r.nwarmup = nwarmup
+    fill!(r.at, r.offset)
+    fill!(r.divs, 0)
+    return r
+end
+
+function (r::_JMapLearnReport)(c::Int, phase, iteration, total, logp, divergent)
+    Base.@lock r.lock begin
+        r.at[c] = r.offset + Int(iteration) + (phase == "sampling" ? r.nwarmup : 0)
+        r.lps[c] = Float64(logp)
+        r.divs[c] = Int(divergent)
+        at = sum(r.at) ÷ length(r.at)
+        k = argmin(r.at)
+        r.logp = r.lps[k]
+        div = sum(r.divs)
+        n = r.retuned[]
+        lag = maximum(r.at) > minimum(r.at)
+        _due(r.reporter) && _progress_line(r.reporter, at, r.total,
+            @sprintf("logp %11.2f", r.logp), @sprintf("div %d", div),
+            lag ? "chains " * join(r.at .- r.offset, " ") : "",
+            n > 0 ? @sprintf("retuned %d", n) : "")
+        _invoke_callback(r.callback, "learning", at, r.total, r.logp, div)
+    end
     return nothing
 end
+
+"""Chain `c`'s callback into the learning report."""
+struct _JMapChainWatch
+    report::_JMapLearnReport
+    chain::Int
+end
+
+(w::_JMapChainWatch)(phase, iteration, total, logp, divergent) =
+    w.report(w.chain, phase, iteration, total, logp, divergent)
 
 """
     _JMapStageReport(phase, label, verbose, overwrite, sink, callback, logp)
@@ -2058,9 +2100,9 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     end
     learning = _JMapLearnReport(CTSEMProgress(verbose; label="learning the map",
             overwrite=progress_overwrite, sink=progress_sink),
-        CTSEMCallback(progress_callback; every=0.0), 0, 0, nlearn, NaN,
-        Threads.Atomic{Int}(0))
-    watch = (verbose || progress_callback !== nothing) ? learning : nothing
+        CTSEMCallback(progress_callback; every=0.0), nlearn, nchains)
+    watch = (verbose || progress_callback !== nothing) ?
+        (c -> _JMapChainWatch(learning, c)) : nothing
     # Every window's draws are warm-up, so a chain that stalls in one finds its
     # step size again where it stands (`_ChainRetune`).
     retune = _ChainRetune(_JMAP_STALL, Int(nsettle), Float64(target_accept),
@@ -2078,14 +2120,14 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     end
     for (w, nw) in enumerate(windows)
         mw = m
-        learning.nwarmup = w == 1 ? nwarmup : Int(nsettle)
+        _jmap_learn_window!(learning, w == 1 ? nwarmup : Int(nsettle))
         before = learning.retuned[]
         results = (w == 1 && resume !== nothing) ? resume.results :
             _sample_chains(nchains, parallel, seed + 101 * w, centre, metric,
             w == 1 ? nwarmup : Int(nsettle), Int(nw), Int(maxdepth), Float64(target_accept),
             Float64(maxdelta), Float64(init_scale), adapt_metric, adapt,
             c -> CTSEMJointMapDensity(mw, counter); init_eps=eps, starts=starts,
-            progress_callback=watch, retune=retune)
+            chain_callback=watch, retune=retune)
         learning.offset += learning.nwarmup + Int(nw)
         moved = _jmap_moved(results, npar)
         if w == 1 && first_only
@@ -2127,12 +2169,12 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     end
     if checking
         mc = m
-        learning.nwarmup = Int(nsettle)
+        _jmap_learn_window!(learning, Int(nsettle))
         before = learning.retuned[]
         results = _sample_chains(nchains, parallel, seed + 997, centre, metric, Int(nsettle),
             Int(ncheck), Int(maxdepth), Float64(target_accept), Float64(maxdelta), 0.0,
             adapt_metric, adapt, c -> CTSEMJointMapDensity(mc, counter); init_eps=eps,
-            starts=starts, progress_callback=watch, retune=retune)
+            starts=starts, chain_callback=watch, retune=retune)
         moved = _jmap_moved(results, npar)
         Wl = _pool_draws(results[moved], D)
         starts = _jmap_restarts(m, m, results, moved, Wl, rng)

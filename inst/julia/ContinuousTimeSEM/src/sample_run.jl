@@ -956,12 +956,18 @@ the property a run has to keep to be reproducible from its seed.
 """
 function _run_chains(nchains::Int, parallel::Bool, seed::Integer,
     label::String, closing::String, chain; progress::Bool=false,
-    overwrite::Bool=true, progress_callback=nothing, progress_sink=nothing)
+    overwrite::Bool=true, progress_callback=nothing, progress_sink=nothing,
+    chain_callback=nothing)
     results = Vector{_ChainResult}(undef, nchains)
     runner = function (c)
         reporter = CTSEMProgress(progress && c == 1; label=label,
             overwrite=overwrite, sink=progress_sink)
-        watcher = CTSEMCallback(c == 1 ? progress_callback : nothing)
+        # `chain_callback(c)`, where given, is every chain's own callback: a
+        # caller that serialises them itself (the map's learning report) and
+        # so can follow every chain, where chain 1 alone fell silent once it
+        # finished a window ahead of the others.
+        watcher = CTSEMCallback(chain_callback !== nothing ? chain_callback(c) :
+            (c == 1 ? progress_callback : nothing))
         results[c] = chain(c, Random.Xoshiro(UInt64(seed) + UInt64(c)),
             reporter, watcher)
         _progress_done(reporter, closing)
@@ -1057,6 +1063,7 @@ scratch: the joint sampler hands each chain its own adjoint workspace, since
 every chain filters every subject and they would otherwise share buffers.
 `retune` (`_ChainRetune`) is for draws that are warm-up, the map's learning
 windows: a chain that stalls finds its step size again where it is.
+`chain_callback` is `_run_chains`'s.
 """
 function _sample_chains(nchains::Int, parallel::Bool, seed::Integer,
     centre::Vector{Float64}, metric::CTSEMMetric, nwarmup::Int, ndraws::Int,
@@ -1065,7 +1072,7 @@ function _sample_chains(nchains::Int, parallel::Bool, seed::Integer,
     density_for; settle_tol::Float64=0.0, init_eps::Float64=0.0,
     progress::Bool=false, overwrite::Bool=true, progress_callback=nothing,
     progress_sink=nothing, starts=nothing,
-    retune::Union{Nothing,_ChainRetune}=nothing)
+    retune::Union{Nothing,_ChainRetune}=nothing, chain_callback=nothing)
     # One reporter spans both phases -- `_run_chain` relabels it from "warmup"
     # to "sampling" partway -- so it opens on "warmup" and the closing line
     # names both rather than whichever phase it ended in.
@@ -1081,7 +1088,8 @@ function _sample_chains(nchains::Int, parallel::Bool, seed::Integer,
             settle_tol=settle_tol, init_eps=init_eps, progress=reporter,
             callback=watcher, retune=retune);
         progress=progress, overwrite=overwrite,
-        progress_callback=progress_callback, progress_sink=progress_sink)
+        progress_callback=progress_callback, progress_sink=progress_sink,
+        chain_callback=chain_callback)
 end
 
 """
