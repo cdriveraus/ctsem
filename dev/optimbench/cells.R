@@ -872,9 +872,13 @@ flip_truth <- list(
   t0cov = matrix(c(1, 0.4, 0.4, 1), 2),
   fastdrift = -2, fastsd = 0.6)
 
-flip_data <- function(type, seed, fast = FALSE, nsub = 150L, nobs = 6L) {
+flip_data <- function(type, seed, fast = FALSE, nsub = 150L, nobs = 6L,
+  anchor = 1) {
   set.seed(seed)
   tr <- flip_truth
+  # `anchor` < 1: the anchors are the factors' weakest items, as in the
+  # reanalysis, where the mirror basin then costs only what the anchors share.
+  for (f in 1:2) tr$lambda[[f]][1] <- anchor
   sims <- sim_linear(nsub, nobs, tr$drift, tr$diffchol, tr$cintmean, tr$cintsd,
     tr$t0cov, dtrange = c(0.6, 1.4))
   TAU <- c(-1.0, 0.5, 2.0)
@@ -1013,10 +1017,13 @@ bench_problem <- function(model) {
     return(mk(function(s) growth_data(P, as.integer(s)), function() growth_model(P),
       c("augmented", "laplace", "auto"), reference = FALSE))
   }
-  if (model %in% c("flipo", "flipg", "flipof", "flipgf")) {
+  # flip<o|g>[f][w]: ordinal or Gaussian items, f fast companions, w weak
+  # anchors (loading 0.5 against the others' 0.8-1.4).
+  if (grepl("^flip[og]f?w?$", model)) {
     type <- if (startsWith(model, "flipo")) "ordinal" else "gaussian"
-    fast <- endsWith(model, "f")
-    return(mk(function(s) flip_data(type, as.integer(s), fast),
+    fast <- grepl("f", substring(model, 6))
+    anchor <- if (endsWith(model, "w")) 0.5 else 1
+    return(mk(function(s) flip_data(type, as.integer(s), fast, anchor = anchor),
       function() flip_model(type, fast), c("laplace", "augmented", "auto")))
   }
   if (grepl("^cov[0-9]+$", model)) {

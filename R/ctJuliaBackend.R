@@ -6228,6 +6228,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (!is.null(optimcontrol$lbfgs_growth)) {
     common$lbfgs_growth <- as.numeric(optimcontrol$lbfgs_growth)[1L]
     common$lbfgs_growth_coord <- isTRUE(optimcontrol$lbfgs_growth_coord)
+    common$lbfgs_growth_gain <- isTRUE(optimcontrol$lbfgs_growth_gain)
   }
   # Grippo-Lampariello-Lucidi acceptance over the last `lbfgs_gll` values.
   if (!is.null(optimcontrol$lbfgs_gll)) {
