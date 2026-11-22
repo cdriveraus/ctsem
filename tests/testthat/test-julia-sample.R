@@ -588,6 +588,31 @@ test_that("a stalled chain in a learning window finds its step size again", {
   expect_gt(on$moved, 50L)
   expect_lt(on$divergent, 20L)
   expect_lt(on$stepsize, 2)
+
+  # The learning line follows every chain: chain 1 alone fell silent once it
+  # finished a window ahead of the others. Its count is the chains' mean
+  # position, its log density the furthest-behind chain's, its divergences
+  # every chain's.
+  ctsem:::.ctJuliaEval(paste(
+    "function __learn_report()",
+    "  CT = ContinuousTimeSEM",
+    "  seen = []",
+    "  r = CT._JMapLearnReport(CT.CTSEMProgress(false),",
+    "    CT.CTSEMCallback((a...) -> push!(seen, a); every=0.0), 100, 2)",
+    "  r.offset = 20",
+    "  CT._jmap_learn_window!(r, 10)",
+    "  CT._JMapChainWatch(r, 1)(\"sampling\", 30, 40, -5.0, 2)",
+    "  CT._JMapChainWatch(r, 2)(\"warmup\", 4, 10, -9.0, 1)",
+    "  a = seen[end]",
+    "  return (phase=a[1], at=a[2], total=a[3], logp=a[4], div=a[5], n=length(seen))",
+    "end", sep = "\n"))
+  lr <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall("Main.__learn_report"))
+  expect_identical(lr$phase, "learning")
+  expect_equal(lr$at, ((20 + 10 + 30) + (20 + 4)) %/% 2)
+  expect_equal(lr$total, 100)
+  expect_equal(lr$logp, -9)
+  expect_equal(lr$div, 3)
+  expect_equal(lr$n, 2L)
 })
 
 test_that("theta's triangular map is the same fitted on the pool, and says how far it is", {
