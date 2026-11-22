@@ -852,14 +852,16 @@ growthm_model <- function(P, age0 = 4.5) {
 # Two correlated processes, each measured by five items: the first loads 1
 # (the anchor), the other four are free with the default transform 0.5 + 5 *
 # param, and every free loading is positive in truth. Each process has a random
-# intercept. The shape of a reanalysis model whose default fit ended with a
-# factor flipped against its anchor (a mirror basin hundreds of nats down):
-# from the default start the latent spread is far larger than the data's, so
-# the first steps shrink every free loading, and a step long enough takes a
-# factor's free loadings past zero together, where they cannot come back while
-# the anchor stays positive. `type` is 'ordinal' (four categories, logistic;
-# no data start for these processes' diffusion, which starts at its default) or
-# 'gaussian'. Kept small enough for the bench: 150 people, 6 occasions.
+# intercept. With `fast`, each factor also has a fast companion process that
+# loads its items with the same loadings (a state beside the trait). The shape
+# of a reanalysis model whose default fit ended with a factor flipped against
+# its anchor (a mirror basin hundreds of nats down): from the default start the
+# latent spread is far larger than the data's, so the first steps shrink every
+# free loading, and a step long enough takes a factor's free loadings past zero
+# together, where they cannot come back while the anchor stays positive. `type`
+# is 'ordinal' (four categories, logistic; no data start for these processes'
+# drift and diffusion, which start at their defaults) or 'gaussian'. Kept small
+# enough for the bench: 150 people, 6 occasions.
 
 flip_truth <- list(
   lambda = list(c(1, 1.2, 0.9, 1.3, 0.8), c(1, 1.1, 1.4, 0.9, 1.2)),
@@ -867,9 +869,10 @@ flip_truth <- list(
   drift = matrix(c(-0.4, 0.1, 0.05, -0.6), 2),
   diffchol = matrix(c(0.7, 0.3, 0, 0.6), 2),
   cintmean = c(0.2, -0.1), cintsd = c(0.3, 0.3),
-  t0cov = matrix(c(1, 0.4, 0.4, 1), 2))
+  t0cov = matrix(c(1, 0.4, 0.4, 1), 2),
+  fastdrift = -2, fastsd = 0.6)
 
-flip_data <- function(type, seed, nsub = 150L, nobs = 6L) {
+flip_data <- function(type, seed, fast = FALSE, nsub = 150L, nobs = 6L) {
   set.seed(seed)
   tr <- flip_truth
   sims <- sim_linear(nsub, nobs, tr$drift, tr$diffchol, tr$cintmean, tr$cintsd,
@@ -877,8 +880,22 @@ flip_data <- function(type, seed, nsub = 150L, nobs = 6L) {
   TAU <- c(-1.0, 0.5, 2.0)
   do.call(rbind, lapply(sims, function(s) {
     out <- data.frame(id = s$id, time = s$time)
+    x <- s$x
+    if (fast) {
+      # Each factor's companion: an OU process at its stationary spread.
+      dts <- diff(s$time)
+      for (f in 1:2) {
+        z <- numeric(nobs)
+        z[1] <- stats::rnorm(1, 0, tr$fastsd)
+        for (t in 2:nobs) {
+          a <- exp(tr$fastdrift * dts[t - 1])
+          z[t] <- a * z[t - 1] + stats::rnorm(1, 0, tr$fastsd * sqrt(1 - a^2))
+        }
+        x[, f] <- x[, f] + z
+      }
+    }
     for (f in 1:2) for (j in 1:5) {
-      eta <- tr$mm[[f]][j] + tr$lambda[[f]][j] * s$x[, f]
+      eta <- tr$mm[[f]][j] + tr$lambda[[f]][j] * x[, f]
       out[[sprintf("f%dy%d", f, j)]] <- if (type == "ordinal") drawcat(eta, TAU) else
         eta + stats::rnorm(length(eta), 0, 0.6)
     }
@@ -886,15 +903,33 @@ flip_data <- function(type, seed, nsub = 150L, nobs = 6L) {
   }))
 }
 
-flip_model <- function(type) {
+flip_model <- function(type, fast = FALSE) {
   man <- c(sprintf("f1y%d", 1:5), sprintf("f2y%d", 1:5))
-  LAMBDA <- matrix("0", 10, 2)
-  LAMBDA[1:5, 1] <- c("1", sprintf("lam_f1y%d", 2:5))
-  LAMBDA[6:10, 2] <- c("1", sprintf("lam_f2y%d", 2:5))
+  lat <- if (fast) c("f1", "f2", "m1", "m2") else c("f1", "f2")
+  nl <- length(lat)
+  LAMBDA <- matrix("0", 10, nl)
+  load1 <- c("1", sprintf("lam_f1y%d", 2:5)); load2 <- c("1", sprintf("lam_f2y%d", 2:5))
+  LAMBDA[1:5, 1] <- load1; LAMBDA[6:10, 2] <- load2
+  if (fast) { LAMBDA[1:5, 3] <- load1; LAMBDA[6:10, 4] <- load2 }
   MM <- matrix(c("0", sprintf("mm_f1y%d", 2:5), "0", sprintf("mm_f2y%d", 2:5)))
-  args <- list(type = "ct", n.latent = 2, n.manifest = 10, manifestNames = man,
-    latentNames = c("f1", "f2"), LAMBDA = LAMBDA, MANIFESTMEANS = MM,
-    CINT = matrix(c("cint1", "cint2")), silent = TRUE)
+  args <- list(type = "ct", n.latent = nl, n.manifest = 10, manifestNames = man,
+    latentNames = lat, LAMBDA = LAMBDA, MANIFESTMEANS = MM,
+    CINT = matrix(c("cint1", "cint2", rep("0", nl - 2L))), silent = TRUE)
+  if (fast) {
+    # The companions: their own rate and noise, no intercept, starting at zero
+    # mean; nothing between them and the slow processes.
+    DRIFT <- matrix("0", nl, nl)
+    DRIFT[1:2, 1:2] <- matrix(c("drift_f1", "drift_f2_f1", "drift_f1_f2", "drift_f2"), 2)
+    DRIFT[3, 3] <- "drift_m1"; DRIFT[4, 4] <- "drift_m2"
+    DIFF <- matrix("0", nl, nl)
+    DIFF[1:2, 1:2] <- matrix(c("diff_f1", "diff_f2_f1", "0", "diff_f2"), 2)
+    DIFF[3, 3] <- "diff_m1"; DIFF[4, 4] <- "diff_m2"
+    T0VAR <- matrix("0", nl, nl)
+    T0VAR[1:2, 1:2] <- matrix(c("t0var_f1", "t0var_f2_f1", "0", "t0var_f2"), 2)
+    T0VAR[3, 3] <- "t0var_m1"; T0VAR[4, 4] <- "t0var_m2"
+    args$DRIFT <- DRIFT; args$DIFFUSION <- DIFF; args$T0VAR <- T0VAR
+    args$T0MEANS <- matrix(c("t0m_f1", "t0m_f2", "0", "0"))
+  }
   if (type == "ordinal") {
     args$MANIFESTVAR <- diag(0, 10)
     args$manifesttype <- rep(2L, 10)
@@ -978,10 +1013,11 @@ bench_problem <- function(model) {
     return(mk(function(s) growth_data(P, as.integer(s)), function() growth_model(P),
       c("augmented", "laplace", "auto"), reference = FALSE))
   }
-  if (model %in% c("flipo", "flipg")) {
-    type <- if (model == "flipo") "ordinal" else "gaussian"
-    return(mk(function(s) flip_data(type, as.integer(s)), function() flip_model(type),
-      c("laplace", "augmented", "auto")))
+  if (model %in% c("flipo", "flipg", "flipof", "flipgf")) {
+    type <- if (startsWith(model, "flipo")) "ordinal" else "gaussian"
+    fast <- endsWith(model, "f")
+    return(mk(function(s) flip_data(type, as.integer(s), fast),
+      function() flip_model(type, fast), c("laplace", "augmented", "auto")))
   }
   if (grepl("^cov[0-9]+$", model)) {
     m <- as.integer(substring(model, 4))

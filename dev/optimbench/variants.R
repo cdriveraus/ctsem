@@ -83,6 +83,7 @@ BENCH_VARIANTS <- list(
   careful = list(optimcontrol = list(carefulfit = TRUE)),
   careful5 = list(optimcontrol = list(carefulfit = 5L)),
   careful20 = list(optimcontrol = list(carefulfit = 20L)),
+  careful200 = list(optimcontrol = list(carefulfit = 200L)),
 
   # An estimate, then what a value, a gradient and a Hessian cost there, and
   # single units against their weights (harness section 6): the measurements
@@ -98,6 +99,15 @@ BENCH_VARIANTS <- list(
 
   # The sgd phase (`_ctsem_sgd`) before L-BFGS: optimcontrol$stochastic.
   stoch = list(optimcontrol = list(stochastic = TRUE)),
+  stoch_allprior = list(optimcontrol = list(stochastic = TRUE),
+    args = list(priors = TRUE), objective = "allprior"),
+
+  # A cold L-BFGS run's step capped at `lbfgs_growth` times the longest move
+  # any coordinate has made so far (branch earlysteps), alone and with priors
+  # on every parameter (no prior warm-up then, as for the reanalysis fit).
+  grow2 = list(optimcontrol = list(lbfgs_growth = 2)),
+  grow2_allprior = list(optimcontrol = list(lbfgs_growth = 2),
+    args = list(priors = TRUE), objective = "allprior"),
 
   # L-BFGS with the diagonal initial inverse Hessian and Grippo-Lampariello-
   # Lucidi acceptance over the last 20 values: the BFGS-side improvement alone.
