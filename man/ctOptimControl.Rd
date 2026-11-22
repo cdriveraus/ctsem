@@ -119,6 +119,12 @@ is a misspelled name. Settings left unset take the backend's default.
  and Hager).}
  \item{\code{initial_alpha}}{Julia. Default 0.1. The length of the first
  trial step, in raw units.}
+ \item{\code{lbfgs_growth}}{Julia. Default 2. In each optimisation that
+ starts without curvature information, no step moves a parameter more than
+ this many times the largest move that parameter has made so far (or a
+ tenth of the largest move of any parameter, if that is larger). This keeps
+ the first steps short while the rest of the model settles, which can stop
+ factor loadings from changing sign early on. 0 removes the limit.}
  \item{\code{precondition}}{Julia. Default FALSE. TRUE sets L-BFGS's initial
  scaling of each parameter from the model's transforms, instead of learning
  it from the curvature. This can make fits whose intercepts start far from

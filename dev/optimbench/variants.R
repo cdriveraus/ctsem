@@ -103,8 +103,10 @@ BENCH_VARIANTS <- list(
     args = list(priors = TRUE), objective = "allprior"),
   # The variants grow2, growc2 and gain1 (caps on a cold L-BFGS run's early
   # steps) and the grid earlysteps.txt that ran them need the switches of
-  # ctsem commit b1d3f194 (branch earlysteps), which were not kept:
-  # CT-SEM/review/bench/2026-11-22-earlysteps.md.
+  # ctsem commit b1d3f194 (branch earlysteps): CT-SEM/review/bench/
+  # 2026-11-22-earlysteps.md. growc2 became the default, `lbfgs_growth = 2`;
+  # this is the run without it.
+  nogrowth = list(optimcontrol = list(lbfgs_growth = 0)),
 
   # L-BFGS with the diagonal initial inverse Hessian and Grippo-Lampariello-
   # Lucidi acceptance over the last 20 values: the BFGS-side improvement alone.
