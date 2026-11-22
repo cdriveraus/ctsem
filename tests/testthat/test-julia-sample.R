@@ -668,7 +668,7 @@ test_that("theta's triangular map is the same fitted on the pool, and says how f
     optimcontrol = list(finishsamples = 20))))
 })
 
-test_that("the maximum check reads the map's first window and costs a centred run nothing", {
+test_that("the maximum check reads the map's first window, climbs only past its bar, and leaves the draws as they were", {
   skip_without_julia()
   fit <- .maximum_fixture()
   ask <- function(...) suppressWarnings(suppressMessages(ctFitUncertainty(fit,
@@ -676,19 +676,27 @@ test_that("the maximum check reads the map's first window and costs a centred ru
     control = list(chains = 2, draws = 60L, minESS = 0, processes = FALSE))))
   on <- ask()
   off <- ask(checks = c("randomeffects", "intervals"))
-  # Chains started at the estimate of a posterior centred there: each mean
-  # inside the bar, no climb.
+  # This fixture's posterior is centred at the estimate (its mean 8.6 of a
+  # bar of 27.9 away), but its sds are 1.5 to 4.6 times the Hessian's, most
+  # along the ridge between the initial and manifest means, which the chains
+  # cross slowly. A window's chain mean is then near one draw, and passed the
+  # bar for 6 chains of 42 and in 11 runs of 40 (seeds 1-41, Julia 1.13.3,
+  # dev2), each climb finding nothing. Which chains pass depends on the seed
+  # and the platform's last bits, so the test reads the check's rule, never
+  # whether this run's chains passed.
   mc <- on$sample$maximumcheck
   expect_identical(on$sample$sampler, "map")
   expect_length(mc$distance, 2L)
   expect_true(all(is.finite(mc$distance)))
-  expect_true(all(mc$distance < mc$bar))
   expect_equal(mc$bar, stats::qchisq(0.999, length(fit$estimate$raw)))
-  expect_false(any(mc$flagged))
-  expect_false(mc$climbed)
+  expect_identical(mc$flagged, mc$distance > mc$bar)
+  # A climb only from a chain past the bar, and nothing higher where the
+  # estimate is the maximum.
+  expect_identical(mc$climbed, any(mc$flagged))
+  expect_false(mc$higher)
   expect_null(off$sample$maximumcheck)
-  # The run went on from the window it was read at, to the draws of a run
-  # that was not read.
+  # Climbed or not, the run went on from the window it was read at, to the
+  # draws of a run that was not read.
   expect_equal(on$estimate$rawposterior, off$estimate$rawposterior)
   expect_identical(on$sample$draws, off$sample$draws)
   expect_error(ctFitUncertainty(fit, method = "sample", checks = "maxima"),
@@ -791,7 +799,12 @@ test_that("ctFit(optimize = FALSE) fits again from a higher point before it samp
   expect_identical(calls, 2L)
   expect_identical(stops, c(TRUE, TRUE))
   expect_identical(fit$sample$maximumcheck$rounds, 1L)
-  expect_false(fit$sample$maximumcheck$climbed)
+  # The second check is the real one, on a fixture whose estimate is its
+  # maximum: whether its chains pass the bar is the seed's (the test above),
+  # and a climb from them finds nothing higher.
+  mc <- fit$sample$maximumcheck
+  expect_identical(mc$climbed, any(mc$flagged))
+  expect_false(mc$higher)
   expect_true(any(grepl("Fitting again from there before sampling", said, fixed = TRUE)))
   expect_true(all(is.finite(fit$estimate$rawposterior)))
 })
