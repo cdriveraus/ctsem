@@ -34,7 +34,9 @@ summary the unit's conditional given theta is
 partial non-centring (Papaspiliopoulos, Roberts and Skold 2007), centred where a
 unit's data dominate and non-centred where its prior does, continuous in theta,
 for any number of levels, members a unit and ranks. `G_s` couples a member's
-summary to the free parameters outside `P` its likelihood also reads (`cross`).
+summary to the free parameters outside `P` its likelihood also reads (`cross`):
+those every subject reads and its own sampled TI predictor values, never
+another subject's (`_jmap_layout`).
 The log Jacobian is `log det C - sum_U log det R_U`, exactly, so the draws are
 the target's whatever the summaries are; they decide only how near normal the
 latent posterior is.
@@ -48,8 +50,10 @@ chains' draws pooled over the chains that moved: theta's centre and `C` from
 their covariance shrunk toward the last (`_smc_shrunk_cov`), each member's
 summary by least squares of its scores on `b_s` in the directions its draws
 span, the last summary kept in the others. Score matching is exact for a
-Gaussian conditional from a few draws. A chain that stopped restarts from a
-draw of those that moved; one check window under the final map does the same
+Gaussian conditional from a few draws. A window's draws are warm-up, so a
+chain that stalls within one finds its step size again where it stands
+(`_ChainRetune`); a chain that stopped over a window restarts from a draw of
+those that moved; one check window under the final map does the same
 without a refit; the kept draws all come after the last refit, under one map,
 and stop by the rule every sampler stops by (`_sample_until_target`), judged
 on theta.
@@ -439,22 +443,29 @@ function _jmap_cor2(x::AbstractVector, y::AbstractVector)
     return sxx > 0 && syy > 0 ? sxy^2 / (sxx * syy) : 0.0
 end
 
-# The earlier coordinates component `k` conditions on: every one where there are
-# at most `m`, otherwise the `m` the component's draws depend on most -- its
-# location linearly or bending, or its spread -- by the squared correlations of
-# `u_k` with `s_j` and with `s_j^2`, and of `(u_k - mean)^2` with `s_j`, summed;
-# `S` holds the draws' saturated values.
-function _jmap_tri_parents(X::AbstractMatrix, S::AbstractMatrix, k::Int, m::Int)
-    k - 1 <= m && return collect(1:(k - 1))
-    m <= 0 && return Int[]
+# How much component `k`'s draws depend on each earlier coordinate -- its
+# location linearly or bending, or its spread: the squared correlations of
+# `u_k` with `s_j` and with `s_j^2`, and of `(u_k - mean)^2` with `s_j`, summed.
+# `X` holds the draws (a row a coordinate); `Sd` and `S2d` the saturated values
+# and their squares a column a coordinate, so each is read contiguously.
+function _jmap_tri_scores(X::AbstractMatrix, Sd::AbstractMatrix, S2d::AbstractMatrix,
+    k::Int)
     x = X[k, :]
     xc = x .- sum(x) / length(x)
     x2 = xc .^ 2
     score = zeros(k - 1)
     for j in 1:(k - 1)
-        s = S[j, :]
-        score[j] = _jmap_cor2(xc, s) + _jmap_cor2(xc, s .^ 2) + _jmap_cor2(x2, s)
+        s = view(Sd, :, j)
+        score[j] = _jmap_cor2(xc, s) + _jmap_cor2(xc, view(S2d, :, j)) + _jmap_cor2(x2, s)
     end
+    return score
+end
+
+# The earlier coordinates component `k` conditions on: every one where there are
+# at most `m`, otherwise the `m` its draws depend on most (`_jmap_tri_scores`).
+function _jmap_tri_parents(score::Vector{Float64}, k::Int, m::Int)
+    k - 1 <= m && return collect(1:(k - 1))
+    m <= 0 && return Int[]
     return sort(partialsortperm(score, 1:m; rev=true))
 end
 
@@ -543,9 +554,18 @@ size, where they are weighted); then refitted on every draw. Each size's
 Newton starts from the last size's fit, and the refit from the size kept: the
 same fits, in fewer iterations. `nothing` where too few draws fit even the
 marginal.
+
+The components depend on the draws alone, not on each other's fits, so with
+`parallel` (a caller that has sized the pool, `_laplace_ensure_pool!`) they
+run on it, OpenBLAS held to one thread meanwhile so that the workers' products
+do not queue on its pool; a component's fit is the same wherever it runs.
+`progress(done, n)` is called from the calling task as components finish
+(`_ctsem_call_hook`): on the reanalysis theta had 2,868 coordinates (2,803 of
+them sampled TI predictor values), fitted one after another in silence after
+every window.
 """
 function _jmap_tri_fit(U::AbstractMatrix; weights::Union{Nothing,AbstractVector}=nothing,
-    iters::Int=60)
+    iters::Int=60, parallel::Bool=false, progress=nothing)
     n, N = size(U)
     nv = cld(N, 4)
     nt = N - nv
@@ -555,6 +575,7 @@ function _jmap_tri_fit(U::AbstractMatrix; weights::Union{Nothing,AbstractVector}
     w = weights === nothing ? ones(N) : collect(Float64, weights)
     wt = w[1:nt] ./ (sum(w[1:nt]) / nt)
     wv = w[(nt + 1):N] ./ (sum(w[(nt + 1):N]) / nv)
+    wall = w ./ (sum(w) / N)
     # What the training draws carry: their effective size, which weighted
     # draws (a tempering stage's cloud) hold fewer of than their count.
     neff = sum(wt)^2 / sum(abs2, wt)
@@ -562,6 +583,33 @@ function _jmap_tri_fit(U::AbstractMatrix; weights::Union{Nothing,AbstractVector}
     va = (nt + 1):N
     Xt = X[:, tr]
     St = S[:, tr]
+    Sv = S[:, va]
+    # The training draws' saturated values and their squares, a column a
+    # coordinate, for the parents' scores.
+    Sd = permutedims(St)
+    S2d = Sd .^ 2
+    fits = Vector{Tuple{Vector{Int},Vector{Float64},Int}}(undef, n)
+    done = Threads.Atomic{Int}(0)
+    caller = current_task()
+    body = function (k)
+        fits[k] = _jmap_tri_component_ladder(X, S, Xt, St, Sv, Sd, S2d, wt, wv, wall,
+            neff, va, k, iters)
+        Threads.atomic_add!(done, 1)
+        current_task() === caller && _ctsem_call_hook(progress, done[], n)
+        return true
+    end
+    if parallel && n > 1
+        nb = LinearAlgebra.BLAS.get_num_threads()
+        LinearAlgebra.BLAS.set_num_threads(1)
+        try
+            _laplace_parallel(body, 1:n)
+        finally
+            LinearAlgebra.BLAS.set_num_threads(nb)
+        end
+    else
+        foreach(body, 1:n)
+    end
+    _ctsem_call_hook(progress, n, n)
     par = Vector{Vector{Int}}(undef, n)
     f1 = Vector{Vector{Float64}}(undef, n)
     f2 = Vector{Vector{Float64}}(undef, n)
@@ -569,34 +617,8 @@ function _jmap_tri_fit(U::AbstractMatrix; weights::Union{Nothing,AbstractVector}
     a1 = Vector{Vector{Float64}}(undef, n)
     f0 = zeros(n); a0 = zeros(n); epsv = zeros(n); ld = zeros(n)
     for k in 1:n
-        best = (nll=Inf, P=Int[], p=Float64[])
-        prev = nothing
-        worse = 0
-        m = 0
-        while true
-            P = _jmap_tri_parents(Xt, St, k, m)
-            Phi, Psi = _jmap_tri_designs(St, P)
-            size(Phi, 2) + size(Psi, 2) + 2 <= neff || break
-            p0 = prev === nothing ? nothing : _jmap_tri_embed(prev.p, prev.P, P)
-            p, held = _jmap_tri_component_fit(Xt[k, :], Phi, Psi, wt, iters; start=p0)
-            prev = (P=P, p=p)
-            Phv, Psv = _jmap_tri_designs(S[:, va], P)
-            nll = _jmap_tri_component_nll(_JMapTriComponent(X[k, va], Phv, Psv, held, wv), p)
-            if nll < best.nll
-                best = (nll=nll, P=P, p=p)
-                worse = 0
-            else
-                worse += 1
-            end
-            (worse >= 2 || length(P) >= k - 1) && break
-            m = m == 0 ? 1 : 2m
-        end
-        P = best.P
+        P, p, nf = fits[k]
         mm = length(P)
-        Phi, Psi = _jmap_tri_designs(S, P)
-        p, _ = _jmap_tri_component_fit(X[k, :], Phi, Psi, w ./ (sum(w) / N), iters;
-            start=isempty(best.p) ? nothing : best.p)
-        nf = size(Phi, 2)
         par[k] = P
         f0[k] = p[1]
         f1[k] = p[2:(mm + 1)]
@@ -610,13 +632,53 @@ function _jmap_tri_fit(U::AbstractMatrix; weights::Union{Nothing,AbstractVector}
     return _JMapTri(n, par, f0, f1, f2, f3, a0, a1, epsv, ld)
 end
 
+# Component `k` of `_jmap_tri_fit`: its parents' ladder on the training draws,
+# scored on the held-out ones, then the size kept refitted on every draw. Its
+# parents, coefficients and the location's design width.
+function _jmap_tri_component_ladder(X, S, Xt, St, Sv, Sd, S2d, wt, wv, wall, neff, va,
+    k::Int, iters::Int)
+    score = _jmap_tri_scores(Xt, Sd, S2d, k)
+    xk = Xt[k, :]
+    xv = X[k, va]
+    best = (nll=Inf, P=Int[], p=Float64[])
+    prev = nothing
+    worse = 0
+    m = 0
+    while true
+        P = _jmap_tri_parents(score, k, m)
+        Phi, Psi = _jmap_tri_designs(St, P)
+        size(Phi, 2) + size(Psi, 2) + 2 <= neff || break
+        p0 = prev === nothing ? nothing : _jmap_tri_embed(prev.p, prev.P, P)
+        p, held = _jmap_tri_component_fit(xk, Phi, Psi, wt, iters; start=p0)
+        prev = (P=P, p=p)
+        Phv, Psv = _jmap_tri_designs(Sv, P)
+        nll = _jmap_tri_component_nll(_JMapTriComponent(xv, Phv, Psv, held, wv), p)
+        if nll < best.nll
+            best = (nll=nll, P=P, p=p)
+            worse = 0
+        else
+            worse += 1
+        end
+        (worse >= 2 || length(P) >= k - 1) && break
+        m = m == 0 ? 1 : 2m
+    end
+    P = best.P
+    Phi, Psi = _jmap_tri_designs(S, P)
+    p, _ = _jmap_tri_component_fit(X[k, :], Phi, Psi, wall, iters;
+        start=isempty(best.p) ? nothing : best.p)
+    return (P, p, size(Phi, 2))
+end
+
 """
     CTSEMJointMap
 
 The map: theta's centre and whitening factor, and per member of each unit its
-Gaussian summary in its raw effects (`Lam`, `h`) and coupling `G` to
-`theta[R]`. `P` are the raw positions varying at some level, `row` a raw
-position's row of `P`.
+Gaussian summary in its raw effects (`Lam`, `h`) and coupling `G` to the free
+parameters outside its effects that its subject reads: `theta[R]`, those every
+subject reads, then `theta[own[s]]`, its subject's own sampled TI predictor
+values (`_jmap_layout`). `P` are the raw positions varying at some level,
+`row` a raw position's row of `P`, `thref` the parameters (extended) the
+couplings are centred at.
 """
 struct CTSEMJointMap{S}
     sampler::S
@@ -624,6 +686,7 @@ struct CTSEMJointMap{S}
     P::Vector{Int}
     row::Vector{Int}
     R::Vector{Int}
+    own::Vector{Vector{Int}}
     members::Vector{Vector{Int}}
     Lam::Vector{Matrix{Float64}}
     h::Vector{Vector{Float64}}
@@ -636,8 +699,11 @@ end
 
 _jmap_with(m::CTSEMJointMap; Lam=m.Lam, h=m.h, G=m.G, theta0=m.theta0, Ct=m.Ct,
     tri=m.tri) =
-    CTSEMJointMap(m.sampler, m.npar, m.P, m.row, m.R, m.members, Lam, h, G,
+    CTSEMJointMap(m.sampler, m.npar, m.P, m.row, m.R, m.own, m.members, Lam, h, G,
         m.thref, theta0, Ct, tri)
+
+"""Member `s`'s coupled positions, `R` then its own: the columns of `G[s]`."""
+_jmap_coupled(m::CTSEMJointMap, s::Int) = vcat(m.R, m.own[s])
 
 """
     _JMapTheta
@@ -666,14 +732,16 @@ column each, weighted where `weights` are given: a tempering stage's cloud),
 whitened by `m`'s own centre and factor, each component as large as the draws
 support (`_jmap_tri_fit`); `m` as it is where they support none. At most 4000
 draws are read, spread through the pool in its order, so the held-out quarter
-stays the pool's last.
+stays the pool's last. `parallel` and `progress` are `_jmap_tri_fit`'s.
 """
 function _jmap_learn_tri(m::_JMapThetaLike, pooled::AbstractMatrix;
-    weights::Union{Nothing,AbstractVector}=nothing)
+    weights::Union{Nothing,AbstractVector}=nothing, parallel::Bool=false,
+    progress=nothing)
     N = size(pooled, 2)
     pick = N > 4000 ? round.(Int, range(1, N; length=4000)) : collect(1:N)
     U = LowerTriangular(m.Ct) \ (pooled[:, pick] .- m.theta0)
-    tri = _jmap_tri_fit(U; weights=weights === nothing ? nothing : weights[pick])
+    tri = _jmap_tri_fit(U; weights=weights === nothing ? nothing : weights[pick],
+        parallel=parallel, progress=progress)
     return tri === nothing ? m : _jmap_with(m; tri=tri)
 end
 
@@ -727,6 +795,14 @@ function _jmap_theta_pullback(m::_JMapThetaLike, w::AbstractVector,
 end
 
 
+# The positions `P` that vary, each one's row, and with coupling (`cross`) what
+# each member's summary is coupled to: `R`, the free parameters outside `P`
+# that every subject reads, and per member (flat index) its subject's own
+# sampled TI predictor values (`TIMissingRecipe`). A subject's score is exactly
+# zero at another subject's values, so a coupling to them is a zero column: on
+# the reanalysis (8,446 members, 2,803 sampled values) every member carried
+# 2,860 columns where it read 62 and its own, about 1.5 GB a matrix of `G` and
+# of the refit's sums, read at every density evaluation.
 function _jmap_layout(sampler::CTSEMSampler, cross::Bool)
     laplace = sampler.laplace
     spec = laplace.spec
@@ -737,12 +813,28 @@ function _jmap_layout(sampler::CTSEMSampler, cross::Bool)
     for (j, p) in enumerate(P)
         row[p] = j
     end
-    R = cross ? setdiff(1:sampler.npar, P) : Int[]
+    nflat = length(sampler.flat_unit)
+    own = [Int[] for _ in 1:nflat]
+    R = Int[]
+    if cross
+        sampled = falses(nv)
+        for j in laplace.objective.ti_missing_parameter
+            sampled[j] = true
+        end
+        R = [j for j in 1:sampler.npar if row[j] == 0 && !sampled[j]]
+        for s in 1:nflat
+            U = sampler.flat_unit[s]
+            i = laplace.units.members[U][sampler.flat_member[s]]
+            tip = laplace.objective.subject_objectives[i].tipreds
+            tip isa TIMissingRecipe || continue
+            own[s] = [j for j in tip.parameter_index if j <= sampler.npar && row[j] == 0]
+        end
+    end
     members = [Int[] for _ in 1:sampler.nunits]
     for s in eachindex(sampler.flat_unit)
         sampler.udims[sampler.flat_unit[s]] > 0 && push!(members[sampler.flat_unit[s]], s)
     end
-    return P, row, R, members
+    return P, row, R, own, members
 end
 
 # Member s's J_s, |P| by its unit's dimension, from the levels' roots `Ls`.
@@ -770,12 +862,35 @@ function _jmap_jacobian!(J::AbstractMatrix{T}, m::CTSEMJointMap, Ls, s::Int) whe
     return J
 end
 
+# Member s's linear term `h_s - Lam_s mu - G_s shift_s` at row `a`, where its
+# shift is `shift` (theta[R] less its reference) then its own values less
+# theirs, read from the extended theta `th`.
+@inline function _jmap_lin(m::CTSEMJointMap, s::Int, a::Int, mu, shift, th)
+    Lam = m.Lam[s]
+    acc = m.h[s][a]
+    nP = length(m.P)
+    @inbounds for b in 1:nP
+        acc -= Lam[a, b] * mu[b]
+    end
+    G = m.G[s]
+    nR = length(shift)
+    @inbounds for b in 1:nR
+        acc -= G[a, b] * shift[b]
+    end
+    own = m.own[s]
+    @inbounds for j in eachindex(own)
+        acc -= G[a, nR + j] * (th[own[j]] - m.thref[own[j]])
+    end
+    return acc
+end
+
 # Unit U's conditional given theta for the members' summaries: Q_U factored in
-# place (`_ctsem_cholesky`, upper) and the mean m_U. `Ls`, `mu = theta[P]` and
-# `thR = theta[R]` at theta. Lock-free kernels throughout: it runs on every
-# leapfrog step of chains that run at once.
-function _jmap_unit(m::CTSEMJointMap, Ls, mu::AbstractVector{T}, thR::AbstractVector,
-    U::Int) where {T}
+# place (`_ctsem_cholesky`, upper) and the mean m_U. `Ls`, `mu = theta[P]`,
+# `shift = theta[R] - thref[R]` and the extended theta `th` at theta. Lock-free
+# kernels throughout: it runs on every leapfrog step of chains that run at
+# once.
+function _jmap_unit(m::CTSEMJointMap, Ls, mu::AbstractVector{T}, shift::AbstractVector,
+    th::AbstractVector, U::Int) where {T}
     d = m.sampler.udims[U]
     nP = length(m.P)
     Q = Matrix{T}(I, d, d)
@@ -783,25 +898,13 @@ function _jmap_unit(m::CTSEMJointMap, Ls, mu::AbstractVector{T}, thR::AbstractVe
     J = zeros(T, nP, d)
     LJ = zeros(T, nP, d)
     lin = zeros(T, nP)
-    coupled = !isempty(m.R)
-    shift = coupled ? thR .- m.thref : thR
     for s in m.members[U]
         _jmap_jacobian!(J, m, Ls, s)
         Lam = m.Lam[s]
         _ctsem_mul!(LJ, Lam, J)
         _ctsem_mulTN!(Q, J, LJ, true, true)
         @inbounds for a in 1:nP
-            acc = m.h[s][a]
-            for b in 1:nP
-                acc -= Lam[a, b] * mu[b]
-            end
-            if coupled
-                G = m.G[s]
-                for b in eachindex(shift)
-                    acc -= G[a, b] * shift[b]
-                end
-            end
-            lin[a] = acc
+            lin[a] = _jmap_lin(m, s, a, mu, shift, th)
         end
         @inbounds for q in 1:d, a in 1:nP
             c[q] += J[a, q] * lin[a]
@@ -872,7 +975,7 @@ function _jmap_effects(m::CTSEMJointMap, theta::AbstractVector{T},
     th = _laplace_extend(laplace, theta)
     Ls = _laplace_popchols(th, laplace.spec)
     mu = th[m.P]
-    thR = th[m.R]
+    shift = th[m.R] .- m.thref[m.R]
     nunits = sampler.nunits
     us = Vector{Vector{T}}(undef, nunits)
     Fs = Vector{CTSEMCholesky{T,Matrix{T}}}(undef, nunits)
@@ -886,7 +989,7 @@ function _jmap_effects(m::CTSEMJointMap, theta::AbstractVector{T},
                 continue
             end
             unit = try
-                _jmap_unit(m, Ls, mu, thR, U)
+                _jmap_unit(m, Ls, mu, shift, th, U)
             catch err
                 _ctsem_must_propagate(err) && rethrow()
                 nothing
@@ -1008,20 +1111,22 @@ function _jmap_theta_adjoint!(gtheta::Vector{Float64}, m::CTSEMJointMap,
     th = _laplace_extend(laplace, theta)
     Ls = _laplace_popchols(th, spec)
     mu = th[m.P]
-    shift = isempty(m.R) ? Float64[] : th[m.R] .- m.thref
+    shift = th[m.R] .- m.thref[m.R]
     nP = length(m.P)
-    nR = length(m.R)
     dmax = maximum(sampler.udims; init=0)
     dmax == 0 && return gtheta
     Lbar = [zeros(size(L)) for L in Ls]
     mubar = zeros(nP)
-    Rbar = zeros(nR)
+    # The couplings' cotangent by raw position: `theta[R]` for every member,
+    # and each member's own values.
+    cbar = zeros(npar)
+    coupled = !isempty(m.R) || any(!isempty, m.own)
     reduction = ReentrantLock()
     _laplace_partition(laplace, sampler.nunits) do mine, _w
-        work = _JMapAdjointWork(nP, nR, dmax, Ls)
+        work = _JMapAdjointWork(nP, coupled ? npar : 0, dmax, Ls)
         for U in mine
             sampler.udims[U] == 0 && continue
-            _jmap_unit_adjoint!(work, m, Ls, mu, shift, U, Fs[U], us[U], gus[U],
+            _jmap_unit_adjoint!(work, m, Ls, mu, shift, th, U, Fs[U], us[U], gus[U],
                 view(xt, _sample_urange(sampler, U)))
         end
         Base.@lock reduction begin
@@ -1029,7 +1134,7 @@ function _jmap_theta_adjoint!(gtheta::Vector{Float64}, m::CTSEMJointMap,
                 Lbar[l] .+= work.Lbar[l]
             end
             mubar .+= work.mubar
-            Rbar .+= work.Rbar
+            coupled && (cbar .+= work.Rbar)
         end
         return true
     end
@@ -1037,9 +1142,7 @@ function _jmap_theta_adjoint!(gtheta::Vector{Float64}, m::CTSEMJointMap,
         p = m.P[a]
         p <= npar && (gtheta[p] += mubar[a])
     end
-    @inbounds for b in 1:nR
-        gtheta[m.R[b]] += Rbar[b]
-    end
+    coupled && (gtheta .+= cbar)
     dL = _laplace_level_chol_derivatives(th, spec)
     @inbounds for l in eachindex(spec.levels)
         level = spec.levels[l]
@@ -1061,7 +1164,8 @@ function _jmap_theta_adjoint!(gtheta::Vector{Float64}, m::CTSEMJointMap,
 end
 
 # A worker's scratch for `_jmap_unit_adjoint!`, sized for the largest unit, and
-# its accumulators.
+# its accumulators: `Rbar` the couplings' cotangent by raw position, as long as
+# theta where any member is coupled and empty otherwise.
 struct _JMapAdjointWork
     X::Matrix{Float64}
     S::Matrix{Float64}
@@ -1100,17 +1204,18 @@ _JMapAdjointWork(nP::Int, nR::Int, d::Int, Ls) = _JMapAdjointWork(zeros(d, d), z
 # lower triangle is `-z w'` there less the identity, since `U y = z` -- and the
 # second `g'Q^-1 c`'s. The gradient in c is v. Then per member
 # `Jbar_s = 2 Lam_s J_s S + lin_s v'`, `linbar_s = J_s v`, so
-# `mubar -= Lam_s linbar_s`, `shiftbar -= G_s' linbar_s`, and the levels' roots
-# take `Jbar_s` back at the positions `_jmap_jacobian!` put them.
+# `mubar -= Lam_s linbar_s`, `shiftbar_s -= G_s' linbar_s` (at `R` and the
+# member's own positions), and the levels' roots take `Jbar_s` back at the
+# positions `_jmap_jacobian!` put them.
 function _jmap_unit_adjoint!(work::_JMapAdjointWork, m::CTSEMJointMap, Ls, mu, shift,
-    U::Int, F, u::Vector{Float64}, g::Vector{Float64}, z::AbstractVector)
+    th, U::Int, F, u::Vector{Float64}, g::Vector{Float64}, z::AbstractVector)
     sampler = m.sampler
     laplace = sampler.laplace
     spec = laplace.spec
     d = sampler.udims[U]
     nP = length(m.P)
     nR = length(m.R)
-    coupled = nR > 0
+    coupled = !isempty(work.Rbar)
     X = view(work.X, 1:d, 1:d)
     S = view(work.S, 1:d, 1:d)
     XP = view(work.XP, 1:d, 1:d)
@@ -1159,17 +1264,7 @@ function _jmap_unit_adjoint!(work::_JMapAdjointWork, m::CTSEMJointMap, Ls, mu, s
         Lam = m.Lam[s]
         _ctsem_mul!(LJ, Lam, J)
         @inbounds for a in 1:nP
-            acc = m.h[s][a]
-            for b in 1:nP
-                acc -= Lam[a, b] * mu[b]
-            end
-            if coupled
-                G = m.G[s]
-                for b in 1:nR
-                    acc -= G[a, b] * shift[b]
-                end
-            end
-            lin[a] = acc
+            lin[a] = _jmap_lin(m, s, a, mu, shift, th)
             t = 0.0
             for q in 1:d
                 t += J[a, q] * v[q]
@@ -1189,12 +1284,13 @@ function _jmap_unit_adjoint!(work::_JMapAdjointWork, m::CTSEMJointMap, Ls, mu, s
         end
         if coupled
             G = m.G[s]
-            @inbounds for b in 1:nR
+            own = m.own[s]
+            @inbounds for b in 1:(nR + length(own))
                 acc = 0.0
                 for a in 1:nP
                     acc += G[a, b] * linb[a]
                 end
-                work.Rbar[b] -= acc
+                work.Rbar[b <= nR ? m.R[b] : own[b - nR]] -= acc
             end
         end
         # The roots' cotangents, where `_jmap_jacobian!` placed each entry.
@@ -1226,11 +1322,11 @@ function _jmap_inverse(m::CTSEMJointMap, theta::AbstractVector, x::AbstractVecto
     th = _laplace_extend(laplace, collect(Float64, theta))
     Ls = _laplace_popchols(th, laplace.spec)
     mu = th[m.P]
-    thR = th[m.R]
+    shift = th[m.R] .- m.thref[m.R]
     for U in 1:sampler.nunits
         r = _sample_urange(sampler, U)
         isempty(r) && continue
-        F, mean = _jmap_unit(m, Ls, mu, thR, U)
+        F, mean = _jmap_unit(m, Ls, mu, shift, th, U)
         xt[r] .= _jmap_umul(F, x[r] .- mean)
     end
     return xt
@@ -1261,8 +1357,9 @@ _jmap_score!(gsub, laplace, i::Int, aws, shifted, ekf) =
     _laplace_subject_value_gradient!(gsub, laplace.objective.subject_objectives[i],
         aws, shifted, ekf, _HYBRID_FULL)
 
-"""A member's training rows as sums: `b_s`, its score in `b_s` and in
-`theta[R]`, and the cross products the regressions read."""
+"""A member's training rows as sums: `b_s`, its score in `b_s` and at its
+coupled positions (`_jmap_coupled`), and the cross products the regressions
+read."""
 mutable struct _JMapStats
     n::Int
     sb::Vector{Float64}
@@ -1275,8 +1372,15 @@ end
 _JMapStats(nP::Int, nR::Int) = _JMapStats(0, zeros(nP), zeros(nP), zeros(nR),
     zeros(nP, nP), zeros(nP, nP), zeros(nP, nR))
 
+"""Every member's empty sums, sized by its coupling."""
+_jmap_stats(m::CTSEMJointMap) = [_JMapStats(length(m.P), size(m.G[s], 2))
+                                 for s in eachindex(m.G)]
+
 # Members `mine` at the effects `x` (theta extended `th`, roots `Ls`): one row
-# each into `stats`, none where the subject is not finite.
+# each into `stats`, none where the subject is not finite. Into the sums in
+# place: a row is a pass over every subject, and copies of the score at the
+# coupled positions, and of their outer products, were a gigabyte a row on
+# the reanalysis.
 function _jmap_scores_range!(stats, m::CTSEMJointMap, flat::Vector{Int}, th, Ls, x, mine)
     sampler = m.sampler
     laplace = sampler.laplace
@@ -1284,6 +1388,10 @@ function _jmap_scores_range!(stats, m::CTSEMJointMap, flat::Vector{Int}, th, Ls,
     ekf = _laplace_ekf_workspace!(laplace, Float64)
     shifted = similar(th)
     gsub = similar(th)
+    P = m.P
+    R = m.R
+    nP = length(P)
+    nR = length(R)
     for k in mine
         s = flat[k]
         U = sampler.flat_unit[s]
@@ -1291,18 +1399,28 @@ function _jmap_scores_range!(stats, m::CTSEMJointMap, flat::Vector{Int}, th, Ls,
         _laplace_member_values!(shifted, th, laplace.spec, Ls,
             view(x, _sample_urange(sampler, U)), laplace.units.offsets[U][mm])
         v = _jmap_score!(gsub, laplace, laplace.units.members[U][mm], aws, shifted, ekf)
-        b = shifted[m.P]
-        sb = gsub[m.P]
-        sr = gsub[m.R]
-        (isfinite(v) && all(isfinite, sb) && all(isfinite, sr)) || continue
+        own = m.own[s]
+        isfinite(v) || continue
+        (all(a -> isfinite(gsub[a]), P) && all(a -> isfinite(gsub[a]), R) &&
+            all(a -> isfinite(gsub[a]), own)) || continue
         st = stats[s]
         st.n += 1
-        st.sb .+= b
-        st.ss .+= sb
-        st.st .+= sr
-        st.bb .+= b * transpose(b)
-        st.bs .+= b * transpose(sb)
-        st.bt .+= b * transpose(sr)
+        @inbounds for a in 1:nP
+            ba = shifted[P[a]]
+            st.sb[a] += ba
+            st.ss[a] += gsub[P[a]]
+            for c in 1:nP
+                st.bb[a, c] += ba * shifted[P[c]]
+                st.bs[a, c] += ba * gsub[P[c]]
+            end
+        end
+        @inbounds for c in 1:(nR + length(own))
+            t = gsub[c <= nR ? R[c] : own[c - nR]]
+            st.st[c] += t
+            for a in 1:nP
+                st.bt[a, c] += shifted[P[a]] * t
+            end
+        end
     end
     return true
 end
@@ -1316,10 +1434,10 @@ function _jmap_scores!(stats, m::CTSEMJointMap, flat::Vector{Int}, x::Vector{Flo
 end
 
 # Members `mine` of `flat`: each one's curvature in b_s at its unit's mode
-# `modes[U]` by central differences of its score, its coupling to theta[R]
-# from the same differences, and the linear term that puts the summary's
-# maximum at the mode.
-function _jmap_curvature_range!(Lam, h, G, sampler, P, R, flat, th, Ls, modes, mine)
+# `modes[U]` by central differences of its score, its coupling to its coupled
+# positions (`R`, then its own `own[s]`) from the same differences, and the
+# linear term that puts the summary's maximum at the mode.
+function _jmap_curvature_range!(Lam, h, G, sampler, P, R, own, flat, th, Ls, modes, mine)
     laplace = sampler.laplace
     aws = _laplace_workspace!(laplace, Float64, length(th))
     ekf = _laplace_ekf_workspace!(laplace, Float64)
@@ -1329,7 +1447,6 @@ function _jmap_curvature_range!(Lam, h, G, sampler, P, R, flat, th, Ls, modes, m
     gminus = similar(th)
     g0 = similar(th)
     nP = length(P)
-    nR = length(R)
     for k in mine
         s = flat[k]
         U = sampler.flat_unit[s]
@@ -1338,6 +1455,8 @@ function _jmap_curvature_range!(Lam, h, G, sampler, P, R, flat, th, Ls, modes, m
         _laplace_member_values!(shifted, th, laplace.spec, Ls, modes[U],
             laplace.units.offsets[U][mm])
         isfinite(_jmap_score!(g0, laplace, i, aws, shifted, ekf)) || continue
+        Rs = vcat(R, own[s])
+        nR = length(Rs)
         H = zeros(nP, nP)
         Gt = zeros(nR, nP)
         for j in 1:nP
@@ -1352,7 +1471,7 @@ function _jmap_curvature_range!(Lam, h, G, sampler, P, R, flat, th, Ls, modes, m
                 H[a, j] = -(gplus[P[a]] - gminus[P[a]]) / (2step)
             end
             for a in 1:nR
-                Gt[a, j] = -(gplus[R[a]] - gminus[R[a]]) / (2step)
+                Gt[a, j] = -(gplus[Rs[a]] - gminus[Rs[a]]) / (2step)
             end
         end
         (all(isfinite, H) && all(isfinite, Gt)) || continue
@@ -1369,9 +1488,9 @@ end
 
 A member's summary refitted from its sums: least squares of its score in `b`
 on `b` in the directions the rows' `b` span, the previous summary `Lp` kept in
-the directions they do not; with coupling, its score in `theta[R]` on `b` the
-same way, for `G`. `thbar` is `theta[R]`'s mean over the rows. `nothing` where
-the rows say too little.
+the directions they do not; with coupling, its score at its coupled positions
+on `b` the same way, for `G`. `thbar` is those positions' mean over the rows,
+`thref` their reference. `nothing` where the rows say too little.
 """
 function _jmap_member_update(Lp::Matrix{Float64}, Gp::Matrix{Float64}, st::_JMapStats,
     thbar::Vector{Float64}, thref::Vector{Float64}; tol::Real=1e-8)
@@ -1423,7 +1542,7 @@ function _jmap_build(sampler::CTSEMSampler, theta0::Vector{Float64},
     laplace = sampler.laplace
     npar = sampler.npar
     _laplace_ensure_pool!(laplace)
-    P, row, R, members = _jmap_layout(sampler, cross)
+    P, row, R, own, members = _jmap_layout(sampler, cross)
     nP = length(P)
     nR = length(R)
     th = _laplace_extend(laplace, theta0)
@@ -1440,13 +1559,13 @@ function _jmap_build(sampler::CTSEMSampler, theta0::Vector{Float64},
     nflat = length(sampler.flat_unit)
     Lam = [zeros(nP, nP) for _ in 1:nflat]
     h = [zeros(nP) for _ in 1:nflat]
-    G = [zeros(nP, nR) for _ in 1:nflat]
+    G = [zeros(nP, nR + length(own[s])) for s in 1:nflat]
     flat = reduce(vcat, members; init=Int[])
-    _laplace_partition((mine, _w) -> _jmap_curvature_range!(Lam, h, G, sampler, P, R, flat,
-        th, Ls, modes, mine), laplace, length(flat))
+    _laplace_partition((mine, _w) -> _jmap_curvature_range!(Lam, h, G, sampler, P, R, own,
+        flat, th, Ls, modes, mine), laplace, length(flat))
     S = Symmetric((Matrix{Float64}(cov) .+ transpose(Matrix{Float64}(cov))) ./ 2)
     Ct = Matrix(cholesky(Symmetric(Matrix(S) + 1e-12 * max(tr(S), 1.0) / npar * I)).L)
-    m = CTSEMJointMap(sampler, npar, P, row, R, members, Lam, h, G, th[R],
+    m = CTSEMJointMap(sampler, npar, P, row, R, own, members, Lam, h, G, copy(th),
         copy(theta0), Ct, nothing)
     # The differences' passes, and about five for the units' mode solves.
     return m, isempty(flat) ? 0 : 2 * nP + 6
@@ -1458,8 +1577,12 @@ end
 The map refitted from latent draws `Wl` (columns, under `m`), at most `maxrows`
 of them: theta's centre and whitening, each member's summary. Returns the new
 map, the members refitted, theta's shrinkage, and the rows' cost in full passes.
+`progress(done, rows)` is called after each row (`_ctsem_call_hook`): a row is
+a pass over every subject, and on the reanalysis 400 of them ran for hours
+with nothing said.
 """
-function _jmap_refit(m::CTSEMJointMap, Wl::AbstractMatrix, rng; maxrows::Int=400)
+function _jmap_refit(m::CTSEMJointMap, Wl::AbstractMatrix, rng; maxrows::Int=400,
+    progress=nothing)
     sampler = m.sampler
     npar = m.npar
     n = size(Wl, 2)
@@ -1473,29 +1596,37 @@ function _jmap_refit(m::CTSEMJointMap, Wl::AbstractMatrix, rng; maxrows::Int=400
     Ct = Matrix(cholesky(Symmetric(S + 1e-12 * max(tr(S), 1.0) / npar * I)).L)
     nP = length(m.P)
     flat = _jmap_flat(m)
-    nflat = length(sampler.flat_unit)
-    stats = [_JMapStats(nP, length(m.R)) for _ in 1:nflat]
+    stats = _jmap_stats(m)
     rows = 0
     if nP > 0 && !isempty(flat)
         for t in 1:nr
             _, x = _jmap_point(m, view(W, :, t))
             _jmap_scores!(stats, m, flat, x)
+            _ctsem_call_hook(progress, t, nr)
         end
         rows = nr
     end
-    thbar = isempty(m.R) ? Float64[] : vec(mean(thetas[m.R, :]; dims=2))
     Lam = copy(m.Lam)
     h = copy(m.h)
     G = copy(m.G)
     refit = 0
     for s in flat
-        upd = _jmap_member_update(m.Lam[s], m.G[s], stats[s], thbar, m.thref)
+        cpos = _jmap_coupled(m, s)
+        upd = _jmap_member_update(m.Lam[s], m.G[s], stats[s], theta0[cpos], m.thref[cpos])
         upd === nothing && continue
         Lam[s], h[s], G[s] = upd
         refit += 1
     end
     return _jmap_with(m; Lam=Lam, h=h, G=G, theta0=theta0, Ct=Ct), refit, shrunk.lambda, rows
 end
+
+"""Transitions in a row that moved nothing (divergent, or accepting under
+`_STALL_ACCEPT` on average) before a learning window's chain finds its step
+size again (`_ChainRetune`). At a step size tuned to accept 0.8 on average,
+five in a row are rare enough that a retune of a moving chain costs little
+more than its few leapfrogs and settle; each stalled transition on the
+reanalysis cost about 4.5 minutes."""
+const _JMAP_STALL = 5
 
 """Which chains moved over their last window: one whose draws spread, in
 theta's latent coordinates, under a tenth of the pooled spread in most of them
@@ -1642,6 +1773,11 @@ reports through (`.ctBackendProgressFileWriter()`). Reported as they came,
 the counts would restart eight times; reported not at all, as until
 2026-11-18, the line was blank from the sampler's start to its kept draws --
 hours on a hard model -- and a run in worker processes showed nothing then.
+
+The log density and divergences are chain 1's, so the line also counts the
+chains of every window that stalled and found their step size again
+(`retuned`, `_ChainRetune`): a stalled chain 1 shows as one log density held
+for many iterations, another chain not at all.
 """
 mutable struct _JMapLearnReport
     reporter::CTSEMProgress
@@ -1649,13 +1785,46 @@ mutable struct _JMapLearnReport
     offset::Int
     nwarmup::Int
     total::Int
+    logp::Float64
+    retuned::Threads.Atomic{Int}
 end
 
 function (r::_JMapLearnReport)(phase, iteration, total, logp, divergent)
     at = r.offset + Int(iteration) + (phase == "sampling" ? r.nwarmup : 0)
+    r.logp = Float64(logp)
+    n = r.retuned[]
     _due(r.reporter) && _progress_line(r.reporter, at, r.total,
-        @sprintf("logp %11.2f", logp), @sprintf("div %d", divergent))
+        @sprintf("logp %11.2f", logp), @sprintf("div %d", divergent),
+        n > 0 ? @sprintf("retuned %d", n) : "")
     _invoke_callback(r.callback, "learning", at, r.total, logp, divergent)
+    return nothing
+end
+
+"""
+    _JMapStageReport(phase, label, verbose, overwrite, sink, callback, logp)
+
+A window-end refit stage's progress, `(done, total)` at a time: its rows
+(`"scoring"`, `_jmap_refit`) or theta's triangular fit (`"mapping"`,
+`_jmap_learn_tri`), printed as its own line and handed to the caller's
+callback under that phase with chain 1's last log density, which is what the
+line and a worker process report until the chains run again. After window 2
+on the reanalysis the two ran 13 hours with nothing printed.
+"""
+mutable struct _JMapStageReport
+    reporter::CTSEMProgress
+    callback::CTSEMCallback
+    phase::String
+    logp::Float64
+end
+
+_JMapStageReport(phase::String, label::String, verbose::Bool, overwrite::Bool, sink,
+    callback, logp::Float64) =
+    _JMapStageReport(CTSEMProgress(verbose; label=label, overwrite=overwrite, sink=sink),
+        CTSEMCallback(callback; every=1.0), phase, logp)
+
+function (r::_JMapStageReport)(done, total)
+    _due(r.reporter) && _progress_line(r.reporter, done, total)
+    _invoke_callback(r.callback, r.phase, done, total, r.logp, 0)
     return nothing
 end
 
@@ -1870,8 +2039,13 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     end
     learning = _JMapLearnReport(CTSEMProgress(verbose; label="learning the map",
             overwrite=progress_overwrite, sink=progress_sink),
-        CTSEMCallback(progress_callback; every=0.0), 0, 0, nlearn)
+        CTSEMCallback(progress_callback; every=0.0), 0, 0, nlearn, NaN,
+        Threads.Atomic{Int}(0))
     watch = (verbose || progress_callback !== nothing) ? learning : nothing
+    # Every window's draws are warm-up, so a chain that stalls in one finds its
+    # step size again where it stands (`_ChainRetune`).
+    retune = _ChainRetune(_JMAP_STALL, Int(nsettle), Float64(target_accept),
+        learning.retuned)
     pooled = zeros(npar, 0)
     # The first window, where the call is asked for that alone or goes on from
     # one (`CTSEMMapStart`).
@@ -1886,12 +2060,13 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     for (w, nw) in enumerate(windows)
         mw = m
         learning.nwarmup = w == 1 ? nwarmup : Int(nsettle)
+        before = learning.retuned[]
         results = (w == 1 && resume !== nothing) ? resume.results :
             _sample_chains(nchains, parallel, seed + 101 * w, centre, metric,
             w == 1 ? nwarmup : Int(nsettle), Int(nw), Int(maxdepth), Float64(target_accept),
             Float64(maxdelta), Float64(init_scale), adapt_metric, adapt,
             c -> CTSEMJointMapDensity(mw, counter); init_eps=eps, starts=starts,
-            progress_callback=watch)
+            progress_callback=watch, retune=retune)
         learning.offset += learning.nwarmup + Int(nw)
         moved = _jmap_moved(results, npar)
         if w == 1 && first_only
@@ -1899,36 +2074,53 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
             return _jmap_start(m, extra, results, moved, counter[] + extra, time() - t0,
                 Float64(centre_bar), hessian !== nothing)
         end
+        _progress_break(learning.reporter)
         Wl = _pool_draws(results[moved], D)
-        m2, refit, lambda, rows = _jmap_refit(m, Wl, rng; maxrows=Int(maxrows))
+        scoring = _JMapStageReport("scoring", "refitting the map", verbose,
+            progress_overwrite, progress_sink, progress_callback, learning.logp)
+        at = time()
+        m2, refit, lambda, rows = _jmap_refit(m, Wl, rng; maxrows=Int(maxrows),
+            progress=scoring)
+        _progress_done(scoring.reporter, @sprintf("%d rows", rows))
+        refit_secs = time() - at
+        map_secs = 0.0
         if learn
             pooled = hcat(pooled, _jmap_thetas(m, Wl[1:npar, :]))
-            m2 = _jmap_learn_tri(m2, pooled)
+            mapping = _JMapStageReport("mapping", "learning theta's map", verbose,
+                progress_overwrite, progress_sink, progress_callback, learning.logp)
+            at = time()
+            m2 = _jmap_learn_tri(m2, pooled; parallel=true, progress=mapping)
+            _progress_done(mapping.reporter, @sprintf("%d coordinates", npar))
+            map_secs = time() - at
         end
         extra += rows
         starts = _jmap_restarts(m, m2, results, moved, Wl, rng)
         eps = median([r.stepsize for r in results[moved]])
+        retuned = learning.retuned[] - before
         push!(windowlog, (window=Int(nw), stopped=count(!, moved), refit=refit,
-            shrink=lambda, stepsize=eps))
-        _progress_break(learning.reporter)
+            shrink=lambda, stepsize=eps, retuned=retuned, refit_secs=refit_secs,
+            map_secs=map_secs))
         verbose && println(_console(), "  map window ", w, " of ", length(windows), ": ",
-            nw, " draws a chain, ", count(!, moved), " chain(s) restarted, ", refit,
+            nw, " draws a chain, ", count(!, moved), " chain(s) restarted, ",
+            retuned > 0 ? string(retuned, " step size(s) retuned, ") : "", refit,
             " summaries refitted, step ", round(eps; sigdigits=3))
         m = m2
     end
     if checking
         mc = m
         learning.nwarmup = Int(nsettle)
+        before = learning.retuned[]
         results = _sample_chains(nchains, parallel, seed + 997, centre, metric, Int(nsettle),
             Int(ncheck), Int(maxdepth), Float64(target_accept), Float64(maxdelta), 0.0,
             adapt_metric, adapt, c -> CTSEMJointMapDensity(mc, counter); init_eps=eps,
-            starts=starts, progress_callback=watch)
+            starts=starts, progress_callback=watch, retune=retune)
         moved = _jmap_moved(results, npar)
         Wl = _pool_draws(results[moved], D)
         starts = _jmap_restarts(m, m, results, moved, Wl, rng)
         eps = median([r.stepsize for r in results[moved]])
         push!(windowlog, (window=0, stopped=count(!, moved), refit=0, shrink=NaN,
-            stepsize=eps))
+            stepsize=eps, retuned=learning.retuned[] - before, refit_secs=0.0,
+            map_secs=0.0))
     end
     _progress_done(learning.reporter, @sprintf("%d iterations a chain", learning.total))
     learned = time() - t0 + (resume === nothing ? 0.0 : resume.secs)
@@ -2017,7 +2209,10 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
               # schedule and the final phase's warm-up.
               warmup=learning.total + (isempty(windows) ? nwarmup : Int(nsettle)),
               windows=windowlog, coordinates=D - npar, latent_mean=lmean,
-              latent_sd=lsd, integrated=hybrid, coupled=length(mf.R),
+              latent_sd=lsd, integrated=hybrid,
+              # The most free parameters one member's summary is coupled to:
+              # those every subject reads, and its own sampled TI values.
+              coupled=length(mf.R) + maximum(length, mf.own; init=0),
               theta_parents=mf.tri === nothing ? -1 :
                 maximum(length, mf.tri.parents; init=0))))
 end

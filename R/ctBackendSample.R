@@ -487,7 +487,8 @@
 # The map's learning record (`ctsem_sample_map`): its cost in gradients and
 # learning's share of it, and per window its draws a chain, the chains
 # restarted, the summaries refitted, theta's shrinkage (NaN for the check
-# window) and the step.
+# window), the step, the step sizes retuned where a chain stalled, and the
+# seconds its refit's rows and theta's map took.
 .ctBackendMapRecord <- function(m) {
   w <- m$windows
   windows <- if (length(w)) do.call(rbind, lapply(w, function(x)

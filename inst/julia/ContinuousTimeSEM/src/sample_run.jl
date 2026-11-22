@@ -246,11 +246,41 @@ const _ACCEPT_MAX = 0.95
 const _ACCEPT_MAX_RAISES = 3
 
 """
+    _ChainRetune(after, steps, target, count)
+
+What a chain whose draws are warm-up does when it stops moving: after `after`
+transitions in a row that were divergent or accepted under `_STALL_ACCEPT` on
+average, its step size is found again where it stands (`_init_stepsize`) and
+dual-averaged for `steps` transitions towards `target`, then held at the
+average; `count` counts the retunes over every chain of the run. The map
+sampler's learning windows draw at a step size fixed from the window's
+settle, and a chain that moved somewhere stiffer than where that step was
+tuned then diverged at every transition and stayed put: on the reanalysis one
+of four chains did so for 140 of a window's 160 draws, about ten hours of a
+quarter of the pool. Retuned rather than restarted elsewhere, the chain goes
+on drawing from where the posterior took it, and the window's refit learns
+the map there. Never on kept draws, whose kernel must not depend on the
+draws before them.
+"""
+struct _ChainRetune
+    after::Int
+    steps::Int
+    target::Float64
+    count::Threads.Atomic{Int}
+end
+
+"""A transition that moved nothing, for `_ChainRetune`: divergent, or its
+trajectory's mean acceptance under this."""
+const _STALL_ACCEPT = 0.05
+
+"""
     _sample_draws!(logdensity!, ws, rng, x, g, logp, eps, metric, ndraws,
-                   maxdepth, maxdelta, progress, callback)
+                   maxdepth, maxdelta, progress, callback; retune)
 
 The post-warmup draw loop: `ndraws` NUTS transitions at a fixed step size and
-metric, recording the draw and its diagnostics.
+metric, recording the draw and its diagnostics; with `retune` (a learning
+window's draws, `_ChainRetune`), the step size found again where the chain
+stalls. The step size the loop ended on comes back as `eps`.
 
 One loop rather than two. `_run_chain`'s sampling phase and the whole body of
 `_continue_chain` were line-for-line the same -- same `_nuts_transition!` call,
@@ -267,7 +297,8 @@ caller's forced final callback has already been made here.
 function _sample_draws!(logdensity!, ws::_NUTSWorkspace, rng::AbstractRNG,
     x::Vector{Float64}, g::Vector{Float64}, logp::Float64, eps::Float64,
     metric::CTSEMMetric, ndraws::Int, maxdepth::Int, maxdelta::Float64,
-    progress::CTSEMProgress, callback::CTSEMCallback)
+    progress::CTSEMProgress, callback::CTSEMCallback;
+    retune::Union{Nothing,_ChainRetune}=nothing)
 
     progress.label = "sampling"
     progress.started = time()
@@ -278,6 +309,10 @@ function _sample_draws!(logdensity!, ws::_NUTSWorkspace, rng::AbstractRNG,
     bound = Vector{Bool}(undef, ndraws)
     depth = Vector{Int}(undef, ndraws)
     energy = Vector{Float64}(undef, ndraws)
+    # Transitions in a row that moved nothing, and the retune under way.
+    stalled = 0
+    tuning = 0
+    da = _DualAverage(eps, retune === nothing ? 0.8 : retune.target)
     for iteration in 1:ndraws
         # On a coreset, the transition's end is tested against the full density
         # and may be put back (`_surrogate_correct!`); otherwise both are no-ops.
@@ -293,6 +328,22 @@ function _sample_draws!(logdensity!, ws::_NUTSWorkspace, rng::AbstractRNG,
         bound[iteration] = step.bound
         depth[iteration] = step.depth
         energy[iteration] = step.energy
+        if retune !== nothing
+            if tuning > 0
+                eps = _dual_update!(da, step.accept)
+                tuning -= 1
+                tuning == 0 && (eps = _dual_final(da))
+            else
+                stalled = (step.divergent || step.accept < _STALL_ACCEPT) ? stalled + 1 : 0
+                if stalled >= retune.after
+                    eps = _dual_restart!(da, _init_stepsize(logdensity!, metric, rng, x, g,
+                        logp, ws))
+                    tuning = retune.steps
+                    stalled = 0
+                    Threads.atomic_add!(retune.count, 1)
+                end
+            end
+        end
         if _due(progress)
             _progress_line(progress, iteration, ndraws,
                 @sprintf("logp %11.2f", logp),
@@ -307,8 +358,10 @@ function _sample_draws!(logdensity!, ws::_NUTSWorkspace, rng::AbstractRNG,
     _invoke_callback(callback, "sampling", ndraws, ndraws, logp,
         count(divergent); force=true)
     logp = _surrogate_batch!(logdensity!, x, g, logp)
+    # A retune cut short by the window's end keeps its average so far.
+    tuning > 0 && (eps = _dual_final(da))
     return (draws=draws, accept=accept, divergent=divergent, bound=bound, depth=depth,
-        energy=energy, logp=logp)
+        energy=energy, logp=logp, eps=eps)
 end
 
 function _run_chain(logdensity!, centre::Vector{Float64},
@@ -319,7 +372,8 @@ function _run_chain(logdensity!, centre::Vector{Float64},
     init_eps::Float64=0.0,
     resume::Union{Nothing,_ChainResult}=nothing,
     progress::CTSEMProgress=CTSEMProgress(false),
-    callback::CTSEMCallback=CTSEMCallback(nothing))
+    callback::CTSEMCallback=CTSEMCallback(nothing),
+    retune::Union{Nothing,_ChainRetune}=nothing)
 
     ndim = length(centre)
     ws = _NUTSWorkspace(ndim, maxdepth)
@@ -529,9 +583,9 @@ function _run_chain(logdensity!, centre::Vector{Float64},
         warmup_divergent; force=true)
 
     sampled = _sample_draws!(logdensity!, ws, rng, x, g, logp, eps, current,
-        ndraws, maxdepth, maxdelta, progress, callback)
+        ndraws, maxdepth, maxdelta, progress, callback; retune=retune)
     return _ChainResult(sampled.draws, sampled.accept, sampled.divergent,
-        sampled.bound, sampled.depth, sampled.energy, eps,
+        sampled.bound, sampled.depth, sampled.energy, sampled.eps,
         warmup_divergent, warmup_used, copy(x), current)
 end
 
@@ -1001,6 +1055,8 @@ Run the chains, concurrently when there are threads for them.
 chain rather than one shared closure because a target may need per-chain
 scratch: the joint sampler hands each chain its own adjoint workspace, since
 every chain filters every subject and they would otherwise share buffers.
+`retune` (`_ChainRetune`) is for draws that are warm-up, the map's learning
+windows: a chain that stalls finds its step size again where it is.
 """
 function _sample_chains(nchains::Int, parallel::Bool, seed::Integer,
     centre::Vector{Float64}, metric::CTSEMMetric, nwarmup::Int, ndraws::Int,
@@ -1008,7 +1064,8 @@ function _sample_chains(nchains::Int, parallel::Bool, seed::Integer,
     init_scale::Float64, adapt_metric::Bool, adapt::Union{Nothing,Vector{Bool}},
     density_for; settle_tol::Float64=0.0, init_eps::Float64=0.0,
     progress::Bool=false, overwrite::Bool=true, progress_callback=nothing,
-    progress_sink=nothing, starts=nothing)
+    progress_sink=nothing, starts=nothing,
+    retune::Union{Nothing,_ChainRetune}=nothing)
     # One reporter spans both phases -- `_run_chain` relabels it from "warmup"
     # to "sampling" partway -- so it opens on "warmup" and the closing line
     # names both rather than whichever phase it ended in.
@@ -1022,7 +1079,7 @@ function _sample_chains(nchains::Int, parallel::Bool, seed::Integer,
             target_accept, maxdelta, starts === nothing ? init_scale : 0.0,
             adapt_metric, adapt;
             settle_tol=settle_tol, init_eps=init_eps, progress=reporter,
-            callback=watcher);
+            callback=watcher, retune=retune);
         progress=progress, overwrite=overwrite,
         progress_callback=progress_callback, progress_sink=progress_sink)
 end
