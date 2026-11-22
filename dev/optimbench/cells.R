@@ -873,7 +873,7 @@ flip_truth <- list(
   fastdrift = -2, fastsd = 0.6)
 
 flip_data <- function(type, seed, fast = FALSE, nsub = 150L, nobs = 6L,
-  anchor = 1, means = TRUE) {
+  anchor = 1, means = TRUE, unique = FALSE) {
   set.seed(seed)
   tr <- flip_truth
   # `anchor` < 1: the anchors are the factors' weakest items, as in the
@@ -900,8 +900,11 @@ flip_data <- function(type, seed, fast = FALSE, nsub = 150L, nobs = 6L,
         x[, f] <- x[, f] + z
       }
     }
+    # `unique`: each person's own intercept on every item but the anchors.
+    own <- if (unique) matrix(c(0, stats::rnorm(4, 0, 0.4), 0, stats::rnorm(4, 0, 0.4)),
+      5, 2) else matrix(0, 5, 2)
     for (f in 1:2) for (j in 1:5) {
-      eta <- tr$mm[[f]][j] + tr$lambda[[f]][j] * x[, f]
+      eta <- tr$mm[[f]][j] + own[j, f] + tr$lambda[[f]][j] * x[, f]
       out[[sprintf("f%dy%d", f, j)]] <- if (type == "ordinal") drawcat(eta, TAU) else
         eta + stats::rnorm(length(eta), 0, 0.6)
     }
@@ -909,7 +912,7 @@ flip_data <- function(type, seed, fast = FALSE, nsub = 150L, nobs = 6L,
   }))
 }
 
-flip_model <- function(type, fast = FALSE, means = TRUE) {
+flip_model <- function(type, fast = FALSE, means = TRUE, unique = FALSE) {
   man <- c(sprintf("f1y%d", 1:5), sprintf("f2y%d", 1:5))
   lat <- if (fast) c("f1", "f2", "m1", "m2") else c("f1", "f2")
   nl <- length(lat)
@@ -943,7 +946,8 @@ flip_model <- function(type, fast = FALSE, means = TRUE) {
     args$ncategories <- rep(4L, 10)
   } else args$MANIFESTVAR <- diagchar(sprintf("mv_%s", man))
   m <- suppressWarnings(suppressMessages(do.call(ctModel, args)))
-  m$pars$indvarying <- m$pars$param %in% c("cint1", "cint2")
+  m$pars$indvarying <- m$pars$param %in% c("cint1", "cint2",
+    if (unique && means) c(sprintf("mm_f1y%d", 2:5), sprintf("mm_f2y%d", 2:5)))
   m
 }
 
@@ -1020,19 +1024,25 @@ bench_problem <- function(model) {
     return(mk(function(s) growth_data(P, as.integer(s)), function() growth_model(P),
       c("augmented", "laplace", "auto"), reference = FALSE))
   }
-  # flip<o|g>[f][w][z][l]: ordinal or Gaussian items, f fast companions, w
-  # weak anchors (loading 0.5 against the others' 0.8-1.4), z item intercepts
-  # zero and fixed, l a long panel (100 people, 12 occasions).
-  if (grepl("^flip[og]f?w?z?l?$", model)) {
+  # flip<o|g>[f][w][z][u][l]: ordinal or Gaussian items, f fast companions, w
+  # weak anchors (loading 0.75 against the others' 0.8-1.4), z item intercepts
+  # zero and fixed, u each person's own item intercepts, l a long panel (100
+  # people, 12 occasions).
+  if (grepl("^flip[og]f?w?z?u?l?$", model)) {
     type <- if (startsWith(model, "flipo")) "ordinal" else "gaussian"
-    fast <- grepl("f", substring(model, 6))
-    anchor <- if (grepl("w", substring(model, 6))) 0.5 else 1
-    means <- !grepl("z", substring(model, 6))
-    long <- endsWith(model, "l")
+    opts <- substring(model, 6)
+    fast <- grepl("f", opts)
+    anchor <- if (grepl("w", opts)) 0.75 else 1
+    means <- !grepl("z", opts)
+    unique <- grepl("u", opts)
+    long <- grepl("l", opts)
     return(mk(function(s) flip_data(type, as.integer(s), fast, anchor = anchor,
-      means = means, nsub = if (long) 100L else 150L, nobs = if (long) 12L else 6L),
-      function() flip_model(type, fast, means),
-      c("laplace", "augmented", "auto")))
+      means = means, nsub = if (long) 100L else 150L, nobs = if (long) 12L else 6L,
+      unique = unique), function() flip_model(type, fast, means, unique),
+      # No exact reference: a flipped factor costs tens to hundreds of nats,
+      # which the re-scored objective shows, and the u cells' units have ten
+      # effects, which only importance sampling would reach.
+      c("laplace", "augmented", "auto"), reference = FALSE))
   }
   if (grepl("^cov[0-9]+$", model)) {
     m <- as.integer(substring(model, 4))
