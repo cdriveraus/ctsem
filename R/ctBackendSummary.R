@@ -812,8 +812,9 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # MANIFESTVAR has a free off-diagonal parameter (`names`, each in `matrices`):
 # such a parameter is a coordinate of the covariance's construction -- under
 # covmattransform 'z' an entry of a matrix logarithm, the correlation's Fisher
-# z only for two variables -- and reads as a correlation without being one.
-# NULL where there is none.
+# z only for two variables -- and reads as a correlation without being one:
+# an estimate near zero is not a covariance near zero, though a parameter
+# fixed at zero is a zero covariance. NULL where there is none.
 .ctCovParameterNote <- function(names, matrices) {
   if (!length(names)) return(NULL)
   cors <- c(T0VAR = "T0cor", DIFFUSION = "DIFFUSIONcor",
@@ -822,7 +823,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   paste0(" Off-diagonal covariance parameters (", paste(names, collapse = ", "),
     ") are not correlations; ", paste(cors, collapse = ", "), " under System ",
     "Matrices, or ctSummaryMatrices(), ", if (length(cors) > 1L) "give" else
-    "gives", " the correlations.")
+    "gives", " the correlations. With three or more variables an estimate ",
+    "near 0 does not show a correlation near 0.")
 }
 
 # Each draw's correlations from its covariance, draws x k x k: NA where a

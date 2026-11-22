@@ -36,7 +36,16 @@ Under \code{'z'}, a cell of \code{T0VAR}, \code{DIFFUSION} or
 \code{MANIFESTVAR} that is fixed to 0 gives a covariance of zero, and
 \code{ctCov()} writes a zero covariance as a cell of 0. Under
 \code{'rawcorr'} and \code{'cholesky'} a cell of 0 gives a zero covariance
-only in some positions.
+only in some positions. The cells of \code{RAWPOPVAR} are not treated this
+way, and \code{backend = 'stan'} stops for a model with a cell fixed to 0
+between variables that other covariances connect.
+
+An estimated cell that is 0, or near 0, does not show that the covariance
+is zero when there are three or more variables. Read covariances and
+correlations from the matrices that \code{\link{summary.ctStanFit}} and
+\code{\link{ctSummaryMatrices}} report (\code{DIFFUSIONcov},
+\code{DIFFUSIONcor}, \code{T0cov}, \code{T0cor}, \code{MANIFESTcov} and
+\code{MANIFESTcor}), and not from the cells.
 
 Use the result wherever a fixed matrix can go, such as
 \code{ctModel(DIFFUSION = ctCov(S))}, \code{m$matrices$T0VAR <- ctCov(S)},

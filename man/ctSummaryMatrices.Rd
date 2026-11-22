@@ -52,7 +52,10 @@ covariances computed from them (\code{DIFFUSIONcov}, \code{MANIFESTcov}, and
 and \code{dtDRIFT} at \code{timeinterval}. Each covariance has a matching
 correlation matrix, \code{DIFFUSIONcor}, \code{MANIFESTcor}, \code{T0cor} and
 \code{asymDIFFUSIONcor}, computed for each draw before \code{calcfunc} is
-applied. A variable with zero variance has \code{NA} correlations.
+applied. A variable with zero variance has \code{NA} correlations. These
+matrices give the size of a covariance or correlation. The off-diagonal
+parameters of \code{T0VAR}, \code{DIFFUSION} and \code{MANIFESTVAR} do not
+(see \code{\link{summary.ctStanFit}}).
 
 On \code{backend='julia'} the list also holds the Jacobians of the drift and
 of the measurement at the evaluation point, \code{JAx} (latent by latent) and

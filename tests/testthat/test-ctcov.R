@@ -113,6 +113,18 @@ test_that("ctCov writes a zero covariance as a cell of zero", {
   }
 })
 
+test_that("summary's note says an estimated parameter near zero is not a zero covariance", {
+  note <- ctsem:::.ctCovParameterNote(c("d21", "t21"), c("DIFFUSION", "T0VAR"))
+  expect_match(note, "are not correlations; T0cor, DIFFUSIONcor", fixed = TRUE)
+  expect_match(note, "With three or more variables an estimate near 0 does not show a correlation near 0.",
+    fixed = TRUE)
+  expect_null(ctsem:::.ctCovParameterNote(character(), character()))
+  # Three variables, the cell between the first two at 0: not a correlation of 0.
+  A <- matrix(0, 3, 3)
+  A[3, 1] <- A[3, 2] <- 0.8
+  expect_gt(abs(stats::cov2cor(expm::expm(A + t(A)))[2, 1]), 0.1)
+})
+
 test_that("a model's cells fixed at zero are found, and stan refuses them", {
   m <- suppressMessages(ctModel(LAMBDA = diag(3), Tpoints = 5, silent = TRUE,
     DIFFUSION = matrix(c("d11", 0, "d31", 0, "d22", "d32", 0, 0, "d33"), 3)))
