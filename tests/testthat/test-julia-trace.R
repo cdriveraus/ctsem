@@ -203,6 +203,62 @@ test_that("the callback carries the point its numbers describe", {
   expect_equal(seen[[length(seen)]], as.numeric(fit$estimate$raw))
 })
 
+test_that("the callback's point moves with every iteration of a batch stage", {
+  skip_without_julia()
+  # The point was once read off the trials, and a batch stage's gradients do
+  # not pass through them: on a 300-subject Laplace fit iterations 5-13 all
+  # reported iteration 4's point while the objective moved, and a checkpoint
+  # written then held the older point. With 200 subjects the run starts on a
+  # batch of 20 and grows it. The engine's own callback, heard at every
+  # iteration (R's is rate limited).
+  spec <- suppressMessages(ctFit(.trace_data(nsubjects = 200, nobs = 6),
+    .trace_model(), backend = "julia", cores = 2, fit = FALSE))
+  ctsem:::.ctJuliaEval('
+    function _ctsem_test_callback_points(o, start, sgd)
+      M = ContinuousTimeSEM
+      its = Int[]; vals = Float64[]; pts = Vector{Float64}[]
+      cb = (it, total, value, gnorm, x, rest...) ->
+        (push!(its, Int(it)); push!(vals, Float64(value)); push!(pts, copy(x)); nothing)
+      r = M.ctsem_optimize(o, collect(Float64, start); maxiter=60,
+        batch=!sgd, sgd=sgd, progress=false, overshoot_probe=:off,
+        progress_callback=cb, callback_every=0.0)
+      return (iterations=its, values=vals, points=reduce(hcat, pts),
+        evaluated=[M.ctsem_evaluate(o, p; gradient=false).value for p in pts],
+        minimizer=collect(Float64, r.minimizer),
+        batch_sizes=collect(Int, r.batch_sizes),
+        batch_iterations=collect(Int, r.batch_iterations))
+    end')
+  npar <- ctsem:::.ctBackendNpar(spec)
+  run <- function(sgd) ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall(
+    "_ctsem_test_callback_points", ctsem:::.ctJuliaObjective(spec),
+    ctsem:::.ctJuliaNumericVector(rep(0, npar)), sgd))
+  # Whether each iteration's point differs from the one before it. An
+  # accepted step always moves the point; the closing call repeats the last
+  # iteration's number and is left out.
+  moved <- function(r) {
+    at <- which(diff(r$iterations) > 0L) + 1L
+    vapply(at, function(i) any(r$points[, i] != r$points[, i - 1L]), logical(1))
+  }
+  batched <- run(FALSE)
+  expect_equal(nrow(batched$points), npar)
+  sizes <- batched$batch_sizes
+  expect_gt(length(sizes), 1L)
+  expect_equal(sizes[length(sizes)], 200L)
+  full <- batched$batch_iterations[length(sizes)]
+  expect_gte(sum(batched$iterations > 0L & batched$iterations <= full), 3L)
+  expect_true(all(moved(batched)))
+  # Once the batch is the whole data the value is the objective's at the
+  # point reported with it.
+  after <- batched$iterations > full
+  expect_gt(sum(after), 0L)
+  expect_equal(batched$values[after], batched$evaluated[after], tolerance = 1e-8)
+  expect_equal(batched$points[, ncol(batched$points)], batched$minimizer)
+  # The sgd phase on the whole data, and L-BFGS after it.
+  sgd <- run(TRUE)
+  expect_true(all(moved(sgd)))
+  expect_equal(sgd$values, sgd$evaluated, tolerance = 1e-8)
+})
+
 test_that("a checkpointed point restarts the fit where it stopped", {
   skip_without_julia()
   last <- NULL
