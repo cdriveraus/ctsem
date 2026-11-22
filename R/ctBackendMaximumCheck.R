@@ -17,20 +17,20 @@
 # (`ctsem_sample_map`'s `first_only`), in three steps:
 #
 #  1. Where each chain's draws are centred, as the squared distance of their
-#     mean from the estimate in the metric of the Hessian the map is whitened
-#     by (`ctsem_map_centre`). The mean, not the draws: a posterior wider than
-#     the Hessian's normal puts every draw far out and leaves the mean where it
-#     was, and in many dimensions a width a few per cent off moves a draw's
-#     distance by several of its standard deviations. A mean past
-#     `.ctMaximumBar()` is where the Hessian's normal has a thousandth of its
-#     mass: the posterior reaches somewhere that normal does not. Either it is
-#     centred there, or it is several times wider than the normal along a
-#     direction the chains cross slowly, where a window's mean is near one
-#     draw: on test-julia-sample.R's random-drift fixture, centred at the
-#     estimate with sds up to 4.6 times the Hessian's, one chain in seven
-#     passed, and every climb from there found nothing. The climb decides
-#     which. No evaluation is spent on this, and a run that passes goes on
-#     from the window's draws as if it had not been asked.
+#     mean from the estimate in the wider, direction by direction, of the
+#     Hessian's normal and the window's own spread within chains
+#     (`ctsem_map_centre`, `_jmap_window_distances`). The mean, not the draws:
+#     a posterior wider than the Hessian's normal puts every draw far out and
+#     leaves the mean where it was, and in many dimensions a width a few per
+#     cent off moves a draw's distance by several of its standard deviations.
+#     The window's spread, because along a direction the posterior is several
+#     times wider than the normal and the chains cross slowly, a window's mean
+#     is near one draw: on test-julia-sample.R's random-drift fixture, centred
+#     at the estimate with sds up to 4.6 times the Hessian's, the Hessian's
+#     metric alone flagged 23 runs of 80, each climb finding nothing, and this
+#     one none. A mean past `.ctMaximumBar()` is where neither has a
+#     thousandth of its mass. No evaluation is spent on this, and a run that
+#     passes goes on from the window's draws as if it had not been asked.
 #  2. Only then a climb of the fit's own objective from those means
 #     (`ctsem_climb_above`): L-BFGS with no Hessian, stopped once it is
 #     `.ctMaximumMargin` above the estimate's value. A candidate's own value
