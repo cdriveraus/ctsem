@@ -119,7 +119,8 @@ splits variance into between subject, process and measurement parts, and
   `ctCov()` writes covariance matrices.
 - Covariance matrices use a new parameterisation (a matrix logarithm), so their
   off-diagonal parameters are not correlations. `summary()` reports the
-  correlation matrices (`DIFFUSIONcor`, `T0cor`, `MANIFESTcor`).
+  correlation matrices (`DIFFUSIONcor`, `T0cor`, `MANIFESTcor`). An
+  off-diagonal parameter fixed to zero gives a covariance of zero.
 - `ctGenerate()` simulates data from any model, including random effects and
   non-Gaussian indicators.
 

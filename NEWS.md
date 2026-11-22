@@ -19,7 +19,7 @@ A major release. ctsem has a second estimation engine, written in Julia, which m
 - On the julia backend, missing values of time independent predictors are imputed when optimising and sampled when sampling, and `nlcontrol$nsubsteps='auto'` chooses the number of integration steps for a nonlinear model.
 - `ctFit(stationary=TRUE)` works again, with `backend='julia'`.
 - Model matrix cells accept a named form, `'mm, indvarying=TRUE, sdscale=0.5'`, as well as `'mm||TRUE|0.5'`. `ctPar()` writes either form, and `ctCov()` writes a covariance matrix as cells.
-- Covariance matrices are parameterised by a matrix logarithm, so any positive definite matrix can be reached. Use `model$covmattransform='rawcorr'` for the previous parameterisation.
+- Covariance matrices are parameterised by a matrix logarithm, so any positive definite matrix can be reached, and a covariance parameter fixed to zero gives a covariance of zero. Use `model$covmattransform='rawcorr'` for the previous parameterisation.
 - A parameter used in cells with different default transforms, such as a DRIFT diagonal and an off-diagonal, now gives an error. Previously each cell transformed it differently.
 - New checks: `ctReport()` runs the reporting and checking functions on a fit and saves the results to a folder. `ctIdentify()` and `ctFitProfile()` check identification on the julia backend, `ctLaplaceCheck()` and `ctParticleLik()` check the approximations a julia fit makes, and `ctTracePlot()` plots a julia fit's optimisation or chains.
 - New plots of the dynamics: `ctNetwork()`, `ctNetworkPlot()`, `ctPhasePortrait()`, `ctStateDependencePlot()` and `ctVarianceDecomposition()`.

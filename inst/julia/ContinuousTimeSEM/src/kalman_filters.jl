@@ -1905,11 +1905,17 @@ filter and the summary once built the initial covariance their own ways, and
 that is how they came to disagree about what a fit had estimated. Three ways
 was one too many.
 
-With no population block this is exactly `_ctsem_sdcor_factor!` and nothing
-changes -- deliberately, so a model with no random effects keeps the
-seed-for-seed generation it already had. With one, the covariance is built the
-way the filter builds it and then factored, `_ctsem_lower_chol!` being the
-semi-definite factorisation a carrier state with no diffusion of its own needs.
+With no population block, under the correlation square root, this is exactly
+`_ctsem_sdcor_factor!` and nothing changes -- deliberately, so a model with no
+random effects keeps the seed-for-seed generation it already had. Otherwise
+the covariance is built the way the filter builds it and then factored,
+`_ctsem_lower_chol!` being the semi-definite factorisation a carrier state
+with no diffusion of its own needs. `_ctsem_sdcor_factor!` is the correlation
+square root's factor whatever the model's construction is, so under `'z'` or
+`'cholesky'` it is not taken: until 2026-11-22 it was, and generation, the
+state-explicit pass and the particle filter started a model with no random
+effects from T0VAR's cells read through the wrong construction (correlations
+of 0.8, 0.3 and 0.5 under `'z'` came out 0.77, 0.16 and 0.46).
 
 `stationary` places the stationary block the same way, by `_ctsem_stationary!`,
 and writes the stationary mean over `pars.T0MEANS`, which is what both callers
@@ -1922,7 +1928,8 @@ elements (`CTSEMStationaryElements`), are placed the same way when it has any.
         stationary::Bool=false,
         elements::CTSEMStationaryElements=_CTSEM_NO_STATIONARY_ELEMENTS)
     onelements = _stationary_elements_on(elements)
-    if isempty(ws.sp.population_indices) && !stationary && !onelements
+    if isempty(ws.sp.population_indices) && !stationary && !onelements &&
+       ws.sp.covmatcode <= 0
         return _ctsem_sdcor_factor!(dest, pars.T0VAR, ws.bufferQ, ws.state_dim)
     end
     n = ws.state_dim

@@ -209,6 +209,28 @@ end
     @test [s.s for s in vec(S)] ≈ second atol = 1e-9
 end
 
+@testset "the reverse pass at a trace jet" begin
+    # The Laplace gradient's trace terms carry jets through the reverse pass:
+    # its first parts and summed second part, against forward mode over the
+    # reverse pass along the same directions.
+    k = 4
+    cells = _covzero_cells(k, [(3, 1), (4, 2)])
+    v = _covzero_point(k, cells)
+    cb = [0.03 * (1 + i) + 0.011 * j for i in 1:k, j in 1:k]
+    dirs = [[0.4 * sinpi(0.3 * i + 0.21 * l) for i in eachindex(v)] for l in 1:2]
+    J = CT.CTSEMTraceJet{2}
+    vj = [J(v[i], (dirs[1][i], dirs[2][i]), 0.0) for i in eachindex(v)]
+    g = _covzero_pull(vj, J.(cb), k, cells)
+    along(d) = t -> _covzero_pull(v .+ t .* d, cb, k, cells)
+    first_ = [ForwardDiff.derivative(along(d), 0.0) for d in dirs]
+    second = sum(ForwardDiff.derivative(t -> ForwardDiff.derivative(along(d), t), 0.0)
+        for d in dirs)
+    @test [x.v for x in g] ≈ _covzero_pull(v, cb, k, cells) atol = 1e-12
+    @test [x.d[1] for x in g] ≈ first_[1] atol = 1e-9
+    @test [x.d[2] for x in g] ≈ first_[2] atol = 1e-9
+    @test [x.s for x in g] ≈ second atol = 1e-8
+end
+
 @testset "BigFloat carries the solution to its own precision" begin
     k = 3
     cells = _covzero_cells(k, [(2, 1)])

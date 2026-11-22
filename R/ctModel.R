@@ -64,7 +64,9 @@
 #' be strictly nested.
 #' @param time character string denoting column name containing timing data. Timing data must be numeric.
 #' 
-#' @param T0VAR lower triangular n.latent*n.latent cholesky matrix of latent process initial variance / covariance. 
+#' @param T0VAR lower triangular n.latent*n.latent matrix of latent process initial variance / covariance,
+#' with standard deviations on the diagonal and covariance parameters below it (see \code{\link{ctCov}}).
+#' A cell below the diagonal fixed to 0 gives a covariance of zero. 
 #' "auto" freely estimates all parameters.
 #' 
 #' @param T0MEANS n.latent*1 matrix of latent process means at first time point, T0. 
@@ -73,8 +75,10 @@
 #' @param MANIFESTMEANS n.manifest*1 matrix of manifest intercept parameters.  
 #' "auto" frees all parameters.
 #' 
-#' @param MANIFESTVAR lower triangular n.manifest*n.manifest cholesky matrix of variance / covariance 
-#' between manifests at each measurement occasion (i.e. measurement error / residual).  
+#' @param MANIFESTVAR lower triangular n.manifest*n.manifest matrix of variance / covariance 
+#' between manifests at each measurement occasion (i.e. measurement error / residual),
+#' with standard deviations on the diagonal and covariance parameters below it (see \code{\link{ctCov}}).
+#' A cell below the diagonal fixed to 0 gives a covariance of zero.  
 #' "auto" freely estimates variance parameters, 
 #' and fixes covariances between manifests to 0. "free" frees all values, including covariances.
 #'
@@ -119,8 +123,10 @@
 #' @param CINT n.latent * 1 matrix of latent process intercepts, allowing for non 0 
 #' asymptotic levels of the latent processes. Generally only necessary for additional trends and more complex dynamics.
 #' 
-#' @param DIFFUSION lower triangular n.latent*n.latent cholesky matrix of diffusion process 
-#' variance and covariance (latent error / dynamic innovation).
+#' @param DIFFUSION lower triangular n.latent*n.latent matrix of diffusion process 
+#' variance and covariance (latent error / dynamic innovation),
+#' with standard deviations on the diagonal and covariance parameters below it (see \code{\link{ctCov}}).
+#' A cell below the diagonal fixed to 0 gives a covariance of zero.
 #' "auto" freely estimates all parameters.
 #' 
 #' @param n.TIpred Number of time independent predictors. 

@@ -172,6 +172,31 @@ test_that("the engine solves the cells R does", {
   }
 })
 
+test_that("generated data start from the model's initial covariance", {
+  skip_without_julia()
+  # Under each construction, and with a zero covariance between variables
+  # that both covary with a third. The initial state's factor was once the
+  # correlation square root's whatever the construction, which under 'z' gave
+  # 0.77, 0.16 and 0.46 for the first target's 0.8, 0.3 and 0.5.
+  first <- function(S, tf) {
+    m <- suppressMessages(ctModel(LAMBDA = diag(3), silent = TRUE, T0VAR = ctCov(S),
+      T0MEANS = matrix(0, 3, 1), MANIFESTMEANS = matrix(0, 3, 1),
+      MANIFESTVAR = diag(1e-4, 3), DRIFT = diag(-0.5, 3), DIFFUSION = diag(0.5, 3)))
+    m$covmattransform <- tf
+    m <- ctsem:::.ctCovRefresh(m)
+    set.seed(1)
+    d <- as.data.frame(suppressMessages(ctGenerate(m, n = 6000, Tpoints = 2,
+      backend = "julia")))
+    unname(stats::cov(d[!duplicated(d$id), c("Y1", "Y2", "Y3")]))
+  }
+  S <- matrix(c(1, .8, .3, .8, 1, .5, .3, .5, 1), 3)
+  for (tf in c("z", "rawcorr", "cholesky")) {
+    expect_equal(first(S, tf), S, tolerance = 0.06, info = tf)
+  }
+  Sz <- matrix(c(1, 0, .4, 0, 1, .4, .4, .4, 1), 3)
+  expect_equal(first(Sz, "z"), Sz, tolerance = 0.06)
+})
+
 test_that("a model with zero covariances is fitted with them", {
   skip_without_julia()
   model <- .cc_zero_model()

@@ -248,6 +248,12 @@
 #' correlations depend on all the values together, so the cells for a given
 #' covariance are hard to work out by hand. \code{ctCov()} computes them.
 #'
+#' Under \code{'z'}, a cell of \code{T0VAR}, \code{DIFFUSION} or
+#' \code{MANIFESTVAR} that is fixed to 0 gives a covariance of zero, and
+#' \code{ctCov()} writes a zero covariance as a cell of 0. Under
+#' \code{'rawcorr'} and \code{'cholesky'} a cell of 0 gives a zero covariance
+#' only in some positions.
+#'
 #' Use the result wherever a fixed matrix can go, such as
 #' \code{ctModel(DIFFUSION = ctCov(S))}, \code{m$matrices$T0VAR <- ctCov(S)},
 #' or \code{m$RAWPOPVAR <- ctCov(S)}, always for the whole matrix. The model
