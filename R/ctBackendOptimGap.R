@@ -1448,12 +1448,16 @@
   attempt <- 0L
   escapes <- 0L
   repeat {
-    # With the budget spent nothing is asked for a point to resume from: the
-    # result is certified where it stands and the loop ends.
+    # With the budget spent only a run-off escape is asked for, which bounds
+    # itself (each coordinate once a fit); without one the result is
+    # certified where it stands and the loop ends.
     spent <- attempt >= budget || !is.function(optimise)
     from <- if (is.function(optimise) && is.function(escape)) escape(result,
       runoffonly = spent) else NULL
     kind <- if (identical(attr(from, "kind"), "runoff")) "runoff" else "escape"
+    # The budget is this loop's to keep, whatever the escape function hands
+    # back: a stand-in that ignored `runoffonly` kept it running for good.
+    if (spent && !identical(kind, "runoff")) from <- NULL
     gap <- NULL
     stage_endgame <- NULL
     endgame <- NULL
