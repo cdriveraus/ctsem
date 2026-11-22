@@ -268,6 +268,8 @@ _ctsem_nan(::Type{CTSEMTraceJet{W}}) where {W} =
     B::AbstractMatrix{<:CTSEMTraceJet}, dim) = _matrix_equal_noalloc(A, B, dim, dim)
 @inline _primal(x::CTSEMTraceJet) = x.v
 _carries_derivatives(::Type{<:CTSEMTraceJet}) = true
+# A jet carries first parts and a summed second part: two orders (cov_zero.jl).
+_zcov_order(::Type{<:CTSEMTraceJet}) = 2
 _primal_type(::Type{<:CTSEMTraceJet}) = Float64
 @inline _laplace_deepvalue(x::CTSEMTraceJet) = x.v
 @inline _laplace_finite(x::CTSEMTraceJet) = _finite_deep(x)

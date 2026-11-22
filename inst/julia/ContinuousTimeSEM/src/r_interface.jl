@@ -549,6 +549,10 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
         Float64.(ti_fixed_value), ti_tail)
     _ctsem_set_stationary_elements!(sp.stationary_elements, stationary_mean,
         stationary_block, stationary_closure)
+    # Under 'z' a covariance cell fixed at zero is a zero covariance, which
+    # between connected variables the construction has to solve for.
+    covmatcode == 2 && _ctsem_set_cov_zeros!(sp.covzeros, matrix, row, col, parnumber,
+        value, transform, predicttransform, updatetransform, tdtransform)
     # Parameters with a stated population value (`CTSEMAnchors`): their cells
     # read `param[nfree + j]`, and the TI predictor tail follows them, which
     # `ti_tail_offset` already says.
@@ -558,6 +562,49 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
         sp.anchors.values = Float64.(anchor_values)
     end
     return sp
+end
+
+"""
+    _ctsem_set_cov_zeros!(cz, matrix, row, col, parnumber, value, transforms...)
+
+Find, from the parameter table's columns, the cells of T0VAR, DIFFUSION and
+MANIFESTVAR that the construction solves as zero covariances
+(`CTSEMZeroCells`): below the diagonal, fixed at zero with no parameter and no
+transform of any kind, and joined by the matrix's other cells below the
+diagonal, each of which is open whatever it holds (`_ctsem_linked_zeros`).
+From the table rather than sent, so every model that reaches the engine is
+read by the one rule.
+"""
+function _ctsem_set_cov_zeros!(cz::CTSEMCovZeros, matrix, row, col, parnumber, value,
+    transform, predicttransform, updatetransform, tdtransform)
+    for name in ("T0VAR", "DIFFUSION", "MANIFESTVAR")
+        zero_rows = Int[]; zero_cols = Int[]
+        open_rows = Int[]; open_cols = Int[]
+        d = 0
+        for i in eachindex(matrix)
+            String(matrix[i]) == name || continue
+            r = Int(row[i]); c = Int(col[i])
+            d = max(d, r, c)
+            r > c || continue
+            fixedzero = Int(parnumber[i]) == 0 && value[i] == 0 &&
+                isempty(transform[i]) && isempty(predicttransform[i]) &&
+                isempty(updatetransform[i]) && isempty(tdtransform[i])
+            if fixedzero
+                push!(zero_rows, r); push!(zero_cols, c)
+            else
+                push!(open_rows, r); push!(open_cols, c)
+            end
+        end
+        cells = _ctsem_linked_zeros(d, zero_rows, zero_cols, open_rows, open_cols)
+        if name == "T0VAR"
+            cz.t0var = cells
+        elseif name == "DIFFUSION"
+            cz.diffusion = cells
+        else
+            cz.manifestvar = cells
+        end
+    end
+    return cz
 end
 
 """

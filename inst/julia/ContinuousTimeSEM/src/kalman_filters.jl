@@ -219,7 +219,7 @@ from `pars.DIFFUSION`, which every other caller relies on. Passed rather than
 remembered on the workspace, so no caller can read one left by another pass.
 """
 @inline function _ekf_predict_step!(ws::ContinuousEKFWorkspace, pars, Δt)
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.sp.covmatcode, ws.state_dim)
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, _ctsem_diffusion_code(ws.sp), ws.state_dim)
     return _ekf_predict_step!(ws, pars, Δt, ws.bufferQ.out)
 end
 
@@ -1643,7 +1643,7 @@ function _ctsem_stationary!(P, x, ws, pars)
     end
     _solve_square_system!(ab.intermediate, ab.s, ab.piv, ab.dim)
 
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.sp.covmatcode,
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, _ctsem_diffusion_code(ws.sp),
         ws.state_dim)
     db = ws.diffusion_buffer
     A = view(ws.discretization_buffer.input, 1:k, 1:k)
@@ -1759,7 +1759,7 @@ function _ctsem_stationary_elements_cov!(P, ws, pars, se::CTSEMStationaryElement
     k = length(dyn)
     inclosure = se.inclosure
     DRIFT = pars.DRIFT
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.sp.covmatcode,
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, _ctsem_diffusion_code(ws.sp),
         ws.state_dim)
     db = ws.diffusion_buffer
     buf = ws.discretization_buffer
@@ -1926,7 +1926,7 @@ elements (`CTSEMStationaryElements`), are placed the same way when it has any.
         return _ctsem_sdcor_factor!(dest, pars.T0VAR, ws.bufferQ, ws.state_dim)
     end
     n = ws.state_dim
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.T0VAR, ws.sp.covmatcode,
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.T0VAR, _ctsem_t0var_code(ws.sp),
         ws.state_dim)
     @inbounds for j in 1:n, i in 1:n
         dest[i, j] = ws.bufferQ.out[i, j]
@@ -2010,7 +2010,7 @@ function _extended_kalman_filter_continuous!(
     #   P_{1|0} = T0VAR
     # with the latent processes' block replaced by their stationary moments
     # below when the model asks for that.
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.T0VAR, ws.sp.covmatcode, ws.state_dim)
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.T0VAR, _ctsem_t0var_code(ws.sp), ws.state_dim)
     copyto!(ws.P_predict.data, ws.bufferQ.out)
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
     _apply_population_block!(ws, all_params)
@@ -2086,7 +2086,7 @@ function _extended_kalman_filter_continuous!(
     # written nowhere else, so building the covariance first read the parameter
     # buffer before anything had filled that slot. Every later row already
     # runs transform, covariance, record in this order.
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.sp.covmatcode, ws.manifest_dim)
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, _ctsem_manifestvar_code(ws.sp), ws.manifest_dim)
     _record_theta!(trace, pars, ws.manifest_dim)
     log2π_const = log(2π)
     _record_row_prior!(trace, ws, pars, 1)
@@ -2110,7 +2110,7 @@ function _extended_kalman_filter_continuous!(
     # per row (`diffusion_static`), as MANIFESTVAR's above; each prediction
     # rebuilt it from `pars.DIFFUSION` otherwise.
     if ws.diffusion_static && nsteps >= 2
-        ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.sp.covmatcode, ws.state_dim)
+        ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, _ctsem_diffusion_code(ws.sp), ws.state_dim)
         copyto!(ws.diffusion_cov, ws.bufferQ.out)
     end
     # Nonlinear dynamics are moment-matched (`_ekf_moment_cells!`), except when
@@ -2168,7 +2168,7 @@ function _extended_kalman_filter_continuous!(
         # reverse to compare, was the whole manifest-by-manifest matrix every
         # row, against an update that reads only the observed block of it.
         if !ws.manifestvar_static
-            ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.sp.covmatcode, ws.manifest_dim)
+            ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, _ctsem_manifestvar_code(ws.sp), ws.manifest_dim)
             _record_theta!(trace, pars, ws.manifest_dim)
         end
         _record_row_prior!(trace, ws, pars, t_idx)

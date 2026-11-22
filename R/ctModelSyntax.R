@@ -22,9 +22,10 @@
 #  * A modifier may be a number, a label, a quoted ctsem cell or a ctPar()
 #    call, so a cell can say anything a ctModel() cell can.
 #  * What a statement says in its own language has to hold in the model that
-#    is fitted, or it is refused: a covariance that is zero in the syntax
-#    where the cells cannot make it zero (`.ctSynLinkedZeros()`), a lag in
-#    continuous time, a factor model or independence for the random effects.
+#    is fitted, or it is refused: a lag in continuous time, a factor model or
+#    independence for the random effects. A covariance that is left out or
+#    fixed to zero is a zero covariance in these models, which are built under
+#    covmattransform 'z' (ctCov.R).
 #    The writer compares what its code builds with the model it was given
 #    (`.ctSynDifferences()`).
 
@@ -87,10 +88,7 @@
 #' its value at the next occasion. A time dependent predictor acts as an
 #' impulse, shifting the process at each occasion by the effect times the
 #' value of the predictor. A covariance that is not written, or is fixed to
-#' zero, is zero in the fitted model. ctsem builds a covariance matrix from all
-#' of its cells together, so this is possible only between variables that no
-#' other covariances connect, and the functions stop where it is not. A quoted
-#' \code{"0"} sets the cell of the matrix itself, see \code{\link{ctCov}}.
+#' zero, is zero in the fitted model.
 #'
 #' \strong{lavaan style.}
 #' \preformatted{
@@ -1012,7 +1010,6 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
   cells$expr <- FALSE
   cells$raw <- NA_character_
   cells$tipset <- FALSE
-  cells$rawcell <- FALSE
   out <- as.list(cells)
   out$vary <- vector('list', n)
   out$tip <- vector('list', n)
@@ -1096,17 +1093,6 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
   list(latents = latents, manifests = manifests, tds = tds, labels = labels)
 }
 
-# Covariance cells that are zero although other covariances connect their two
-# variables. The cells of a covariance matrix are coordinates of the whole
-# matrix (ctCov.R): variables in separate blocks have zero covariance under
-# every construction, and within a block a zero cell is not a zero covariance.
-.ctSynLinkedZeros <- function(row, col, open, n) {
-  reach <- diag(n) > 0
-  reach[cbind(c(row[open], col[open]), c(col[open], row[open]))] <- TRUE
-  for (step in seq_len(n)) reach <- reach | (reach %*% reach > 0)
-  !open & reach[cbind(row, col)]
-}
-
 .ctSynLevel <- function(token, ids) {
   if (is.null(token)) return(NULL)
   t <- tolower(trimws(token))
@@ -1162,7 +1148,6 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
       if (!is.na(suppressWarnings(as.numeric(p)))) {
         # a quoted number is the cell's own value, as ctModel() reads it
         fix(as.numeric(p))
-        cells$rawcell[k] <- TRUE
       } else if (.ctSynIsName(p) && !p %in% cells$vars) free(p)
       else {
         free(cells$auto[k])
@@ -1527,33 +1512,6 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
     }
   }
 
-  # A covariance that is left out, or fixed to zero, has to be zero in the
-  # model that is fitted.
-  for (m in c('DIFFUSION', 'MANIFESTVAR', 'T0VAR')) {
-    rows <- which(cells$matrix == m & cells$row > cells$col)
-    if (!length(rows)) next
-    vars <- if (m == 'MANIFESTVAR') manifests else latents
-    open <- cells$free[rows] | cells$expr[rows] | !cells$value[rows] %in% 0
-    linked <- .ctSynLinkedZeros(cells$row[rows], cells$col[rows], open,
-      length(vars))
-    bad <- rows[linked & !cells$rawcell[rows]]
-    if (!length(bad)) next
-    a <- cells$col[bad[1L]]
-    b <- cells$row[bad[1L]]
-    # a variable that covaries with one of the two, in their block
-    partner <- unique(c(cells$row[rows][open & cells$col[rows] %in% c(a, b)],
-      cells$col[rows][open & cells$row[rows] %in% c(a, b)]))
-    stop('The ', c(DIFFUSION = 'noise', MANIFESTVAR = 'residual',
-      T0VAR = 'initial')[[m]], ' covariance of ', vars[a], ' and ', vars[b],
-      ' is zero in the syntax, but other covariances connect the two, through ',
-      paste(vars[setdiff(partner, c(a, b))], collapse = ', '), '. ctsem ',
-      'builds a covariance matrix from all of its cells together, and a ',
-      'covariance stays at zero only between variables that no covariances ',
-      'connect. Free this covariance as well, or remove those that connect ',
-      'the two. A quoted "0" sets the cell of the matrix itself, see ?ctCov.',
-      call. = FALSE)
-  }
-
   mats <- list()
   for (m in unique(cells$matrix)) {
     rows <- which(cells$matrix == m)
@@ -1733,11 +1691,10 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
 .ctSynTerm <- function(style, var, mod, default = 'auto', variance = FALSE) {
   bare <- (mod$type == 'auto' && default == 'auto') ||
     (mod$type == 'fixed' && default == 'one' && mod$value == 1)
-  # A covariance statement takes a covariance. A cell that is not one, a
-  # nonzero value or a zero beside covariances that connect its variables, is
-  # written as the cell itself, in quotes.
+  # A covariance statement takes a covariance. A cell fixed at another value
+  # than zero is not one, and is written as the cell itself, in quotes.
   value <- if (mod$type == 'fixed') {
-    if (isTRUE(mod$raw) || (variance && mod$value != 0 && !is.na(var[2L]))) NA else
+    if (variance && mod$value != 0 && !is.na(var[2L])) NA else
       .ctSynNumber(if (variance) mod$value^2 else mod$value)
   }
   # A label alone leaves a first loading at 1, so a free one is freed too.
@@ -1895,24 +1852,16 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
   # statements about a parameter by its name
   parline <- function(k, m = mod(k)) {
     h <- cells$auto[k]
-    if (style == 'formula') out(h, ' ~ ', if (m$type == 'fixed' &&
-        !isTRUE(m$raw)) fnum(m$value) else term('1', m))
+    if (style == 'formula') out(h, ' ~ ', if (m$type == 'fixed') fnum(m$value) else
+      term('1', m))
     else if (style == 'lavaan') out(h, ' ~ ', term('1', m))
     else mplus('', list(term(h, m)), '[', ']')
-  }
-  # zero cells that are not zero covariances, which the reader would refuse
-  rawzero <- rep(FALSE, nrow(cells))
-  for (mat in c('DIFFUSION', 'MANIFESTVAR', 'T0VAR')) {
-    rows <- which(cells$matrix == mat & cells$row > cells$col)
-    if (length(rows)) rawzero[rows] <- .ctSynLinkedZeros(cells$row[rows],
-      cells$col[rows], !vapply(rows, zero, NA), if (mat == 'MANIFESTVAR') nm else nl)
   }
   # (co)variances and intercepts that differ from the default
   for (k in which(cells$matrix %in% c('DIFFUSION', 'MANIFESTVAR', 'T0VAR',
     'MANIFESTMEANS', 'T0MEANS') & !is.na(cells$auto))) {
     m <- mod(k)
-    if (rawzero[k]) m$raw <- TRUE
-    default <- if (cells$deffree[k]) m$type == 'auto' else zero(k) && !rawzero[k]
+    default <- if (cells$deffree[k]) m$type == 'auto' else zero(k)
     if (default) next
     mat <- cells$matrix[k]
     if (mat == 'MANIFESTMEANS' && style == 'formula') next

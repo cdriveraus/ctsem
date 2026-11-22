@@ -409,8 +409,9 @@
           if (is.null(spec$covmatcode)) 0L else spec$covmatcode)]
         if (is.na(construction)) stop("values$rawpopcorr needs ",
           "covmattransform 'z' or 'rawcorr'.", call. = FALSE)
+        # The population's cells are all coordinates (R/ctCov.R).
         cells <- .ctCovCells(R, construction,
-          what = paste0("values$rawpopcorr at level ", level$name))
+          what = paste0("values$rawpopcorr at level ", level$name), zeros = FALSE)
         lower <- which(lower.tri(R), arr.ind = TRUE)
         lower <- lower[order(lower[, 2L], lower[, 1L]), , drop = FALSE]
         raw[index] <- cells[lower]
