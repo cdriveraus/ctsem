@@ -5500,6 +5500,31 @@ function _ctsem_anchor_here!(laplace::CTSEMLaplaceObjective)
 end
 
 """
+    _ctsem_anchor_take!(objective, subset, units)
+
+The anchors of `subset`, an objective over `objective`'s units `units`
+(`_ctsem_subset_objective`), taken into `objective`'s for those units, each
+with the parameters it was found at: a batch stage's after each accepted step
+(`_ctsem_batch_anchor_here!`), which the full objective, not evaluated while
+the batch is smaller than the data, hands on to a grown batch and takes itself
+once the batch is the data. A unit's curvature at its old anchor no longer
+describes it and is dropped (`_laplace_anchor_curvatures!`).
+"""
+_ctsem_anchor_take!(::Any, ::Any, units) = nothing
+function _ctsem_anchor_take!(laplace::CTSEMLaplaceObjective,
+    subset::CTSEMLaplaceObjective, units::AbstractVector{<:Integer})
+    (isempty(laplace.anchors) || isempty(laplace.alt_anchors) ||
+        isempty(laplace.anchor_values) || isempty(subset.anchors)) && return nothing
+    for (j, U) in enumerate(units)
+        laplace.anchors[U] = subset.anchors[j]
+        laplace.alt_anchors[U] = subset.alt_anchors[j]
+        laplace.anchor_values[U] = subset.anchor_values[j]
+    end
+    _laplace_anchor_curvatures!(laplace)
+    return nothing
+end
+
+"""
     _ctsem_anchor_finish!(objective, x)
 
 The end of an anchored run: the anchored evaluation at `x` and a search there
