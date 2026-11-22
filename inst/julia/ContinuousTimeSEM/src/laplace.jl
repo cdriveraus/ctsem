@@ -4324,6 +4324,7 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         # an untyped `M` made the factorization below a dynamic call that boxed
         # its result, every Newton step.
         M = if exact
+            _CTSEM_OPCOUNT.inner_curvatures[] += 1
             Mx = _laplace_unit_curvature(laplace, U, values, Ls, u;
                 into=Mwork)::CTSEMBlockMatrix{Float64}
             sr1 && copyto!(B, Mx.diag[1])
@@ -4501,6 +4502,8 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     # that did not converge, then never ran, and its columns differed from the
     # full budget's by 3e-8 relative (test-julia-laplace.R, 2026-10-18).
     d == 0 && (converged = true)
+    _CTSEM_OPCOUNT.inner_solves[] += 1
+    _CTSEM_OPCOUNT.inner_iterations[] += iterations
     # The gradient's largest entry, the one thing its readers ask of it: the
     # vector is the slot's, and the next solve on this slot overwrites it.
     return (u=copy(u), value=current.value,
