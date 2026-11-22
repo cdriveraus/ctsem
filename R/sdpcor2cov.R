@@ -44,7 +44,8 @@ sdpcor2cov <- function(mat, coronly=FALSE, cholesky=FALSE){
 # The (-1, 1) squash lives here rather than in the parameter table, so that one
 # model structure works under any of the covariance transforms: 'rawcorr' needs
 # its off-diagonal coordinate bounded, 'z' reads the same cell as an unbounded
-# Fisher z, and 'cholesky' as a factor entry. Putting the bound in the
+# entry of a matrix logarithm (Fisher z of the correlation for two variables),
+# and 'cholesky' as a factor entry. Putting the bound in the
 # construction that needs it leaves the off-diagonal parameter free on the real
 # line for all three.
 #

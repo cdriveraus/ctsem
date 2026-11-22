@@ -683,8 +683,6 @@ ctModelLatexMeasurementBlock <- function(ctmodel, matrixnames=TRUE,
 #' @param compile Compile to .pdf? (Depends on \code{tex = TRUE}) 
 #' @param open Open after compiling? (Depends on \code{compile = TRUE})
 #' @param includeNote Include text describing matrix transformations and subject notation?
-#' triangular matrices (which results in a covariance or Cholesky matrix) is shown -- 
-#' the latter is a more direct representation of the model, while the former is often simpler to convey.
 #' @param savepng Logical. If TRUE, renders the equation as a png file instead of a pdf, viewing the png in RStudio viewer when available.
 #'
 #' @return character string of latex code. Side effects include saving a .tex, .pdf, and displaying the pdf. 
@@ -1198,8 +1196,9 @@ pars <- unique(c(rownames(popcov),unlist(lapply(extracov,rownames)),
           &",ifelse(continuoustime,'\\Delta ',''),"\\big[W_{j \\in [1,",ctmodel$n.latent,"]}\\big](t",
       ifelse(continuoustime,'-u',''),")   \\sim  \\mathrm{N}(0,",W,") \\\\ \\\\
       \\end{aligned} \\\\",
-      if(includeNote) paste0("&\\textrm{Note: } UcorSDtoChol\\textrm{ converts lower tri matrix of standard deviations and unconstrained correlations to Cholesky factor,} \\\\
-&UcorSDtoCov =\\textrm{ transposed cross product of UcorSDtoChol, to give covariance, See Driver \\& Voelkle (2018) p11.} \\\\",
+      if(includeNote) paste0("&\\textrm{Note: } UcorSDtoChol\\textrm{ converts lower tri matrix of standard deviations and covariance parameters to Cholesky factor,} \\\\
+&UcorSDtoCov =\\textrm{ transposed cross product of UcorSDtoChol, to give covariance, See Driver \\& Voelkle (2018) p11.} \\\\
+&\\textrm{The model's covmattransform sets how the parameters below the diagonal give correlations, see ?ctCov.} \\\\",
         if(dopop) paste0(if(length(extracov)) "&\\textrm{Unit specific notation (subscripts) only shown for the parameter distribution -- pop. means shown elsewhere.} \\\\
 " else "&\\textrm{Individual specific notation (subscript i) only shown for subject parameter distribution -- pop. means shown elsewhere.} \\\\
 ",if(linearise) "&\\textrm{Linearised approximation of subject parameter distribution shown.} \\\\",

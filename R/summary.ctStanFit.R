@@ -114,7 +114,10 @@ ctStanRawSamples<-function(fit){
 #'and \code{dtDRIFT} at \code{timeinterval}. Each covariance has a matching
 #'correlation matrix, \code{DIFFUSIONcor}, \code{MANIFESTcor}, \code{T0cor} and
 #'\code{asymDIFFUSIONcor}, computed for each draw before \code{calcfunc} is
-#'applied. A variable with zero variance has \code{NA} correlations.
+#'applied. A variable with zero variance has \code{NA} correlations. These
+#'matrices give the size of a covariance or correlation. The off-diagonal
+#'parameters of \code{T0VAR}, \code{DIFFUSION} and \code{MANIFESTVAR} do not
+#'(see \code{\link{summary.ctStanFit}}).
 #'
 #'On \code{backend='julia'} the list also holds the Jacobians of the drift and
 #'of the measurement at the evaluation point, \code{JAx} (latent by latent) and
@@ -415,6 +418,13 @@ getparnames <- function(fit,reonly=FALSE, subjvariationonly=FALSE, popstatesonly
 #'   correlations are in \code{parmatrices}, as \code{T0cor},
 #'   \code{DIFFUSIONcor}, \code{MANIFESTcor} and \code{asymDIFFUSIONcor} beside
 #'   the covariances, each summarised over the draws' own correlations.
+#'
+#'   Under the default \code{'z'}, a covariance parameter fixed to 0 gives a
+#'   covariance of exactly 0. An estimated parameter that is 0 or near 0 does not show that
+#'   the covariance is 0 when there are three or more variables. To see
+#'   whether a covariance or correlation is zero, or how large it is, read
+#'   \code{T0cov}, \code{DIFFUSIONcov}, \code{MANIFESTcov},
+#'   \code{asymDIFFUSIONcov} and the correlation matrices.
 #' @examples
 #' summary(ctstantestfit)
 #' @method summary ctStanFit
