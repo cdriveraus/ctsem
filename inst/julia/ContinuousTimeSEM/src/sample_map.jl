@@ -401,15 +401,34 @@ function _jmap_tri_component_derivatives(C::_JMapTriComponent, p::Vector{Float64
     return g, H
 end
 
+# The Newton step `-H^-1 g` on the Hessian's eigenvalues floored at 1e-6 of
+# the largest in size (and 1e-8). Where a Cholesky factor shows the floor cannot
+# bind -- its smallest eigenvalue at least `1 / ||U^-1||_F^2`, above the floor
+# taken at `||H||_inf`, which bounds the largest -- the step is the factor's
+# solve, the same step; otherwise the eigendecomposition's. An eigendecomposition
+# with vectors costs several times a factor and its inverse, and at the ladder's
+# widest sizes (hundreds of coefficients, sixty iterations a size) it was most
+# of a component's fit: theta's map over the reanalysis's 2,868 coordinates
+# took hours after a window.
+function _jmap_tri_step(H::Matrix{Float64}, g::Vector{Float64})
+    F = cholesky(Symmetric(H); check=false)
+    if issuccess(F)
+        Ui = inv(UpperTriangular(F.U))
+        top = maximum(sum(abs, H; dims=2))
+        1 / sum(abs2, Ui) > 1e-6 * top + 1e-8 && return -(F \ g)
+    end
+    ev = eigen(Symmetric(H))
+    lam = max.(ev.values, 1e-6 * maximum(abs, ev.values) + 1e-8)
+    return -(ev.vectors * ((transpose(ev.vectors) * g) ./ lam))
+end
+
 # Damped Newton on the component from `p`, on the Hessian's eigenvalues floored.
 function _jmap_tri_newton(C::_JMapTriComponent, p::Vector{Float64}, iters::Int)
     val = _jmap_tri_component_value(C, p)
     for _ in 1:iters
         g, H = _jmap_tri_component_derivatives(C, p)
         (all(isfinite, g) && all(isfinite, H)) || break
-        ev = eigen(Symmetric(H))
-        lam = max.(ev.values, 1e-6 * maximum(abs, ev.values) + 1e-8)
-        step = -(ev.vectors * ((transpose(ev.vectors) * g) ./ lam))
+        step = _jmap_tri_step(H, g)
         t = 1.0
         improved = false
         for _ in 1:30
