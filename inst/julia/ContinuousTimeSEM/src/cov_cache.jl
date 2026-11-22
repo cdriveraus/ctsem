@@ -41,11 +41,15 @@ struct CovCache{T}
     d::Int
     # Which construction this table's entries were built under; see below.
     code::Int
+    # And which of the matrix's cells that construction solves as zero
+    # covariances (`CTSEMZeroCells`'s id, 0 for none): two matrices of one
+    # size with equal cells and different such cells are different matrices.
+    zeros::UInt
 end
 
-CovCache{T}(D::Int, code::Int) where {T} = CovCache{T}(
+CovCache{T}(D::Int, code::Int, zeroid::UInt) where {T} = CovCache{T}(
     [zeros(T, D, D) for _ in 1:_COVCACHE_SLOTS],
-    [zeros(T, D, D) for _ in 1:_COVCACHE_SLOTS], Ref(0), Ref(1), D, code)
+    [zeros(T, D, D) for _ in 1:_COVCACHE_SLOTS], Ref(0), Ref(1), D, code, zeroid)
 
 # The construction in force is part of the key. Without it an entry built under
 # one route is served under the other, which a switch mid-session -- every
@@ -75,7 +79,7 @@ CovCache{T}(D::Int, code::Int) where {T} = CovCache{T}(
 # type, dimension and construction actually used -- a handful -- and each step
 # is a type test. That is cheaper than the allocation it replaces, let alone
 # than the construction either one is in front of.
-function _covcache(::Type{T}, __d::Int, code::Int) where {T}
+function _covcache(::Type{T}, __d::Int, code::Int, zeroid::UInt=UInt(0)) where {T}
     d = __d
     store = _ctsem_scratch()
     caches = get(store, _COVCACHE_TLS_KEY, nothing)
@@ -85,11 +89,11 @@ function _covcache(::Type{T}, __d::Int, code::Int) where {T}
     end
     list = caches::Vector{Any}
     for e in list
-        if e isa CovCache{T} && e.d == d && e.code == code
+        if e isa CovCache{T} && e.d == d && e.code == code && e.zeros == zeroid
             return e
         end
     end
-    c = CovCache{T}(d, code)
+    c = CovCache{T}(d, code, zeroid)
     push!(list, c)
     return c
 end

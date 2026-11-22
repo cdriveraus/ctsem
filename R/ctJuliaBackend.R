@@ -4827,6 +4827,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     objective_args$corbound_index <- V(unlist(lapply(bounds, function(b) b$index)))
     objective_args$corbound_fixed <- V(unlist(lapply(bounds, function(b) {
       x <- b$fixed; x[!is.finite(x)] <- 0; x })))
+    # The cells a block's matrix solves as zero covariances (R/ctCov.R), sent
+    # only when there are any.
+    zero <- unlist(lapply(bounds, function(b)
+      if (is.null(b$zero)) rep(FALSE, length(b$index)) else b$zero))
+    if (any(zero)) objective_args$corbound_zero <- V(as.integer(zero))
   }
   # Sampled TI-predictor values, one entry per missing cell -- omitted
   # entirely (not sent as empty vectors) for every model with none, which is

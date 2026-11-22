@@ -90,6 +90,17 @@ struct ExpmCovScratch{T}
     Ytab::Vector{Matrix{T}}
     nslots::Base.RefValue{Int}
     nextslot::Base.RefValue{Int}
+    # For a matrix with solved zero cells (cov_zero.jl), beside each slot's
+    # key: the pattern's id (0 for none), the matrix with those cells solved,
+    # which is what `Ytab` is then the exponential of, the factor of the
+    # solve's Newton matrix, and whether the solve found its solution. `zq`
+    # and `zl` are scratch a cell long.
+    Ztab::Vector{UInt}
+    Stab::Vector{Matrix{T}}
+    Htab::Vector{Matrix{Float64}}
+    oktab::Vector{Bool}
+    zq::Vector{T}
+    zl::Vector{T}
 end
 
 function ExpmCovScratch{T}(D::Int) where {T}
@@ -98,7 +109,11 @@ function ExpmCovScratch{T}(D::Int) where {T}
         zeros(T, D, D), zeros(T, D, D), zeros(T, D, D), zeros(T, D, D),
         zeros(T, D, D), zeros(T, D), zeros(T, D),
         ExpBuffer{T}(D), ExpFrechetBuffer{T}(D),
-        mk(), mk(), Ref(0), Ref(1))
+        mk(), mk(), Ref(0), Ref(1),
+        zeros(UInt, _EXPM_CACHE_SLOTS),
+        [zeros(T, 0, 0) for _ in 1:_EXPM_CACHE_SLOTS],
+        [zeros(Float64, 0, 0) for _ in 1:_EXPM_CACHE_SLOTS],
+        fill(true, _EXPM_CACHE_SLOTS), T[], T[])
 end
 
 # Held in *task*-local storage, keyed by shape.
@@ -166,36 +181,63 @@ end
     #
     # The row-sum (infinity) norm bounds the spectral radius of a symmetric
     # matrix and costs one pass over `A`.
+    _hollow_shift!(A, d, T)
+    return nothing
+end
+
+# Set the diagonal of the hollow `A` to minus its largest row sum of absolute
+# values, whatever the diagonal held: `_fill_hollow!` says why.
+@inline function _hollow_shift!(A, __d::Int, ::Type{T}) where {T}
+    d = __d
     shift = zero(T)
     @inbounds for i in 1:d
         rowsum = zero(T)
         for j in 1:d
-            rowsum += abs(A[i, j])
+            j == i || (rowsum += abs(A[i, j]))
         end
         rowsum > shift && (shift = rowsum)
     end
     @inbounds for i in 1:d
-        A[i, i] -= shift
+        A[i, i] = -shift
     end
     return nothing
 end
 
 """
-    _expm_cov_slot!(sc, A, dim)
+    _expm_cov_slot!(sc, A, dim, cells)
 
-Index of the cache slot holding `exp(A)` for this `A`, filling it on a miss.
+Index of the cache slot holding the exponential for this `A` and these solved
+zero cells, filling it on a miss. With no such cells that is `exp(A)`. With
+some, the slot also holds `A` with them solved (`sc.Stab`), which the
+exponential is then of, the solve's factor (`sc.Htab`) and whether it found
+its solution (`sc.oktab`); the key stays the matrix as it was handed over.
 """
-function _expm_cov_slot!(sc::ExpmCovScratch{T}, A, __d::Int) where {T}
+function _expm_cov_slot!(sc::ExpmCovScratch{T}, A, __d::Int,
+    cells::CTSEMZeroCells) where {T}
     d = __d
     _EXPM_COV_CALLS[] += 1
     @inbounds for e in 1:sc.nslots[]
-        _blocks_equal(sc.Atab[e], A, d) && return e
+        sc.Ztab[e] == cells.id && _blocks_equal(sc.Atab[e], A, d) && return e
     end
     _EXPM_COV_MISSES[] += 1
     slot = sc.nextslot[]
     @inbounds begin
         copyto!(sc.Atab[slot], A)
-        my_exp!(sc.Ytab[slot], A, sc.W1, sc.eb, d)
+        sc.Ztab[slot] = cells.id
+        sc.oktab[slot] = true
+        if cells.id == UInt(0)
+            my_exp!(sc.Ytab[slot], A, sc.W1, sc.eb, d)
+        else
+            z = length(cells.rows)
+            size(sc.Stab[slot], 1) == d || (sc.Stab[slot] = zeros(T, d, d))
+            size(sc.Htab[slot], 1) == z || (sc.Htab[slot] = zeros(Float64, z, z))
+            length(sc.zq) == z || (resize!(sc.zq, z); resize!(sc.zl, z))
+            S = sc.Stab[slot]
+            copyto!(S, A)
+            ok = _zcov_solved!(S, sc.Htab[slot], cells, d, sc.Ytmp, sc.W1, sc.eb, sc.zq)
+            sc.oktab[slot] = ok
+            ok && my_exp!(sc.Ytab[slot], S, sc.W1, sc.eb, d)
+        end
     end
     sc.nslots[] = max(sc.nslots[], slot)
     sc.nextslot[] = slot == _EXPM_CACHE_SLOTS ? 1 : slot + 1
@@ -223,12 +265,17 @@ happens to sit at 0 still has a derivative, which the general route keeps.
 end
 
 """
-    sdcovexpm2cov!(buffer, mat, dim)
+    sdcovexpm2cov!(buffer, mat, dim, cells)
 
 Write `D * normalise(exp(A)) * D` into `buffer.out`, where `D` is `mat`'s
-diagonal and `A` is hollow symmetric from `mat`'s lower triangle.
+diagonal and `A` is hollow symmetric from `mat`'s lower triangle. The cells
+`cells` names are zero covariances: `A` is solved there so that `exp(A)` is
+zero (cov_zero.jl), and the result is exactly zero. Where that solve finds no
+solution the result is NaN, an invalid point.
 """
-function sdcovexpm2cov!(buffer, mat, __d::Int)
+sdcovexpm2cov!(buffer, mat, d::Int) = sdcovexpm2cov!(buffer, mat, d, _CTSEM_NO_ZERO_CELLS)
+
+function sdcovexpm2cov!(buffer, mat, __d::Int, cells::CTSEMZeroCells)
     d = __d
     T = eltype(buffer.out)
     sc = _expm_cov_scratch(T, d)
@@ -240,7 +287,11 @@ function sdcovexpm2cov!(buffer, mat, __d::Int)
         end
         return nothing
     end
-    slot = _expm_cov_slot!(sc, A, d)
+    slot = _expm_cov_slot!(sc, A, d, cells)
+    if !sc.oktab[slot]
+        fill!(buffer.out, _ctsem_nan(T))
+        return nothing
+    end
     Y = sc.Ytab[slot]
     yd, g = sc.yd, sc.g
     @inbounds for i in 1:d
@@ -249,6 +300,11 @@ function sdcovexpm2cov!(buffer, mat, __d::Int)
     end
     @inbounds for j in 1:d, i in 1:d
         buffer.out[i, j] = i == j ? T(mat[i, i])^2 : g[i] * g[j] * Y[i, j]
+    end
+    @inbounds for c in eachindex(cells.rows)
+        i = cells.rows[c]; j = cells.cols[c]
+        buffer.out[i, j] = zero(T)
+        buffer.out[j, i] = zero(T)
     end
     return nothing
 end
@@ -261,14 +317,14 @@ layout. Follows `_sdcovsqrt2cov_pullback!`'s convention: the cotangent is
 symmetrised by adding both triangles.
 """
 function _sdcovexpm2cov_pullback!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
-        cov_bar::AbstractMatrix, d::Int)
+        cov_bar::AbstractMatrix, d::Int, cells::CTSEMZeroCells=_CTSEM_NO_ZERO_CELLS)
     d == 0 && return mat_bar
     all(iszero, cov_bar) && return mat_bar
-    return _sdcovexpm2cov_pullback_body!(mat_bar, mat, cov_bar, d)
+    return _sdcovexpm2cov_pullback_body!(mat_bar, mat, cov_bar, d, cells)
 end
 
 function _sdcovexpm2cov_pullback_body!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
-        cov_bar::AbstractMatrix, __d::Int)
+        cov_bar::AbstractMatrix, __d::Int, cells::CTSEMZeroCells)
     d = __d
     T = promote_type(eltype(mat), eltype(cov_bar))
     sc = _expm_cov_scratch(T, d)
@@ -288,11 +344,28 @@ function _sdcovexpm2cov_pullback_body!(mat_bar::AbstractMatrix, mat::AbstractMat
         end
         return mat_bar
     end
-    slot = _expm_cov_slot!(sc, A, d)
+    slot = _expm_cov_slot!(sc, A, d, cells)
+    solved = cells.id != UInt(0)
+    if !sc.oktab[slot]
+        # The forward pass was NaN here: no solution for the zero cells.
+        @inbounds for i in 1:d, j in 1:i
+            mat_bar[i, j] = _ctsem_nan(T)
+        end
+        return mat_bar
+    end
     Y = sc.Ytab[slot]
     yd = sc.yd
     @inbounds for i in 1:d
         yd[i] = sqrt(Y[i, i])
+    end
+    # A solved cell's covariance is the constant zero, whatever its cotangent.
+    mask = sc.M1
+    if solved
+        fill!(mask, zero(T))
+        @inbounds for c in eachindex(cells.rows)
+            mask[cells.rows[c], cells.cols[c]] = one(T)
+            mask[cells.cols[c], cells.rows[c]] = one(T)
+        end
     end
 
     Ybar = sc.Ybar
@@ -303,6 +376,7 @@ function _sdcovexpm2cov_pullback_body!(mat_bar::AbstractMatrix, mat::AbstractMat
         acc = 2 * T(cov_bar[i, i]) * T(mat[i, i])
         for j in 1:d
             j == i && continue
+            solved && !iszero(mask[i, j]) && continue
             w = T(cov_bar[i, j]) + T(cov_bar[j, i])
             # For a fixed i this visits each j once, and `w` already carries
             # both of that pair's cotangent entries, so there is no halving.
@@ -314,6 +388,7 @@ function _sdcovexpm2cov_pullback_body!(mat_bar::AbstractMatrix, mat::AbstractMat
     # Frechet map at a symmetric A sends symmetric directions to symmetric
     # results, so putting the whole pair weight in the lower triangle is exact.
     @inbounds for i in 1:d, j in 1:(i - 1)
+        solved && !iszero(mask[i, j]) && continue
         w = T(cov_bar[i, j]) + T(cov_bar[j, i])
         cbar = w * T(mat[i, i]) * T(mat[j, j])
         cij = Y[i, j] / (yd[i] * yd[j])
@@ -323,9 +398,29 @@ function _sdcovexpm2cov_pullback_body!(mat_bar::AbstractMatrix, mat::AbstractMat
     end
     # Y = exp(A), and the adjoint of E -> L(A, E) is L(A', .) = L(A, .) for
     # symmetric A, so the same map serves the pullback.
-    my_exp_frechet!(sc.Ytmp, sc.Abar, A, Ybar, sc.fb)
+    if !solved
+        my_exp_frechet!(sc.Ytmp, sc.Abar, A, Ybar, sc.fb)
+        @inbounds for i in 1:d, j in 1:(i - 1)
+            mat_bar[i, j] += sc.Abar[i, j] + sc.Abar[j, i]
+        end
+        return mat_bar
+    end
+    # With solved cells `Y` is the exponential of the solved matrix, and those
+    # cells' cotangent goes to the open ones (`_zcov_fold!`). `mask` has done
+    # its work, so the fold takes its matrix as scratch.
+    S = sc.Stab[slot]
+    my_exp_frechet!(sc.Ytmp, sc.Abar, S, Ybar, sc.fb)
+    L = sc.M2
+    z = length(cells.rows)
+    length(sc.zq) == z || (resize!(sc.zq, z); resize!(sc.zl, z))
+    _zcov_fold!(L, sc.Abar, S, cells, sc.Htab[slot], d, sc.Ytmp, sc.M1, sc.fb, sc.zq, sc.zl)
+    @inbounds for c in eachindex(cells.rows)
+        i = cells.rows[c]; j = cells.cols[c]
+        # What the loop below adds at a solved cell, which has no cotangent.
+        mat_bar[i, j] -= sc.Abar[i, j] + sc.Abar[j, i] - (L[i, j] + L[j, i]) / 2
+    end
     @inbounds for i in 1:d, j in 1:(i - 1)
-        mat_bar[i, j] += sc.Abar[i, j] + sc.Abar[j, i]
+        mat_bar[i, j] += sc.Abar[i, j] + sc.Abar[j, i] - (L[i, j] + L[j, i]) / 2
     end
     return mat_bar
 end

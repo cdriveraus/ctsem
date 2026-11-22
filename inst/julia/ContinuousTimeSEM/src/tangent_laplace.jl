@@ -455,7 +455,7 @@ function _tan_record!(rec::TanTraceRecorder, kind::Int, t::Int, x::TanVec, P::Ta
     _tan_to_duals!(kind == 1 ? ws.P_predict.data : ws.P_update.data, P)
     pars = CTSEMPars(rec.cells, sp.parameter_axis)
     if kind == 1
-        sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.sp.covmatcode, ws.manifest_dim)
+        sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, _ctsem_manifestvar_code(ws.sp), ws.manifest_dim)
         _record_row_prior!(rec.trace, ws, pars, t)
         return nothing
     end

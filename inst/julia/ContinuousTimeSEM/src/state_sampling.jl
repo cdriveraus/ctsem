@@ -382,7 +382,7 @@ noise-free trajectory takes (`ctsem_state_trajectories`).
     apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices,
         sp.predict_transforms, CTSEMRowContext(ws.state, pars, tdpreds, tipreds,
             time, h, subject, t))
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.sp.covmatcode,
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, _ctsem_diffusion_code(ws.sp),
         ws.state_dim)
     if transition === :euler && ws.continuous_time
         _ctsem_mulvec!(ws.bufferQ.r, pars.DRIFT, ws.state)
@@ -790,7 +790,7 @@ function _ctsem_state_row!(ws, pars, data::AbstractMatrix, col::Int,
         pred[i] = acc
     end
 
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.sp.covmatcode,
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, _ctsem_manifestvar_code(ws.sp),
         ws.manifest_dim)
     @inbounds for j in 1:m, i in 1:m
         theta[i, j] = ws.bufferΘ.out[i, j]

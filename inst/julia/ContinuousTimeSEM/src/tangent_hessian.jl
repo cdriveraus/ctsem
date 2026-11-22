@@ -162,10 +162,10 @@ function _tan_mats_of!(dst, aws, sp, all_params::AbstractVector, mask::UInt16=_T
     on(bit) = (mask & bit) != 0
     # As the filter builds them: MANIFESTVAR's and DIFFUSION's covariances as
     # the construction leaves them, T0VAR's with its lower triangle copied up.
-    cov!(out, mat, d, buf) = (sdcovsqrt2cov!(buf, mat, sp.covmatcode, d);
+    cov!(out, mat, d, buf, code) = (sdcovsqrt2cov!(buf, mat, code, d);
         copyto!(out, view(buf.out, 1:d, 1:d)))
     T0V = dst.T0V
-    on(_TAN_M_T0V) && cov!(T0V, pars.T0VAR, n, ws.bufferQ)
+    on(_TAN_M_T0V) && cov!(T0V, pars.T0VAR, n, ws.bufferQ, _ctsem_t0var_code(sp))
     on(_TAN_M_T0V) && _copy_lower_to_upper!(T0V, n)
     # The population block, added (`_place_population_block!`).
     pidx = sp.population_indices
@@ -194,11 +194,11 @@ function _tan_mats_of!(dst, aws, sp, all_params::AbstractVector, mask::UInt16=_T
     on(_TAN_M_JAX) && copyto!(dst.JAx, view(pars.JAx, 1:n, 1:n))
     on(_TAN_M_DRIFT) && copyto!(dst.DRIFT, view(pars.DRIFT, 1:n, 1:n))
     on(_TAN_M_CINT) && copyto!(dst.CINT, view(pars.CINT, 1:n))
-    on(_TAN_M_QC) && cov!(dst.Qc, pars.DIFFUSION, n, ws.bufferQ)
+    on(_TAN_M_QC) && cov!(dst.Qc, pars.DIFFUSION, n, ws.bufferQ, _ctsem_diffusion_code(sp))
     on(_TAN_M_LAM) && copyto!(dst.LAM, view(pars.LAMBDA, 1:m, 1:n))
     on(_TAN_M_JY) && copyto!(dst.Jy, view(pars.Jy, 1:m, 1:n))
     on(_TAN_M_MM) && copyto!(dst.MM, view(pars.MANIFESTMEANS, 1:m))
-    on(_TAN_M_R) && cov!(dst.R, pars.MANIFESTVAR, m, ws.bufferΘ)
+    on(_TAN_M_R) && cov!(dst.R, pars.MANIFESTVAR, m, ws.bufferΘ, _ctsem_manifestvar_code(sp))
     on(_TAN_M_T0M) && copyto!(dst.T0M, view(pars.T0MEANS, 1:n))
     # The categorical extras' cells as they are.
     XC = dst.XC
@@ -245,11 +245,11 @@ function _tan_bar_of!(tb::AbstractVector{S}, aws, sp, C, rawD, rawR, cells,
     on(_TAN_M_T0M) && (view(tc.T0MEANS, 1:n) .+= C.T0M)
     on(_TAN_M_TDE) && hasproperty(tc, :TDPREDEFFECT) && (tc.TDPREDEFFECT .+= C.TDE)
     on(_TAN_M_JTD) && hasproperty(tc, :Jtd) && (view(tc.Jtd, 1:n, 1:n) .+= C.Jtd)
-    pullback!(target, mat, cbar, d) = _sdcovsqrt2cov_pullback!(target, mat, cbar, d;
-        scratch=aws.covsqrt_scratch, covmatcode=sp.covmatcode)
+    pullback!(target, mat, cbar, d, code) = _sdcovsqrt2cov_pullback!(target, mat, cbar, d;
+        scratch=aws.covsqrt_scratch, covmatcode=code)
     # A covariance with no cotangent has none to pull back.
-    on(_TAN_M_QC) && any(!iszero, C.Qc) && pullback!(tc.DIFFUSION, rawD, C.Qc, n)
-    on(_TAN_M_R) && any(!iszero, C.R) && pullback!(tc.MANIFESTVAR, rawR, C.R, m)
+    on(_TAN_M_QC) && any(!iszero, C.Qc) && pullback!(tc.DIFFUSION, rawD, C.Qc, n, _ctsem_diffusion_code(sp))
+    on(_TAN_M_R) && any(!iszero, C.R) && pullback!(tc.MANIFESTVAR, rawR, C.R, m, _ctsem_manifestvar_code(sp))
     # The categorical extras' cells, straight onto them (`_extras_cotangent!`).
     XCbar = C.XC
     on(_TAN_M_XC) && _tan_cat_each((k, cell, i) -> (@inbounds tb[cell] += XCbar[k]), sp)
@@ -277,7 +277,8 @@ function _tan_bar_of!(tb::AbstractVector{S}, aws, sp, C, rawD, rawR, cells,
     end
     any(!iszero, T0Vbar) || return tb
     t0 = t0 === nothing ? zeros(S, n, n) : fill!(t0, zero(S))
-    pullback!(t0, view(CTSEMPars(cells, sp.parameter_axis).T0VAR, 1:n, 1:n), T0Vbar, n)
+    pullback!(t0, view(CTSEMPars(cells, sp.parameter_axis).T0VAR, 1:n, 1:n), T0Vbar, n,
+        _ctsem_t0var_code(sp))
     view(tc.T0VAR, 1:n, 1:n) .+= t0
     return tb
 end

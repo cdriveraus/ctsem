@@ -219,7 +219,7 @@ from `pars.DIFFUSION`, which every other caller relies on. Passed rather than
 remembered on the workspace, so no caller can read one left by another pass.
 """
 @inline function _ekf_predict_step!(ws::ContinuousEKFWorkspace, pars, Δt)
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.sp.covmatcode, ws.state_dim)
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, _ctsem_diffusion_code(ws.sp), ws.state_dim)
     return _ekf_predict_step!(ws, pars, Δt, ws.bufferQ.out)
 end
 
@@ -1643,7 +1643,7 @@ function _ctsem_stationary!(P, x, ws, pars)
     end
     _solve_square_system!(ab.intermediate, ab.s, ab.piv, ab.dim)
 
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.sp.covmatcode,
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, _ctsem_diffusion_code(ws.sp),
         ws.state_dim)
     db = ws.diffusion_buffer
     A = view(ws.discretization_buffer.input, 1:k, 1:k)
@@ -1759,7 +1759,7 @@ function _ctsem_stationary_elements_cov!(P, ws, pars, se::CTSEMStationaryElement
     k = length(dyn)
     inclosure = se.inclosure
     DRIFT = pars.DRIFT
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.sp.covmatcode,
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, _ctsem_diffusion_code(ws.sp),
         ws.state_dim)
     db = ws.diffusion_buffer
     buf = ws.discretization_buffer
@@ -1905,11 +1905,17 @@ filter and the summary once built the initial covariance their own ways, and
 that is how they came to disagree about what a fit had estimated. Three ways
 was one too many.
 
-With no population block this is exactly `_ctsem_sdcor_factor!` and nothing
-changes -- deliberately, so a model with no random effects keeps the
-seed-for-seed generation it already had. With one, the covariance is built the
-way the filter builds it and then factored, `_ctsem_lower_chol!` being the
-semi-definite factorisation a carrier state with no diffusion of its own needs.
+With no population block, under the correlation square root, this is exactly
+`_ctsem_sdcor_factor!` and nothing changes -- deliberately, so a model with no
+random effects keeps the seed-for-seed generation it already had. Otherwise
+the covariance is built the way the filter builds it and then factored,
+`_ctsem_lower_chol!` being the semi-definite factorisation a carrier state
+with no diffusion of its own needs. `_ctsem_sdcor_factor!` is the correlation
+square root's factor whatever the model's construction is, so under `'z'` or
+`'cholesky'` it is not taken: until 2026-11-22 it was, and generation, the
+state-explicit pass and the particle filter started a model with no random
+effects from T0VAR's cells read through the wrong construction (correlations
+of 0.8, 0.3 and 0.5 under `'z'` came out 0.77, 0.16 and 0.46).
 
 `stationary` places the stationary block the same way, by `_ctsem_stationary!`,
 and writes the stationary mean over `pars.T0MEANS`, which is what both callers
@@ -1922,11 +1928,12 @@ elements (`CTSEMStationaryElements`), are placed the same way when it has any.
         stationary::Bool=false,
         elements::CTSEMStationaryElements=_CTSEM_NO_STATIONARY_ELEMENTS)
     onelements = _stationary_elements_on(elements)
-    if isempty(ws.sp.population_indices) && !stationary && !onelements
+    if isempty(ws.sp.population_indices) && !stationary && !onelements &&
+       ws.sp.covmatcode <= 0
         return _ctsem_sdcor_factor!(dest, pars.T0VAR, ws.bufferQ, ws.state_dim)
     end
     n = ws.state_dim
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.T0VAR, ws.sp.covmatcode,
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.T0VAR, _ctsem_t0var_code(ws.sp),
         ws.state_dim)
     @inbounds for j in 1:n, i in 1:n
         dest[i, j] = ws.bufferQ.out[i, j]
@@ -2010,7 +2017,7 @@ function _extended_kalman_filter_continuous!(
     #   P_{1|0} = T0VAR
     # with the latent processes' block replaced by their stationary moments
     # below when the model asks for that.
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.T0VAR, ws.sp.covmatcode, ws.state_dim)
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.T0VAR, _ctsem_t0var_code(ws.sp), ws.state_dim)
     copyto!(ws.P_predict.data, ws.bufferQ.out)
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
     _apply_population_block!(ws, all_params)
@@ -2086,7 +2093,7 @@ function _extended_kalman_filter_continuous!(
     # written nowhere else, so building the covariance first read the parameter
     # buffer before anything had filled that slot. Every later row already
     # runs transform, covariance, record in this order.
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.sp.covmatcode, ws.manifest_dim)
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, _ctsem_manifestvar_code(ws.sp), ws.manifest_dim)
     _record_theta!(trace, pars, ws.manifest_dim)
     log2π_const = log(2π)
     _record_row_prior!(trace, ws, pars, 1)
@@ -2110,7 +2117,7 @@ function _extended_kalman_filter_continuous!(
     # per row (`diffusion_static`), as MANIFESTVAR's above; each prediction
     # rebuilt it from `pars.DIFFUSION` otherwise.
     if ws.diffusion_static && nsteps >= 2
-        ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.sp.covmatcode, ws.state_dim)
+        ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, _ctsem_diffusion_code(ws.sp), ws.state_dim)
         copyto!(ws.diffusion_cov, ws.bufferQ.out)
     end
     # Nonlinear dynamics are moment-matched (`_ekf_moment_cells!`), except when
@@ -2168,7 +2175,7 @@ function _extended_kalman_filter_continuous!(
         # reverse to compare, was the whole manifest-by-manifest matrix every
         # row, against an update that reads only the observed block of it.
         if !ws.manifestvar_static
-            ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.sp.covmatcode, ws.manifest_dim)
+            ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, _ctsem_manifestvar_code(ws.sp), ws.manifest_dim)
             _record_theta!(trace, pars, ws.manifest_dim)
         end
         _record_row_prior!(trace, ws, pars, t_idx)

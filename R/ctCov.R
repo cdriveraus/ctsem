@@ -15,10 +15,104 @@
 # generating on julia, a Cholesky factor for the R generator. A cell edited by
 # hand since is the user's statement and is left alone.
 
+#
+# Under 'z' a cell of T0VAR, DIFFUSION or MANIFESTVAR that is fixed at zero is
+# a zero covariance. Between variables that the matrix's other cells connect, a
+# coordinate held at 0 would not be one (three variables, the other two cells
+# at 0.5: a correlation of 0.115), so the construction solves those cells: the
+# engine's cov_zero.jl says why there is always exactly one solution, and
+# `.ctCovZeroSolve()` is the same computation for R's own readers. The
+# population matrices keep every cell as the coordinate it is, since no syntax
+# fixes one of their covariances at zero.
+
+# Of the cells below the diagonal marked in the logical matrix `zero`, those
+# whose two variables the other cells below the diagonal connect. Those are
+# the ones the construction solves; a zero between separate blocks is a zero
+# covariance as it stands.
+#' @keywords internal
+.ctCovLinkedZeros <- function(zero) {
+  d <- nrow(zero)
+  zero <- zero & lower.tri(zero)
+  if (!any(zero)) return(zero)
+  reach <- diag(d) > 0
+  reach[lower.tri(zero) & !zero] <- TRUE
+  reach <- reach | t(reach)
+  repeat {
+    more <- reach | (reach %*% reach > 0)
+    if (identical(more, reach)) break
+    reach <- more
+  }
+  zero & reach
+}
+
+# The hollow symmetric matrix `A` with the cells `zero` (below the diagonal)
+# solved so that exp(A) is zero there, or NULL where there is no solution to
+# find in double precision. Newton's method on log tr exp(A), which is convex
+# in those cells, as the engine's `_zcov_solve!`.
+#' @keywords internal
+.ctCovZeroSolve <- function(A, zero) {
+  d <- nrow(A)
+  Z <- which(zero & lower.tri(zero), arr.ind = TRUE)
+  z <- nrow(Z)
+  if (!z) return(A)
+  basis <- lapply(seq_len(z), function(k) {
+    E <- matrix(0, d, d)
+    E[Z[k, 1L], Z[k, 2L]] <- E[Z[k, 2L], Z[k, 1L]] <- 1
+    E
+  })
+  evaluate <- function(A) {
+    e <- eigen(A, symmetric = TRUE)
+    w <- exp(e$values - e$values[1L])
+    Y <- e$vectors %*% (w * t(e$vectors))
+    list(e = e, w = w, g = Y[Z], total = sum(w),
+      phi = e$values[1L] + log(sum(w)),
+      r = max(abs(Y[Z]) / sqrt(diag(Y)[Z[, 1L]] * diag(Y)[Z[, 2L]])))
+  }
+  at <- evaluate(A)
+  if (!is.finite(at$phi) || !is.finite(at$r)) return(NULL)
+  for (iteration in seq_len(60L)) {
+    if (at$r <= 1e-13) return(A)
+    l <- at$e$values - at$e$values[1L]
+    delta <- outer(l, l, "-")
+    psi <- ifelse(abs(delta) < 1e-3, exp(outer(l, l, "+") / 2) * (1 + delta^2 / 24),
+      outer(exp(l), exp(l), "-") / delta)
+    V <- at$e$vectors
+    H <- vapply(basis, function(E) (V %*% ((crossprod(V, E %*% V)) * psi) %*% t(V))[Z],
+      numeric(z))
+    step <- tryCatch(-solve(matrix(H, z, z), at$g), error = function(e) NULL)
+    if (is.null(step) || !all(is.finite(step))) return(if (at$r <= 1e-8) A else NULL)
+    slope <- 2 * sum(at$g * step) / at$total
+    size <- 1
+    accepted <- FALSE
+    while (size > 1e-10) {
+      trial <- A
+      trial[Z] <- trial[Z] + size * step
+      trial[Z[, 2:1, drop = FALSE]] <- trial[Z]
+      new <- evaluate(trial)
+      if (is.finite(new$phi) && is.finite(new$r) && new$phi <= at$phi +
+          1e-4 * size * slope + 8 * .Machine$double.eps * (1 + abs(at$phi))) {
+        accepted <- TRUE
+        break
+      }
+      size <- size / 2
+    }
+    if (!accepted) return(if (at$r <= 1e-8) A else NULL)
+    stalled <- at$r <= 1e-8 && new$r > at$r / 2
+    A <- trial
+    at <- new
+    if (stalled) return(A)
+  }
+  if (at$r <= 1e-8) A else NULL
+}
+
 # Each construction the cells are read through, by name: the forward map from
 # cells to covariance, as `sdcovsqrt2cov` (engine and stan) computes it.
+# `zero` marks, below the diagonal, the cells that are zero covariances under
+# 'z' (above), and is not read under the other constructions. NULL is none:
+# every cell the coordinate it holds. Where the solve has no solution the
+# result is NaN, as the engine's is.
 #' @keywords internal
-.ctCovForward <- function(cells, covmattransform) {
+.ctCovForward <- function(cells, covmattransform, zero = NULL) {
   d <- nrow(cells)
   if (identical(covmattransform, "cholesky")) {
     low <- cells
@@ -29,19 +123,42 @@
   if (identical(covmattransform, "z")) {
     A <- matrix(0, d, d)
     A[lower.tri(A)] <- cells[lower.tri(cells)]
+    linked <- if (is.null(zero)) NULL else .ctCovLinkedZeros(zero)
     A <- A + t(A)
+    if (any(linked)) {
+      A[linked | t(linked)] <- 0
+      A <- .ctCovZeroSolve(A, linked)
+      if (is.null(A)) return(matrix(NaN, d, d))
+    }
     Y <- expm::expm(A)
-    return(diag(sd, nrow = d) %*% stats::cov2cor(Y) %*% diag(sd, nrow = d))
+    out <- diag(sd, nrow = d) %*% stats::cov2cor(Y) %*% diag(sd, nrow = d)
+    if (any(linked)) out[linked | t(linked)] <- 0
+    return(out)
   }
   # 'rawcorr' and 'rawcorr_indep': the row-normalised correlation square root.
   O <- constraincorsqrt1(cells)
   tcrossprod(diag(sd, nrow = d) %*% O)
 }
 
+# The cells of a matrix of fixed numbers that are zero covariances under 'z':
+# every one below the diagonal that is exactly zero.
+#' @keywords internal
+.ctCovZeroCells <- function(cells) {
+  cells <- as.matrix(cells)
+  lower.tri(cells) & !is.na(cells) & cells == 0
+}
+
 # The cells that give `cov` under `covmattransform`, checked by putting them
 # back through the forward map.
+#
+# `zeros`: whether a cell of 0 is read as a zero covariance under 'z', as it
+# is in T0VAR, DIFFUSION and MANIFESTVAR. Then a zero of `cov` is written as a
+# cell of 0 and the other cells are found given that, and a covariance that is
+# not zero is never written as exactly 0, which would be read as one. FALSE
+# for the population matrices, whose cells are all coordinates.
 #' @keywords internal
-.ctCovCells <- function(cov, covmattransform = "z", what = "the covariance") {
+.ctCovCells <- function(cov, covmattransform = "z", what = "the covariance",
+    zeros = TRUE) {
   cov <- as.matrix(cov)
   storage.mode(cov) <- "double"
   d <- nrow(cov)
@@ -55,6 +172,10 @@
   }
   tf <- if (is.null(covmattransform)) "rawcorr" else as.character(covmattransform)
   cells <- matrix(0, d, d, dimnames = dimnames(cov))
+  # The cells read as zero covariances, which stay at 0, and the cells to find.
+  readzeros <- identical(tf, "z") && isTRUE(zeros)
+  zero <- if (readzeros) lower.tri(cov) & cov == 0 else NULL
+  open <- if (readzeros) lower.tri(cov) & !zero else lower.tri(cov)
   if (identical(tf, "cholesky")) {
     cells[] <- t(chol(cov))
   } else {
@@ -62,20 +183,20 @@
       diag(cells) <- sqrt(diag(cov))
       start <- function(R) {
         e <- eigen(R, symmetric = TRUE)
-        (e$vectors %*% diag(log(e$values), nrow = d) %*% t(e$vectors))[lower.tri(R)]
+        (e$vectors %*% diag(log(e$values), nrow = d) %*% t(e$vectors))[open]
       }
     } else {
       # Each row of the square root has norm 1 + 1e-5 rather than 1, so the
       # correlations the cells give are scaled by that, and the sds absorb it.
       diag(cells) <- sqrt(diag(cov) / (1 + 1e-5))
-      start <- function(R) 2 * atanh(pmax(pmin(R[lower.tri(R)], 0.99), -0.99))
+      start <- function(R) 2 * atanh(pmax(pmin(R[open], 0.99), -0.99))
     }
-    if (d > 1L) {
-      target <- cov[lower.tri(cov)]
+    if (any(open)) {
+      target <- cov[open]
       residual <- function(x) {
         trial <- cells
-        trial[lower.tri(trial)] <- x
-        .ctCovForward(trial, tf)[lower.tri(cov)] - target
+        trial[open] <- x
+        .ctCovForward(trial, tf, zero)[open] - target
       }
       x <- start(stats::cov2cor(cov))
       for (iteration in seq_len(60)) {
@@ -97,10 +218,14 @@
         }
         x <- x - size * step
       }
-      cells[lower.tri(cells)] <- x
+      # A cell of exactly 0 would be read as a zero covariance, which this
+      # one is not: the smallest number is the same coordinate to any reader.
+      if (readzeros) x[x == 0] <- .Machine$double.xmin
+      cells[open] <- x
     }
   }
-  back <- .ctCovForward(cells, tf)
+  # Through the forward map as a reader of these cells applies it.
+  back <- .ctCovForward(cells, tf, if (readzeros) .ctCovZeroCells(cells))
   if (max(abs(back - cov)) > 1e-8 * max(1, abs(cov))) {
     stop(what, " cannot be written under covmattransform='", tf, "': the ",
       "nearest the construction reaches differs by ",
@@ -122,6 +247,12 @@
 #' under \code{'z'}, where each value is Fisher's z of the correlation, the
 #' correlations depend on all the values together, so the cells for a given
 #' covariance are hard to work out by hand. \code{ctCov()} computes them.
+#'
+#' Under \code{'z'}, a cell of \code{T0VAR}, \code{DIFFUSION} or
+#' \code{MANIFESTVAR} that is fixed to 0 gives a covariance of zero, and
+#' \code{ctCov()} writes a zero covariance as a cell of 0. Under
+#' \code{'rawcorr'} and \code{'cholesky'} a cell of 0 gives a zero covariance
+#' only in some positions.
 #'
 #' Use the result wherever a fixed matrix can go, such as
 #' \code{ctModel(DIFFUSION = ctCov(S))}, \code{m$matrices$T0VAR <- ctCov(S)},
@@ -173,6 +304,48 @@ print.ctCov <- function(x, ...) {
 # The fields a model's covariance cells can live in.
 .ctCovSystemMatrices <- c("T0VAR", "DIFFUSION", "MANIFESTVAR")
 
+# Whether a cell of 0 in the matrix `name` is read as a zero covariance under
+# 'z': in the model's own matrices, not in the population's.
+.ctCovReadsZeros <- function(name) name %in% .ctCovSystemMatrices
+
+# The cells of a model's covariance matrix `name` that the construction solves
+# as zero covariances: below the diagonal, fixed at zero, and joined by the
+# matrix's other cells below the diagonal. A logical matrix, all FALSE under
+# any construction but 'z'. From the model's `pars`, where a fixed cell has a
+# value and no parameter.
+#' @keywords internal
+.ctCovSolvedCells <- function(model, name) {
+  pars <- model$pars
+  rows <- which(pars$matrix %in% name)
+  d <- if (length(rows)) max(pars$row[rows], pars$col[rows]) else 0L
+  none <- matrix(FALSE, d, d)
+  tf <- if (is.null(model$covmattransform)) "rawcorr" else
+    as.character(model$covmattransform)[1L]
+  if (!identical(tf, "z") || d < 3L) return(none)
+  zero <- none
+  fixed <- rows[is.na(pars$param[rows]) & pars$value[rows] %in% 0 &
+    pars$row[rows] > pars$col[rows]]
+  zero[cbind(pars$row[fixed], pars$col[fixed])] <- TRUE
+  .ctCovLinkedZeros(zero)
+}
+
+# The Stan program holds every cell as the coordinate it is, so a model with a
+# cell the julia engine solves as a zero covariance is another model there:
+# refused by name, with what to use.
+#' @keywords internal
+.ctCovRefuseSolved <- function(model) {
+  for (name in .ctCovSystemMatrices) {
+    cells <- which(.ctCovSolvedCells(model, name), arr.ind = TRUE)
+    if (!nrow(cells)) next
+    stop(name, "[", cells[1L, 1L], ",", cells[1L, 2L], "] is fixed at zero and ",
+      "other covariances connect its two variables. backend = 'julia' fits ",
+      "that as a zero covariance, which the stan backend cannot. Use backend = ",
+      "'julia', or set model$covmattransform <- 'rawcorr', under which the ",
+      "cell is a coordinate of the correlation matrix held at 0.", call. = FALSE)
+  }
+  invisible(NULL)
+}
+
 # The cells a model currently holds for `name`, as a numeric matrix, or NULL
 # when any of them is not a fixed number.
 #' @keywords internal
@@ -223,7 +396,7 @@ print.ctCov <- function(x, ...) {
 .ctCovAccept <- function(model, name, value) {
   cov <- attr(value, "covariance")
   tf <- if (is.null(model$covmattransform)) "rawcorr" else model$covmattransform
-  cells <- .ctCovCells(cov, tf, what = name)
+  cells <- .ctCovCells(cov, tf, what = name, zeros = .ctCovReadsZeros(name))
   dimnames(cells) <- dimnames(cov)
   inputs <- model$covinput
   inputs[[name]] <- list(cov = cov, cells = unname(cells), covmattransform = tf)
@@ -248,7 +421,8 @@ print.ctCov <- function(x, ...) {
       next
     }
     if (identical(entry$covmattransform, tf)) next
-    cells <- unname(.ctCovCells(entry$cov, tf, what = name))
+    cells <- unname(.ctCovCells(entry$cov, tf, what = name,
+      zeros = .ctCovReadsZeros(name)))
     model <- .ctCovWriteCells(model, name, cells)
     inputs[[name]] <- list(cov = entry$cov, cells = cells, covmattransform = tf)
   }

@@ -371,3 +371,25 @@ test_that('a state dependent specification says which cells it left out, in the 
   expect_true(grepl('absent from these edges', g$labels$subtitle))
   expect_null(attr(suppressMessages(ctNetwork(msd, dt = 1)), 'stateLabel'))
 })
+
+
+test_that('a model specification is read through its own covariance construction', {
+  # The cells of DIFFUSION mean what the model's covmattransform says they
+  # mean. The specification path once read them as a correlation square root
+  # under every construction.
+  S <- matrix(c(1, .6, .3, .6, 2, .5, .3, .5, 1.5), 3)
+  for(tf in c('z', 'rawcorr', 'cholesky')){
+    m <- suppressMessages(suppressWarnings(ctModel(type = 'ct', n.latent = 3,
+      n.manifest = 3, LAMBDA = diag(3), DRIFT = diag(-1, 3), DIFFUSION = ctCov(S))))
+    m$covmattransform <- tf
+    m <- ctsem:::.ctCovRefresh(m)
+    net <- ctNetwork(m, dt = 1, standardise = FALSE, quiet = TRUE)
+    expect_equal(unname(net$DIFFUSIONcov), S, tolerance = 1e-8, info = tf)
+  }
+  # A covariance fixed at zero beside two that connect its variables.
+  Sz <- matrix(c(1, 0, .4, 0, 1, .4, .4, .4, 1), 3)
+  m <- suppressMessages(suppressWarnings(ctModel(type = 'ct', n.latent = 3,
+    n.manifest = 3, LAMBDA = diag(3), DRIFT = diag(-1, 3), DIFFUSION = ctCov(Sz))))
+  net <- ctNetwork(m, dt = 1, standardise = FALSE, quiet = TRUE)
+  expect_equal(unname(net$DIFFUSIONcov), Sz, tolerance = 1e-8)
+})
