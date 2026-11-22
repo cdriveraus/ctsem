@@ -125,8 +125,14 @@ test_that("PSIS on a sampled fit uses its posterior draws", {
   expect_equal(psis$ndraws, nrow(sampled$estimate$rawposterior))
   expect_true(is.na(psis$proposal_k))
   expect_match(psis$note, "from the posterior draws")
-  # Monte Carlo error of a few hundred MCMC draws; locally 0.021.
-  expect_lt(rms(psis$pointwise$elpd_loo - exact), 0.05)
+  # Monte Carlo error of the sampler's draws (400 to 4000, as it stops), most
+  # of it the outlier's. Over 200 sampler seeds (local, Julia 1.12.7, one
+  # thread) the rms had median 0.020, 95th percentile 0.055 and maximum 0.086;
+  # the in-sample lppd, with no leave-one-out weighting, reads 0.26. The draws
+  # change with the thread count as well as the seed: the default seed read
+  # 0.050 in the one-thread session skip_without_julia() starts, 0.013 at two
+  # (CT-SEM/scripts/loo-psis-bar-2026-11/).
+  expect_lt(rms(psis$pointwise$elpd_loo - exact), 0.1)
   thinned <- suppressWarnings(ctLOO(sampled, method = "psis", nsamples = 200))
   expect_lte(thinned$ndraws, 200L)
   # And the row level, which conditions on one parameter vector, is refused.
