@@ -54,9 +54,7 @@ Useful if output overflows page.}
 
 \item{open}{Open after compiling? (Depends on \code{compile = TRUE})}
 
-\item{includeNote}{Include text describing matrix transformations and subject notation?
-triangular matrices (which results in a covariance or Cholesky matrix) is shown -- 
-the latter is a more direct representation of the model, while the former is often simpler to convey.}
+\item{includeNote}{Include text describing matrix transformations and subject notation?}
 
 \item{minimal}{if TRUE, outputs reduced form version displaying matrix dimensions and equation structure only.}
 

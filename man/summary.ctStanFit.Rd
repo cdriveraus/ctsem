@@ -64,6 +64,13 @@ List containing summary items, with a \code{print} method for readable console a
   correlations are in \code{parmatrices}, as \code{T0cor},
   \code{DIFFUSIONcor}, \code{MANIFESTcor} and \code{asymDIFFUSIONcor} beside
   the covariances, each summarised over the draws' own correlations.
+
+  Under the default \code{'z'}, a covariance parameter fixed to 0 gives a
+  covariance of exactly 0. An estimated parameter that is 0 or near 0 does not show that
+  the covariance is 0 when there are three or more variables. To see
+  whether a covariance or correlation is zero, or how large it is, read
+  \code{T0cov}, \code{DIFFUSIONcov}, \code{MANIFESTcov},
+  \code{asymDIFFUSIONcov} and the correlation matrices.
 }
 \description{
 Summarise a fit from \code{\link{ctFit}}, on either backend: population
