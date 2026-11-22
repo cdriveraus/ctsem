@@ -29,20 +29,21 @@ using Random
 The state an iteration callback sees, shaped like the Optim state it replaced,
 plus the predicted gain of the step that produced it where the step knows it
 exactly (a Newton step does; an L-BFGS step leaves it to `CTSEMDirectional`),
-and the point itself where the stepper holds it apart from the objective's
-evaluations: the finish's evaluations include Hessian columns and rejected
-trials, so the last point evaluated is not its iterate. `nothing` for L-BFGS,
-whose caller reads the last accepted trial instead.
+and the point the value and gradient norm describe, from every stepper. The
+last point evaluated is not that point: the finish's evaluations include
+Hessian columns and rejected trials, and a batch stage takes its gradients
+outside the caller's trial function. Read from the trials, the point stood
+still through a batch stage while its value moved (iterations 5-13 of a
+300-subject Laplace fit all reported iteration 4's point). The stepper's own
+vector: a callback that keeps it copies it.
 """
 struct CTSEMIterate
     iteration::Int
     value::Float64
     g_norm::Float64
     gain::Float64
-    x::Union{Nothing,Vector{Float64}}
+    x::Vector{Float64}
 end
-CTSEMIterate(iteration, value, g_norm, gain=NaN) =
-    CTSEMIterate(iteration, value, g_norm, gain, nothing)
 
 """
 A jump a search saw (`_ctsem_lbfgs`'s line search, or the Newton finish's
@@ -360,7 +361,7 @@ alone, `F === nothing` for the gradient alone, and an invalid trial point comes
 back as a huge value with a zero gradient.
 
 `callback(state::CTSEMIterate)` is called at iteration 0 and after every
-accepted step, and stops the run by returning `true`. `directional` receives the
+accepted step, with the point reached, and stops the run by returning `true`. `directional` receives the
 directional derivative `g's` of each step taken, which is what
 `_ctsem_predicted_gain` reads.
 
@@ -455,7 +456,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     # Iteration 0 only on a run that is a run of its own; a continuation's
     # starting point is the last row its predecessor already recorded.
     stopped = callback !== nothing && iteration0 == 0 &&
-        callback(CTSEMIterate(0, f, maximum(abs, G; init=0.0))) === true
+        callback(CTSEMIterate(0, f, maximum(abs, G; init=0.0), NaN, x)) === true
     # `at_start`: a stage that starts within its held Hessian's reach ends
     # here with no step, for the finish to take over (`CTSEMHeldStart`).
     stopped || (stopped = _ctsem_held_start!(at_start, x, f, G))
@@ -717,8 +718,10 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         # where the stage began (`offset`), so the trace and the progress line
         # read on across the switches.
         shown = _ctsem_coreset_live(coreset) ? f + coreset.offset : f
+        # `x` is rebound at each step, never written into, so the callback
+        # may keep it.
         stopped = callback !== nothing && callback(CTSEMIterate(
-            iteration0 + iteration, shown, maximum(abs, G; init=0.0))) === true
+            iteration0 + iteration, shown, maximum(abs, G; init=0.0), NaN, x)) === true
         # A growing batch changes the objective under the optimiser. The
         # curvature pairs are kept -- the batch objective is scaled to the full
         # data, so they estimate the same curvature -- but no pair spans the
@@ -858,8 +861,9 @@ function _ctsem_sgd(fg!, x0::AbstractVector; maxiter::Integer=1000,
     G = zeros(n)
     f = fg!(0.0, G, x)
     fcalls = 1; gcalls = 1
+    # Copies of `x`, which the loop writes into.
     stopped = callback !== nothing && iteration0 == 0 &&
-        callback(CTSEMIterate(0, f, maximum(abs, G; init=0.0))) === true
+        callback(CTSEMIterate(0, f, maximum(abs, G; init=0.0), NaN, copy(x))) === true
     warmup = 20
     # Ascent quantities, for the maximised objective -f. `g` holds the previous
     # gradient when a point is accepted; before the first it is the scaled sign
@@ -944,7 +948,7 @@ function _ctsem_sgd(fg!, x0::AbstractVector; maxiter::Integer=1000,
             bestf = f; bestx .= x; bestG .= G
         end
         stopped = callback !== nothing && callback(CTSEMIterate(
-            iteration0 + iteration, f, maximum(abs, G; init=0.0))) === true
+            iteration0 + iteration, f, maximum(abs, G; init=0.0), NaN, copy(x))) === true
         # sgd()'s own rule, and the relative one: the best value over the last
         # 30 iterations against the best before them.
         if iteration > 30 && maximum(@view history[end-29:end]) == maximum(history)

@@ -3441,12 +3441,14 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # `evaluated`, not `result`: see `ctsem_laplace_optimize`. A closure's
     # assignment binds to the enclosing local of the same name, and the outer
     # L-BFGS result below is called `result`.
-    # Where the fit currently is. The L-BFGS's callback is handed convergence
-    # numbers, not the point they describe, and the stall conjunction has to ask
-    # the transforms what they are doing *at this point*. `fg!` sees every
-    # trial, so the last one it accepted is recorded there and read here.
-    # Made before the closure that writes it: a capture of a local assigned
-    # later is a `Core.Box`.
+    # Where the fit currently is: the point each stepper hands its callback
+    # (`CTSEMIterate`), copied here by `watch` for the stall conjunction, which
+    # asks the transforms what they are doing *at this point*, and for the
+    # caller's callback and checkpoints. Not read off the trials: a batch
+    # stage's gradients do not pass through `trial_fg!`, and recorded there
+    # the point stood still for a batch stage's iterations while the reported
+    # value moved. Made before the closure that writes it: a capture of a
+    # local assigned later is a `Core.Box`.
     current_x = copy(start_values)
     # Over whichever objective is in force: the fit's own, or a batch of its
     # units (see `_ctsem_batch_plan`), which is the same route over fewer.
@@ -3490,8 +3492,6 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         if G !== nothing
             G .= -evaluated.gradient
         end
-        # The point the callback will be asked about; see `current_x`.
-        copyto!(current_x, x)
         return F === nothing ? nothing : -evaluated.value
     end
     fg! = (F, G, x) -> trial_fg!(objective, F, G, x)
@@ -3741,6 +3741,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     in_sgd = Ref(false)
     watch = function (state)
         latest = state isa AbstractVector ? last(state) : state
+        copyto!(current_x, latest.x)
         # After an accepted step, whose point the last evaluation was.
         _ctsem_anchor_here!(objective)
         _record!(trace, latest.iteration, -latest.value, latest.g_norm,
@@ -3774,8 +3775,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # The point comes with the numbers. Without it a caller can watch a
         # multi-hour fit and still have nothing to restart from when it is
         # interrupted, because nothing is written until the fit returns --
-        # which has cost a run here. `current_x` is the last accepted trial,
-        # the same point the reported objective and gradient describe.
+        # which has cost a run here. `current_x` is the stepper's iterate, the
+        # point the reported objective and gradient describe.
         ck_modes = _ctsem_checkpoint_modes(watcher, objective, checkpoint_last,
             checkpoint_every)
         _invoke_callback(watcher, latest.iteration, Int(maxiter),
@@ -4077,7 +4078,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         ck_modes = _ctsem_checkpoint_modes(watcher, objective, checkpoint_last,
             checkpoint_every)
         _invoke_callback(watcher, state.iteration, Int(maxiter), -state.value,
-            state.g_norm, state.x === nothing ? current_x : state.x,
+            state.g_norm, state.x,
             _ctsem_checkpoint_args(ck_modes)...; force=ck_modes !== nothing)
         return false
     end
