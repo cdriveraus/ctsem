@@ -87,8 +87,10 @@ ctModelUnlist<-function(ctmodelobj,
     if(row != col){
       # Free on the real line, with no squash here. Each covariance transform
       # reads this cell differently -- 'rawcorr' as a coordinate it bounds
-      # itself inside constraincorsqrt1, 'z' as an unbounded Fisher z,
-      # 'cholesky' as a factor entry -- so one model structure now works under
+      # itself inside constraincorsqrt1, 'z' as an unbounded entry of a matrix
+      # logarithm (Fisher z of the correlation for two variables, and a zero
+      # covariance where the cell is fixed at 0), 'cholesky' as a factor entry
+      # -- so one model structure now works under
       # all three. The (-1, 1) map that used to live here (transform 3,
       # multiplier 2, offset -1) moved into constraincorsqrt1 unchanged, so the
       # composite raw -> correlation is the same and 'rawcorr' fits are

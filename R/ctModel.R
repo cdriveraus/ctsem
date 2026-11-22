@@ -66,7 +66,8 @@
 #' 
 #' @param T0VAR lower triangular n.latent*n.latent matrix of latent process initial variance / covariance,
 #' with standard deviations on the diagonal and covariance parameters below it (see \code{\link{ctCov}}).
-#' A cell below the diagonal fixed to 0 gives a covariance of zero. 
+#' Under the default \code{covmattransform}, \code{'z'}, a cell below the diagonal fixed to 0
+#' gives a covariance of zero.
 #' "auto" freely estimates all parameters.
 #' 
 #' @param T0MEANS n.latent*1 matrix of latent process means at first time point, T0. 
@@ -78,8 +79,9 @@
 #' @param MANIFESTVAR lower triangular n.manifest*n.manifest matrix of variance / covariance 
 #' between manifests at each measurement occasion (i.e. measurement error / residual),
 #' with standard deviations on the diagonal and covariance parameters below it (see \code{\link{ctCov}}).
-#' A cell below the diagonal fixed to 0 gives a covariance of zero.  
-#' "auto" freely estimates variance parameters, 
+#' Under the default \code{covmattransform}, \code{'z'}, a cell below the diagonal fixed to 0
+#' gives a covariance of zero.
+#' "auto" freely estimates variance parameters,
 #' and fixes covariances between manifests to 0. "free" frees all values, including covariances.
 #'
 #' @param ASYMPTOTES Matrix with one row per binary indicator, in manifest
@@ -126,7 +128,8 @@
 #' @param DIFFUSION lower triangular n.latent*n.latent matrix of diffusion process 
 #' variance and covariance (latent error / dynamic innovation),
 #' with standard deviations on the diagonal and covariance parameters below it (see \code{\link{ctCov}}).
-#' A cell below the diagonal fixed to 0 gives a covariance of zero.
+#' Under the default \code{covmattransform}, \code{'z'}, a cell below the diagonal fixed to 0
+#' gives a covariance of zero.
 #' "auto" freely estimates all parameters.
 #' 
 #' @param n.TIpred Number of time independent predictors. 
