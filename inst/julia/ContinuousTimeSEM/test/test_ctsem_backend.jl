@@ -2193,9 +2193,14 @@ end
     # walk was to stand in for.
     q = p -> -0.5 * ((p[1] - 0.3)^2 + 4 * (p[2] + 0.2)^2) - 0.05 * (p[1] - 0.3)^4
     m = _endgame_mock(q)
+    # L-BFGS hands over as soon as it has spent the Hessian's cost
+    # (`newton_switch` above any step's gain), so the finish has a walk to make
+    # however close L-BFGS would have come by itself: left to its own rule it
+    # reached the gap tolerance from most starts, and the finish took no step.
     r = C.ctsem_optimize(m, [1.5, 0.8]; maxiter=200, gap_tol=1e-2,
         converge_tol=1e-8, newton=true, certify=true, newton_curvature=:chord,
-        newton_final=:walked, progress=false, verbose=false, overshoot_probe=:off)
+        newton_final=:walked, newton_switch=10.0, progress=false, verbose=false,
+        overshoot_probe=:off)
     @test r.newton_steps >= 1
     @test size(r.newton_walked) == (2, 2)
     @test r.newton_hessians == 1 && m.hessians[] == 1

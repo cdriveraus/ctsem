@@ -532,6 +532,9 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
                 Pinv = _ctsem_local_build!(local_curvature, x)
                 if Pinv !== nothing
                     inverse = Pinv; Dinv = Pinv; learn = false; B = nothing
+                    # The run has a curvature now, as one handed `inverse`
+                    # does from its start: its steps are no longer held.
+                    capped = false
                 end
             end
         end
