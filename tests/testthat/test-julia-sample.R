@@ -400,13 +400,24 @@ test_that("the map sampler draws the joint posterior with the filter's effects i
           total = total)))))
   phase <- vapply(seen, `[[`, "", "phase")
   learning <- which(phase == "learning")
+  # The refit after each window reports too, theta's triangular map
+  # ("mapping") and, where units keep coordinates, its rows ("scoring"), each
+  # counted to its own total: after a window of the reanalysis they ran 13
+  # hours with nothing said.
+  refitting <- which(phase %in% c("scoring", "mapping"))
   expect_gt(length(learning), 3L)
-  expect_true(all(learning < min(which(phase != "learning"))))
+  expect_true("mapping" %in% phase)
+  schedule <- sort(c(learning, refitting))
+  expect_true(all(schedule < min(which(!phase %in% c("learning", "scoring", "mapping")))))
+  expect_true(all(vapply(seen[refitting], function(s) s$iteration <= s$total, TRUE)))
   at <- vapply(seen[learning], `[[`, 0, "iteration")
   total <- vapply(seen[learning], `[[`, 0, "total")
   expect_false(is.unsorted(at))
   expect_equal(unique(total), max(at))
-  expect_setequal(unique(phase[-learning]), c("warmup", "sampling"))
+  expect_setequal(unique(phase[-schedule]), c("warmup", "sampling"))
+  # And the record says what each window's refit cost.
+  expect_true(all(c("retuned", "refit_secs", "map_secs", "step_min", "step_max",
+    "depth_max") %in% names(out$sample$map$windows)))
   # Announced as what it does, and recorded so: the map takes no NUTS warmup
   # of 200, and its chains ran the whole schedule and a final warm-up first.
   expect_true(any(grepl("learning the map first, then 20 draws each", said,
@@ -469,6 +480,182 @@ test_that("the map sampler draws a fit without random effects", {
   expect_identical(map$sample$target, "marginal")
   expect_equal(ncol(map$estimate$rawposterior), length(fit$estimate$raw))
   expect_lt(.map_z(map, ref), 4)
+})
+
+test_that("the map couples each member to what its subject reads, its own TI values alone", {
+  skip_without_julia()
+  # Sampled TI predictor values are free parameters, and a subject reads only
+  # its own, so a member's score at another subject's values is exactly zero.
+  # Coupled to every one of them, each member carried that many zero columns:
+  # 2,860 on the reanalysis, where it read 62 and its own (`_jmap_layout`).
+  # The change of variables stays exact.
+  model <- suppressWarnings(ctModel(type = "ct", LAMBDA = diag(1),
+    DRIFT = matrix("drift", 1, 1), DIFFUSION = matrix(.2, 1, 1),
+    MANIFESTVAR = matrix(.1, 1, 1), MANIFESTMEANS = matrix(0, 1, 1),
+    T0VAR = matrix(1, 1, 1), T0MEANS = matrix("t0m", 1, 1), n.TIpred = 1,
+    TIpredNames = "group", tipredDefault = FALSE))
+  model$pars$indvarying[model$pars$param == "drift"] <- TRUE
+  model$pars$group_effect[model$pars$param %in% c("t0m", "drift")] <- TRUE
+  set.seed(7)
+  n <- 8
+  group <- rnorm(n)
+  group[c(2, 5, 6)] <- NA
+  dat <- data.frame(id = rep(seq_len(n), each = 5),
+    time = rep(c(0, .8, 1.7, 2.9, 4.1), n), Y1 = rnorm(5 * n),
+    group = rep(group, each = 5))
+  spec <- ctsem:::.ctJuliaTIMissingSampled(suppressWarnings(suppressMessages(
+    ctFit(dat, model, backend = "julia", intoverpop = "laplace", fit = FALSE))))
+  npar <- ctsem:::.ctBackendNpar(spec)
+  cells <- spec$ti_missing
+  expect_equal(nrow(cells), 3L)
+  x <- seq(-.2, .2, length.out = npar)
+  x[cells$parameter] <- cells$mu + c(.3, -.4, .5)
+  obj <- ctsem:::.ctJuliaObjective(spec, hybrid = TRUE)
+  ctsem:::.ctJuliaEval(paste(
+    "function __jmap_coupling(laplace, x::Vector{Float64})",
+    "  CT = ContinuousTimeSEM",
+    "  npar = length(x)",
+    "  sampler = CT.ctsem_sampler(laplace, npar)",
+    "  m, _ = CT._jmap_build(sampler, x, Matrix{Float64}(CT.I, npar, npar); cross=true)",
+    "  th = CT._laplace_extend(laplace, x)",
+    "  tis = laplace.objective.ti_missing_parameter",
+    "  aws = CT._laplace_workspace!(laplace, Float64, length(th))",
+    "  ekf = CT._laplace_ekf_workspace!(laplace, Float64)",
+    "  g = similar(th)",
+    "  zero = true; widths = true",
+    "  subject = Int[]; own = Int[]; ownof = Int[]",
+    "  for s in CT._jmap_flat(m)",
+    "    U = sampler.flat_unit[s]",
+    "    i = laplace.units.members[U][sampler.flat_member[s]]",
+    "    CT._jmap_score!(g, laplace, i, aws, th, ekf)",
+    "    zero &= all(g[setdiff(tis, m.own[s])] .== 0)",
+    "    widths &= size(m.G[s], 2) == length(m.R) + length(m.own[s])",
+    "    push!(subject, i)",
+    "    append!(own, m.own[s]); append!(ownof, fill(i, length(m.own[s])))",
+    "  end",
+    "  return (R=m.R, P=m.P, zero=zero, widths=widths, subject=subject, own=own,",
+    "    ownof=ownof)",
+    "end", sep = "\n"))
+  r <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall("Main.__jmap_coupling", obj,
+    ctsem:::.ctJuliaNumericVector(x)))
+  expect_true(r$zero)
+  expect_true(r$widths)
+  expect_length(r$subject, n)
+  # Every subject reads the population parameters outside P; each reads its
+  # own cells' values and no other's.
+  expect_length(intersect(r$R, cells$parameter), 0L)
+  expect_setequal(c(r$R, cells$parameter), setdiff(seq_len(npar), r$P))
+  expect_equal(as.integer(sort(r$own)), as.integer(sort(cells$parameter)))
+  expect_equal(as.integer(r$ownof[order(r$own)]),
+    as.integer(cells$subject[order(cells$parameter)]))
+  module <- ctsem:::.ctJuliaModule(spec$project)
+  for (tri in c(FALSE, TRUE)) {
+    check <- ctsem:::.ctJuliaGet(module$ctsem_sample_map_check(obj,
+      ctsem:::.ctJuliaNumericVector(x), tri = tri))
+    expect_gt(check$coordinates, 0L)
+    expect_lt(check$gradient, 1e-5)
+    expect_lt(check$jacobian, 1e-6)
+  }
+})
+
+test_that("a stalled chain in a learning window finds its step size again", {
+  skip_without_julia()
+  # A window's draws are warm-up, so a chain whose transitions stop moving
+  # retunes its step where it stands (`_ChainRetune`): a step far too long
+  # for a standard normal diverges at every transition and never moves, as one
+  # chain of the reanalysis did for 140 of a window's 160 draws.
+  ctsem:::.ctJuliaEval(paste(
+    "function __retune_probe(on::Bool)",
+    "  CT = ContinuousTimeSEM",
+    "  d = 20",
+    "  ld = (g, x) -> (g .= .-x; -sum(abs2, x) / 2)",
+    "  metric = CT._metric_from_covariances([1:d], [Matrix{Float64}(CT.I, d, d)])",
+    "  n = Threads.Atomic{Int}(0)",
+    "  rt = on ? CT._ChainRetune(5, 25, 0.8, n) : nothing",
+    "  r = CT._run_chain(ld, zeros(d), metric, CT.Random.Xoshiro(3), 0, 80, 10, 0.8,",
+    "    1000.0, 1.0, false, nothing; init_eps=20.0, retune=rt)",
+    "  moved = sum(r.draws[:, t] != r.draws[:, t - 1] for t in 2:80)",
+    "  return (retuned=n[], divergent=sum(r.divergent), moved=moved,",
+    "    stepsize=r.stepsize)",
+    "end", sep = "\n"))
+  probe <- function(on) ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall("Main.__retune_probe", on))
+  off <- probe(FALSE)
+  on <- probe(TRUE)
+  expect_lt(off$moved, 5L)
+  expect_gt(off$divergent, 70L)
+  expect_equal(off$stepsize, 20)
+  expect_gte(on$retuned, 1L)
+  expect_gt(on$moved, 50L)
+  expect_lt(on$divergent, 20L)
+  expect_lt(on$stepsize, 2)
+
+  # The learning line follows every chain: chain 1 alone fell silent once it
+  # finished a window ahead of the others. Its count is the chains' mean
+  # position, its log density the furthest-behind chain's, its divergences
+  # every chain's.
+  ctsem:::.ctJuliaEval(paste(
+    "function __learn_report()",
+    "  CT = ContinuousTimeSEM",
+    "  seen = []",
+    "  r = CT._JMapLearnReport(CT.CTSEMProgress(false),",
+    "    CT.CTSEMCallback((a...) -> push!(seen, a); every=0.0), 100, 2)",
+    "  r.offset = 20",
+    "  CT._jmap_learn_window!(r, 10)",
+    "  CT._JMapChainWatch(r, 1)(\"sampling\", 30, 40, -5.0, 2)",
+    "  CT._JMapChainWatch(r, 2)(\"warmup\", 4, 10, -9.0, 1)",
+    "  a = seen[end]",
+    "  return (phase=a[1], at=a[2], total=a[3], logp=a[4], div=a[5], n=length(seen))",
+    "end", sep = "\n"))
+  lr <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall("Main.__learn_report"))
+  expect_identical(lr$phase, "learning")
+  expect_equal(lr$at, ((20 + 10 + 30) + (20 + 4)) %/% 2)
+  expect_equal(lr$total, 100)
+  expect_equal(lr$logp, -9)
+  expect_equal(lr$div, 3)
+  expect_equal(lr$n, 2L)
+})
+
+test_that("theta's triangular map is the same fitted on the pool, and says how far it is", {
+  skip_without_julia()
+  # Its components depend on the draws alone, so the window-end refit fits
+  # them on the pool (`_jmap_tri_fit(parallel = true)`); on the reanalysis
+  # 2,868 of them were fitted one after another with nothing said.
+  fit <- .sample_fixture()
+  obj <- ctsem:::.ctJuliaObjective(fit, hybrid = TRUE)
+  ctsem:::.ctJuliaEval(paste(
+    "function __tri_pool(laplace)",
+    "  CT = ContinuousTimeSEM",
+    "  CT._laplace_ensure_pool!(laplace)",
+    "  rng = CT.Random.Xoshiro(11)",
+    "  U = randn(rng, 9, 240)",
+    "  U[4, :] .+= 0.8 .* tanh.(U[1, :]) .+ 0.3 .* U[2, :] .^ 2",
+    "  U[7, :] .*= exp.(0.4 .* U[3, :])",
+    "  seen = Int[]",
+    "  a = CT._jmap_tri_fit(U)",
+    "  b = CT._jmap_tri_fit(U; parallel=true, progress=(d, n) -> push!(seen, d))",
+    "  same = all(getfield(a, f) == getfield(b, f) for f in fieldnames(typeof(a)))",
+    "  # A component's Newton step: by Cholesky where the eigenvalue floor cannot",
+    "  # bind, which is then the floored eigendecomposition's step.",
+    "  g = randn(rng, 30)",
+    "  floored = function (H)",
+    "    ev = CT.eigen(CT.Symmetric(H))",
+    "    lam = max.(ev.values, 1e-6 * maximum(abs, ev.values) + 1e-8)",
+    "    -(ev.vectors * ((transpose(ev.vectors) * g) ./ lam))",
+    "  end",
+    "  A = randn(rng, 30, 30)",
+    "  Q = Matrix(CT.qr(A).Q)",
+    "  cases = [transpose(A) * A + 30 * CT.I, A + transpose(A),",
+    "    Q * CT.Diagonal([1e-9; fill(1.0, 29)]) * transpose(Q)]",
+    "  step = maximum(maximum(abs, CT._jmap_tri_step(H, g) .- floored(H)) /",
+    "    maximum(abs, floored(H)) for H in cases)",
+    "  return (same=same, last=isempty(seen) ? 0 : seen[end], parents=length(a.parents[4]),",
+    "    step=step)",
+    "end", sep = "\n"))
+  r <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall("Main.__tri_pool", obj))
+  expect_true(r$same)
+  expect_equal(r$last, 9L)
+  expect_gt(r$parents, 0L)
+  expect_lt(r$step, 1e-8)
 })
 
 # The maximum check (R/ctBackendMaximumCheck.R) on the random-drift fixture,
