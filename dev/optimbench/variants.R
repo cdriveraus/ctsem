@@ -108,6 +108,12 @@ BENCH_VARIANTS <- list(
   grow2 = list(optimcontrol = list(lbfgs_growth = 2)),
   grow2_allprior = list(optimcontrol = list(lbfgs_growth = 2),
     args = list(priors = TRUE), objective = "allprior"),
+  # Per coordinate: each coordinate's move at most twice its own longest so far
+  # (floored at a tenth of the longest move of any).
+  growc2 = list(optimcontrol = list(lbfgs_growth = 2, lbfgs_growth_coord = TRUE)),
+  # Stan's first trial (Nocedal & Wright eq. 3.60): it promises to first order
+  # at most 2 * 1.01 times the gain the last step made.
+  gain1 = list(optimcontrol = list(lbfgs_growth = 1.01, lbfgs_growth_gain = TRUE)),
 
   # L-BFGS with the diagonal initial inverse Hessian and Grippo-Lampariello-
   # Lucidi acceptance over the last 20 values: the BFGS-side improvement alone.

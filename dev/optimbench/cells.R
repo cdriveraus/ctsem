@@ -873,12 +873,14 @@ flip_truth <- list(
   fastdrift = -2, fastsd = 0.6)
 
 flip_data <- function(type, seed, fast = FALSE, nsub = 150L, nobs = 6L,
-  anchor = 1) {
+  anchor = 1, means = TRUE) {
   set.seed(seed)
   tr <- flip_truth
   # `anchor` < 1: the anchors are the factors' weakest items, as in the
   # reanalysis, where the mirror basin then costs only what the anchors share.
   for (f in 1:2) tr$lambda[[f]][1] <- anchor
+  # `means = FALSE`: every item intercept zero, and fixed so in the model.
+  if (!means) tr$mm <- list(rep(0, 5), rep(0, 5))
   sims <- sim_linear(nsub, nobs, tr$drift, tr$diffchol, tr$cintmean, tr$cintsd,
     tr$t0cov, dtrange = c(0.6, 1.4))
   TAU <- c(-1.0, 0.5, 2.0)
@@ -907,7 +909,7 @@ flip_data <- function(type, seed, fast = FALSE, nsub = 150L, nobs = 6L,
   }))
 }
 
-flip_model <- function(type, fast = FALSE) {
+flip_model <- function(type, fast = FALSE, means = TRUE) {
   man <- c(sprintf("f1y%d", 1:5), sprintf("f2y%d", 1:5))
   lat <- if (fast) c("f1", "f2", "m1", "m2") else c("f1", "f2")
   nl <- length(lat)
@@ -915,7 +917,8 @@ flip_model <- function(type, fast = FALSE) {
   load1 <- c("1", sprintf("lam_f1y%d", 2:5)); load2 <- c("1", sprintf("lam_f2y%d", 2:5))
   LAMBDA[1:5, 1] <- load1; LAMBDA[6:10, 2] <- load2
   if (fast) { LAMBDA[1:5, 3] <- load1; LAMBDA[6:10, 4] <- load2 }
-  MM <- matrix(c("0", sprintf("mm_f1y%d", 2:5), "0", sprintf("mm_f2y%d", 2:5)))
+  MM <- if (means) matrix(c("0", sprintf("mm_f1y%d", 2:5), "0",
+    sprintf("mm_f2y%d", 2:5))) else matrix("0", 10, 1)
   args <- list(type = "ct", n.latent = nl, n.manifest = 10, manifestNames = man,
     latentNames = lat, LAMBDA = LAMBDA, MANIFESTMEANS = MM,
     CINT = matrix(c("cint1", "cint2", rep("0", nl - 2L))), silent = TRUE)
@@ -1017,14 +1020,19 @@ bench_problem <- function(model) {
     return(mk(function(s) growth_data(P, as.integer(s)), function() growth_model(P),
       c("augmented", "laplace", "auto"), reference = FALSE))
   }
-  # flip<o|g>[f][w]: ordinal or Gaussian items, f fast companions, w weak
-  # anchors (loading 0.5 against the others' 0.8-1.4).
-  if (grepl("^flip[og]f?w?$", model)) {
+  # flip<o|g>[f][w][z][l]: ordinal or Gaussian items, f fast companions, w
+  # weak anchors (loading 0.5 against the others' 0.8-1.4), z item intercepts
+  # zero and fixed, l a long panel (100 people, 12 occasions).
+  if (grepl("^flip[og]f?w?z?l?$", model)) {
     type <- if (startsWith(model, "flipo")) "ordinal" else "gaussian"
     fast <- grepl("f", substring(model, 6))
-    anchor <- if (endsWith(model, "w")) 0.5 else 1
-    return(mk(function(s) flip_data(type, as.integer(s), fast, anchor = anchor),
-      function() flip_model(type, fast), c("laplace", "augmented", "auto")))
+    anchor <- if (grepl("w", substring(model, 6))) 0.5 else 1
+    means <- !grepl("z", substring(model, 6))
+    long <- endsWith(model, "l")
+    return(mk(function(s) flip_data(type, as.integer(s), fast, anchor = anchor,
+      means = means, nsub = if (long) 100L else 150L, nobs = if (long) 12L else 6L),
+      function() flip_model(type, fast, means),
+      c("laplace", "augmented", "auto")))
   }
   if (grepl("^cov[0-9]+$", model)) {
     m <- as.integer(substring(model, 4))
