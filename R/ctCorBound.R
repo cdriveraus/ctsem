@@ -139,6 +139,10 @@
     if (k < 2L) next
     cells <- .ctCorBoundLower(k)
     index <- integer(nrow(cells)); fixed <- rep(0, nrow(cells))
+    # Under 'z' a cell fixed at zero is a zero covariance, which the matrix's
+    # construction solves between connected states (R/ctCov.R); the wall
+    # reads the same matrix, so its block says which cells those are.
+    zero <- matrix(FALSE, k, k)
     for (r in seq_len(nrow(cells))) {
       a <- states[cells[r, 1L]]; b <- states[cells[r, 2L]]
       hit <- which(off & row == a & col == b)
@@ -146,16 +150,29 @@
       hit <- hit[1L]
       if (p[hit] > 0L) index[r] <- p[hit] else
         if (!is.na(value[hit])) fixed[r] <- value[hit]
+      zero[cells[r, 1L], cells[r, 2L]] <- p[hit] == 0L && value[hit] %in% 0 &&
+        !any(nzchar(.ctCorBoundTransforms(rows, hit)))
     }
+    zero <- if (code == 2L) .ctCovLinkedZeros(zero)[cells] else rep(FALSE, nrow(cells))
     names <- vapply(states, function(i) {
       d <- which(row == i & col == i)
       if (length(d) && !is.na(rows$param[d[1L]]) && nzchar(rows$param[d[1L]]))
         as.character(rows$param[d[1L]]) else paste0(m, "[", i, ",", i, "]")
     }, character(1))
     blocks[[length(blocks) + 1L]] <- list(k = k, code = code, index = index,
-      fixed = fixed, names = names, level = "", matrix = m)
+      fixed = fixed, names = names, level = "", matrix = m, zero = zero)
   }
   blocks
+}
+
+# A table row's transforms of every kind, "" where it has none: a fixed cell
+# has none.
+.ctCorBoundTransforms <- function(rows, hit) {
+  fields <- intersect(c("transform", "predicttransform", "updatetransform",
+    "tdtransform"), names(rows))
+  out <- vapply(fields, function(f) as.character(rows[[f]][hit]), character(1))
+  out[is.na(out)] <- ""
+  out
 }
 
 # The bound, read from the engine rather than duplicated.
@@ -172,7 +189,12 @@
   low <- which(lower.tri(cells), arr.ind = TRUE)
   low <- low[order(low[, 2L], low[, 1L]), , drop = FALSE]
   cells[low] <- ifelse(b$index > 0L, raw[pmax(b$index, 1L)], b$fixed)
-  .ctCovForward(cells, if (b$code == 2L) "z" else "rawcorr")
+  zero <- NULL
+  if (any(b$zero)) {
+    zero <- matrix(FALSE, b$k, b$k)
+    zero[low] <- b$zero
+  }
+  .ctCovForward(cells, if (b$code == 2L) "z" else "rawcorr", zero)
 }
 
 # Each bounded effect's multiple correlation with the others at the fit's

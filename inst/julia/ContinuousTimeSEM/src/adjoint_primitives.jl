@@ -390,27 +390,28 @@ Laplace one. Copied into `scratch`'s own matrices first, which this branch of
 box: `d x d` copies against the pullback's matrix exponential.
 """
 function _sdcovexpm2cov_pullback_plain!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
-    cov_bar::AbstractMatrix, d::Int, scratch::CTSEMCovSqrtScratch{T}) where {T}
+    cov_bar::AbstractMatrix, d::Int, scratch::CTSEMCovSqrtScratch{T},
+    cells::CTSEMZeroCells) where {T}
     (eltype(mat_bar) === T && eltype(mat) === T && eltype(cov_bar) === T &&
         size(scratch.O, 1) >= d) ||
-        return _sdcovexpm2cov_pullback!(mat_bar, mat, cov_bar, d)
+        return _sdcovexpm2cov_pullback!(mat_bar, mat, cov_bar, d, cells)
     (mat_bar isa Matrix && mat isa Matrix && cov_bar isa Matrix) &&
-        return _sdcovexpm2cov_pullback!(mat_bar, mat, cov_bar, d)
+        return _sdcovexpm2cov_pullback!(mat_bar, mat, cov_bar, d, cells)
     M, C, B = scratch.O, scratch.B, scratch.Csym
     @inbounds for j in 1:d, i in 1:d
         M[i, j] = mat[i, j]
         C[i, j] = cov_bar[i, j]
         B[i, j] = zero(T)
     end
-    _sdcovexpm2cov_pullback!(B, M, C, d)
+    _sdcovexpm2cov_pullback!(B, M, C, d, cells)
     @inbounds for j in 1:d, i in 1:d
         mat_bar[i, j] += B[i, j]
     end
     return mat_bar
 end
 
-_sdcovexpm2cov_pullback_plain!(mat_bar, mat, cov_bar, d::Int, ::Nothing) =
-    _sdcovexpm2cov_pullback!(mat_bar, mat, cov_bar, d)
+_sdcovexpm2cov_pullback_plain!(mat_bar, mat, cov_bar, d::Int, ::Nothing,
+    cells::CTSEMZeroCells) = _sdcovexpm2cov_pullback!(mat_bar, mat, cov_bar, d, cells)
 
 # With no scratch, allocate as the pullback always did (tests, the rrule).
 _covsqrt_scratch(::Nothing, ::Type{T}, d::Int) where {T} = (
@@ -434,15 +435,17 @@ diagonal of `mat_bar` are written, matching where the free parameters live.
 """
 function _sdcovsqrt2cov_pullback!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
     cov_bar::AbstractMatrix, d::Int; epsilon::Real=1e-5, scratch=nothing,
-    covmatcode::Int=0)
+    covmatcode::Union{Int,CTSEMCovCode}=0)
     d == 0 && return mat_bar
     # Mirrors the forward's dispatch, through the same function, so the two
     # cannot disagree about which construction is in force. A reverse pass that
     # ignored the setting the forward honoured would give a gradient for a
-    # different model than the likelihood.
+    # different model than the likelihood. The same holds for the cells the
+    # forward solved as zero covariances, which come with the code.
     code = _effective_covmatcode(covmatcode)
     if code == 2
-        return _sdcovexpm2cov_pullback_plain!(mat_bar, mat, cov_bar, d, scratch)
+        return _sdcovexpm2cov_pullback_plain!(mat_bar, mat, cov_bar, d, scratch,
+            _ctsem_zero_cells(covmatcode))
     end
     # A zero cotangent happens routinely -- e.g. the manifest-covariance
     # cotangent on a fully missing row, where no measurement update ran -- and

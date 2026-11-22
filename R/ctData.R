@@ -405,8 +405,9 @@ expmGetSubsets <- function(m){
   if(!is.null(ctm$covmattransform)){
     if(ctm$covmattransform=='rawcorr_indep') standata$choleskymats<- -1L
     if(ctm$covmattransform=='cholesky') standata$choleskymats<- 1L
-    # 'z': the off-diagonal is Fisher's z of the correlation, and the covariance
-    # is D * normalise(matrix_exp(A)) * D with A hollow symmetric. See
+    # 'z': the covariance is D * normalise(matrix_exp(A)) * D with A hollow
+    # symmetric, the off-diagonal cells being A's entries (Fisher's z of the
+    # correlation for two variables). See
     # `sdcovexpm2cov` in inst/stan/ctsm.stan and cov_expm.jl in the engine.
     if(ctm$covmattransform=='z') standata$choleskymats<- 2L
     if(!ctm$covmattransform %in% c('rawcorr','rawcorr_indep','cholesky','z')) stop(

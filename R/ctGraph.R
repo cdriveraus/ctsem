@@ -31,20 +31,6 @@
 # a finite interval, and refusing to draw its contemporaneous network would
 # refuse exactly the models where the picture is most wanted.
 
-# Covariance from ctsem's DIFFUSION / T0VAR / MANIFESTVAR parameterisation.
-#
-# The lower triangle is an unconstrained correlation square root and the
-# diagonal holds standard deviations, so this mirrors the stan function
-# `sdcovsqrt2cov()` in R/ctModelWriter.R -- including its epsilon, which is why
-# an sd of 0.5 gives a variance of 0.2500025 rather than 0.25. Used only on the
-# model-specification path; a fit already reports DIFFUSIONcov.
-.ctSdcovsqrt2cov <- function(mat, cholesky = FALSE){
-  mat <- as.matrix(mat)
-  if(nrow(mat) == 0) return(mat)
-  if(cholesky) return(tcrossprod(mat))
-  tcrossprod(diag(diag(mat), nrow = nrow(mat)) %*% constraincorsqrt1(mat))
-}
-
 # Partial correlations of a covariance matrix -- the Gaussian graphical model
 # every contemporaneous network in the literature is.
 #
@@ -301,8 +287,14 @@
     drift <- tonum('DRIFT', nl, nl)
     diffusion <- tonum('DIFFUSION', nl, nl)
     lambda <- tonum('LAMBDA', nm, nl)
-    diffusioncov <- .ctSdcovsqrt2cov(diffusion,
-      cholesky = identical(as.character(m$covmattransform)[1], 'cholesky'))
+    # The model's own construction of a covariance from its cells
+    # (R/ctCov.R), with the cells it solves as zero covariances under 'z'. A
+    # fit already reports DIFFUSIONcov. Until 2026-11-22 this read the cells
+    # as a correlation square root whatever the model's covmattransform.
+    construction <- if(is.null(m$covmattransform)) 'rawcorr' else
+      sub('_indep$', '', as.character(m$covmattransform)[1])
+    diffusioncov <- if(nl == 0) diffusion else .ctCovForward(diffusion, construction,
+      if(construction == 'z') .ctCovSolvedCells(m, 'DIFFUSION'))
     if(length(free) && !quiet) message(length(free), ' free ',
       paste(sort(unique(as.character(pars$matrix[free]))), collapse = '/'),
       ' parameter(s) were taken at their untransformed value of zero, which ',

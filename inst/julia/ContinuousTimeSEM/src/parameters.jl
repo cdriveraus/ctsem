@@ -405,6 +405,81 @@ end
 Base.hasproperty(p::CTSEMPars, s::Symbol) = _layout_index(getfield(p, :layout), s) != 0
 Base.propertynames(p::CTSEMPars, private::Bool=false) = Tuple(getfield(p, :layout).names)
 
+"""
+    CTSEMZeroCells(rows, cols)
+
+Cells below the diagonal of a covariance matrix under covmattransform `'z'`
+that the model fixes at zero although other cells connect their two variables.
+Held at 0 such a cell would not be a zero covariance, so the construction
+solves it (cov_zero.jl). A fixed zero between variables that no cells connect
+is a zero covariance as it stands and is not listed. `id` identifies the
+pattern in the construction's caches, 0 for none.
+"""
+struct CTSEMZeroCells
+    rows::Vector{Int}
+    cols::Vector{Int}
+    id::UInt
+end
+CTSEMZeroCells() = CTSEMZeroCells(Int[], Int[], UInt(0))
+function CTSEMZeroCells(rows::AbstractVector{<:Integer}, cols::AbstractVector{<:Integer})
+    isempty(rows) && return CTSEMZeroCells()
+    length(rows) == length(cols) ||
+        throw(DimensionMismatch("a zero cell is a row and a column"))
+    all(rows .> cols) || throw(ArgumentError("zero cells lie below the diagonal"))
+    r = Vector{Int}(rows)
+    c = Vector{Int}(cols)
+    return CTSEMZeroCells(r, c, max(hash((r, c)), UInt(1)))
+end
+const _CTSEM_NO_ZERO_CELLS = CTSEMZeroCells()
+
+"""
+    _ctsem_linked_zeros(d, zero_rows, zero_cols, open_rows, open_cols)
+
+Of the cells below the diagonal of a `d x d` matrix that are fixed at zero,
+those whose two variables the open cells connect, in the order given.
+"""
+function _ctsem_linked_zeros(d::Integer, zero_rows, zero_cols, open_rows, open_cols)
+    parent = collect(1:Int(d))
+    root(i) = begin
+        while parent[i] != i
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        end
+        i
+    end
+    for (i, j) in zip(open_rows, open_cols)
+        a = root(Int(i)); b = root(Int(j))
+        a == b || (parent[a] = b)
+    end
+    rows = Int[]
+    cols = Int[]
+    for (i, j) in zip(zero_rows, zero_cols)
+        root(Int(i)) == root(Int(j)) || continue
+        push!(rows, Int(i)); push!(cols, Int(j))
+    end
+    return CTSEMZeroCells(rows, cols)
+end
+
+"""
+The solved zero cells of a model's own covariance matrices (`CTSEMZeroCells`).
+Empty unless the model is under `'z'` and has such cells.
+"""
+mutable struct CTSEMCovZeros
+    t0var::CTSEMZeroCells
+    diffusion::CTSEMZeroCells
+    manifestvar::CTSEMZeroCells
+end
+CTSEMCovZeros() = CTSEMCovZeros(CTSEMZeroCells(), CTSEMZeroCells(), CTSEMZeroCells())
+
+"""
+A covariance construction code with the matrix's solved zero cells, which
+`sdcovsqrt2cov!` and its pullback take wherever they take the code alone.
+"""
+struct CTSEMCovCode
+    code::Int
+    zeros::CTSEMZeroCells
+end
+
 struct EKFParameters{RG,PT,UT,TT,AX,FV}
     mutables::BitVector
     transform_indices::Vector{Bool}
@@ -545,6 +620,10 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
     # Parameters with a stated population value; see `CTSEMAnchors`. Empty
     # unless R sent them. Declared last and supplied last.
     anchors::CTSEMAnchors
+    # Cells of T0VAR, DIFFUSION and MANIFESTVAR that are zero covariances and
+    # have to be solved to be so; see `CTSEMZeroCells`. Empty unless
+    # `ekf_from_columns` found some. Declared last and supplied last.
+    covzeros::CTSEMCovZeros
 
     # The constructor ensures that the provided vectors are of the correct types and converts them if necessary.
     function EKFParameters(
@@ -663,9 +742,18 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
             CTSEMHybrid(),
             CTSEMStationaryElements(),
             CTSEMAnchors(),
+            CTSEMCovZeros(),
         )
     end
 end
+
+"""Each of a model's covariance matrices' construction, with its solved zero
+cells: what its `sdcovsqrt2cov!` and pullback are handed."""
+@inline _ctsem_t0var_code(sp::EKFParameters) = CTSEMCovCode(sp.covmatcode, sp.covzeros.t0var)
+@inline _ctsem_diffusion_code(sp::EKFParameters) =
+    CTSEMCovCode(sp.covmatcode, sp.covzeros.diffusion)
+@inline _ctsem_manifestvar_code(sp::EKFParameters) =
+    CTSEMCovCode(sp.covmatcode, sp.covzeros.manifestvar)
 
 # Compatibility constructor for existing callers without TD transform metadata.
 function EKFParameters(mutables, transform_indices, predict_transforms_indices,

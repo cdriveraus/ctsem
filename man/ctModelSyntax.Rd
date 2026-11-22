@@ -112,10 +112,7 @@ on the rate of change of another, and with \code{type = 'dt'} the effect on
 its value at the next occasion. A time dependent predictor acts as an
 impulse, shifting the process at each occasion by the effect times the
 value of the predictor. A covariance that is not written, or is fixed to
-zero, is zero in the fitted model. ctsem builds a covariance matrix from all
-of its cells together, so this is possible only between variables that no
-other covariances connect, and the functions stop where it is not. A quoted
-\code{"0"} sets the cell of the matrix itself, see \code{\link{ctCov}}.
+zero, is zero in the fitted model.
 
 \strong{lavaan style.}
 \preformatted{

@@ -37,13 +37,21 @@ diagonal, in column-major order, the raw parameter it reads, or 0 and the value
 it is fixed at. Both routes read those coordinates untransformed, the Laplace
 level as `cor_index` and the augmented route as `RAWPOPVAR`'s cells, so one
 description serves both and the R side writes it (`.ctCorBoundSpec`).
+
+A block of one of the model's own matrices under `'z'` may hold cells that are
+zero covariances and are solved to be so (`zeros`, in the block's own indices:
+cov_zero.jl), as the matrix's construction solves them; the wall reads the
+correlation matrix the model has.
 """
 struct CTSEMCorBound
     k::Int
     code::Int
     index::Vector{Int}
     fixed::Vector{Float64}
+    zeros::CTSEMZeroCells
 end
+CTSEMCorBound(k, code, index, fixed) =
+    CTSEMCorBound(k, code, index, fixed, CTSEMZeroCells())
 
 """
     CTSEMObjective(params, subject_starts, timesteps, data)
@@ -511,7 +519,10 @@ end
     _ctsem_corbound_zterms(block, values)
 
 `log((R^-1)_jj R_jj)` for each effect of a `'z'` block (code 2), and what its
-gradient needs: `(logs, Ap, An, Yp, Yn)`. There `R` is `exp(H)` normalised to a
+gradient needs: `(logs, Ap, An, Yp, Yn, Hfac)`, or `nothing` where the block
+has cells solved as zero covariances and their solve finds no solution
+(cov_zero.jl), as the matrix's own construction is then NaN. `Hfac` is that
+solve's factor, empty without such cells. There `R` is `exp(H)` normalised to a
 unit diagonal, `H` hollow from the coordinates, so `R^-1` is `exp(-H)`
 normalised back, and the log is `log exp(H)_jj + log exp(-H)_jj`, each a sum
 of positive terms. Nothing is inverted, and it is finite however far out the
@@ -527,27 +538,36 @@ function _ctsem_corbound_zterms(block::CTSEMCorBound, values::AbstractVector{T})
     base = _ctsem_corbound_base(block, values)
     Ap = Matrix{T}(undef, k, k)
     _fill_hollow!(Ap, base, k, T)
+    sc = _expm_cov_scratch(T, k)
+    Yp = Matrix{T}(undef, k, k)
+    Yn = Matrix{T}(undef, k, k)
+    z = length(block.zeros.rows)
+    Hfac = zeros(Float64, z, z)
+    if z > 0
+        _zcov_solved!(Ap, Hfac, block.zeros, k, Yp, sc.W1, sc.eb, Vector{T}(undef, z)) ||
+            return nothing
+    end
     An = Matrix{T}(undef, k, k)
     @inbounds for j in 1:k, i in 1:k
         An[i, j] = i == j ? Ap[i, j] : -Ap[i, j]
     end
     shift = -Ap[1, 1]
-    sc = _expm_cov_scratch(T, k)
-    Yp = Matrix{T}(undef, k, k)
-    Yn = Matrix{T}(undef, k, k)
     my_exp!(Yp, Ap, sc.W1, sc.eb, k)
     my_exp!(Yn, An, sc.W1, sc.eb, k)
     logs = Vector{T}(undef, k)
     @inbounds for j in 1:k
         logs[j] = log(Yp[j, j]) + log(Yn[j, j]) + 2 * shift
     end
-    return logs, Ap, An, Yp, Yn
+    return logs, Ap, An, Yp, Yn, Hfac
 end
 
 """Each effect's `log((R^-1)_jj R_jj)` in `block`, or `nothing` where its `R`
 does not factor."""
 function _ctsem_corbound_logs(block::CTSEMCorBound, values::AbstractVector{T}) where {T}
-    block.code == 2 && return first(_ctsem_corbound_zterms(block, values))
+    if block.code == 2
+        terms = _ctsem_corbound_zterms(block, values)
+        return terms === nothing ? nothing : first(terms)
+    end
     _, R = _ctsem_corbound_matrix(block, values)
     M = _ctsem_corbound_inverse(R)
     M === nothing && return nothing
@@ -636,7 +656,14 @@ end
 function _ctsem_corbound_zgradient!(gradient::AbstractVector, block::CTSEMCorBound,
     values::AbstractVector{T}, limit, kappa) where {T}
     k = block.k
-    logs, Ap, An, Yp, Yn = _ctsem_corbound_zterms(block, values)
+    terms = _ctsem_corbound_zterms(block, values)
+    if terms === nothing
+        for idx in block.index
+            idx == 0 || (gradient[idx] = _ctsem_nan(T))
+        end
+        return gradient
+    end
+    logs, Ap, An, Yp, Yn, Hfac = terms
     Ep = zeros(T, k, k)
     En = zeros(T, k, k)
     past = false
@@ -660,6 +687,21 @@ function _ctsem_corbound_zgradient!(gradient::AbstractVector, block::CTSEMCorBou
         c += 1
         idx = block.index[c]
         idx == 0 || (gradient[idx] += Lp[i, j] + Lp[j, i] + Ln[i, j] + Ln[j, i])
+    end
+    z = length(block.zeros.rows)
+    z == 0 && return gradient
+    # The solved cells move with the open ones: their cotangent, through
+    # `exp(Ap)`'s zeros, onto the open cells (`_zcov_fold!`).
+    @inbounds for j in 1:k, i in 1:k
+        Lp[i, j] += Ln[i, j]
+    end
+    _zcov_fold!(Ln, Lp, Ap, block.zeros, Hfac, k, Y, Matrix{T}(undef, k, k), sc.fb,
+        Vector{T}(undef, z), Vector{T}(undef, z))
+    c = 0
+    @inbounds for j in 1:k, i in (j + 1):k
+        c += 1
+        idx = block.index[c]
+        idx == 0 || (gradient[idx] -= (Ln[i, j] + Ln[j, i]) / 2)
     end
     return gradient
 end
@@ -805,6 +847,7 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
     ti_missing_subject=Int[], ti_missing_predictor=Int[], ti_missing_parameter=Int[],
     ti_missing_mu=Float64[], ti_missing_sigma=Float64[], subject_weights=Float64[],
     corbound_k=Int[], corbound_code=Int[], corbound_index=Int[], corbound_fixed=Float64[],
+    corbound_zero=Int[],
     penalty_index=Int[], penalty_precision=Float64[], jacobian_index=Int[],
     jacobian_value=String[], jacobian_slope=String[], relin_steps=Int[])
     length(penalty_index) == length(penalty_precision) ||
@@ -887,7 +930,8 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
         Float64.(prior_scale), Float64(prior_weight), Int.(ti_missing_parameter),
         Float64.(ti_missing_mu), Float64.(ti_missing_sigma), Int.(ti_missing_subject),
         Float64.(subject_weights),
-        _ctsem_corbound_blocks(corbound_k, corbound_code, corbound_index, corbound_fixed),
+        _ctsem_corbound_blocks(corbound_k, corbound_code, corbound_index, corbound_fixed,
+            corbound_zero),
         Int.(penalty_index), Float64.(penalty_precision), Int.(jacobian_index),
         _ctsem_natural_exprs(jacobian_value), _ctsem_natural_exprs(jacobian_slope),
         nothing, full)
@@ -907,10 +951,14 @@ function _ctsem_natural_exprs(texts)
 end
 
 """The bounded blocks from flat vectors, as the R side sends them: a size and
-a construction per block, and the blocks' lower-triangle cells concatenated."""
-function _ctsem_corbound_blocks(ks, codes, index, fixed)
+a construction per block, and the blocks' lower-triangle cells concatenated.
+`zero`, when sent, is 1 at each cell that is a solved zero covariance and 0
+elsewhere, as long as `index`."""
+function _ctsem_corbound_blocks(ks, codes, index, fixed, solved=Int[])
     length(ks) == length(codes) && length(index) == length(fixed) ||
         throw(DimensionMismatch("corbound_* vectors do not describe whole blocks"))
+    isempty(solved) || length(solved) == length(index) ||
+        throw(DimensionMismatch("corbound_zero needs one entry per cell"))
     blocks = CTSEMCorBound[]
     at = 0
     for b in eachindex(ks)
@@ -918,8 +966,19 @@ function _ctsem_corbound_blocks(ks, codes, index, fixed)
         n = k * (k - 1) ÷ 2
         at + n <= length(index) ||
             throw(DimensionMismatch("corbound_index is shorter than its blocks"))
+        # The cells run down each column below the diagonal.
+        rows = Int[]
+        cols = Int[]
+        if !isempty(solved)
+            c = 0
+            for j in 1:k, i in (j + 1):k
+                c += 1
+                solved[at + c] == 0 && continue
+                push!(rows, i); push!(cols, j)
+            end
+        end
         push!(blocks, CTSEMCorBound(k, Int(codes[b]), Int.(index[(at + 1):(at + n)]),
-            Float64.(fixed[(at + 1):(at + n)])))
+            Float64.(fixed[(at + 1):(at + n)]), CTSEMZeroCells(rows, cols)))
         at += n
     end
     at == length(index) ||
@@ -934,6 +993,7 @@ ctsem_objective(params::EKFParameters, subject_starts, timesteps, data,
     ti_missing_subject=Int[], ti_missing_predictor=Int[], ti_missing_parameter=Int[],
     ti_missing_mu=Float64[], ti_missing_sigma=Float64[], subject_weights=Float64[],
     corbound_k=Int[], corbound_code=Int[], corbound_index=Int[], corbound_fixed=Float64[],
+    corbound_zero=Int[],
     penalty_index=Int[], penalty_precision=Float64[], jacobian_index=Int[],
     jacobian_value=String[], jacobian_slope=String[], relin_steps=Int[]) =
     CTSEMObjective(params, subject_starts, timesteps, data, tdpred_data, tipred_data,
@@ -943,6 +1003,7 @@ ctsem_objective(params::EKFParameters, subject_starts, timesteps, data,
         ti_missing_mu=ti_missing_mu, ti_missing_sigma=ti_missing_sigma,
         subject_weights=subject_weights, corbound_k=corbound_k, corbound_code=corbound_code,
         corbound_index=corbound_index, corbound_fixed=corbound_fixed,
+        corbound_zero=corbound_zero,
         penalty_index=penalty_index, penalty_precision=penalty_precision,
         jacobian_index=jacobian_index, jacobian_value=jacobian_value,
         jacobian_slope=jacobian_slope, relin_steps=relin_steps)
@@ -3380,12 +3441,14 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # `evaluated`, not `result`: see `ctsem_laplace_optimize`. A closure's
     # assignment binds to the enclosing local of the same name, and the outer
     # L-BFGS result below is called `result`.
-    # Where the fit currently is. The L-BFGS's callback is handed convergence
-    # numbers, not the point they describe, and the stall conjunction has to ask
-    # the transforms what they are doing *at this point*. `fg!` sees every
-    # trial, so the last one it accepted is recorded there and read here.
-    # Made before the closure that writes it: a capture of a local assigned
-    # later is a `Core.Box`.
+    # Where the fit currently is: the point each stepper hands its callback
+    # (`CTSEMIterate`), copied here by `watch` for the stall conjunction, which
+    # asks the transforms what they are doing *at this point*, and for the
+    # caller's callback and checkpoints. Not read off the trials: a batch
+    # stage's gradients do not pass through `trial_fg!`, and recorded there
+    # the point stood still for a batch stage's iterations while the reported
+    # value moved. Made before the closure that writes it: a capture of a
+    # local assigned later is a `Core.Box`.
     current_x = copy(start_values)
     # Over whichever objective is in force: the fit's own, or a batch of its
     # units (see `_ctsem_batch_plan`), which is the same route over fewer.
@@ -3429,8 +3492,6 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         if G !== nothing
             G .= -evaluated.gradient
         end
-        # The point the callback will be asked about; see `current_x`.
-        copyto!(current_x, x)
         return F === nothing ? nothing : -evaluated.value
     end
     fg! = (F, G, x) -> trial_fg!(objective, F, G, x)
@@ -3680,6 +3741,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     in_sgd = Ref(false)
     watch = function (state)
         latest = state isa AbstractVector ? last(state) : state
+        copyto!(current_x, latest.x)
         # After an accepted step, whose point the last evaluation was.
         _ctsem_anchor_here!(objective)
         _record!(trace, latest.iteration, -latest.value, latest.g_norm,
@@ -3713,8 +3775,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # The point comes with the numbers. Without it a caller can watch a
         # multi-hour fit and still have nothing to restart from when it is
         # interrupted, because nothing is written until the fit returns --
-        # which has cost a run here. `current_x` is the last accepted trial,
-        # the same point the reported objective and gradient describe.
+        # which has cost a run here. `current_x` is the stepper's iterate, the
+        # point the reported objective and gradient describe.
         ck_modes = _ctsem_checkpoint_modes(watcher, objective, checkpoint_last,
             checkpoint_every)
         _invoke_callback(watcher, latest.iteration, Int(maxiter),
@@ -4016,7 +4078,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         ck_modes = _ctsem_checkpoint_modes(watcher, objective, checkpoint_last,
             checkpoint_every)
         _invoke_callback(watcher, state.iteration, Int(maxiter), -state.value,
-            state.g_norm, state.x === nothing ? current_x : state.x,
+            state.g_norm, state.x,
             _ctsem_checkpoint_args(ck_modes)...; force=ck_modes !== nothing)
         return false
     end
