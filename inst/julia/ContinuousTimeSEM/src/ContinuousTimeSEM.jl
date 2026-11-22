@@ -177,6 +177,9 @@ include("saem.jl")
 # After saem.jl and sample_run.jl: the joint sampled through a learnt map, on the
 # chains, the stopping rule and the hybrid's reporting above it.
 include("sample_map.jl")
+# A climb of a fit's objective from where the sampler's chains are centred
+# (`ctsem_map_centre`), for R's check for a higher maximum.
+include("higher_maximum.jl")
 
 # Last, because it exercises everything above it.
 include("precompile_workload.jl")

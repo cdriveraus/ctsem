@@ -363,6 +363,11 @@
     }
     control$warmup <- NULL
   }
+  # The maximum check reads the map's first window against the fit's Hessian
+  # and climbs the fit's objective, which has no coordinate for a sampled TI
+  # value.
+  control$maximumcheck <- !isFALSE(control$maximumcheck) &&
+    identical(control$sampler, "map") && !tisampled && !isTRUE(state_explicit)
   # Resolved once here for its refusals, before any worker is started or the
   # engine reached: a setting refused deep in a worker process would surface
   # as a failed chain and a fallback rather than as the error it is.
@@ -537,6 +542,11 @@
   # state, the default there) or 'fit' (the fit's estimate); read by
   # `.ctBackendUncertaintySample()`.
   "placement",
+  # The maximum check (R/ctBackendMaximumCheck.R): whether the map sampler's
+  # first window is read for it, which `checks` says (`ctFitUncertainty()`,
+  # `optimcontrol$checks`), and whether a higher point is signalled to the
+  # caller rather than warned about, which `ctFit(optimize = FALSE)` sets.
+  "maximumcheck", "maximumstop",
   "callback")
 
 #' Fold the deprecated sampling arguments into \code{sampleControl}
@@ -1441,8 +1451,28 @@
     entry <- module$ctsem_sample_smc
   }
 
+  # The maximum check (R/ctBackendMaximumCheck.R): the map's first learning
+  # window alone, read for where its chains are centred, and the same call
+  # then goes on from that window. Where the map starts at the fit's estimate
+  # and is whitened by a Hessian, which is what the distance is from and is
+  # measured in, and not in a worker process, which holds one chain of
+  # several.
+  maximumcheck <- NULL
+  if (mapped && isTRUE(control$maximumcheck) && !is.null(metric) &&
+      is.null(coordinate) && identical(as.numeric(start),
+        as.numeric(target$estimate))) {
+    first <- .ctBackendWithMaxChunks(cores, do.call(entry, c(arguments,
+      list(first_only = TRUE, centre_bar = .ctMaximumBar(target$npar)))))
+    maximumcheck <- .ctBackendMaximumCheck(fit,
+      .ctJuliaGet(module$ctsem_map_centre(first)), cores = cores,
+      verbose = verbose, progress = progress,
+      stop = isTRUE(control$maximumstop))
+    arguments$resume <- first
+  }
   result <- .ctBackendWithMaxChunks(cores,
     .ctJuliaGet(do.call(entry, arguments)))
+  # `[[`: an engine result's names would answer `$` by prefix.
+  if (!is.null(maximumcheck)) result[["maximumcheck"]] <- maximumcheck
   if (!is.null(callback_failure)) {
     warning("The progress callback failed and was disabled after the first ",
       "error; sampling itself is unaffected. The error was: ",
@@ -1567,7 +1597,7 @@
   # `result$ndraws` rather than the count asked for: with an effective sample
   # size target the sampler decides when to stop, and reporting the request
   # would describe a run that did not happen.
-  .ctBackendSampleAssemble(fit, result, target$npar,
+  out <- .ctBackendSampleAssemble(fit, result, target$npar,
     isTRUE(saveEffects) && !isTRUE(target$marginal),
     if (smc) as.integer(result$nchains) else as.integer(chains),
     if (smc) 0L else .ctBackendRanWarmup(result, warmup),
@@ -1575,6 +1605,10 @@
     target$estimate[seq_len(target$npar)], marginal = isTRUE(target$marginal),
     ess_target = .ctBackendSampleTargetESS(control),
     rhat_target = .ctBackendSampleTargetRhat(control))
+  if (!is.null(result[["maximumcheck"]])) {
+    out$sample$maximumcheck <- result[["maximumcheck"]]
+  }
+  out
 }
 
 # How many of up to `n` thinned posterior draws have a subject whose
@@ -2450,21 +2484,27 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # placement it runs no iterations at all, and "no progress from its
   # starting values ... Treat this fit as failed" came with every default
   # sampled fit. The sampler's diagnostics are what judge a sampled fit.
-  placementwarnings <- character()
-  placementfit <- withCallingHandlers(.ctJuliaOptimiseFit(model_spec = model_spec,
-    datalong = datalong, model = model, prepared_data = prepared_data,
-    inits = inits, cores = placementcores,
-    optimcontrol = placementcontrol, verbose = verbose, priors = priors,
-    priorscope = priorscope, intoverpop = intoverpop, intoverstates = TRUE,
-    gradient = gradient, correctlaplace = FALSE),
-    warning = function(w) {
-      placementwarnings <<- c(placementwarnings, conditionMessage(w))
-      invokeRestart("muffleWarning")
-    })
-  if (length(placementwarnings)) {
-    placementfit$optim$placement_warnings <- unique(placementwarnings)
+  # `resume`: the modes that go with `inits`, where the maximum check found
+  # the point (its record's `modes`).
+  place <- function(inits, cores, resume = NULL) {
+    placementwarnings <- character()
+    placementfit <- withCallingHandlers(.ctJuliaOptimiseFit(model_spec = model_spec,
+      datalong = datalong, model = model, prepared_data = prepared_data,
+      inits = inits, cores = cores,
+      optimcontrol = placementcontrol, verbose = verbose, priors = priors,
+      priorscope = priorscope, intoverpop = intoverpop, intoverstates = TRUE,
+      gradient = gradient, correctlaplace = FALSE, resume = resume),
+      warning = function(w) {
+        placementwarnings <<- c(placementwarnings, conditionMessage(w))
+        invokeRestart("muffleWarning")
+      })
+    if (length(placementwarnings)) {
+      placementfit$optim$placement_warnings <- unique(placementwarnings)
+    }
+    .ctSamplePlacementNote(placementfit)
+    placementfit
   }
-  .ctSamplePlacementNote(placementfit)
+  placementfit <- place(inits, placementcores)
 
   # From here, sampling is exactly `ctFitUncertainty(placementfit, 'sample')`:
   # one function for both entry points (`.ctBackendUncertaintySample()`,
@@ -2477,8 +2517,32 @@ print.ctSampleDiagnostics <- function(x, ...) {
   samplecontrol <- utils::modifyList(control,
     list(chains = chains, warmup = warmup, draws = draws, seed = seed,
       saveEffects = saveEffects, processes = processes,
-      intoverpop = intoverpop))
-  .ctBackendUncertaintySample(placementfit, control = samplecontrol,
-    cores = cores, verbose = verbose, state_explicit = !isTRUE(intoverstates),
-    handles = handles, checkcores = placementcores, nutsgiven = nutsgiven)
+      intoverpop = intoverpop,
+      maximumcheck = "maximum" %in%
+        .ctUncertaintyChecks(.ctJuliaOr(optimcontrol$checks, TRUE))))
+  # The maximum check (R/ctBackendMaximumCheck.R) may find, from the sampler's
+  # first draws, a point above the placement's estimate. The fit is then made
+  # again from that point, so that the estimate, its Hessian and the map the
+  # sampler starts from are the higher maximum's, up to `.ctMaximumRounds`
+  # times; past that the sampler warns and samples from where it is.
+  rounds <- 0L
+  repeat {
+    samplecontrol$maximumstop <- rounds < .ctMaximumRounds
+    out <- tryCatch(.ctBackendUncertaintySample(placementfit,
+      control = samplecontrol, cores = cores, verbose = verbose,
+      state_explicit = !isTRUE(intoverstates),
+      handles = if (rounds == 0L) handles else NULL,
+      checkcores = placementcores, nutsgiven = nutsgiven),
+      ctHigherMaximum = function(e) e)
+    if (!inherits(out, "ctHigherMaximum")) break
+    rounds <- rounds + 1L
+    found <- out$record
+    message("A log posterior ", format(round(found$gain, 2)), " above the ",
+      "estimate's was reached from where the sampler's first draws are ",
+      "centred. Fitting again from there before sampling.")
+    placementfit <- place(found$raw, cores, resume = found$modes)
+  }
+  # How often the fit was made again, with the check's record.
+  if (!is.null(out$sample$maximumcheck)) out$sample$maximumcheck$rounds <- rounds
+  out
 }

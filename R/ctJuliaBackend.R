@@ -5864,7 +5864,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   callback = NULL, objective = NULL, progress_label = NULL,
   progress_budget = FALSE, pin = NULL, resumed = FALSE, inverse = NULL,
   hessian = NULL, hessian_at = NULL, walked = FALSE, checkpoint = NULL,
-  probed = FALSE, pairs = FALSE, coldstart = NULL) {
+  probed = FALSE, pairs = FALSE, coldstart = NULL, resume = NULL) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   # Where a run-off escape restarts the coordinates it does not hold: the
   # fit's start before its warm-up where the caller has one, else this stage's.
@@ -6138,6 +6138,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     }
     if (is.null(callback)) callback <- function(iteration, total, objective,
       gradient_norm) NULL
+  }
+  # Modes that came with the start where no checkpoint brought any (`resume`:
+  # `units`, one per column of `values`), for the opening search as a
+  # checkpoint's are: the maxima the maximum check's search ended on at the
+  # point this run starts from (`.ctBackendMaximumCheck()`).
+  if (is.null(common$resume_units) && !is.null(resume) && length(resume$units)) {
+    values <- as.matrix(resume$values)
+    storage.mode(values) <- "double"
+    common$resume_units <- .ctJuliaVector(as.integer(resume$units))
+    common$resume_values <- values
   }
   if (!is.null(callback)) {
     if (!is.function(callback)) {
@@ -6866,7 +6876,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 #' @keywords internal
 .ctJuliaOptimiseFit <- function(model_spec, datalong, model, prepared_data,
   inits, cores, optimcontrol, verbose, priors, priorscope, intoverpop,
-  intoverstates, gradient, correctlaplace) {
+  intoverstates, gradient, correctlaplace, resume = NULL) {
   npar <- .ctBackendNpar(model_spec)
   # A fully fixed model has nothing to maximise over. Without the zero above,
   # `max` warned and returned -Inf, and `rnorm(-Inf, ...)` then failed with
@@ -7176,7 +7186,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     objective = jointobjective, checkpoint = checkpoint,
     hessian = checkpoint$hessian, hessian_at = checkpoint$hessian_at,
     walked = if (walkfirst) "dear" else FALSE, pairs = smoothing,
-    coldstart = coldstart))
+    coldstart = coldstart, resume = resume))
   optimum <- as.numeric(result$minimizer)[seq_len(npar)]
   # Its modes and Hessian were the first run's; later runs start from their
   # own (`laplace_known`), and form their own.

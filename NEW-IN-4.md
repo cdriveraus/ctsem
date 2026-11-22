@@ -76,6 +76,11 @@ and [ordinal or continuous data](https://cdriveraus.github.io/ctsem/articles/ord
 - `ctFit(optimize = FALSE)`, or `ctFitUncertainty(fit, 'sample')` after a fit,
   samples the posterior until the effective sample size reaches its target. See
   the [uncertainty vignette](https://cdriveraus.github.io/ctsem/articles/uncertainty.html).
+- When sampling, ctsem checks whether the first draws are centred away from
+  the estimate, which can mean the optimiser stopped at a local maximum. If
+  optimising from there reaches a higher log posterior,
+  `ctFit(optimize = FALSE)` fits again from that point and
+  `ctFitUncertainty(fit, 'sample')` gives a warning.
 
 ## Checking and improving models
 

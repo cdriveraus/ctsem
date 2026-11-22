@@ -244,10 +244,11 @@
 #'  intervals to report, sample with \code{ctFitUncertainty(fit, 'sample')}.
 #'  \code{'sample'} is not accepted here. Use \code{optimize = FALSE}, or
 #'  \code{ctFitUncertainty(fit, 'sample')} after the fit.}
-#'  \item{\code{checks}}{Julia. Default \code{TRUE}, which runs both checks
+#'  \item{\code{checks}}{Julia. Default \code{TRUE}, which runs the checks
 #'  below, as the \code{checks} argument of \code{\link{ctFitUncertainty}}
-#'  does. \code{FALSE} runs neither, and \code{'randomeffects'} or
-#'  \code{'intervals'} runs one. Neither runs with \code{estonly}. The
+#'  does. \code{FALSE} runs none, and any of \code{'randomeffects'},
+#'  \code{'intervals'} and \code{'maximum'} runs those named. The first two
+#'  do not run with \code{estonly}. The
 #'  random-effects check (with \code{intoverpop = 'laplace'}) scores the
 #'  Laplace approximation for every subject at draws of its random effects,
 #'  and warns if integrating them exactly would move an estimate by 0.1
@@ -267,7 +268,11 @@
 #'  message and in \code{summary()} where it does not. With
 #'  \code{intoverpop = 'quadrature'} it uses the refined fit, and can then
 #'  take longer than the refinement. \code{checks = 'randomeffects'} leaves it
-#'  out.}
+#'  out. The maximum check (with \code{optimize = FALSE}, sampling the joint
+#'  posterior) looks at where the sampler's first draws are centred. If that
+#'  is far from the estimate it optimises from there, and if this reaches a
+#'  higher log posterior the model is fitted again from that point before
+#'  sampling. \code{fit$sample$maximumcheck} records the check.}
 #'  \item{\code{uncertaintyDraws}, \code{finishsamples},
 #'  \code{uncertaintyControl}}{Both. The \code{draws} argument of
 #'  \code{ctOptimUncertainty} (default \code{'auto'}), and the
