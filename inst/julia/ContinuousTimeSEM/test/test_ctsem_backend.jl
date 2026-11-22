@@ -801,6 +801,50 @@ end
     @test maximum(abs, diag.minimizer) < 1e-4
 end
 
+@testset "a cold L-BFGS run's moves grow at most growth-fold per coordinate" begin
+    C = ContinuousTimeSEM
+    a = 10.0 .^ range(-2, 2; length=8)
+    target = collect(range(-1, 2; length=8))
+    # The accepted points: each the last point whose gradient was taken
+    # before the callback hears of its step.
+    function path(growth; pairs=nothing)
+        last = Ref(zeros(8))
+        points = Vector{Vector{Float64}}()
+        fg! = function (F, G, x)
+            G === nothing || (last[] = copy(x); G .= a .* (x .- target))
+            F === nothing ? nothing : 0.5 * sum(a .* (x .- target) .^ 2)
+        end
+        cb = state -> (push!(points, copy(last[])); false)
+        r = C._ctsem_lbfgs(fg!, zeros(8); maxiter=300, g_tol=1e-8,
+            diagonal=true, growth=growth, pairs=pairs, callback=cb)
+        return r, points
+    end
+    # Whether every move stays within `growth` times its coordinate's longest
+    # earlier move, floored at a tenth of the longest earlier move of any.
+    function within(points, growth)
+        reachv = abs.(points[2] .- points[1])
+        for k in 2:(length(points) - 1)
+            d = abs.(points[k + 1] .- points[k])
+            lim = growth .* max.(reachv, 0.1 * maximum(reachv))
+            all(d .<= lim .* (1 + 1e-10) .+ 1e-14) || return false
+            reachv = max.(reachv, d)
+        end
+        return true
+    end
+    capped, cpoints = path(2.0)
+    free, fpoints = path(0.0)
+    @test capped.g_converged && free.g_converged
+    @test maximum(abs, capped.minimizer .- target) < 1e-4
+    @test within(cpoints, 2.0)
+    # The problem is one where the uncapped run does take a longer step.
+    @test !within(fpoints, 2.0)
+    # A run handed curvature is not capped: from the free run's pairs it
+    # follows the same path with the cap as without it.
+    warm, wpoints = path(2.0; pairs=free.memory)
+    warm0, w0points = path(0.0; pairs=free.memory)
+    @test wpoints == w0points
+end
+
 # A sum over units for the batch test below: unit k's log likelihood is
 # -|x - c_k|^2 / 2, except that a unit marked `bad` cannot be evaluated where
 # x[1] > 0.5. The methods are the few a batch reads of its objective.
