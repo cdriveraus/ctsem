@@ -3323,7 +3323,6 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     precondition=nothing, lbfgs_inverse=nothing, lbfgs_scores::Bool=false,
     lbfgs_local::Bool=false,
     lbfgs_pairs=nothing, initial_alpha::Real=0.1,
-    lbfgs_growth::Real=0.0, lbfgs_growth_coord::Bool=false, lbfgs_growth_gain::Bool=false,
     overshoot_probe=_CTSEM_OVERSHOOT_PROBE[],
     stall_window::Integer=80, stall_cooldown::Integer=30,
     stall_ratio::Real=1e-3, stall_alone::Bool=false,
@@ -3893,9 +3892,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
         directional=directional, batch=batcher, iteration0=sgd_iterations,
         coreset=coreseter, jump=watch_jump ? jump : nothing,
-        local_curvature=local_curvature, at_start=at_start,
-        growth=Float64(lbfgs_growth), growth_coord=lbfgs_growth_coord,
-        growth_gain=lbfgs_growth_gain)
+        local_curvature=local_curvature, at_start=at_start)
     # As a stage L-BFGS stopped by its gap rule, which is what it is: nothing
     # left for L-BFGS that the finish's step on the held Hessian does not take.
     first_finish[] && (stopped_by_gap[] = true)

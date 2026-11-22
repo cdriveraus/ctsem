@@ -101,19 +101,10 @@ BENCH_VARIANTS <- list(
   stoch = list(optimcontrol = list(stochastic = TRUE)),
   stoch_allprior = list(optimcontrol = list(stochastic = TRUE),
     args = list(priors = TRUE), objective = "allprior"),
-
-  # A cold L-BFGS run's step capped at `lbfgs_growth` times the longest move
-  # any coordinate has made so far (branch earlysteps), alone and with priors
-  # on every parameter (no prior warm-up then, as for the reanalysis fit).
-  grow2 = list(optimcontrol = list(lbfgs_growth = 2)),
-  grow2_allprior = list(optimcontrol = list(lbfgs_growth = 2),
-    args = list(priors = TRUE), objective = "allprior"),
-  # Per coordinate: each coordinate's move at most twice its own longest so far
-  # (floored at a tenth of the longest move of any).
-  growc2 = list(optimcontrol = list(lbfgs_growth = 2, lbfgs_growth_coord = TRUE)),
-  # Stan's first trial (Nocedal & Wright eq. 3.60): it promises to first order
-  # at most 2 * 1.01 times the gain the last step made.
-  gain1 = list(optimcontrol = list(lbfgs_growth = 1.01, lbfgs_growth_gain = TRUE)),
+  # The variants grow2, growc2 and gain1 (caps on a cold L-BFGS run's early
+  # steps) and the grid earlysteps.txt that ran them need the switches of
+  # ctsem commit b1d3f194 (branch earlysteps), which were not kept:
+  # CT-SEM/review/bench/2026-11-22-earlysteps.md.
 
   # L-BFGS with the diagonal initial inverse Hessian and Grippo-Lampariello-
   # Lucidi acceptance over the last 20 values: the BFGS-side improvement alone.

@@ -419,8 +419,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         inverse::Union{Nothing,Matrix{Float64}}=nothing,
         structured=nothing, coreset=nothing,
         jump::Union{Nothing,CTSEMJump}=nothing, local_curvature=nothing,
-        at_start::CTSEMHeldStart=CTSEMHeldStart(), growth::Real=0.0,
-        growth_coord::Bool=false, growth_gain::Bool=false)
+        at_start::CTSEMHeldStart=CTSEMHeldStart())
     n = length(x0)
     x = collect(Float64, x0)
     dinv = metric === nothing ? ones(n) : begin
@@ -495,17 +494,6 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     whole = 0b111
     # Gradients the local curvature has been told of.
     gseen = 0
-    # EXPLORATION (earlysteps): on a run that starts with no curvature, no step
-    # moves any coordinate further than `growth` times the longest move taken
-    # so far (`growth_coord`: per coordinate, floored at a tenth of the
-    # longest move of any coordinate).
-    # `growth_gain`: instead, the first trial promises to first order at most
-    # `2 growth` times the gain the last accepted step made (Nocedal & Wright
-    # eq. 3.60; Stan's BFGS takes min(1, 1.01 * 2 * gain / -g's)).
-    cold = growth > 0 && isempty(M.S) && inverse === nothing
-    reach = 0.0
-    reachv = zeros(n)
-    lastgain = 0.0
     while !stopped && !gconv && iteration < maxiter
         # The local curvature (`CTSEMLocalCurvature`), once the run has spent
         # what it costs: from then on the initial inverse Hessian, in place of
@@ -540,25 +528,6 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         if isempty(M.S) && !took_structured
             len = norm(s)
             len > 1 && (s .*= 1 / len)
-        end
-        if cold && growth_gain
-            if lastgain > 0
-                pred = -dot(G, s)
-                a0 = 2 * Float64(growth) * lastgain / pred
-                isfinite(a0) && 0 < a0 < 1 && (s .*= a0)
-            end
-        elseif cold && reach > 0
-            if growth_coord
-                floor_ = 0.1 * reach
-                @inbounds for i in 1:n
-                    lim = Float64(growth) * max(reachv[i], floor_)
-                    abs(s[i]) > lim && (s[i] = sign(s[i]) * lim)
-                end
-            else
-                big = maximum(abs, s; init=0.0)
-                lim = Float64(growth) * reach
-                big > lim && (s .*= lim / big)
-            end
         end
         dphi = dot(G, s)
         if (!(dphi < 0) || !isfinite(dphi)) && took_structured
@@ -721,13 +690,6 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         # sum would.
         stepgain = informed ? abs(alpha * dphi) / 2 : Inf
         step = xn .- x
-        if cold
-            lastgain = f - fn
-            reach = max(reach, maximum(abs, step; init=0.0))
-            @inbounds for i in 1:n
-                reachv[i] = max(reachv[i], abs(step[i]))
-            end
-        end
         # What the objective resolves along the step (`_ctsem_resolution`):
         # its value change against the trapezoid of its end gradients.
         directional === nothing || _ctsem_resolution_step!(directional,

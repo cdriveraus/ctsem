@@ -860,8 +860,12 @@ growthm_model <- function(P, age0 = 4.5) {
 # free loading, and a step long enough takes a factor's free loadings past zero
 # together, where they cannot come back while the anchor stays positive. `type`
 # is 'ordinal' (four categories, logistic; no data start for these processes'
-# drift and diffusion, which start at their defaults) or 'gaussian'. Kept small
-# enough for the bench: 150 people, 6 occasions.
+# drift and diffusion, which start at their defaults) or 'gaussian'. 150 people
+# at 6 occasions, or 100 at 12. The options and their keys are at the registry
+# below. None ended flipped at juliaFit e90367ca: with each person's own item
+# intercepts (`u`) the first steps take every free loading down and often one
+# past zero, as the reanalysis's did, and the data pull it back
+# (CT-SEM/review/bench/2026-11-22-earlysteps.md).
 
 flip_truth <- list(
   lambda = list(c(1, 1.2, 0.9, 1.3, 0.8), c(1, 1.1, 1.4, 0.9, 1.2)),

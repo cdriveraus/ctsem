@@ -1,0 +1,15 @@
+# flipcells grid: the factor models whose free loadings pass near or through
+# zero in L-BFGS's first steps (cells.R, flip*), at the seeds where they came
+# closest. None ended flipped on juliaFit e90367ca. The u cells take about 25
+# minutes a fit on one thread, the others 5-10.
+# id                                     model        data route      start                    variant
+flipoful.lap.d1.s1.default               flipoful     1    laplace    default:1                default
+flipoful.lap.d1.s1.allprior              flipoful     1    laplace    default:1                allprior
+flipoful.lap.d6.s1.default               flipoful     6    laplace    default:1                default
+flipoful.lap.d6.s1.allprior              flipoful     6    laplace    default:1                allprior
+flipofwul.lap.d4.s1.default              flipofwul    4    laplace    default:1                default
+flipofwul.lap.d4.s1.allprior             flipofwul    4    laplace    default:1                allprior
+flipofwul.lap.d6.s1.default              flipofwul    6    laplace    default:1                default
+flipofwul.lap.d6.s1.allprior             flipofwul    6    laplace    default:1                allprior
+flipofl.lap.d1.s1.default                flipofl      1    laplace    default:1                default
+flipofl.lap.d1.s1.allprior               flipofl      1    laplace    default:1                allprior
