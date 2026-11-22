@@ -29,12 +29,25 @@ cell <- function(model, matrix, row, col = 1) {
       model$pars$col == col, ]
 }
 
+# The code is run in an environment of its own: with settings to assign it
+# names its model `model`.
 roundtrip <- function(model) {
   for (style in c('lavaan', 'mplus', 'formula')) {
-    code <- ctModelSyntax(model, style)
-    back <- quiet(eval(parse(text = code)))
+    code <- NULL
+    expect_no_warning(code <- ctModelSyntax(model, style))
+    back <- quiet(eval(parse(text = code), new.env()))
     expect_same_model(model, back)
+    for (field in .ctSynSettings(model)) expect_identical(back[[field]],
+      model[[field]])
   }
+}
+
+# The covariance a model's cells give, with its free cells at `free`.
+implied <- function(model, matrix, free) {
+  p <- model$pars[model$pars$matrix == matrix, ]
+  cells <- matrix(0, max(p$row), max(p$col))
+  cells[cbind(p$row, p$col)] <- ifelse(is.na(p$value), free, p$value)
+  .ctCovForward(cells, model$covmattransform)
 }
 
 test_that('the three styles and ctModel() write the same default model', {
@@ -351,15 +364,133 @@ test_that('a whole Mplus input, lags and ranges', {
     ANALYSIS: TYPE = TWOLEVEL RANDOM;
     MODEL:
       %WITHIN%
-      f BY y1-y3;
+      f BY y1-y3 (&1);
       f ON f&1;
       %BETWEEN%
       y1-y3 ON age;
-    OUTPUT: TECH1;'), 'MODEL: section')
+    OUTPUT: TECH1;', type = 'dt'), 'MODEL: section')
   expect_identical(m$manifestNames, c('y1', 'y2', 'y3'))
   expect_identical(cell(m, 'DRIFT', 1, 1)$param, 'drift_f')
   expect_identical(cell(m, 'MANIFESTMEANS', 3)$age_effect, 'TRUE')
   expect_error(ctModelMplus('f BY y1; f ON f&2;'), 'ctModelHigherOrder')
+})
+
+test_that('a lag is discrete time, and a value keeps its meaning', {
+  # An autoregression of 0.8 is 0.8 over one occasion in the model it is read
+  # into, and is not read as a continuous time auto effect of +0.8.
+  m <- ctModelMplus('f BY y1; g BY y2; f ON f&1@0.8 g&1; g ON g&1;', type = 'dt')
+  expect_false(m$continuoustime)
+  expect_identical(cell(m, 'DRIFT', 1, 1)$value, 0.8)
+  expect_identical(cell(m, 'DRIFT', 1, 2)$param, 'drift_f_g')
+  expect_error(ctModelMplus('f BY y1; f ON f&1@0.8;'), "type = 'dt'")
+  expect_error(ctModelMplus('f BY y1; f ON f&1;'), "type = 'dt'")
+  expect_error(ctModelMplus('f BY y1; f&1 WITH f;', type = 'dt'), 'after ON')
+  # the writer writes the lag where the model has one
+  expect_match(ctModelSyntax(m, 'mplus'), 'f ON f&1@0.8 g&1;', fixed = TRUE)
+  expect_false(grepl('&1', ctModelSyntax(ctModelMplus('f BY y1; f ON f;'),
+    'mplus'), fixed = TRUE))
+  roundtrip(m)
+})
+
+test_that('a covariance that is zero in the syntax is zero in the model', {
+  # separate blocks: zero whatever the free cells are
+  m <- ctModelLavaan('
+    a =~ y1
+    b =~ y2
+    c =~ y3
+    d =~ y4
+    a ~~ 0*c + 0*d
+    b ~~ 0*c + 0*d
+    y1 ~~ y2')
+  for (free in list(0.7, c(1.3, -0.4, 2))) {
+    S <- implied(m, 'DIFFUSION', free)
+    expect_equal(S[3:4, 1:2], matrix(0, 2, 2))
+    expect_true(all(abs(S[2, 1]) > 0.01, abs(S[4, 3]) > 0.01))
+    R <- implied(m, 'MANIFESTVAR', free)
+    expect_equal(R[3:4, 1:2], matrix(0, 2, 2))
+    expect_equal(R[4, 3], 0)
+    expect_gt(abs(R[2, 1]), 0.01)
+  }
+  roundtrip(m)
+  # a zero beside covariances that connect its two variables is refused,
+  # written out or left out, in each matrix and style
+  expect_error(ctModelLavaan('a =~ y1\n b =~ y2\n c =~ y3\n a ~~ 0*b'),
+    'noise covariance of a and b')
+  expect_error(ctModelLavaan('f =~ y1 + y2 + y3\n y1 ~~ y2\n y2 ~~ y3'),
+    'residual covariance of y1 and y3')
+  expect_error(ctModelMplus('a BY y1; b BY y2; c BY y3; a WITH b@0;'),
+    'through c')
+  expect_error(ctModelFormula(y1 ~ a, y2 ~ b, y3 ~ c, T0var_b_a ~ 0),
+    'initial covariance of a and b')
+  # what the refused model would have been: not a zero covariance
+  cells <- diag(3)
+  cells[3, 1:2] <- 0.5
+  expect_gt(abs(.ctCovForward(cells, 'z')[2, 1]), 0.1)
+  # the cell itself can still be set, in quotes, and a model that has such
+  # cells is written that way
+  q <- ctModelLavaan('a =~ y1\n b =~ y2\n c =~ y3\n a ~~ "0"*b')
+  expect_identical(cell(q, 'DIFFUSION', 2, 1)$value, 0)
+  expect_match(ctModelSyntax(q, 'mplus'), 'b WITH a ("0");', fixed = TRUE)
+  roundtrip(q)
+  viaModel <- ctModel(LAMBDA = diag(3), silent = TRUE,
+    MANIFESTVAR = matrix(c('v1', 'v21', 0, 0, 'v2', 'v32', 0, 0, 'v3'), 3))
+  roundtrip(viaModel)
+})
+
+test_that('a label names a first loading and NA frees it', {
+  expect_message(m1 <- ctModelLavaan('f =~ a*y1 + y2'), 'stays fixed at 1')
+  expect_message(m2 <- ctModelMplus('f BY y1 (a)\n y2;'), 'stays fixed at 1')
+  expect_message(m3 <- ctModelFormula(y1 ~ "a"*f, y2 ~ f), 'stays fixed at 1')
+  for (m in list(m1, m2, m3)) {
+    expect_identical(cell(m, 'LAMBDA', 1, 1)$value, 1)
+    expect_identical(cell(m, 'LAMBDA', 2, 1)$param, 'lambda_y2_f')
+  }
+  for (m in list(
+    ctModelLavaan('f =~ NA*y1 + a*y1 + y2\n f ~~ 1*f'),
+    ctModelMplus('f BY y1* (a)\n y2; f@1;'),
+    ctModelFormula(y1 ~ NA*f + "a"*f, y2 ~ f, diff_f ~ 1*1))) {
+    expect_identical(cell(m, 'LAMBDA', 1, 1)$param, 'a')
+    expect_identical(cell(m, 'DIFFUSION', 1, 1)$value, 1)
+    roundtrip(m)
+  }
+  # a label on any other loading labels it, free
+  expect_identical(cell(ctModelLavaan('f =~ y1 + a*y2'), 'LAMBDA', 2, 1)$param,
+    'a')
+})
+
+test_that('the writer carries the settings of a model, and says what it cannot', {
+  m <- ctModelLavaan('
+    eta1 =~ y1
+    eta2 =~ y2
+    eta2 ~ eta1 + eta2
+    drift_eta2 ~ age')
+  m$covmattransform <- 'cholesky'
+  m$tipredeffectscale <- 3
+  m$rawpopsdbase <- 'normal(0,0.5)'
+  m$RAWPOPVAR[2, 1] <- '0'
+  code <- ctModelSyntax(m, 'lavaan')
+  expect_match(code, 'model$covmattransform <- "cholesky"', fixed = TRUE)
+  expect_match(code, 'model$tipredeffectscale <- 3', fixed = TRUE)
+  roundtrip(m)
+  # a model at its defaults is still one call
+  plain <- ctModelLavaan('eta1 =~ y1')
+  expect_false(grepl('model', ctModelSyntax(plain, 'lavaan'), fixed = TRUE))
+  # the comparison behind the warning names the cell and the field
+  other <- plain
+  other$pars$transform[other$pars$matrix == 'DRIFT'] <- 'exp(param)'
+  other$tipredsimputedscale <- 2
+  expect_identical(.ctSynDifferences(plain, plain), character())
+  expect_identical(.ctSynDifferences(plain, other),
+    c('transform of DRIFT[1,1]', 'tipredsimputedscale'))
+})
+
+test_that('a mistyped parameter name is not read as a new variable', {
+  expect_error(ctModelFormula(y ~ f, drfit_f ~ age), 'close to the parameter name drift_f')
+  expect_error(ctModelLavaan('f =~ y\n drfit_f ~ age'), 'drift_f')
+  expect_error(ctModelMplus('f BY y; [T0M_f@0];'), 'T0m_f')
+  # a variable that is named so is declared
+  m <- ctModelFormula(y ~ f, drfit_f ~ f, manifestNames = c('y', 'drfit_f'))
+  expect_identical(m$manifestNames, c('y', 'drfit_f'))
 })
 
 test_that('a model with default predictor effects is written out', {
@@ -388,6 +519,11 @@ test_that('what the syntax cannot say is refused with a pointer', {
   expect_error(ctModelFormula(y1 ~ eta1, d(eta1) ~ eta1 + (1 | subject)),
     'not a level')
   expect_error(ctModelMplus('f BY y1; f XWITH f;'), 'XWITH')
+  # a factor model between subjects, and uncorrelated random effects
+  expect_error(ctModelLavaan('eta =~ y1 + y2\n level: 2\n fb =~ y1 + y2'),
+    'popblocks')
+  expect_error(ctModelMplus('eta BY y1 y2; %BETWEEN% fb BY y1 y2;'), 'popblocks')
+  expect_error(ctModelFormula(y1 ~ eta, d(eta) ~ eta + (1 || id)), 'popunique')
   expect_message(ctModelLavaan('eta1 =~ y1\n eta1 ~ start(-0.5)*eta1'),
     'inits')
   # a mistyped field name in a quoted cell is ctPar's error

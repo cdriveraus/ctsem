@@ -21,6 +21,12 @@
 #    random effect on any parameter, predictors of any parameter).
 #  * A modifier may be a number, a label, a quoted ctsem cell or a ctPar()
 #    call, so a cell can say anything a ctModel() cell can.
+#  * What a statement says in its own language has to hold in the model that
+#    is fitted, or it is refused: a covariance that is zero in the syntax
+#    where the cells cannot make it zero (`.ctSynLinkedZeros()`), a lag in
+#    continuous time, a factor model or independence for the random effects.
+#    The writer compares what its code builds with the model it was given
+#    (`.ctSynDifferences()`).
 
 #' Write a model in lavaan, Mplus or formula syntax
 #'
@@ -75,6 +81,17 @@
 #' }
 #' Fix or free any of these with the statements below.
 #'
+#' \strong{What the statements mean.} An effect between processes is an entry
+#' of the drift matrix. With \code{type = 'ct'} it is the effect of one process
+#' on the rate of change of another, and with \code{type = 'dt'} the effect on
+#' its value at the next occasion. A time dependent predictor acts as an
+#' impulse, shifting the process at each occasion by the effect times the
+#' value of the predictor. A covariance that is not written, or is fixed to
+#' zero, is zero in the fitted model. ctsem builds a covariance matrix from all
+#' of its cells together, so this is possible only between variables that no
+#' other covariances connect, and the functions stop where it is not. A quoted
+#' \code{"0"} sets the cell of the matrix itself, see \code{\link{ctCov}}.
+#'
 #' \strong{lavaan style.}
 #' \preformatted{
 #' eta1 =~ y1 + y2 + y3        # eta1 is measured by y1, y2, y3
@@ -89,7 +106,9 @@
 #' }
 #' A number before \code{*} fixes a parameter, a name labels it, and \code{NA}
 #' frees it. Two parameters with the same label are equal, as are labels
-#' joined by \code{==}. A variable on the right of \code{~} that is not a
+#' joined by \code{==}. A label on the first indicator of a process leaves its
+#' loading at 1, and \code{NA*y1 + a*y1} frees and labels it (\code{y1* (a)} in
+#' Mplus style). A variable on the right of \code{~} that is not a
 #' process is a time dependent predictor. \code{level: 2} or
 #' \code{level: between} starts a block in which an indicator's name stands
 #' for its intercept and a process's name for its intercept, so that
@@ -112,8 +131,10 @@
 #' y1@0;                       ! the intercept of y1 does not vary
 #' }
 #' \code{@} fixes a parameter, \code{*} frees it, and a name in parentheses
-#' labels the parameters before it on the same line. A lag written as
-#' \code{eta1&1} is read as \code{eta1}. If the text has sections, only
+#' labels the parameters before it on the same line. In a discrete time model
+#' an effect may be written with its lag, \code{eta1 ON eta1&1}. A continuous
+#' time model has no lag, and one is refused there, because the value of a
+#' lagged effect is on another scale. If the text has sections, only
 #' \code{MODEL:} is read. With nested ids use \code{\%BETWEEN school\%}.
 #'
 #' \strong{Formula style.}
@@ -148,7 +169,8 @@
 #' \code{drift_eta1;} makes an auto effect vary between subjects. A value
 #' given this way is on the scale ctsem stores, which for variances is a
 #' standard deviation. Values given with \code{~~}, \code{WITH} or a variance
-#' statement are variances.
+#' statement are variances. A name that is close to a parameter name and
+#' matches none is taken as a misspelling and refused.
 #'
 #' \strong{Other ctsem features.} Wherever a label can be written, a quoted
 #' ctsem cell or a \code{\link{ctPar}} call can be written instead, such as
@@ -162,14 +184,18 @@
 #' as \code{inits}, and priors with \code{priors = TRUE}. A stationary initial
 #' state is \code{stationary = TRUE} in \code{\link{ctFit}}. Groups are
 #' compared with a time independent predictor. Random effects are
-#' correlated with each other, and \code{poprank} and \code{popblocks} in
-#' \code{\link{ctFit}} give their covariance a factor structure. Higher order
-#' lags are added with \code{\link{ctModelHigherOrder}}.
+#' correlated with each other. \code{poprank} and \code{popblocks} in
+#' \code{\link{ctFit}} give their covariance a factor structure, and
+#' \code{poprank = 0} with \code{popunique = TRUE} makes them independent.
+#' Higher order lags are added with \code{\link{ctModelHigherOrder}}.
 #'
 #' @return \code{ctModelLavaan}, \code{ctModelMplus} and \code{ctModelFormula}
 #'   return a model of class \code{ctStanModel}, as \code{\link{ctModel}} does.
 #'   \code{ctModelSyntax} returns the code that creates the model, as a
-#'   character string that prints as code.
+#'   character string that prints as code. Settings that a model holds beside
+#'   its matrices, such as \code{covmattransform}, are written as assignments
+#'   after the model is created. A warning says so if the code does not create
+#'   the same model.
 #'
 #' @examples
 #' # The same model four ways
@@ -217,12 +243,14 @@ ctModelSyntax <- function(model, style = c('lavaan', 'mplus', 'formula')) {
   }
   w <- .ctSynDescribe(model)
   code <- .ctSynWrite(w, style)
+  build <- function(code) tryCatch(suppressMessages(eval(parse(text = code),
+    envir = new.env(parent = environment(ctModelSyntax)))),
+    error = function(e) e)
   # A transform is written only where it is not the cell's default, and the
   # defaults are whatever the model built from the code has.
-  built <- tryCatch(suppressMessages(eval(parse(text = code),
-    envir = environment(ctModelSyntax))), error = function(e) NULL)
+  built <- build(code)
   differs <- w$cells$kind %in% 'free'
-  if (!is.null(built)) {
+  if (inherits(built, 'ctStanModel')) {
     at <- match(paste(w$cells$matrix, w$cells$row, w$cells$col),
       paste(built$pars$matrix, built$pars$row, built$pars$col))
     differs <- differs & !(as.character(w$cells$transform) ==
@@ -231,8 +259,77 @@ ctModelSyntax <- function(model, style = c('lavaan', 'mplus', 'formula')) {
   if (any(differs)) {
     w$cells$tfexplicit <- differs
     code <- .ctSynWrite(w, style)
+    built <- build(code)
   }
+  # What a model holds beside its cells is assigned once it is built, as a
+  # user sets it.
+  if (inherits(built, 'ctStanModel')) {
+    set <- Filter(function(f) !identical(model[[f]], built[[f]]),
+      .ctSynSettings(model))
+    if (length(set)) {
+      code <- paste0('model <- ', code, '\n', paste0('model',
+        ifelse(make.names(set) == set, paste0('$', set),
+          paste0('[["', set, '"]]')), ' <- ',
+        vapply(set, function(f) .ctSynDeparse(model[[f]]), ''),
+        collapse = '\n'), '\nmodel')
+      built <- build(code)
+    }
+  }
+  # The code is compared with the model it was written from, so that anything
+  # it does not carry is said.
+  differs <- if (inherits(built, 'ctStanModel')) .ctSynDifferences(model, built) else
+    paste('it stops with:', conditionMessage(built))
+  if (length(differs)) warning('This code does not rebuild the model exactly. ',
+    'It differs in: ', paste(differs, collapse = '; '), '.', call. = FALSE)
   structure(code, class = 'ctModelSyntax')
+}
+
+# What a model holds beside its cells and variables, set by assignment.
+.ctSynSettings <- function(model) {
+  intersect(c('covmattransform', 'tipredeffectscale', 'tipredsimputedscale',
+    'rawpopsdbase', 'rawpopsdbaselowerbound', 'rawpopsdtransform',
+    grep('^RAWPOPVAR', names(model), value = TRUE), 'covinput'), names(model))
+}
+
+# R code for a value, with as many digits as it takes to give it back.
+.ctSynDeparse <- function(x) {
+  text <- paste(deparse(x, width.cutoff = 500L), collapse = '\n')
+  if (!identical(tryCatch(eval(parse(text = text), baseenv()),
+    error = function(e) NULL), x)) {
+    text <- paste(deparse(x, width.cutoff = 500L, control = c('keepNA',
+      'keepInteger', 'niceNames', 'showAttributes', 'digits17')), collapse = '\n')
+  }
+  text
+}
+
+# Where model `b` is not model `a`: the fields of the cells, the variables
+# and the settings. A transform, random effect or predictor effect is read
+# only where a cell holds a parameter.
+.ctSynDifferences <- function(a, b) {
+  key <- function(p) paste0(p$matrix, '[', p$row, ',', p$col, ']')
+  pa <- a$pars
+  pb <- b$pars
+  if (!setequal(key(pa), key(pb))) return('its matrices')
+  pb <- pb[match(key(pa), key(pb)), , drop = FALSE]
+  holds <- .ctSpecHoldsParameter(pa, a$latentNames, a$TDpredNames)
+  out <- character()
+  for (cl in setdiff(union(names(pa), names(pb)), c('matrix', 'row', 'col'))) {
+    x <- pa[[cl]]
+    y <- pb[[cl]]
+    if (is.null(x) || is.null(y)) {
+      out <- c(out, cl)
+      next
+    }
+    same <- (is.na(x) & is.na(y)) | (!is.na(x) & !is.na(y) & (
+      if (is.numeric(x) && is.numeric(y)) abs(x - y) <= 1e-12 * pmax(1, abs(x)) else
+        as.character(x) == as.character(y)))
+    if (!cl %in% c('param', 'value')) same <- same | !holds
+    if (any(!same)) out <- c(out, paste0(cl, ' of ', paste(utils::head(
+      key(pa)[!same], 3L), collapse = ', '), if (sum(!same) > 3L) ' and others'))
+  }
+  fields <- c('latentNames', 'manifestNames', 'TDpredNames', 'TIpredNames',
+    'manifesttype', 'fixedpopmeans', .ctSynSettings(a))
+  c(out, fields[!vapply(fields, function(f) identical(a[[f]], b[[f]]), NA)])
 }
 
 #' @export
@@ -482,7 +579,7 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
       }
       switch(op$op,
         '=~' = add(kind = 'load', latent = l, manifest = t$var, mod = t$mod,
-          src = s),
+          level = level, src = s),
         '~' = if (t$var == '1') {
           add(kind = 'int', lhs = l, mod = t$mod, level = level, src = s)
         } else {
@@ -545,6 +642,8 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
         if (!length(pending)) stop("In '", src, "' the label (", tok$label,
           ') follows no parameter on its line.', call. = FALSE)
         lab <- tok$label
+        # (&1) after the indicators of a process only says its lag is used
+        if (grepl('^&[0-9]+([[:space:]]+&[0-9]+)*$', lab)) next
         raw <- grepl('^["\']', lab) || grepl('[|=,]', lab)
         if (raw) {
           mod <- .ctSynModCell(gsub('^["\']|["\']$', '', lab))
@@ -557,7 +656,9 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
             'labels (', lab, ') do not match the ', length(pending),
             ' parameters before them.', call. = FALSE)
           for (k in seq_along(pending)) {
-            items[[pending[k]]]$mod <- list(type = 'label', value = labs[k])
+            # y1* (a) frees and labels, which matters for a first loading
+            items[[pending[k]]]$mod <- list(type = 'label', value = labs[k],
+              freed = isTRUE(items[[pending[k]]]$mod$type %in% c('free', 'start')))
           }
         }
         pending <- integer()
@@ -602,7 +703,8 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
     thresh <- suppressWarnings(as.integer(sub('^.*\\$', '', name)))
     name <- sub('\\$.*$', '', name)
   }
-  if (grepl('&', name, fixed = TRUE)) {
+  lagged <- grepl('&', name, fixed = TRUE)
+  if (lagged) {
     lag <- sub('^.*&', '', name)
     if (!identical(lag, '1')) stop("In '", src, "', ", tok, ': only a lag of ',
       '1 is part of the model syntax. Add higher order dynamics with ',
@@ -611,7 +713,7 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
   }
   if (!.ctSynIsName(name)) stop("In '", src, "', ", tok,
     ' is not a variable name.', call. = FALSE)
-  list(name = name, mod = mod, thresh = thresh)
+  list(name = name, mod = mod, thresh = thresh, lag = lagged)
 }
 
 .ctSynMplus <- function(x) {
@@ -644,12 +746,18 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
   st <- list()
   add <- function(...) st[[length(st) + 1L]] <<- list(...)
   level <- NULL
+  # A lag stands after ON, where it says which effect is meant.
+  unlagged <- function(items, s) {
+    if (any(vapply(items, function(i) isTRUE(i$lag), NA))) stop("'", s,
+      "': a lag (&1) is written after ON, as in  f ON f&1;", call. = FALSE)
+    items
+  }
   names_of <- function(items, s) {
     if (any(vapply(items, function(i) !is.null(i$mod) || is.na(i$name), NA))) {
       stop("'", s, "': the variables before the keyword take no modifiers.",
         call. = FALSE)
     }
-    vapply(items, `[[`, '', 'name')
+    vapply(unlagged(items, s), `[[`, '', 'name')
   }
   for (s in stmts) {
     flat <- gsub('[[:space:]]+', ' ', s)
@@ -672,7 +780,7 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
     } else s2 <- s
     if (grepl('^\\[', s2)) {
       inner <- sub('\\]', ' ', sub('^\\[', ' ', s2))
-      items <- .ctSynMplusItems(inner, src = flat)
+      items <- unlagged(.ctSynMplusItems(inner, src = flat), flat)
       steps <- list()
       for (it in items) {
         if (!is.na(it$thresh)) {
@@ -689,8 +797,9 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
       perl = TRUE))[[1L]]
     if (!length(key)) {
       if (!is.null(slope)) stop("Could not read '", flat, "'.", call. = FALSE)
-      for (it in .ctSynMplusItems(s2, src = flat)) add(kind = 'cov',
-        lhs = it$name, rhs = it$name, mod = it$mod, level = level, src = flat)
+      for (it in unlagged(.ctSynMplusItems(s2, src = flat), flat)) add(
+        kind = 'cov', lhs = it$name, rhs = it$name, mod = it$mod, level = level,
+        src = flat)
       next
     }
     word <- toupper(key[3L])
@@ -700,11 +809,13 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
         'Write the effects one by one with ON or WITH.', call. = FALSE)
     left <- names_of(.ctSynMplusItems(key[2L], src = flat), flat)
     right <- .ctSynMplusItems(key[4L], smooth = word == 'ON', src = flat)
+    if (word != 'ON') unlagged(right, flat)
     if (!is.null(slope)) {
       if (word != 'ON' || length(left) != 1L || length(right) != 1L) stop("'",
         flat, "': a random slope is written as  s | y ON x;", call. = FALSE)
       add(kind = 'reg', lhs = left, rhs = right[[1L]]$name,
-        mod = list(type = 'label', value = slope), level = level, src = flat)
+        mod = list(type = 'label', value = slope), level = level,
+        lag = isTRUE(right[[1L]]$lag), src = flat)
       add(kind = 'vary', target = slope, level = NULL, on = TRUE, src = flat)
       next
     }
@@ -712,10 +823,11 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
       if (length(left) != 1L) stop("'", flat, "': one process before BY.",
         call. = FALSE)
       for (it in right) add(kind = 'load', latent = left, manifest = it$name,
-        mod = it$mod, src = flat)
+        mod = it$mod, level = level, src = flat)
     } else for (l in left) for (it in right) {
       if (word == 'ON') add(kind = 'reg', lhs = l, rhs = it$name,
-        smooth = it$smooth, mod = it$mod, level = level, src = flat)
+        smooth = it$smooth, mod = it$mod, level = level, lag = isTRUE(it$lag),
+        src = flat)
       else add(kind = 'cov', lhs = l, rhs = it$name, mod = it$mod,
         level = level, src = flat)
     }
@@ -734,8 +846,10 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
   bar <- function(e) {
     inside <- e[[2L]]
     if (fn(inside) %in% c('|', '||')) inside <- inside[[2L]]
-    if (fn(e) == '||') message('In ', src, ' random effects are read as ',
-      'correlated, as all random effects in ctsem are.')
+    if (fn(e) == '||') stop('In ', src, ', || asks for random effects that ',
+      'are not correlated, and those of a ctsem model are. Write | here, and ',
+      'fit with ctFit(poprank = 0, popunique = TRUE) for independent random ',
+      'effects.', call. = FALSE)
     vars <- character()
     int <- NA
     walk <- function(a, neg = FALSE) {
@@ -898,6 +1012,7 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
   cells$expr <- FALSE
   cells$raw <- NA_character_
   cells$tipset <- FALSE
+  cells$rawcell <- FALSE
   out <- as.list(cells)
   out$vary <- vector('list', n)
   out$tip <- vector('list', n)
@@ -969,7 +1084,27 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
     'variable. Use another label.', call. = FALSE)
   if (!length(latents)) stop('The model has no process. Define one with a ',
     'measurement statement.', call. = FALSE)
+  # A mistyped parameter name is read as a new variable, and nothing else
+  # would say so before the data are missing a column.
+  for (v in setdiff(c(latents, manifests, tds), unlist(order))) {
+    near <- autos[utils::adist(v, autos, ignore.case = TRUE)[1L, ] <=
+        if (nchar(v) >= 6L) 2L else 1L]
+    if (length(near)) stop(v, ' is read as a variable, but it is close to the ',
+      'parameter name ', near[1L], '. If it is a variable, list it in ',
+      'manifestNames, latentNames or TDpredNames.', call. = FALSE)
+  }
   list(latents = latents, manifests = manifests, tds = tds, labels = labels)
+}
+
+# Covariance cells that are zero although other covariances connect their two
+# variables. The cells of a covariance matrix are coordinates of the whole
+# matrix (ctCov.R): variables in separate blocks have zero covariance under
+# every construction, and within a block a zero cell is not a zero covariance.
+.ctSynLinkedZeros <- function(row, col, open, n) {
+  reach <- diag(n) > 0
+  reach[cbind(c(row[open], col[open]), c(col[open], row[open]))] <- TRUE
+  for (step in seq_len(n)) reach <- reach | (reach %*% reach > 0)
+  !open & reach[cbind(row, col)]
 }
 
 .ctSynLevel <- function(token, ids) {
@@ -1024,8 +1159,11 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
       p <- f$param
       if (is.na(p) || !nzchar(p)) stop("'", src, "': the cell has no name.",
         call. = FALSE)
-      if (!is.na(suppressWarnings(as.numeric(p)))) fix(as.numeric(p))
-      else if (.ctSynIsName(p) && !p %in% cells$vars) free(p)
+      if (!is.na(suppressWarnings(as.numeric(p)))) {
+        # a quoted number is the cell's own value, as ctModel() reads it
+        fix(as.numeric(p))
+        cells$rawcell[k] <- TRUE
+      } else if (.ctSynIsName(p) && !p %in% cells$vars) free(p)
       else {
         free(cells$auto[k])
         cells$expr[k] <- TRUE
@@ -1157,6 +1295,20 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
   if (any(vapply(st, function(s) identical(s$mod$type, 'start'), NA))) message(
     'Start values in the syntax are not used. Give starting values to ',
     'ctFit(inits = ).')
+  lagged <- Filter(function(s) isTRUE(s$lag), st)
+  if (type == 'ct' && length(lagged)) stop("'", lagged[[1L]]$src, "': ",
+    lagged[[1L]]$rhs, '&1 is a lag of one occasion, which a discrete time ',
+    "model has. Use type = 'dt' for that model. In a continuous time model ",
+    'write ', lagged[[1L]]$lhs, ' ON ', lagged[[1L]]$rhs, ' for the effect ',
+    'on the rate of change, whose value is on another scale: an ',
+    'autoregression of 0.8 over one unit of time is an auto effect of ',
+    'log(0.8) = -0.22.', call. = FALSE)
+  for (s in st) if (identical(s$kind, 'load') &&
+      !is.null(.ctSynLevel(s$level, as.character(id)))) stop("'", s$src,
+    "': a factor model for the differences between subjects is not written ",
+    'in the syntax. Random effects are correlated with each other, and ',
+    'poprank and popblocks in ctFit() give their covariance a factor ',
+    'structure.', call. = FALSE)
   nm <- .ctSynClassify(st, args[c('latentNames', 'manifestNames', 'TDpredNames')])
   args[c('latentNames', 'manifestNames', 'TDpredNames')] <- NULL
   latents <- nm$latents
@@ -1191,10 +1343,13 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
       if (x %in% manifests) rows <- idx('MANIFESTMEANS', match(x, manifests), 1L)
       else if (x %in% latents) rows <- idx('CINT', match(x, latents), 1L)
     }
-    if (!length(rows)) stop("In '", src, "', ", x, ' is not a parameter of ',
-      'this model. Parameters are named by their label or their default ',
-      'name, such as ', paste(utils::head(cells$auto[cells$free], 3L),
-        collapse = ', '), '.', call. = FALSE)
+    if (!length(rows)) {
+      known <- unique(c(nm$labels, cells$auto[!is.na(cells$auto)]))
+      stop("In '", src, "', ", x, ' is not a parameter of this model. The ',
+        'closest name is ', known[which.min(utils::adist(x, known,
+          ignore.case = TRUE))], '. Parameters are named by their label or ',
+        'their default name, as print(model) shows them.', call. = FALSE)
+    }
     rows
   }
   role <- function(x) if (x %in% manifests) 'manifest' else if (x %in% latents)
@@ -1254,14 +1409,32 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
   later <- list()
   measured <- character()
   steps <- list()
+  # A label names a first loading and leaves it at 1, as in lavaan and Mplus.
+  # NA (or * in Mplus style) frees it, in the same term or another.
+  named <- function(mod) identical(mod$type, 'label') ||
+    (identical(mod$type, 'cell') && .ctSynIsName(mod$fields$param) &&
+        identical(mod$fields[c('transform', 'indvarying', 'sdscale', 'tipreds',
+          'mean')], .ctCellSpecFields('a')[c('transform', 'indvarying',
+            'sdscale', 'tipreds', 'mean')]))
+  freed <- unlist(lapply(expanded, function(s) if (s$kind == 'load' &&
+      (identical(s$mod$type, 'free') || isTRUE(s$mod$freed)))
+    paste(s$latent, s$manifest)))
   for (s in expanded) {
     lev <- if (s$kind %in% c('reg', 'int', 'cov', 'vary')) .ctSynLevel(s$level, ids)
     between <- !is.null(lev)
     if (s$kind == 'load') {
       first <- !s$latent %in% measured
       measured <- c(measured, s$latent)
-      cells <- .ctSynApply(cells, idx('LAMBDA', match(s$manifest, manifests),
-        match(s$latent, latents)), s$mod, if (first) 'one' else 'free',
+      k <- idx('LAMBDA', match(s$manifest, manifests), match(s$latent, latents))
+      if (first && named(s$mod) && !paste(s$latent, s$manifest) %in% freed) {
+        label <- if (s$mod$type == 'label') s$mod$value else s$mod$fields$param
+        if (!isTRUE(args$silent)) message("'", s$src, "': the loading of ",
+          s$manifest, ' on ', s$latent, ' stays fixed at 1. The label ', label,
+          ' names it without freeing it. To free and label it, free it in a ',
+          'term of its own (NA*) or with * in Mplus style.')
+        cells$name[k] <- label
+        cells <- .ctSynApply(cells, k, NULL, 'one', src = s$src)
+      } else cells <- .ctSynApply(cells, k, s$mod, if (first) 'one' else 'free',
         src = s$src)
     } else if (s$kind == 'thresh') {
       if (!s$manifest %in% manifests) stop("'", s$src, "': ", s$manifest,
@@ -1352,6 +1525,33 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
         'must be free.', call. = FALSE)
       cells$name[b] <- cells$name[a[1L]]
     }
+  }
+
+  # A covariance that is left out, or fixed to zero, has to be zero in the
+  # model that is fitted.
+  for (m in c('DIFFUSION', 'MANIFESTVAR', 'T0VAR')) {
+    rows <- which(cells$matrix == m & cells$row > cells$col)
+    if (!length(rows)) next
+    vars <- if (m == 'MANIFESTVAR') manifests else latents
+    open <- cells$free[rows] | cells$expr[rows] | !cells$value[rows] %in% 0
+    linked <- .ctSynLinkedZeros(cells$row[rows], cells$col[rows], open,
+      length(vars))
+    bad <- rows[linked & !cells$rawcell[rows]]
+    if (!length(bad)) next
+    a <- cells$col[bad[1L]]
+    b <- cells$row[bad[1L]]
+    # a variable that covaries with one of the two, in their block
+    partner <- unique(c(cells$row[rows][open & cells$col[rows] %in% c(a, b)],
+      cells$col[rows][open & cells$row[rows] %in% c(a, b)]))
+    stop('The ', c(DIFFUSION = 'noise', MANIFESTVAR = 'residual',
+      T0VAR = 'initial')[[m]], ' covariance of ', vars[a], ' and ', vars[b],
+      ' is zero in the syntax, but other covariances connect the two, through ',
+      paste(vars[setdiff(partner, c(a, b))], collapse = ', '), '. ctsem ',
+      'builds a covariance matrix from all of its cells together, and a ',
+      'covariance stays at zero only between variables that no covariances ',
+      'connect. Free this covariance as well, or remove those that connect ',
+      'the two. A quoted "0" sets the cell of the matrix itself, see ?ctCov.',
+      call. = FALSE)
   }
 
   mats <- list()
@@ -1533,9 +1733,19 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
 .ctSynTerm <- function(style, var, mod, default = 'auto', variance = FALSE) {
   bare <- (mod$type == 'auto' && default == 'auto') ||
     (mod$type == 'fixed' && default == 'one' && mod$value == 1)
+  # A covariance statement takes a covariance. A cell that is not one, a
+  # nonzero value or a zero beside covariances that connect its variables, is
+  # written as the cell itself, in quotes.
   value <- if (mod$type == 'fixed') {
-    if (variance && mod$value != 0 && !is.na(var[2L])) NA else
+    if (isTRUE(mod$raw) || (variance && mod$value != 0 && !is.na(var[2L]))) NA else
       .ctSynNumber(if (variance) mod$value^2 else mod$value)
+  }
+  # A label alone leaves a first loading at 1, so a free one is freed too.
+  if (default == 'one' && mod$type == 'label') {
+    if (style == 'mplus') return(list(item = paste0(var[1L], '*'),
+      label = paste0('(', mod$value, ')')))
+    quote <- if (style == 'formula') '"' else ''
+    return(paste0('NA*', var[1L], ' + ', quote, mod$value, quote, '*', var[1L]))
   }
   if (style == 'mplus') {
     if (bare) return(list(item = var[1L], label = ''))
@@ -1654,13 +1864,14 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
     else mplus(paste0(w$latents[j], ' BY '), terms)
   }
 
-  # dynamics
+  # dynamics. In a discrete time model Mplus writes the lag.
+  lag <- if (style == 'mplus' && !isTRUE(w$model$continuoustime)) '&1' else ''
   for (i in seq_len(nl)) {
     terms <- list()
     for (j in seq_len(nl)) {
       k <- idx('DRIFT', i, j)
       if (i == j || !zero(k)) terms[[length(terms) + 1L]] <-
-        term(w$latents[j], mod(k))
+        term(paste0(w$latents[j], lag), mod(k))
     }
     for (j in seq_along(w$tds)) {
       k <- idx('TDPREDEFFECT', i, j)
@@ -1684,16 +1895,24 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
   # statements about a parameter by its name
   parline <- function(k, m = mod(k)) {
     h <- cells$auto[k]
-    if (style == 'formula') out(h, ' ~ ', if (m$type == 'fixed')
-      fnum(m$value) else term('1', m))
+    if (style == 'formula') out(h, ' ~ ', if (m$type == 'fixed' &&
+        !isTRUE(m$raw)) fnum(m$value) else term('1', m))
     else if (style == 'lavaan') out(h, ' ~ ', term('1', m))
     else mplus('', list(term(h, m)), '[', ']')
+  }
+  # zero cells that are not zero covariances, which the reader would refuse
+  rawzero <- rep(FALSE, nrow(cells))
+  for (mat in c('DIFFUSION', 'MANIFESTVAR', 'T0VAR')) {
+    rows <- which(cells$matrix == mat & cells$row > cells$col)
+    if (length(rows)) rawzero[rows] <- .ctSynLinkedZeros(cells$row[rows],
+      cells$col[rows], !vapply(rows, zero, NA), if (mat == 'MANIFESTVAR') nm else nl)
   }
   # (co)variances and intercepts that differ from the default
   for (k in which(cells$matrix %in% c('DIFFUSION', 'MANIFESTVAR', 'T0VAR',
     'MANIFESTMEANS', 'T0MEANS') & !is.na(cells$auto))) {
     m <- mod(k)
-    default <- if (cells$deffree[k]) m$type == 'auto' else zero(k)
+    if (rawzero[k]) m$raw <- TRUE
+    default <- if (cells$deffree[k]) m$type == 'auto' else zero(k) && !rawzero[k]
     if (default) next
     mat <- cells$matrix[k]
     if (mat == 'MANIFESTMEANS' && style == 'formula') next
