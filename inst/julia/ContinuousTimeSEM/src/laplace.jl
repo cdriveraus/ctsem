@@ -4324,6 +4324,7 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         # an untyped `M` made the factorization below a dynamic call that boxed
         # its result, every Newton step.
         M = if exact
+            _CTSEM_OPCOUNT.inner_curvatures[] += 1
             Mx = _laplace_unit_curvature(laplace, U, values, Ls, u;
                 into=Mwork)::CTSEMBlockMatrix{Float64}
             sr1 && copyto!(B, Mx.diag[1])
@@ -4501,6 +4502,8 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     # that did not converge, then never ran, and its columns differed from the
     # full budget's by 3e-8 relative (test-julia-laplace.R, 2026-10-18).
     d == 0 && (converged = true)
+    _CTSEM_OPCOUNT.inner_solves[] += 1
+    _CTSEM_OPCOUNT.inner_iterations[] += iterations
     # The gradient's largest entry, the one thing its readers ask of it: the
     # vector is the slot's, and the next solve on this slot overwrites it.
     return (u=copy(u), value=current.value,
@@ -5492,6 +5495,31 @@ function _ctsem_anchor_here!(laplace::CTSEMLaplaceObjective)
     laplace.anchors = [copy(m) for m in laplace.modes]
     laplace.alt_anchors = [Vector{Float64}[copy(m) for m in a] for a in laplace.alt_modes]
     laplace.anchor_values = _laplace_values_copy(laplace.mode_values)
+    _laplace_anchor_curvatures!(laplace)
+    return nothing
+end
+
+"""
+    _ctsem_anchor_take!(objective, subset, units)
+
+The anchors of `subset`, an objective over `objective`'s units `units`
+(`_ctsem_subset_objective`), taken into `objective`'s for those units, each
+with the parameters it was found at: a batch stage's after each accepted step
+(`_ctsem_batch_anchor_here!`), which the full objective, not evaluated while
+the batch is smaller than the data, hands on to a grown batch and takes itself
+once the batch is the data. A unit's curvature at its old anchor no longer
+describes it and is dropped (`_laplace_anchor_curvatures!`).
+"""
+_ctsem_anchor_take!(::Any, ::Any, units) = nothing
+function _ctsem_anchor_take!(laplace::CTSEMLaplaceObjective,
+    subset::CTSEMLaplaceObjective, units::AbstractVector{<:Integer})
+    (isempty(laplace.anchors) || isempty(laplace.alt_anchors) ||
+        isempty(laplace.anchor_values) || isempty(subset.anchors)) && return nothing
+    for (j, U) in enumerate(units)
+        laplace.anchors[U] = subset.anchors[j]
+        laplace.alt_anchors[U] = subset.alt_anchors[j]
+        laplace.anchor_values[U] = subset.anchor_values[j]
+    end
     _laplace_anchor_curvatures!(laplace)
     return nothing
 end

@@ -3384,6 +3384,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     precondition=nothing, lbfgs_inverse=nothing, lbfgs_scores::Bool=false,
     lbfgs_local::Bool=false,
     lbfgs_pairs=nothing, initial_alpha::Real=0.1,
+    lbfgs_growth::Real=_CTSEM_LBFGS_GROWTH,
     overshoot_probe=_CTSEM_OVERSHOOT_PROBE[],
     stall_window::Integer=80, stall_cooldown::Integer=30,
     stall_ratio::Real=1e-3, stall_alone::Bool=false,
@@ -3742,8 +3743,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     watch = function (state)
         latest = state isa AbstractVector ? last(state) : state
         copyto!(current_x, latest.x)
-        # After an accepted step, whose point the last evaluation was.
-        _ctsem_anchor_here!(objective)
+        # After an accepted step, whose point the last evaluation was: the
+        # batch's while one smaller than the data takes the steps, but not the
+        # sgd phase's, which steps on the whole objective.
+        (batching() && !in_sgd[]) ? _ctsem_batch_anchor_here!(batcher) :
+            _ctsem_anchor_here!(objective)
         _record!(trace, latest.iteration, -latest.value, latest.g_norm,
             _ctsem_predicted_gain(directional), directional.discrepancy,
             _ctsem_optimise_trace_values(objective)...)
@@ -3921,6 +3925,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             callback=watch)
         in_sgd[] = false
         lbfgs_start = sgd_result.minimizer
+        # The batch took the full objective's anchors where it was planned,
+        # at the start, and the sgd phase has moved them since.
+        batcher === nothing || (batcher.stage =
+            _ctsem_subset_objective(objective, sort(batcher.perm[1:batcher.m])))
     end
     sgd_iterations = sgd_result === nothing ? 0 : sgd_result.iterations
     # See optimiser.jl for why this is not Optim any more.
@@ -3954,7 +3962,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
         directional=directional, batch=batcher, iteration0=sgd_iterations,
         coreset=coreseter, jump=watch_jump ? jump : nothing,
-        local_curvature=local_curvature, at_start=at_start)
+        local_curvature=local_curvature, at_start=at_start,
+        growth=Float64(lbfgs_growth))
     # As a stage L-BFGS stopped by its gap rule, which is what it is: nothing
     # left for L-BFGS that the finish's step on the held Hessian does not take.
     first_finish[] && (stopped_by_gap[] = true)

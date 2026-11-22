@@ -6233,6 +6233,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (!is.null(optimcontrol$lbfgs_gll)) {
     common$lbfgs_gll <- as.integer(optimcontrol$lbfgs_gll)[1L]
   }
+  # How far each coordinate's move may grow per step on a run that starts with
+  # no curvature (`_ctsem_lbfgs`'s `growth`; the engine's default, 2, when
+  # unset, so that a default call keeps the shape the package image
+  # recorded). 0 removes the limit.
+  if (!is.null(optimcontrol$lbfgs_growth)) {
+    growth <- as.numeric(optimcontrol$lbfgs_growth)[1L]
+    if (!is.finite(growth) || growth < 0)
+      stop("optimcontrol$lbfgs_growth must be 0 or a positive number.", call. = FALSE)
+    common$lbfgs_growth <- growth
+  }
   # `coreset`: stretches of the L-BFGS stage on a weighted few of the units,
   # each checked by a full gradient (`_ctsem_coreset_plan` in the engine),
   # where `.ctJuliaCoresetOn()` says. Sent only when on, so

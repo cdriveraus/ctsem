@@ -348,6 +348,11 @@ function _ctsem_lbfgs_diagonal!(B0, s::Vector{Float64}, y::Vector{Float64},
     B
 end
 
+# How far a coordinate's move may grow per step on an L-BFGS run that starts
+# with no curvature (`_ctsem_lbfgs`'s `growth`), the default `ctsem_optimize`
+# passes; R's `optimcontrol$lbfgs_growth`, where 0 removes the limit.
+const _CTSEM_LBFGS_GROWTH = 2.0
+
 """Whether a value and gradient the objective returned are a usable point:
 not the refused sentinel, and finite."""
 _ctsem_lbfgs_usable(f, G) = isfinite(f) && f < _CTSEM_REFUSED && all(isfinite, G)
@@ -409,6 +414,21 @@ run on the same coordinates ended with (`CTSEMLBFGSResult`'s `memory`), as a
 rescued fit's stages hand on across a placement of the draws. It is copied,
 its newest `memory` pairs kept; one for another number of parameters is
 refused. The result's `memory` is what this run ended with.
+
+`growth` (> 0; `ctsem_optimize` passes `_CTSEM_LBFGS_GROWTH`): on a run that
+starts with no curvature -- no `pairs`, no `inverse` -- no step moves a
+coordinate more than `growth` times the longest move that coordinate has made
+in the run, floored at a tenth of the longest move any coordinate has made.
+Each coordinate's moves then grow at most geometrically from its own first,
+as a per-coordinate trust radius would, while the pairs learn the curvature.
+The hc-wellbeing reanalysis's factor model (two ordinal factors, each
+anchored by its weaker item) took every free loading past zero on its second
+step, 0.6 long after a first of 0.1, and ended in the mirror basin 980 nats
+down; at 2 its loadings crossed zero briefly and came back, as the rest of the
+model settled, and the fit reached the maximum. Over the whole step instead
+of per coordinate it lost AnomAuth S1's spurious start by 8.2 nats; Stan's
+gain-based first trial flipped the reanalysis like the plain run
+(CT-SEM/review/bench/2026-11-22-earlysteps.md).
 """
 function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         pairs::Union{Nothing,CTSEMLBFGSMemory}=nothing,
@@ -420,7 +440,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         inverse::Union{Nothing,Matrix{Float64}}=nothing,
         structured=nothing, coreset=nothing,
         jump::Union{Nothing,CTSEMJump}=nothing, local_curvature=nothing,
-        at_start::CTSEMHeldStart=CTSEMHeldStart())
+        at_start::CTSEMHeldStart=CTSEMHeldStart(), growth::Real=0.0)
     n = length(x0)
     x = collect(Float64, x0)
     dinv = metric === nothing ? ones(n) : begin
@@ -495,6 +515,12 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     whole = 0b111
     # Gradients the local curvature has been told of.
     gseen = 0
+    # `growth`: on a run that starts with no curvature, each coordinate's move
+    # is held to `growth` times its longest so far (`reachv`), floored at a
+    # tenth of the longest move of any coordinate (`reach`); see the docstring.
+    capped = growth > 0 && isempty(M.S) && inverse === nothing
+    reach = 0.0
+    reachv = zeros(capped ? n : 0)
     while !stopped && !gconv && iteration < maxiter
         # The local curvature (`CTSEMLocalCurvature`), once the run has spent
         # what it costs: from then on the initial inverse Hessian, in place of
@@ -506,6 +532,9 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
                 Pinv = _ctsem_local_build!(local_curvature, x)
                 if Pinv !== nothing
                     inverse = Pinv; Dinv = Pinv; learn = false; B = nothing
+                    # The run has a curvature now, as one handed `inverse`
+                    # does from its start: its steps are no longer held.
+                    capped = false
                 end
             end
         end
@@ -529,6 +558,17 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         if isempty(M.S) && !took_structured
             len = norm(s)
             len > 1 && (s .*= 1 / len)
+        end
+        # Each component keeps its sign, so a descent direction stays one unless
+        # the components cut were all that made it descend; the check below
+        # then restarts the memory, and a step without pairs is the gradient's,
+        # whose every component descends.
+        if capped && reach > 0
+            lo = 0.1 * reach
+            @inbounds for i in 1:n
+                lim = Float64(growth) * max(reachv[i], lo)
+                abs(s[i]) > lim && (s[i] = copysign(lim, s[i]))
+            end
         end
         dphi = dot(G, s)
         if (!(dphi < 0) || !isfinite(dphi)) && took_structured
@@ -691,6 +731,13 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         # sum would.
         stepgain = informed ? abs(alpha * dphi) / 2 : Inf
         step = xn .- x
+        if capped
+            @inbounds for i in 1:n
+                a = abs(step[i])
+                a > reachv[i] && (reachv[i] = a)
+                a > reach && (reach = a)
+            end
+        end
         # What the objective resolves along the step (`_ctsem_resolution`):
         # its value change against the trapezoid of its end gradients.
         directional === nothing || _ctsem_resolution_step!(directional,
@@ -1126,6 +1173,30 @@ function _ctsem_batch_plan(objective, fg!; theta::Real=0.25, n0::Integer=0,
 end
 
 _ctsem_batch_full(b::CTSEMBatch) = b.m >= b.nunits
+
+"""
+    _ctsem_batch_anchor_here!(batch)
+
+`_ctsem_anchor_here!` for a step the batch took: the batch's own objective's
+anchors moved to the modes its evaluation at the accepted point left, and the
+full objective's set to the same for the units the batch holds
+(`_ctsem_anchor_take!`). The full objective is not evaluated while the batch
+is smaller than the data, so moved from its own modes, as a run without a
+batch moves them, its anchors stayed at the run's start: each batch, which
+takes its anchors from the full objective (`_ctsem_subset_objective`), and the
+full objective once the batch was the data, started every unit's Newton at its
+mode there, and followed the unit's maxima from the start's parameters
+(`_laplace_follow_one`), at every evaluation of the batch stage. A unit a grown
+batch adds starts from the run's start still, the last point it was evaluated
+at.
+"""
+function _ctsem_batch_anchor_here!(b::CTSEMBatch)
+    _ctsem_batch_full(b) && return _ctsem_anchor_here!(b.full)
+    _ctsem_anchor_here!(b.stage)
+    _ctsem_anchor_take!(b.full, b.stage, sort(b.perm[1:b.m]))
+    return nothing
+end
+
 _ctsem_batch_scale(b::CTSEMBatch) = b.nsubjects / _ctsem_batch_nsubjects(b.stage)
 
 # The stage objective on the minimised scale, with its likelihood scaled to the

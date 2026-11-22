@@ -148,6 +148,63 @@
   lower.tri(cells) & !is.na(cells) & cells == 0
 }
 
+# The hollow symmetric A with cov2cor(exp(A)) = R, for a correlation matrix
+# R, which is what 'z' inverts to: A = log(D R D) for the one positive
+# diagonal D that makes it hollow. With D = exp(diag(s)),
+# psi(s) = ||log(D R D)||^2 / 2 has gradient 2 diag(log(D R D)) and Hessian
+# H_ij = 2 sum_ab V_ia V_ja K_ab V_ib V_jb, V the eigenvectors of D R D,
+# K_ab = u coth(u / 2) and u the difference of the log eigenvalues a and b.
+# K_ab >= 2, so v'Hv >= 4 ||V' diag(v) V||^2 = 4 |v|^2: psi is strictly
+# convex, its one stationary point is the D sought, and damped Newton on the
+# gradient finds it from s = 0. So 'z' reaches every correlation matrix, each
+# from one A, and since exp(A) = D R D is zero wherever R is, the open cells
+# with the zero cells solved reach every correlation matrix with those zeros,
+# each once. NULL where R is singular to machine precision.
+#' @keywords internal
+.ctCovHollowLog <- function(R) {
+  d <- nrow(R)
+  at_point <- function(s) {
+    e <- eigen(exp(s) * t(exp(s) * R), symmetric = TRUE)
+    if (!all(is.finite(e$values)) || any(e$values <= 0)) return(NULL)
+    L <- e$vectors %*% (log(e$values) * t(e$vectors))
+    L <- (L + t(L)) / 2
+    list(e = e, L = L, grad = 2 * diag(L))
+  }
+  s <- rep(0, d)
+  at <- at_point(s)
+  if (is.null(at)) return(NULL)
+  for (iteration in seq_len(100L)) {
+    merit <- sum(at$grad^2)
+    if (merit == 0) break
+    V <- at$e$vectors
+    u <- outer(log(at$e$values), log(at$e$values), "-")
+    K <- ifelse(abs(u) < 1e-4, 2 + u^2 / 6, u / tanh(u / 2))
+    H <- matrix(0, d, d)
+    for (i in seq_len(d)) {
+      Q <- V * rep(V[i, ], each = d)
+      H[i, ] <- 2 * rowSums((Q %*% K) * Q)
+    }
+    step <- -solve((H + t(H)) / 2, at$grad)
+    # The gradient's norm falls along a Newton step on a strictly convex
+    # function; psi's own value is no guide near a singular R, where its
+    # roundoff exceeds what a step gains. Once no step reduces the gradient
+    # it is at roundoff.
+    size <- 1
+    repeat {
+      new <- at_point(s + size * step)
+      if (!is.null(new) && sum(new$grad^2) <= (1 - 1e-4 * size) * merit) break
+      size <- size / 2
+      if (size < 1e-10) break
+    }
+    if (size < 1e-10) break
+    s <- s + size * step
+    at <- new
+  }
+  A <- at$L
+  diag(A) <- 0
+  A
+}
+
 # The cells that give `cov` under `covmattransform`, checked by putting them
 # back through the forward map.
 #
@@ -178,19 +235,22 @@
   open <- if (readzeros) lower.tri(cov) & !zero else lower.tri(cov)
   if (identical(tf, "cholesky")) {
     cells[] <- t(chol(cov))
-  } else {
-    if (identical(tf, "z")) {
-      diag(cells) <- sqrt(diag(cov))
-      start <- function(R) {
-        e <- eigen(R, symmetric = TRUE)
-        (e$vectors %*% diag(log(e$values), nrow = d) %*% t(e$vectors))[open]
-      }
-    } else {
-      # Each row of the square root has norm 1 + 1e-5 rather than 1, so the
-      # correlations the cells give are scaled by that, and the sds absorb it.
-      diag(cells) <- sqrt(diag(cov) / (1 + 1e-5))
-      start <- function(R) 2 * atanh(pmax(pmin(R[open], 0.99), -0.99))
+  } else if (identical(tf, "z")) {
+    diag(cells) <- sqrt(diag(cov))
+    A <- .ctCovHollowLog(stats::cov2cor(cov))
+    if (is.null(A)) {
+      stop(what, " is singular to machine precision.", call. = FALSE)
     }
+    x <- A[open]
+    # A cell of exactly 0 would be read as a zero covariance, which this one
+    # is not: the smallest number is the same coordinate to any reader.
+    if (readzeros) x[x == 0] <- .Machine$double.xmin
+    cells[open] <- x
+  } else {
+    # Each row of the square root has norm 1 + 1e-5 rather than 1, so the
+    # correlations the cells give are scaled by that, and the sds absorb it.
+    diag(cells) <- sqrt(diag(cov) / (1 + 1e-5))
+    start <- function(R) 2 * atanh(pmax(pmin(R[open], 0.99), -0.99))
     if (any(open)) {
       target <- cov[open]
       residual <- function(x) {
@@ -218,9 +278,6 @@
         }
         x <- x - size * step
       }
-      # A cell of exactly 0 would be read as a zero covariance, which this
-      # one is not: the smallest number is the same coordinate to any reader.
-      if (readzeros) x[x == 0] <- .Machine$double.xmin
       cells[open] <- x
     }
   }
