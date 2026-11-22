@@ -53,14 +53,28 @@ skip_on_32bit()
     test_isclose(diag(f$stanfit$transformedparsfull$rawpopcorr[1,,]),
       rep(1,nrow(f$stanfit$transformedparsfull$rawpopcorr[1,,])),tol=1e-3)
     
+    # The traits the data were generated with. 600 draws leave their own
+    # covariance up to about 0.8 from the target (a variance of 6.75 for 6 at
+    # this seed), which is not the fit's error, so the fit is compared with
+    # the traits' covariance and the traits with the target.
+    traits <- stats::cov(as.matrix(attr(d, 'subjectpars')[, c('mm1','mm2','mm3')]))
+    expect_lt(max(abs(traits - targetManifestCov)), 1)
+
     #cov check
-    test_isclose(f$stanfit$transformedparsfull$popcov[1,4:6,4:6],
-      targetManifestCov,tol=1)
-    
+    expect_lt(max(abs(f$stanfit$transformedparsfull$popcov[1,4:6,4:6] - traits)), 0.5)
+
     #cor check
-    test_isclose(f$stanfit$transformedparsfull$rawpopcorr[1,4:6,4:6],
-      cov2cor(targetManifestCov),tol=.1)
-    
+    expect_lt(max(abs(f$stanfit$transformedparsfull$rawpopcorr[1,4:6,4:6] -
+      cov2cor(traits))), 0.1)
+
+    # The initial correlations and the diffusion covariance the data were
+    # generated with. Until 2026-11-22 the generator read T0VAR's cells through
+    # another construction than the model's, and the initial correlations of
+    # -0.98, -0.91 and 0.86 were not the data's.
+    expect_lt(max(abs(cov2cor(p$T0cov) - cov2cor(tcrossprod(
+      matrix(c(5,-5,-5,0,1,-1,0,0,2),3,3))))), 0.05)
+    expect_lt(max(abs(diffcov - ediffcov)), 0.5)
+
     
   })
   

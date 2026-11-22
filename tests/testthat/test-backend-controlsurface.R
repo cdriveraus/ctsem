@@ -118,9 +118,13 @@ test_that("stallretries is the cap on the julia escape loop", {
   skip_without_julia()
   # An escape that always has somewhere to go -- back to where the stage
   # stopped, which a resumed stage cannot do worse than -- so the loop runs
-  # until the cap stops it, and the escapes offered are the cap it read.
+  # until the cap stops it, and the escapes offered are the cap it read. With
+  # the cap spent the loop asks only for a run-off escape (`runoffonly`), of
+  # which this stand-in has none.
   offered <- 0L
-  testthat::local_mocked_bindings(.ctBackendStallEscape = function(result, ...) {
+  testthat::local_mocked_bindings(.ctBackendStallEscape = function(result, ...,
+      runoffonly = FALSE) {
+    if (isTRUE(runoffonly)) return(NULL)
     offered <<- offered + 1L
     as.numeric(result$minimizer)
   }, .package = 'ctsem')

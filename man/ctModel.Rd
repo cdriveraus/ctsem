@@ -111,7 +111,10 @@ be strictly nested.}
 
 \item{silent}{Suppress all output to console.}
 
-\item{T0VAR}{lower triangular n.latent*n.latent cholesky matrix of latent process initial variance / covariance. 
+\item{T0VAR}{lower triangular n.latent*n.latent matrix of latent process initial variance / covariance,
+with standard deviations on the diagonal and covariance parameters below it (see \code{\link{ctCov}}).
+Under the default \code{covmattransform}, \code{'z'}, a cell below the diagonal fixed to 0
+gives a covariance of zero.
 "auto" freely estimates all parameters.}
 
 \item{T0MEANS}{n.latent*1 matrix of latent process means at first time point, T0. 
@@ -120,9 +123,12 @@ be strictly nested.}
 \item{MANIFESTMEANS}{n.manifest*1 matrix of manifest intercept parameters.
 "auto" frees all parameters.}
 
-\item{MANIFESTVAR}{lower triangular n.manifest*n.manifest cholesky matrix of variance / covariance 
-between manifests at each measurement occasion (i.e. measurement error / residual).  
-"auto" freely estimates variance parameters, 
+\item{MANIFESTVAR}{lower triangular n.manifest*n.manifest matrix of variance / covariance 
+between manifests at each measurement occasion (i.e. measurement error / residual),
+with standard deviations on the diagonal and covariance parameters below it (see \code{\link{ctCov}}).
+Under the default \code{covmattransform}, \code{'z'}, a cell below the diagonal fixed to 0
+gives a covariance of zero.
+"auto" freely estimates variance parameters,
 and fixes covariances between manifests to 0. "free" frees all values, including covariances.}
 
 \item{ASYMPTOTES}{Matrix with one row per binary indicator, in manifest
@@ -166,8 +172,11 @@ relating the processes over time.
 \item{CINT}{n.latent * 1 matrix of latent process intercepts, allowing for non 0 
 asymptotic levels of the latent processes. Generally only necessary for additional trends and more complex dynamics.}
 
-\item{DIFFUSION}{lower triangular n.latent*n.latent cholesky matrix of diffusion process 
-variance and covariance (latent error / dynamic innovation).
+\item{DIFFUSION}{lower triangular n.latent*n.latent matrix of diffusion process 
+variance and covariance (latent error / dynamic innovation),
+with standard deviations on the diagonal and covariance parameters below it (see \code{\link{ctCov}}).
+Under the default \code{covmattransform}, \code{'z'}, a cell below the diagonal fixed to 0
+gives a covariance of zero.
 "auto" freely estimates all parameters.}
 
 \item{n.TDpred}{Number of time dependent predictor variables in the dataset.}

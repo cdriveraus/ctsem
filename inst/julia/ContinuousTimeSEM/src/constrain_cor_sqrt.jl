@@ -138,7 +138,8 @@ function sdcovsqrt2cov!(buffer, mat, choleskymats, dim::Int)
     T = eltype(buffer.out)
     if _CTSEM_COV_CACHE[]
         _COVCACHE_CALLS[] += 1
-        c = _covcache(T, dim, _effective_covmatcode(choleskymats))
+        c = _covcache(T, dim, _effective_covmatcode(choleskymats),
+            _ctsem_zero_cells(choleskymats).id)
         hit = _covcache_lookup(c, mat, dim)
         if hit != 0
             copyto!(buffer.out, c.outs[hit])
@@ -163,6 +164,16 @@ because the forward pass, the reverse pass and the cache key must agree about
 which construction is in force, and one place to look is how that stays true.
 """
 @inline _effective_covmatcode(choleskymats) = Int(choleskymats)
+@inline _effective_covmatcode(c::CTSEMCovCode) = c.code
+
+"""
+The cells of the matrix that are zero covariances and have to be solved to be
+so (`CTSEMZeroCells`): a `CTSEMCovCode`'s, and none where the caller hands the
+code alone. Read only under `'z'`; the other constructions keep a zero cell as
+the coordinate it is.
+"""
+@inline _ctsem_zero_cells(c::CTSEMCovCode) = c.zeros
+@inline _ctsem_zero_cells(_) = _CTSEM_NO_ZERO_CELLS
 
 function _sdcovsqrt2cov_uncached!(buffer, mat, choleskymats, dim::Int)
     d = dim
@@ -171,7 +182,7 @@ function _sdcovsqrt2cov_uncached!(buffer, mat, choleskymats, dim::Int)
     # `standata$choleskymats`, and the z implementations agree to 3e-16.
     code = _effective_covmatcode(choleskymats)
     if code == 2
-        return sdcovexpm2cov!(buffer, mat, dim)
+        return sdcovexpm2cov!(buffer, mat, dim, _ctsem_zero_cells(choleskymats))
     elseif code >= 1
         # Stan's `tcrossprod(mat)`: `mat` is the factor itself. Summed over the
         # whole of 1:d rather than 1:min(i,j), which is what stan does, so a

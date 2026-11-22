@@ -480,15 +480,16 @@ function _ctsem_pack_matrices!(column, pars, sp::EKFParameters, layout,
           sp.diffusion_state_indices
     # `sp.covmatcode`, not a hardcoded 0: these are the covariances the
     # summaries report, and the filter builds its own with the requested
-    # construction (`kalman_filters.jl` passes `ws.sp.covmatcode`). Hardcoding it
+    # construction (`kalman_filters.jl` passes the same, `_ctsem_diffusion_code(ws.sp)`
+    # and its fellows, which carry the cells solved as zero covariances). Hardcoding it
     # here meant a fit under 'z' or 'cholesky' was estimated with one
     # construction and reported through another -- T0cov came back 0.083 out
     # with a sign flip, and nothing failed.
     diffusioncov = zeros(Float64, nlatent, nlatent)
     diffusioncov[dyn, dyn] .=
-        Matrix(sdcovsqrt2cov(pars.DIFFUSION, sp.covmatcode))[dyn, dyn]
-    manifestcov = Matrix(sdcovsqrt2cov(pars.MANIFESTVAR, sp.covmatcode))
-    t0cov = Matrix(sdcovsqrt2cov(pars.T0VAR, sp.covmatcode))
+        Matrix(sdcovsqrt2cov(pars.DIFFUSION, _ctsem_diffusion_code(sp)))[dyn, dyn]
+    manifestcov = Matrix(sdcovsqrt2cov(pars.MANIFESTVAR, _ctsem_manifestvar_code(sp)))
+    t0cov = Matrix(sdcovsqrt2cov(pars.T0VAR, _ctsem_t0var_code(sp)))
     # And the population block, through the same placement the filter uses.
     # Reporting T0VAR alone here was wrong the moment the population
     # covariance became its own matrix: the block came back zero while the

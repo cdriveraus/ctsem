@@ -2490,7 +2490,7 @@ function _flush_diffusion!(aws, θ̄ca, n::Int)
     aws.dvar_pending || return nothing
     aws.dvar_pending = false
     _sdcovsqrt2cov_pullback!(θ̄ca.DIFFUSION, aws.dvar_mat, aws.dvar_bar, n;
-        scratch=aws.covsqrt_scratch, covmatcode=aws.sp.covmatcode)
+        scratch=aws.covsqrt_scratch, covmatcode=_ctsem_diffusion_code(aws.sp))
     return nothing
 end
 
@@ -2502,7 +2502,7 @@ function _flush_manifestvar!(aws, θ̄ca, m::Int)
     # overwrites, and writes only the lower triangle and the diagonal, which is
     # exactly what the intermediate buffer used to be copied for.
     _sdcovsqrt2cov_pullback!(θ̄ca.MANIFESTVAR, aws.mvar_mat, aws.mvar_bar, m;
-        scratch=aws.covsqrt_scratch, covmatcode=aws.sp.covmatcode)
+        scratch=aws.covsqrt_scratch, covmatcode=_ctsem_manifestvar_code(aws.sp))
     return nothing
 end
 
@@ -2519,7 +2519,7 @@ function _pullback_t0var!(θ̄ca, mat, cov_bar, aws, n::Int)
     t0var_bar = _rs(aws.reverse_scratch.t0var_bar, n, n)
     fill!(t0var_bar, zero(T))
     _sdcovsqrt2cov_pullback!(t0var_bar, mat, cov_bar, n;
-        scratch=aws.covsqrt_scratch, covmatcode=aws.sp.covmatcode)
+        scratch=aws.covsqrt_scratch, covmatcode=_ctsem_t0var_code(aws.sp))
     θ̄T0V = θ̄ca.T0VAR
     @inbounds for j in 1:n, i in 1:n
         θ̄T0V[i, j] += t0var_bar[i, j]

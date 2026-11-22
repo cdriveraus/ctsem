@@ -24,9 +24,235 @@ test_that("ctCov round-trips under every construction", {
   expect_equal(unclass(ctCov(two))[2, 1], atanh(.5), tolerance = 1e-10)
   expect_error(ctCov(matrix(c(1, 2, 2, 1), 2)), "not positive definite")
   # A covariance the construction does not reach is refused, not approximated.
-  local_mocked_bindings(.ctCovForward = function(cells, covmattransform)
+  local_mocked_bindings(.ctCovForward = function(cells, covmattransform, zero = NULL)
     diag(nrow(cells)), .package = "ctsem")
   expect_error(ctCov(.cc_S, "rawcorr"), "cannot be written")
+})
+
+# Under 'z' a cell of T0VAR, DIFFUSION or MANIFESTVAR fixed at zero is a zero
+# covariance. Between variables that other cells connect the construction
+# solves the cell to make it one.
+.cc_pattern <- function(d, share, sdcoord) {
+  zero <- matrix(FALSE, d, d)
+  zero[lower.tri(zero)] <- stats::runif(d * (d - 1) / 2) < share
+  cells <- diag(exp(stats::rnorm(d, 0, .3)), d)
+  cells[lower.tri(cells)] <- stats::rnorm(d * (d - 1) / 2, 0, sdcoord)
+  cells[zero] <- 0
+  list(cells = cells, zero = zero)
+}
+
+test_that("under 'z' a cell of zero is a zero covariance", {
+  forward <- ctsem:::.ctCovForward
+  cells <- diag(3)
+  cells[3, 1:2] <- 0.5
+  zero <- ctsem:::.ctCovZeroCells(cells)
+  expect_identical(which(zero), 2L)
+  S <- forward(cells, "z", zero)
+  expect_identical(S[2, 1], 0)
+  expect_equal(S[3, 1:2], rep(0.4306862, 2), tolerance = 1e-6)
+  # Held at 0 as a coordinate it is not one, and the other constructions read
+  # the cell as it is.
+  expect_equal(forward(cells, "z")[2, 1], 0.1152759, tolerance = 1e-6)
+  expect_identical(forward(cells, "rawcorr", zero), forward(cells, "rawcorr"))
+  # Between separate blocks nothing is solved.
+  blocks <- diag(4)
+  blocks[2, 1] <- 0.7
+  blocks[4, 3] <- -0.4
+  expect_false(any(ctsem:::.ctCovLinkedZeros(ctsem:::.ctCovZeroCells(blocks))))
+  expect_equal(forward(blocks, "z", ctsem:::.ctCovZeroCells(blocks)),
+    forward(blocks, "z"), tolerance = 1e-14)
+  # Any pattern: exact zeros, positive definite, and the same matrix whatever
+  # the order of the variables.
+  set.seed(4)
+  for (rep in 1:25) {
+    p <- .cc_pattern(6, 0.4, 1)
+    S <- forward(p$cells, "z", p$zero)
+    expect_true(all(S[p$zero] == 0))
+    expect_gt(min(eigen(S, symmetric = TRUE, only.values = TRUE)$values), 0)
+    perm <- sample(6)
+    full <- p$cells + t(p$cells) - diag(diag(p$cells))
+    cellsp <- full[perm, perm]
+    cellsp[upper.tri(cellsp)] <- 0
+    zerop <- (p$zero | t(p$zero))[perm, perm] & lower.tri(p$zero)
+    expect_equal(forward(cellsp, "z", zerop), S[perm, perm], tolerance = 1e-10)
+  }
+  # Thirty variables.
+  p <- .cc_pattern(30, 0.3, 0.3)
+  S <- forward(p$cells, "z", p$zero)
+  expect_true(all(S[p$zero] == 0))
+  expect_gt(min(eigen(S, symmetric = TRUE, only.values = TRUE)$values), 0)
+})
+
+test_that("ctCov writes a zero covariance as a cell of zero", {
+  forward <- ctsem:::.ctCovForward
+  S <- matrix(c(1, 0, .4, 0, 1, .4, .4, .4, 1), 3)
+  cells <- unclass(ctCov(S))
+  attributes(cells) <- list(dim = dim(cells))
+  expect_identical(cells[2, 1], 0)
+  expect_equal(forward(cells, "z", ctsem:::.ctCovZeroCells(cells)), S, tolerance = 1e-10)
+  # A covariance that is not zero is never written as a cell of exactly zero,
+  # which would be read as one.
+  coord <- diag(3)
+  coord[3, 1:2] <- 0.5
+  S2 <- forward(coord, "z")
+  back <- ctsem:::.ctCovCells(S2, "z")
+  expect_false(back[2, 1] == 0)
+  expect_equal(forward(back, "z", ctsem:::.ctCovZeroCells(back)), S2, tolerance = 1e-10)
+  # The population's cells are all coordinates.
+  pop <- ctsem:::.ctCovCells(S, "z", zeros = FALSE)
+  expect_lt(pop[2, 1], -0.05)
+  expect_equal(forward(pop, "z"), S, tolerance = 1e-10)
+  # Random targets with a pattern of zeros are reached.
+  set.seed(9)
+  for (rep in 1:10) {
+    p <- .cc_pattern(5, 0.4, 0.6)
+    target <- forward(p$cells, "z", p$zero)
+    got <- ctsem:::.ctCovCells(target, "z")
+    expect_equal(forward(got, "z", ctsem:::.ctCovZeroCells(got)), target,
+      tolerance = 1e-9)
+  }
+})
+
+test_that("summary's note says an estimated parameter near zero is not a zero covariance", {
+  note <- ctsem:::.ctCovParameterNote(c("d21", "t21"), c("DIFFUSION", "T0VAR"))
+  expect_match(note, "are not correlations; T0cor, DIFFUSIONcor", fixed = TRUE)
+  expect_match(note, "With three or more variables an estimate near 0 does not show a correlation near 0.",
+    fixed = TRUE)
+  expect_null(ctsem:::.ctCovParameterNote(character(), character()))
+  # Three variables, the cell between the first two at 0: not a correlation of 0.
+  A <- matrix(0, 3, 3)
+  A[3, 1] <- A[3, 2] <- 0.8
+  expect_gt(abs(stats::cov2cor(expm::expm(A + t(A)))[2, 1]), 0.1)
+})
+
+test_that("a model's cells fixed at zero are found, and stan refuses them", {
+  m <- suppressMessages(ctModel(LAMBDA = diag(3), Tpoints = 5, silent = TRUE,
+    DIFFUSION = matrix(c("d11", 0, "d31", 0, "d22", "d32", 0, 0, "d33"), 3)))
+  expect_equal(unname(which(ctsem:::.ctCovSolvedCells(m, "DIFFUSION"), arr.ind = TRUE)),
+    matrix(2:1, 1))
+  # the default MANIFESTVAR is diagonal: zeros between separate variables
+  expect_false(any(ctsem:::.ctCovSolvedCells(m, "MANIFESTVAR")))
+  expect_error(ctsem:::.ctCovRefuseSolved(m), "DIFFUSION\\[2,1\\].*backend = 'julia'")
+  raw <- m
+  raw$covmattransform <- "rawcorr"
+  expect_false(any(ctsem:::.ctCovSolvedCells(raw, "DIFFUSION")))
+  expect_silent(ctsem:::.ctCovRefuseSolved(raw))
+  data <- data.frame(id = rep(1:3, each = 4), time = rep(0:3, 3), Y1 = rnorm(12),
+    Y2 = rnorm(12), Y3 = rnorm(12))
+  expect_error(suppressMessages(ctFit(data, m, backend = "stan", fit = FALSE)),
+    "DIFFUSION\\[2,1\\]")
+})
+
+.cc_zero_model <- function() suppressMessages(ctModel(LAMBDA = diag(3), silent = TRUE,
+  manifestNames = paste0("Y", 1:3), latentNames = paste0("eta", 1:3),
+  DRIFT = matrix(c("dr1", 0, 0, 0, "dr2", 0, "cr31", 0, "dr3"), 3, byrow = TRUE),
+  DIFFUSION = matrix(c("d11", 0, "d31", 0, "d22", "d32", 0, 0, "d33"), 3),
+  T0VAR = matrix(c("t11", "t21", 0, 0, "t22", "t32", 0, 0, "t33"), 3),
+  MANIFESTVAR = matrix(c("m11", "m21", "m31", 0, "m22", 0, 0, 0, "m33"), 3),
+  T0MEANS = matrix(0, 3, 1), MANIFESTMEANS = matrix(0, 3, 1), CINT = matrix(0, 3, 1)))
+
+.cc_zero_data <- function(nsub = 20L, nobs = 8L) {
+  set.seed(21)
+  do.call(rbind, lapply(seq_len(nsub), function(i) {
+    x <- matrix(0, nobs, 3)
+    x[1, ] <- stats::rnorm(3)
+    for (t in 2:nobs) {
+      shared <- stats::rnorm(1)
+      x[t, ] <- 0.6 * x[t - 1, ] + c(0.5 * shared + stats::rnorm(1, 0, .6),
+        -0.4 * shared + stats::rnorm(1, 0, .6), shared)
+    }
+    data.frame(id = i, time = seq_len(nobs) - 1, Y1 = x[, 1] + stats::rnorm(nobs, 0, .3),
+      Y2 = x[, 2] + stats::rnorm(nobs, 0, .3), Y3 = x[, 3] + stats::rnorm(nobs, 0, .3))
+  }))
+}
+
+test_that("the engine solves the cells R does", {
+  skip_without_julia()
+  spec <- suppressMessages(ctFit(.cc_zero_data(4L, 4L), .cc_zero_model(),
+    backend = "julia", fit = FALSE))
+  ctsem:::.ctJuliaModule(spec$project)
+  construct <- JuliaConnectoR::juliaEval(paste0("(m, r, c) -> Matrix(",
+    "ContinuousTimeSEM.sdcovsqrt2cov(m, ContinuousTimeSEM.CTSEMCovCode(2, ",
+    "ContinuousTimeSEM.CTSEMZeroCells(Int.(vec(r)), Int.(vec(c))))))"))
+  set.seed(6)
+  for (rep in 1:8) {
+    p <- .cc_pattern(if (rep == 8) 30 else 6, 0.4, if (rep == 8) 0.3 else 0.8)
+    linked <- which(ctsem:::.ctCovLinkedZeros(p$zero), arr.ind = TRUE)
+    if (nrow(linked) < 2L) next
+    engine <- construct(p$cells, matrix(linked[, 1]), matrix(linked[, 2]))
+    expect_equal(ctsem:::.ctCovForward(p$cells, "z", p$zero), engine, tolerance = 1e-10)
+  }
+})
+
+test_that("generated data start from the model's initial covariance", {
+  skip_without_julia()
+  # Under each construction, and with a zero covariance between variables
+  # that both covary with a third. The initial state's factor was once the
+  # correlation square root's whatever the construction, which under 'z' gave
+  # 0.77, 0.16 and 0.46 for the first target's 0.8, 0.3 and 0.5.
+  first <- function(S, tf) {
+    m <- suppressMessages(ctModel(LAMBDA = diag(3), silent = TRUE, T0VAR = ctCov(S),
+      T0MEANS = matrix(0, 3, 1), MANIFESTMEANS = matrix(0, 3, 1),
+      MANIFESTVAR = diag(1e-4, 3), DRIFT = diag(-0.5, 3), DIFFUSION = diag(0.5, 3)))
+    m$covmattransform <- tf
+    m <- ctsem:::.ctCovRefresh(m)
+    set.seed(1)
+    d <- as.data.frame(suppressMessages(ctGenerate(m, n = 6000, Tpoints = 2,
+      backend = "julia")))
+    unname(stats::cov(d[!duplicated(d$id), c("Y1", "Y2", "Y3")]))
+  }
+  S <- matrix(c(1, .8, .3, .8, 1, .5, .3, .5, 1), 3)
+  for (tf in c("z", "rawcorr", "cholesky")) {
+    expect_equal(first(S, tf), S, tolerance = 0.06, info = tf)
+  }
+  Sz <- matrix(c(1, 0, .4, 0, 1, .4, .4, .4, 1), 3)
+  expect_equal(first(Sz, "z"), Sz, tolerance = 0.06)
+})
+
+test_that("a model with zero covariances is fitted with them", {
+  skip_without_julia()
+  model <- .cc_zero_model()
+  data <- .cc_zero_data()
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  set.seed(8)
+  raw <- stats::rnorm(max(spec$parameter_table$parnumber, na.rm = TRUE), 0, .4)
+  at <- ctJuliaEvaluate(spec, raw, gradient = TRUE)
+  expect_true(is.finite(at$value))
+  # The reverse pass through the solved cells, against central differences of
+  # the likelihood.
+  finite <- vapply(seq_along(raw), function(i) {
+    step <- rep(0, length(raw))
+    step[i] <- 1e-5
+    (ctJuliaEvaluate(spec, raw + step, gradient = FALSE)$value -
+        ctJuliaEvaluate(spec, raw - step, gradient = FALSE)$value) / 2e-5
+  }, numeric(1))
+  expect_equal(as.numeric(at$gradient), finite, tolerance = 1e-6)
+  # The matrices the engine builds from the model's table are the ones R's
+  # forward map gives from the model's cells: the two find the same cells to
+  # solve, and solve them alike.
+  pop <- ctsem:::.ctBackendPopArrays(structure(list(model_spec = spec, model = model,
+    backend = "julia", estimate = list(raw = raw, loglik = NA_real_)),
+    class = c("ctJuliaFit", "ctFit")))
+  for (pair in list(c("DIFFUSION", "DIFFUSIONcov"), c("MANIFESTVAR", "MANIFESTcov"),
+      c("T0VAR", "T0cov"))) {
+    cells <- drop(pop[[paste0("pop_", pair[1])]])
+    cov <- drop(pop[[paste0("pop_", pair[2])]])
+    solved <- ctsem:::.ctCovSolvedCells(model, pair[1])
+    expect_identical(sum(solved), 1L, info = pair[1])
+    expect_true(all(cov[solved | t(solved)] == 0), info = pair[1])
+    expect_equal(unname(cov), ctsem:::.ctCovForward(unname(cells), "z", solved),
+      tolerance = 1e-10, info = pair[1])
+  }
+  # What a fit reports: exact zeros where the model has them, covariances
+  # elsewhere.
+  fit <- suppressWarnings(suppressMessages(ctFit(data, model, backend = "julia",
+    cores = 2)))
+  mats <- ctSummaryMatrices(fit)
+  expect_identical(unname(mats$DIFFUSIONcov[2, 1]), 0)
+  expect_identical(unname(mats$T0cov[3, 1]), 0)
+  expect_identical(unname(mats$MANIFESTcov[3, 2]), 0)
+  expect_gt(abs(mats$DIFFUSIONcov[3, 1]), 0.01)
+  expect_gt(abs(mats$DIFFUSIONcov[3, 2]), 0.01)
 })
 
 test_that("the R constructions are the engine's", {

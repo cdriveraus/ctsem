@@ -130,7 +130,10 @@ From the R generator, a long format matrix with one row per subject
 This function generates data according to the specified ctsem model object.
 }
 \details{
-Covariance related matrices are treated as Cholesky factors.
+With \code{backend='r'}, covariance related matrices are treated as
+Cholesky factors. With \code{backend='julia'} they are read as the model's
+\code{covmattransform} reads them, as in \code{\link{ctFit}}. A covariance
+given with \code{\link{ctCov}} is the same covariance on both.
 TRAITTDPREDCOV and TIPREDCOV matrices are not accounted for, at present. 
 The first 1:n.TDpred rows and columns of TDPREDVAR are used for generating
 tdpreds at each time point.

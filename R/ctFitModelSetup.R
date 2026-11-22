@@ -471,6 +471,10 @@
   # julia engine takes those integrals by series where the drift is singular
   # (series_discretization.jl), so it fits the model as written.
   if(!backend %in% 'julia') ctm <- ctModel0DRIFT(ctm, ctm$continuoustime)
+  # Under covmattransform 'z' a covariance cell fixed at zero between connected
+  # variables is a zero covariance, which the julia engine solves for
+  # (R/ctCov.R). The Stan program holds the cell at 0, which is another model.
+  if(!backend %in% 'julia') .ctCovRefuseSolved(ctm)
   ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames = ctm$latentNames,tdprednames=ctm$TDpredNames,tiprednames=ctm$TIpredNames) #replace latent states and PARS with state and PAR[] refs, need this early because we rely on [] detection
   if(any(grepl('tipreds[', ctm$pars$param, fixed=TRUE)) && !backend %in% 'julia') stop(
     'A cell reads a time independent predictor (',

@@ -42,12 +42,13 @@ roundtrip <- function(model) {
   }
 }
 
-# The covariance a model's cells give, with its free cells at `free`.
+# The covariance a model's cells give, with its free cells at `free`, as a fit
+# builds it: a cell fixed at zero is a zero covariance.
 implied <- function(model, matrix, free) {
   p <- model$pars[model$pars$matrix == matrix, ]
   cells <- matrix(0, max(p$row), max(p$col))
   cells[cbind(p$row, p$col)] <- ifelse(is.na(p$value), free, p$value)
-  .ctCovForward(cells, model$covmattransform)
+  .ctCovForward(cells, model$covmattransform, .ctCovSolvedCells(model, matrix))
 }
 
 test_that('the three styles and ctModel() write the same default model', {
@@ -412,28 +413,35 @@ test_that('a covariance that is zero in the syntax is zero in the model', {
     expect_gt(abs(R[2, 1]), 0.01)
   }
   roundtrip(m)
-  # a zero beside covariances that connect its two variables is refused,
-  # written out or left out, in each matrix and style
-  expect_error(ctModelLavaan('a =~ y1\n b =~ y2\n c =~ y3\n a ~~ 0*b'),
-    'noise covariance of a and b')
-  expect_error(ctModelLavaan('f =~ y1 + y2 + y3\n y1 ~~ y2\n y2 ~~ y3'),
-    'residual covariance of y1 and y3')
-  expect_error(ctModelMplus('a BY y1; b BY y2; c BY y3; a WITH b@0;'),
-    'through c')
-  expect_error(ctModelFormula(y1 ~ a, y2 ~ b, y3 ~ c, T0var_b_a ~ 0),
-    'initial covariance of a and b')
-  # what the refused model would have been: not a zero covariance
+  # beside covariances that connect its two variables too, written out or
+  # left out, in each matrix and style
+  linked <- list(
+    list(ctModelLavaan('a =~ y1\n b =~ y2\n c =~ y3\n a ~~ 0*b'), 'DIFFUSION', 2, 1),
+    list(ctModelLavaan('f =~ y1 + y2 + y3\n y1 ~~ y2\n y2 ~~ y3'), 'MANIFESTVAR', 3, 1),
+    list(ctModelMplus('a BY y1; b BY y2; c BY y3; a WITH b@0;'), 'DIFFUSION', 2, 1),
+    list(ctModelFormula(y1 ~ a, y2 ~ b, y3 ~ c, T0var_b_a ~ 0), 'T0VAR', 2, 1))
+  for (case in linked) for (free in list(0.7, c(1.3, -0.4, 2, 0.6, 0.9))) {
+    S <- implied(case[[1]], case[[2]], free)
+    expect_identical(S[case[[3]], case[[4]]], 0)
+    others <- S[lower.tri(S)][-which(which(lower.tri(S)) ==
+      (case[[4]] - 1L) * nrow(S) + case[[3]])]
+    expect_true(all(abs(others) > 0.01))
+    expect_gt(min(eigen(S, symmetric = TRUE, only.values = TRUE)$values), 0)
+    roundtrip(case[[1]])
+  }
+  # the same cells held at 0 as coordinates would not be a zero covariance
   cells <- diag(3)
   cells[3, 1:2] <- 0.5
   expect_gt(abs(.ctCovForward(cells, 'z')[2, 1]), 0.1)
-  # the cell itself can still be set, in quotes, and a model that has such
-  # cells is written that way
+  expect_identical(.ctCovForward(cells, 'z', .ctCovZeroCells(cells))[2, 1], 0)
+  # a quoted zero is the same cell
   q <- ctModelLavaan('a =~ y1\n b =~ y2\n c =~ y3\n a ~~ "0"*b')
   expect_identical(cell(q, 'DIFFUSION', 2, 1)$value, 0)
-  expect_match(ctModelSyntax(q, 'mplus'), 'b WITH a ("0");', fixed = TRUE)
+  expect_match(ctModelSyntax(q, 'mplus'), 'b WITH a@0;', fixed = TRUE)
   roundtrip(q)
   viaModel <- ctModel(LAMBDA = diag(3), silent = TRUE,
     MANIFESTVAR = matrix(c('v1', 'v21', 0, 0, 'v2', 'v32', 0, 0, 'v3'), 3))
+  expect_identical(implied(viaModel, 'MANIFESTVAR', 0.8)[3, 1], 0)
   roundtrip(viaModel)
 })
 
