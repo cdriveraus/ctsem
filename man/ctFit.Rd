@@ -177,7 +177,10 @@ pair the stationary covariance, and needs both their variances, and every
 covariance among the latents it joins, named too. The stationary
 distribution is computed for the marked latents and the latents that drive
 them, so DRIFT, CINT and DIFFUSION need to be fixed within each subject
-only for those latents.}
+only for those latents. For T0VAR cells, a driving latent with no noise,
+such as the clock of \code{\link{ctModelPeriodicComponent}}, is left out:
+it shifts the mean of what it drives and not its covariance, and need not
+settle.}
 
 \item{plot}{if TRUE, for sampling, a Shiny program is launched upon fitting to interactively plot samples.
 May struggle with many (e.g., > 5000) parameters. For optimizing, the optimisation trace is plotted,
