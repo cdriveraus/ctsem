@@ -212,8 +212,10 @@ test_that("PSIS leave-one-row-out matches a grid over each subject's intercept",
     "  return out",
     "end", sep = "\n"))
   grid <- seq(-9, 9, by = 0.004)
+  # The layer, which holds each subject's intercept as the coordinate the grid
+  # sets; the hybrid integrates it in the filter.
   ll <- JuliaConnectoR::juliaCall("_ctsem_test_loo_grid",
-    ctsem:::.ctJuliaObjective(fit), as.numeric(est), grid)
+    ctsem:::.ctJuliaObjective(fit, layer = TRUE), as.numeric(est), grid)
   ll <- matrix(as.numeric(ll), ncol = length(grid))
   rowsubject <- ctsem:::.ctFitRowSubject(fit)
   lse <- ctsem:::.ctLogSumExp

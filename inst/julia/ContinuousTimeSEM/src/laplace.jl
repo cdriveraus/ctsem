@@ -2986,9 +2986,12 @@ unit's term, and the mode solve's sweep another third.
 """
 function _laplace_unit_loglik_value(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
-    aws, gradient::AbstractVector) where {T}
+    aws, gradient::AbstractVector;
+    positions=eachindex(laplace.units.members[U]),
+    each::AbstractVector{Float64}=Float64[]) where {T}
     spec = laplace.spec
     units = laplace.units
+    members = units.members[U]
     shift = _laplace_scratch_vector!(laplace, T, length(values), :loglik_shift)
     total = zero(T)
     hsum = zero(T)
@@ -2997,12 +3000,16 @@ function _laplace_unit_loglik_value(laplace::CTSEMLaplaceObjective, U::Integer,
     hb = aws.ekf_ws.hyb
     hb.mode = mode
     try
-        for (m, i) in enumerate(units.members[U])
+        # `positions`: the members summed, all by default; `each`, where given,
+        # takes each one's log likelihood (`_laplace_probe_nested`).
+        for m in positions
+            i = members[m]
             so = laplace.objective.subject_objectives[i]
             shifted = _laplace_member_values!(shift, values, spec, Ls, u, units.offsets[U][m])
             loglik = _ekf_run(aws.ekf_ws, so, shifted,
                 _ctsem_tipred_fill!(aws.tipreds, so.tipreds, shifted), nothing)
             isfinite(loglik) || return (value=loglik, gradient=gradient, hlogdet=zero(T))
+            isempty(each) || (each[m] = loglik)
             total += loglik
             hsum += whl * hb.half_logdet
         end
@@ -4598,6 +4605,9 @@ It is still a search: a better mode no probe reaches is not found, and where a
 probe starts to reach one the objective changes by that mode's gain. A unit
 with two modes of comparable mass is one no single-mode term approximates, and
 the quadrature correction is the remedy there (`ctLaplaceCheck`).
+
+A unit of nested blocks whose curvature factors at the mode is searched a
+block at a time instead (`_laplace_probe_nested`).
 """
 function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, found;
@@ -4619,6 +4629,10 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     end
     F = _soft_shifted_factor(M, blocks, 0.0)
     screened = F !== nothing
+    # A unit of nested blocks is searched a block at a time, each block's
+    # starts evaluating only the members under it (`_laplace_probe_nested`).
+    (screened && length(blocks) > 1) && return _laplace_probe_nested(laplace, U,
+        values, Ls, aws, found, M, F, blocks; set=set)
     # The soft directions, each a column of `D` already scaled to its reach,
     # softest first. Over the span a second mode can
     # lie in (`_laplace_probe_span`): there a direction's precision is its
@@ -4792,6 +4806,306 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
         best, bestterm, better = _laplace_prefer_mode(laplace, U, values, Ls, aws,
             best, bestterm, r, found)
         better && (_CTSEM_OPCOUNT.probe_better[] += 1)
+    end
+    return best
+end
+
+"""
+    _laplace_probe_nested(laplace, U, values, Ls, aws, found, M, F, blocks; set)
+
+`_laplace_probe_modes` for a unit of nested blocks -- persons in a study --
+whose curvature `M` factors at `found` (`F`): the same starts, screen and
+choice between maxima, taken a block at a time. For each block `b`, the soft
+directions of its span (`_laplace_probe_span_blocks`) given every coordinate
+outside `b`'s subtree (`b` and the blocks beneath it) at `found`: their
+precision is `b`'s within the subtree, the Schur complement of the subtree's
+own curvature, and the blocks beneath `b` move to their conditional mean along
+each. Then the subtree's reflection, `-found.u` within it, where `found.u` has
+a part along the span there. A person's block is searched as a unit of its own
+would be, conditional on the study's effects; the study's block, at the top,
+moves every person, as the whole unit's search did.
+
+A start moves only the subtree's coordinates, so its value differs from
+`found`'s only by the terms of the members under `b` (`blocks[b].members`),
+and the screen evaluates those alone; its gradient in the subtree's
+coordinates is theirs too, and its test of where Newton would land reads the
+subtree's curvature. So a person's starts cost a person's passes, and a
+study's search costs about what its persons' would as units of their own.
+Searched as one unit, every start evaluated every member, and the span's
+directions were mixed through `M^-1` over the whole unit: on the affect
+pilot's persons in studies about 19 starts a person, each a pass over the
+whole study, and a first evaluation at 40 persons a study that had not
+finished in 28 minutes. Newton from a start that passes the screen runs on
+the whole unit, as before, and a better mode it reaches is the point the
+later blocks' starts leave from.
+"""
+function _laplace_probe_nested(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, found,
+    M::CTSEMBlockMatrix{Float64}, F, blocks::Vector{CTSEMLaplaceBlock}; set=nothing)
+    d = length(found.u)
+    nb = length(blocks)
+    nmem = length(laplace.units.members[U])
+    cols = _laplace_probe_span_blocks(laplace, U, Ls)
+    # Each member's log likelihood at the found mode, by the screen's own
+    # value function, so a start's value is the found one's with the moved
+    # members' terms replaced.
+    each = zeros(Float64, nmem)
+    total = _laplace_unit_loglik_value(laplace, U, values, Ls, found.u, aws,
+        Float64[]; each=each).value
+    isfinite(total) || return found
+    # The point the starts leave from: `found`, then the best mode so far
+    # (below).
+    baseu = found.u
+    basevalue = found.value
+    usq = dot(baseu, baseu)
+    work = copy(baseu)
+    grad = zeros(Float64, d)
+    best = found
+    bestterm = NaN
+    improved = false
+    seen = [found.u]
+    counted = false
+    pos = zeros(Int, nb)
+    for b in 1:nb
+        kb = blocks[b].size
+        kb == 0 && continue
+        Qb = cols === nothing ? Matrix{Float64}(I, kb, kb) : cols[b]
+        nq = size(Qb, 2)
+        # The subtree, in the unit's order (a block's ancestors after it, as the
+        # factorization takes them), and its coordinates in `u`.
+        S = Int[t for t in 1:nb if t == b || b in blocks[t].ancestors]
+        idx = Int[]
+        for t in S
+            append!(idx, (blocks[t].offset + 1):(blocks[t].offset + blocks[t].size))
+        end
+        dS = length(idx)
+        uS = baseu[idx]
+        # The reflection where the base has a part along the span within the
+        # subtree: elsewhere the unit is concave given the rest (see
+        # `_laplace_probe_modes`).
+        inside = 0.0
+        for t in S
+            o = blocks[t].offset
+            if cols === nothing
+                for i in 1:blocks[t].size
+                    inside += baseu[o + i]^2
+                end
+            else
+                Qt = cols[t]
+                for c in axes(Qt, 2)
+                    acc = 0.0
+                    for i in axes(Qt, 1)
+                        acc += Qt[i, c] * baseu[o + i]
+                    end
+                    inside += acc^2
+                end
+            end
+        end
+        reflected = inside > 1e-16 * max(1.0, sum(abs2, uS))
+        (nq > 0 || reflected) || continue
+        # The subtree's own curvature and its factor: the whole unit's at the
+        # top block.
+        if length(S) == nb
+            sub = blocks
+            Ms = M
+            Fs = F
+        else
+            fill!(pos, 0)
+            for (k, t) in enumerate(S)
+                pos[t] = k
+            end
+            sub = Vector{CTSEMLaplaceBlock}(undef, length(S))
+            off = 0
+            for (k, t) in enumerate(S)
+                sub[k] = CTSEMLaplaceBlock(off, blocks[t].size, blocks[t].members,
+                    blocks[t].level, Int[pos[a] for a in blocks[t].ancestors if pos[a] > 0])
+                off += blocks[t].size
+            end
+            Ms = CTSEMBlockMatrix{Float64}(Matrix{Float64}[M.diag[t] for t in S],
+                Vector{Matrix{Float64}}[Matrix{Float64}[M.coupling[t][r]
+                    for (r, a) in enumerate(blocks[t].ancestors) if pos[a] > 0] for t in S])
+            Fs = _soft_shifted_factor(Ms, sub, 0.0)
+            Fs === nothing && continue
+        end
+        ob = 0
+        for t in S
+            t == b && break
+            ob += blocks[t].size
+        end
+        # The soft directions over the block's span, as `_laplace_probe_modes`
+        # takes them over the unit's: `X = M_S^-1 Q`, the span's precision in
+        # the subtree `C^-1 = (Q' X)^-1`, and a direction's reach mapped into
+        # the subtree by `X`.
+        nsoft = 0
+        D = zeros(Float64, dS, 0)
+        if nq > 0
+            X = zeros(Float64, dS, nq)
+            rhs = zeros(Float64, dS)
+            for c in 1:nq
+                fill!(rhs, 0.0)
+                for i in 1:kb
+                    rhs[ob + i] = Qb[i, c]
+                end
+                copyto!(view(X, :, c), _soft_solve(Fs, sub, rhs))
+            end
+            C = zeros(Float64, nq, nq)
+            @inbounds for c2 in 1:nq, c1 in 1:nq
+                acc = 0.0
+                for i in 1:kb
+                    acc += Qb[i, c1] * X[ob + i, c2]
+                end
+                C[c1, c2] = acc
+            end
+            _laplace_symmetrise!(C)
+            E = _ctsem_symeig(C)
+            if all(isfinite, E.values)
+                while nsoft < nq && E.values[nq - nsoft] > 1 / _LAPLACE_PROBE_SOFT
+                    nsoft += 1
+                end
+                D = zeros(Float64, dS, nsoft)
+                @inbounds for j in 1:nsoft
+                    c = E.values[nq + 1 - j]
+                    scale = min(_LAPLACE_PROBE_REACH * sqrt(c), 3.0) / c
+                    for i in 1:dS
+                        acc = 0.0
+                        for t in 1:nq
+                            acc += X[i, t] * E.vectors[t, nq + 1 - j]
+                        end
+                        D[i, j] = scale * acc
+                    end
+                end
+            elseif !reflected
+                continue
+            end
+        end
+        nprobe = 2 * nsoft + (reflected ? 1 : 0)
+        nprobe == 0 && continue
+        counted || (_CTSEM_OPCOUNT.probe_units[] += 1; counted = true)
+        group = blocks[b].members
+        base = 0.0
+        for m in group
+            base += each[m]
+        end
+        delta = zeros(Float64, dS)
+        moved = zeros(Float64, dS)
+        miss = zeros(Float64, dS)
+        for probe in 1:nprobe
+            _CTSEM_OPCOUNT.probe_starts[] += 1
+            if probe <= 2 * nsoft
+                j = (probe + 1) >> 1
+                sgn = isodd(probe) ? -1.0 : 1.0
+                @inbounds for i in 1:dS
+                    delta[i] = sgn * D[i, j]
+                end
+            else
+                @inbounds for i in 1:dS
+                    delta[i] = -2 * uS[i]
+                end
+            end
+            wsq = usq
+            @inbounds for i in 1:dS
+                w = uS[i] + delta[i]
+                work[idx[i]] = w
+                wsq += w * w - uS[i] * uS[i]
+            end
+            # The value first, of the members under the block alone.
+            vg = _laplace_unit_loglik_value(laplace, U, values, Ls, work, aws,
+                Float64[]; positions=group).value
+            _CTSEM_OPCOUNT.probe_values[] += 1
+            tol = probe <= 2 * nsoft ? _LAPLACE_PROBE_VALUE_TOL :
+                _LAPLACE_PROBE_REFLECT_TOL
+            _soft_block_mulvec!(moved, Ms, sub, delta)
+            gaussian = false
+            if isfinite(vg)
+                drop = dot(delta, moved)
+                gaussian = abs(total - base + vg - wsq / 2 - (basevalue - drop / 2)) < tol
+            end
+            outward = false
+            if !gaussian
+                at = _laplace_unit_loglik_gradient(laplace, U, values, Ls, work, aws,
+                    group, grad)
+                _CTSEM_OPCOUNT.probe_gradients[] += 1
+                if isfinite(at.value)
+                    # miss = a + M_S (p - u) in the subtree, `a` its gradient
+                    # there, the prior's included.
+                    slope = 0.0
+                    @inbounds for i in 1:dS
+                        a = at.gradient[idx[i]] - work[idx[i]]
+                        miss[i] = a + moved[i]
+                        slope += a * delta[i]
+                    end
+                    if dot(miss, _soft_solve(Fs, sub, miss)) > 1
+                        _CTSEM_OPCOUNT.probe_nongaussian[] += 1
+                        outward = slope > 0
+                        # The slope at three quarters, a half and a quarter of
+                        # the way, as in `_laplace_probe_modes`.
+                        if !outward
+                            for t in (0.75, 0.5, 0.25)
+                                @inbounds for i in 1:dS
+                                    work[idx[i]] = uS[i] + t * delta[i]
+                                end
+                                rg = _laplace_unit_loglik_gradient(laplace, U, values,
+                                    Ls, work, aws, group, grad)
+                                _CTSEM_OPCOUNT.probe_gradients[] += 1
+                                isfinite(rg.value) || continue
+                                slope = 0.0
+                                @inbounds for i in 1:dS
+                                    slope += (rg.gradient[idx[i]] - work[idx[i]]) * delta[i]
+                                end
+                                if slope > 0
+                                    outward = true
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            r = outward ? _laplace_newton_unit_mode(laplace, U, values, Ls, aws, work) :
+                nothing
+            @inbounds for i in 1:dS
+                work[idx[i]] = uS[i]
+            end
+            r === nothing && continue
+            _CTSEM_OPCOUNT.probe_newtons[] += 1
+            (r.converged && isfinite(r.value)) || continue
+            any(m -> _laplace_maxabsdiff(m, r.u) < 1e-4, seen) && continue
+            push!(seen, r.u)
+            set === nothing || _laplace_mode_join!(set, laplace, U, values, Ls, aws, r)
+            best, bestterm, better = _laplace_prefer_mode(laplace, U, values, Ls, aws,
+                best, bestterm, r, found)
+            better && (_CTSEM_OPCOUNT.probe_better[] += 1; improved = true)
+        end
+        # A better mode becomes the base the later blocks' starts leave from,
+        # its curvature and members' values with it, so that what one member's
+        # search found and another's composes. From `found` alone each start
+        # carried only its own block's move, and of two persons with better
+        # maxima the study kept one: on a fixture of sign-ambiguous loadings,
+        # one person's better maximum moved the study's effect, and with it
+        # moved, the next person's other maximum became the better one by 0.07.
+        # A rebase costs a pass over the members and a factorization, beside
+        # the whole-unit Newton that found the mode.
+        if improved
+            improved = false
+            Mb = _laplace_copy_blockmatrix(best.final === nothing ?
+                _laplace_unit_curvature(laplace, U, values, Ls, copy(best.u)) :
+                best.final)
+            for Dg in Mb.diag
+                _laplace_symmetrise!(Dg)
+            end
+            Fb = _soft_shifted_factor(Mb, blocks, 0.0)
+            Fb === nothing && return best
+            tb = _laplace_unit_loglik_value(laplace, U, values, Ls, best.u, aws,
+                Float64[]; each=each).value
+            isfinite(tb) || return best
+            M = Mb
+            F = Fb
+            total = tb
+            baseu = best.u
+            basevalue = best.value
+            usq = dot(baseu, baseu)
+            copyto!(work, baseu)
+        end
     end
     return best
 end
@@ -6023,6 +6337,38 @@ adds a row per level: their span holds the summed rows', and is no smaller.
 """
 function _laplace_probe_span(laplace::CTSEMLaplaceObjective, U::Integer,
     Ls::Vector{Matrix{Float64}}, d::Integer)
+    cols = _laplace_probe_span_blocks(laplace, U, Ls)
+    cols === nothing && return nothing
+    blocks = laplace.units.blocks[U]
+    n = sum(size(c, 2) for c in cols; init=0)
+    Q = _laplace_scratch_matrix!(laplace, Float64, d, n, :probe_span)
+    fill!(Q, 0.0)
+    c = 0
+    @inbounds for (t, V) in enumerate(cols)
+        o = blocks[t].offset
+        for j in axes(V, 2)
+            c += 1
+            for i in axes(V, 1)
+                Q[o + i, c] = V[i, j]
+            end
+        end
+    end
+    return Q
+end
+
+"""
+    _laplace_probe_span_blocks(laplace, U, Ls)
+
+`_laplace_probe_span`'s basis a block at a time, as each block's own
+orthonormal columns (`size` by `n_b`, largest eigenvalue first), or `nothing`
+where the span is every coordinate. A row of the loadings adds only to the
+block its level holds at its member's offset, so the basis is block diagonal,
+and a nested unit's search reads it so (`_laplace_probe_nested`): laid out
+densely, a study of thousands of persons was a matrix of its width by its
+persons' columns.
+"""
+function _laplace_probe_span_blocks(laplace::CTSEMLaplaceObjective, U::Integer,
+    Ls::Vector{Matrix{Float64}})
     affine = laplace.affine
     inert = laplace.inert
     prune = _LAPLACE_PRUNE[] && !isempty(inert)
@@ -6065,37 +6411,34 @@ function _laplace_probe_span(laplace::CTSEMLaplaceObjective, U::Integer,
     # Every row reaches and moves a nonlinear effect: the loadings span every
     # coordinate, and the probes are as before.
     left == 0 && return nothing
-    # Each block's eigenpairs, largest first within it (the order a dense
-    # decomposition read them in), then by value over the unit: rows whose
-    # loadings are roundoff of the largest add nothing a probe could reach.
-    pairs = Tuple{Float64,Int,Int}[]
+    # Each block's eigenpairs, largest first within it: rows whose loadings
+    # are roundoff of the largest over the unit add nothing a probe could
+    # reach.
+    vals = Vector{Vector{Float64}}(undef, length(blocks))
     vecs = Vector{Matrix{Float64}}(undef, length(blocks))
+    biggest = 0.0
     for (t, Gb) in enumerate(G)
         if iszero(maximum(abs, Gb; init=0.0))
+            vals[t] = Float64[]
             vecs[t] = zeros(Float64, size(Gb, 1), 0)
             continue
         end
-        E = _ctsem_symeig(Gb)
-        vecs[t] = E.vectors
-        for j in length(E.values):-1:1
-            push!(pairs, (E.values[j], t, j))
-        end
+        Et = _ctsem_symeig(Gb)
+        vals[t] = collect(Float64, Et.values)
+        vecs[t] = Matrix{Float64}(Et.vectors)
+        biggest = max(biggest, maximum(vals[t]))
     end
-    sort!(pairs; by=first, rev=true, alg=Base.Sort.DEFAULT_STABLE)
-    biggest = isempty(pairs) ? 0.0 : pairs[1][1]
-    n = biggest > 0 ? count(q -> q[1] > 1e-12 * biggest, pairs) : 0
-    n == d && return nothing
-    Q = _laplace_scratch_matrix!(laplace, Float64, d, n, :probe_span)
-    fill!(Q, 0.0)
-    @inbounds for c in 1:n
-        _, t, j = pairs[c]
-        o = blocks[t].offset
-        V = vecs[t]
-        for i in 1:blocks[t].size
-            Q[o + i, c] = V[i, j]
-        end
+    cols = Vector{Matrix{Float64}}(undef, length(blocks))
+    n = 0
+    for t in eachindex(blocks)
+        v = vals[t]
+        keep = biggest > 0 ?
+            Int[j for j in length(v):-1:1 if v[j] > 1e-12 * biggest] : Int[]
+        cols[t] = vecs[t][:, keep]
+        n += length(keep)
     end
-    return Q
+    n == laplace.units.dims[U] && return nothing
+    return cols
 end
 
 """`maximum(abs, a .- b)` without the difference vector."""
@@ -8490,7 +8833,7 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         # one-column matrix, and would otherwise be a wrong gradient.
         local ownedA, b, block, l, L, k, subsA, FC, Q, j, dir, pass, c, m, t
         local Dj, nd, jpass
-        local kparl, la, nb, na, Cab, Vcross, e, q, i, tt
+        local kparl, la, nb, na, Cba, acta, actb, width, Vcross, e, q, i, tt
         local Cs, dir1, dir2, T1, p, x, y, z, acc, Pc, Qc, wc, npairs
         # This worker's own: `_laplace_scratch_*` is keyed by the calling slot,
         # and every worker of the partition holds a different one.
@@ -8610,52 +8953,67 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
             end
         end
         # Cross terms with each ancestor, twice over as the trace requires.
-        # `tr(C[a,b] A[b,a]) = tr(V H)` with `V = L_a C[a,b] L_b'`, and there
-        # are two ways to spell that trace as directional derivatives.
+        # `tr(C[a,b] A[b,a]) = tr(V H)` with `V = L_a C[a,b] L_b'`, `H` the
+        # members' mixed second derivative between the two levels' parameters,
+        # spelled as directional derivatives in whichever of three ways takes
+        # the fewest pairs, all equal by linearity:
         #
-        # Over *parameters*: `V` absorbs both factors, so the first direction is
-        # a bare basis vector and the second is `V`'s matching column. One pair
-        # of directions per parameter of this level.
+        #  - over the ancestor's dimensions, `sum_j (L_b C[a,b]' e_j)' H (L_a e_j)`,
+        #    one pair per dimension of `a`;
+        #  - over this block's, `sum_i (L_b e_i)' H (L_a C[a,b] e_i)`, one pair
+        #    per dimension of `b`;
+        #  - over this level's parameters, `V` absorbing both factors: the first
+        #    direction a bare basis vector, the second `V`'s matching column.
         #
-        # Over *dimensions*: `tr(V H) = tr(C[a,b] L_b' H L_a)`, so sweeping
-        # along the two loadings' own columns and weighting by `C[a,b]` gives
-        # the same number in `rank_b * rank_a` pairs. The two are equal by
-        # linearity -- expand `V[:,q] = sum_j L_a[:,j] sum_i C[a,b][j,i] L_b[q,i]`
-        # and collect over `q`.
-        #
-        # Neither dominates. A subject block of 18 parameters at rank 6 under a
-        # rank-1 study is 6 pairs against 18; a burst block of 6 parameters at
-        # rank 3 under a rank-6 subject is 18 against 6. So the cheaper one is
-        # chosen per pair, which at full rank is always the parameter form
-        # because `rank == kpar` there and `rank^2 >= rank`.
+        # Each folds `C[a,b]` into one side. Swept along both loadings' columns
+        # with `C[a,b]` as weights, as to 2026-11-23, it was `rank_b * rank_a`
+        # pairs or the parameter count: on the affect pilot's persons in
+        # studies (48 person coordinates under 4 study own variances) 48 pairs a
+        # person where the ancestor's dimensions take 4, and the cross terms
+        # were most of a nested unit's gradient. Inactive rows and columns of
+        # `C[a,b]` are zero, so their pairs are skipped.
         kparl = length(spec.levels[l].re_index)
         for (t, a) in enumerate(block.ancestors)
             la = blocks[a].level
             nb = block.size
             na = blocks[a].size
-            # The pairs are gathered, in either spelling, and swept together
-            # (`_laplace_cross_jets!`).
+            Cba = Ccoup[b][t]                       # C[b,a], rank_b by rank_a
+            acta = 0
+            @inbounds for j in 1:na
+                isactive[blocks[a].offset + j] && (acta += 1)
+            end
+            actb = 0
+            @inbounds for i in 1:nb
+                isactive[block.offset + i] && (actb += 1)
+            end
+            width = max(na, nb, kparl)
+            Pc = _laplace_scratch_matrix!(laplace, Float64, npar, width, :sg_cross_p)
+            Qc = _laplace_scratch_matrix!(laplace, Float64, npar, width, :sg_cross_q)
+            wc = _laplace_scratch_vector!(laplace, Float64, width, :sg_cross_w)
             npairs = 0
-            Pc = _laplace_scratch_matrix!(laplace, Float64, npar,
-                max(nb * na, kparl), :sg_cross_p)
-            Qc = _laplace_scratch_matrix!(laplace, Float64, npar,
-                max(nb * na, kparl), :sg_cross_q)
-            wc = _laplace_scratch_vector!(laplace, Float64, max(nb * na, kparl),
-                :sg_cross_w)
-            if nb * na < kparl
-                Cab = transpose(Ccoup[b][t])          # C[a,b], rank_a by rank_b
-                for i in 1:nb, j in 1:na
-                    # C[a,b] is zero in an inactive row or column.
-                    (isactive[block.offset + i] && isactive[blocks[a].offset + j]) ||
-                        continue
-                    scatter!(dir1, l, view(L, :, i))
+            if acta <= min(actb, kparl)
+                for j in 1:na
+                    isactive[blocks[a].offset + j] || continue
+                    scatter_loaded!(dir1, l, L, view(Cba, :, j))
                     scatter!(dir2, la, view(Ls[la], :, j))
                     npairs += 1
                     @inbounds for tt in 1:npar
                         Pc[tt, npairs] = dir1[tt]
                         Qc[tt, npairs] = dir2[tt]
                     end
-                    wc[npairs] = 2 * Cab[j, i]
+                    wc[npairs] = 2.0
+                end
+            elseif actb <= kparl
+                for i in 1:nb
+                    isactive[block.offset + i] || continue
+                    scatter!(dir1, l, view(L, :, i))
+                    scatter_loaded!(dir2, la, Ls[la], view(Cba, i, :))
+                    npairs += 1
+                    @inbounds for tt in 1:npar
+                        Pc[tt, npairs] = dir1[tt]
+                        Qc[tt, npairs] = dir2[tt]
+                    end
+                    wc[npairs] = 2.0
                 end
             else
                 # `Vcross`, not `V`: the explicit terms below use a `V` of
@@ -8669,7 +9027,7 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
                 @inbounds for q in 1:kparl, j in 1:na
                     acc = 0.0
                     for i in 1:nb
-                        acc += Ccoup[b][t][i, j] * L[q, i]
+                        acc += Cba[i, j] * L[q, i]
                     end
                     T1[j, q] = acc
                 end
@@ -8689,6 +9047,7 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
                     wc[npairs] = 2.0
                 end
             end
+            npairs > 0 || continue
             _laplace_cross_jets!(Pm, laplace, U, values, Ls, uhat, subsA, Pc, Qc, wc,
                 npairs) || return false
         end
