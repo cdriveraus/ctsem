@@ -6,27 +6,38 @@
 \alias{ctsem-package}
 \title{ctsem}
 \description{
-ctsem is an R package for continuous time structural equation modelling of panel (N > 1) 
-and time series (N = 1) data, using either a frequentist or Bayesian approach, or middle
-ground forms like maximum a posteriori. 
- 
-The general workflow begins by specifying a model using the \code{\link{ctModel}} function,
-then fitting it to data using \code{\link{ctFit}} (alias \code{\link{ctStanFit}}).
-For original OpenMx / SEM functionality from the first ctsem versions, use the
-\pkg{ctsemOMX} package.
-For most purposes, the forms in \pkg{ctsem} are more robust and flexible.
-For examples, see \code{\link{ctFit}}.
-For citation info, please run \code{citation('ctsem')} .
+ctsem fits continuous and discrete time dynamic models to longitudinal
+data: panel data, intensive longitudinal data or a single time series, with
+observations at any times. The processes can interact, be of higher order
+or nonlinear, and be measured by continuous, binary, ordinal, count or
+censored variables. Any parameter can differ between subjects, at one or
+more levels, and depend on covariates. Estimation is by maximum likelihood,
+or Bayesian by optimisation or sampling, with an engine written in Julia
+(the default) or with Stan.
+}
+\details{
+A model is specified with \code{\link{ctModel}}, or in lavaan, Mplus or
+formula syntax with \code{\link{ctModelLavaan}}, \code{\link{ctModelMplus}}
+and \code{\link{ctModelFormula}}, and fitted with \code{\link{ctFit}}.
+\code{summary()}, \code{\link{ctDiscretePars}}, \code{\link{ctPredict}} and
+\code{\link{ctSubjectPars}} describe a fit, and \code{\link{ctScoreTest}},
+\code{\link{ctFitAdequacy}} and \code{\link{ctModelImprove}} check and
+improve it. \code{\link{ctJuliaInstall}} sets up the Julia engine.
+
+\code{vignette('ctsem')} works through a first analysis, and the website,
+\url{https://cdriveraus.github.io/ctsem/}, has the vignettes and the help
+pages grouped by task. For the original OpenMx based ctsem, see the
+\pkg{ctsemOMX} package. \code{citation('ctsem')} gives the references to
+cite.
 }
 \references{
-https://www.jstatsoft.org/article/view/v077i05
+Driver, C. C., Oud, J. H. L., & Voelkle, M. C. (2017). Continuous time
+structural equation modeling with R package ctsem. Journal of Statistical
+Software, 77(5), 1-35. \doi{10.18637/jss.v077.i05}
 
-Driver, C. C., & Voelkle, M. C. (2018). Hierarchical Bayesian continuous time dynamic modeling. 
-Psychological Methods. Advance online publication.http://dx.doi.org/10.1037/met0000168
-
-Stan Development Team (2018). RStan: the R interface to Stan. R package version 2.17.3. http://mc-stan.org
-
-#' @keywords internal
+Driver, C. C., & Voelkle, M. C. (2018). Hierarchical Bayesian continuous
+time dynamic modeling. Psychological Methods, 23(4), 774-799.
+\doi{10.1037/met0000168}
 }
 \seealso{
 Useful links:
@@ -53,3 +64,4 @@ Other contributors:
 }
 
 }
+\keyword{internal}

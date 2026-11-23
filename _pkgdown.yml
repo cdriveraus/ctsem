@@ -22,7 +22,7 @@ home:
 
 navbar:
   structure:
-    left: [reference, articles, manual, new, news]
+    left: [intro, reference, articles, manual, new, news]
     right: [search, github]
   components:
     manual:
@@ -37,6 +37,12 @@ redirects:
 - ["NEWS.html", "news/index.html"]
 
 articles:
+- title: Getting started
+  navbar: Getting started
+  contents:
+  - ctsem
+  - dynamics
+  - interventions
 - title: Specifying models
   navbar: Specifying models
   contents:

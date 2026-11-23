@@ -32,6 +32,7 @@ R: panel data, intensive longitudinal data or a single time series.
 Observations can be at any times, and the times can differ between subjects.
 
 [Website](https://cdriveraus.github.io/ctsem/) ·
+[Getting started](https://cdriveraus.github.io/ctsem/articles/ctsem.html) ·
 [New in version 4](NEW-IN-4.md) ·
 [Tutorial paper](https://osf.io/preprints/psyarxiv/4q9ex_v3)
 
@@ -86,7 +87,10 @@ problems.
 ## Example
 
 Milk yield and fat percentage of 53 cows, recorded on most days of a lactation,
-from the [doBy](https://cran.r-project.org/package=doBy) package:
+from the [doBy](https://cran.r-project.org/package=doBy) package. ctsem takes
+data in long format: one row per cow and occasion, with columns for the id, the
+time and each measured variable. Missing values are `NA`, and the times can be
+irregular and differ between subjects.
 
 ```{r firstmodel, results = 'hide'}
 library(ctsem)
@@ -109,32 +113,56 @@ model <- ctModel(
 fit <- ctFit(milk, model)
 ```
 
-Anything not given to `ctModel()` takes a default. The effects between the two
-processes, for example, are estimated.
+Anything not given to `ctModel()` takes a default. Here the two processes can
+affect each other, and each cow has its own average levels and starting values.
 
 ```{r firstsummary}
 summary(fit)$popmeans
 ```
 
-`drift_yield` and `drift_fat` are the auto effects: negative values mean each
-process tends back towards its equilibrium. `drift_yield_fat` is the effect of
-fat on yield, and `drift_fat_yield` the reverse. Higher fat is followed by lower
-yield, while yield has little or no effect on fat. The `diff` parameters
-describe the process noise, `mvar` the measurement error, `mm` the measurement
-intercepts and `T0m` the initial states.
+The `drift` parameters are rates of change per day, the time unit of the data.
+`drift_yield` and `drift_fat` are the auto effects, and `drift_yield_fat` is
+the effect of fat on the rate of change of yield, `drift_fat_yield` the
+reverse. The `diff` parameters describe the random shocks to the processes,
+`mvar` the measurement error, `mm` the average levels of the measurements and
+`T0m` the starting values. `diff_fat_yield` is a parameter for the correlation
+of the shocks, which `summary(fit)$parmatrices` reports as `DIFFUSIONcor`.
+`summary(fit)$popsd` gives how much the cows differ.
+
+Whether the processes return to equilibrium after a disturbance, and how
+quickly, depends on the whole drift matrix. They do when every eigenvalue of the
+matrix has a negative real part:
+
+```{r firsteigen}
+drift <- ctSummaryMatrices(fit)$estimate$DRIFT
+eigen(drift)$values
+log(2) / abs(eigen(drift)$values)    # half-lives in days
+```
+
+```{r firsthalflives, include = FALSE}
+halflives <- round(sort(log(2) / abs(eigen(drift)$values)))
+```
+
+A disturbance halves in about `r halflives[1]` days along one combination of
+the processes and `r halflives[2]` days along the other. That is slower than
+either auto effect alone would give, because the cross effects form a loop:
+higher fat lowers yield, and lower yield raises fat.
+
+```{r firstdiscrete, fig.height = 4.4, fig.width = 8, fig.alt = "Auto and cross regression coefficients plotted against time intervals of up to 150 days. The autoregressions fall towards zero, and the effect of fat on yield becomes negative, is strongest at about six weeks, and then returns towards zero; the effect of yield on fat stays near zero."}
+ctDiscretePars(fit, times = seq(0, 150, by = 1), plot = TRUE)
+```
+
+The same effects as regression coefficients, as they change with the time
+interval. A higher fat percentage is followed by a lower yield, most strongly
+after about six weeks, and yield has little effect on fat. The
+[dynamics vignette](https://cdriveraus.github.io/ctsem/articles/dynamics.html)
+explains how to read these.
 
 ```{r firstplot, fig.height = 4.4, fig.width = 8, fig.alt = "Observed yield and fat percentage for two cows over one lactation, with the model's expected trajectory and uncertainty band tracking each series."}
 ctPredict(fit, subjects = unique(milk$cow)[1:2], plot = TRUE)
 ```
 
 Observations for two cows, with the model's predictions and their uncertainty.
-
-```{r firstdiscrete, fig.height = 4.4, fig.width = 8, fig.alt = "Auto and cross regression coefficients plotted against the time interval. The effect of fat on yield grows steadily more negative; the reverse effect stays near zero."}
-ctDiscretePars(fit, plot = TRUE)
-```
-
-The auto and cross effects as regression coefficients, as they change with the
-time interval.
 
 ## Covariate effects
 
@@ -173,11 +201,18 @@ The same models can be written in lavaan, Mplus or brms style syntax with
 `ctModelLavaan()`, `ctModelMplus()` and `ctModelFormula()`, see the
 [model syntax vignette](https://cdriveraus.github.io/ctsem/articles/model-syntax.html).
 
-```{r chicktipreds}
+```{r chickestimates}
+summary(f)$popmeans[c('a11', 'cint'), ]
 summary(f)$tipreds
 ```
 
-Diets 3 and 4 raise the intercept, and so the growth rate, compared with diet 1.
+The rate at which a chick's weight changes is `a11` times its current weight,
+plus `cint`. `a11` is positive, so the heavier a chick, the
+faster it grows. `cint` is the growth rate for diet 1 at the average weight. It
+varies between chicks, as a free intercept does by default, and the diets
+shift it. Diets 3 and 4 raise the growth rate at any weight, compared with
+diet 1, and because heavier chicks grow faster, the difference compounds over
+time. The effect of diet 2 is smaller and its interval includes zero.
 
 ```{r chickpredict, fig.height = 4.2, fig.width = 8, fig.alt = "Predicted weight trajectories for one chick from each of the four diets, based on the diet covariates alone, separating into four increasing curves."}
 ctPredict(f, plot = TRUE, removeObs = TRUE, polygonalpha = 0,
@@ -194,6 +229,10 @@ Predicted growth for one chick on each diet, from the diet alone.
 - A [tutorial paper](https://osf.io/preprints/psyarxiv/4q9ex_v3) works through
   an applied example, with [code and materials](https://osf.io/xh6ue/).
 - Vignettes:
+  [getting started](https://cdriveraus.github.io/ctsem/articles/ctsem.html),
+  [reading continuous time dynamics](https://cdriveraus.github.io/ctsem/articles/dynamics.html),
+  [interventions and time dependent predictors](https://cdriveraus.github.io/ctsem/articles/interventions.html),
+  [model syntax](https://cdriveraus.github.io/ctsem/articles/model-syntax.html),
   [measurement models](https://cdriveraus.github.io/ctsem/articles/measurement-models.html),
   [multilevel random effects](https://cdriveraus.github.io/ctsem/articles/laplace-multilevel.html),
   [uncertainty](https://cdriveraus.github.io/ctsem/articles/uncertainty.html),

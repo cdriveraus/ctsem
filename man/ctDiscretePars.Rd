@@ -160,13 +160,20 @@ This can be modified by the various ggplot2 functions, or displayed using print(
 }
 \examples{
 data.table::setDTthreads(1) #ignore this line
-ctDiscretePars(ctstantestfit,times=seq(.5,4,.1),
- plot=TRUE,indices='CR')
+# The auto and cross effects of the bundled example fit as regression
+# coefficients, for time intervals from 0 to 4 units. Choose the range to
+# cover the time scale of the processes.
+ctDiscretePars(ctstantestfit, times = seq(0, 4, .1), plot = TRUE)
 
-#modify plot
-require(ggplot2)
-g=ctDiscretePars(ctstantestfit,times=seq(.5,4,.1),
- plot=TRUE,indices='CR')
-g= g+ labs(title='Cross effects')
-print(g)
+# Without plot, an array of coefficients. summary() gives each curve's
+# peak, the interval at which it peaks, and the interval at which it has
+# fallen to half the peak.
+dp <- ctDiscretePars(ctstantestfit, times = seq(0, 4, .1))
+summary(dp)
+
+# Cross effects only, standardised by the stationary standard deviations.
+# The plot is a ggplot and can be modified.
+g <- ctDiscretePars(ctstantestfit, times = seq(0, 4, .1),
+  plot = TRUE, indices = 'CR', standardise = TRUE)
+g + ggplot2::labs(title = 'Cross effects')
 }

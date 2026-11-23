@@ -91,7 +91,10 @@ Summarise model-implied parameter matrices from a ctsem fit object.
 }
 \examples{
 \donttest{
-#posterior median over all subjects (also reflects mean of unconstrained pars)
-ctSummaryMatrices(ctstantestfit)
+m <- ctSummaryMatrices(ctstantestfit)
+names(m)
+m$DRIFT                          # posterior median of the drift matrix
+eigen(m$estimate$DRIFT)$values   # stable when every real part is negative
+m$asymDIFFUSIONcor               # stationary correlation within a subject
 }
 }

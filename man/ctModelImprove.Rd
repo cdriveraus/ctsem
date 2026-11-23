@@ -301,6 +301,22 @@ not reached an optimum, and is recorded as such.
   same way.
 }
 
+\examples{
+\donttest{
+if (isTRUE(ctJuliaStatus()$available)) {
+model <- ctModel(LAMBDA = diag(2),
+  manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+  TDpredNames = 'TD1')
+fit <- ctFit(ctstantestdat, model, priors = TRUE)
+improved <- ctModelImprove(fit)
+improved$history    # each change tried, and whether it was kept
+summary(improved$fit)
+
+# Only simplify parts of the model the data do not identify.
+reduced <- ctModelImprove(fit, reduceOnly = TRUE)
+}
+}
+}
 \seealso{
 \code{vignette('score-tests')}.
 }

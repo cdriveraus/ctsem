@@ -20,8 +20,9 @@ data in R: panel data, intensive longitudinal data or a single time
 series. Observations can be at any times, and the times can differ
 between subjects.
 
-[Website](https://cdriveraus.github.io/ctsem/) · [New in version
-4](NEW-IN-4.md) · [Tutorial
+[Website](https://cdriveraus.github.io/ctsem/) · [Getting
+started](https://cdriveraus.github.io/ctsem/articles/ctsem.html) · [New
+in version 4](NEW-IN-4.md) · [Tutorial
 paper](https://osf.io/preprints/psyarxiv/4q9ex_v3)
 
 ## Features
@@ -80,7 +81,10 @@ problems.
 
 Milk yield and fat percentage of 53 cows, recorded on most days of a
 lactation, from the [doBy](https://cran.r-project.org/package=doBy)
-package:
+package. ctsem takes data in long format: one row per cow and occasion,
+with columns for the id, the time and each measured variable. Missing
+values are `NA`, and the times can be irregular and differ between
+subjects.
 
 ``` r
 library(ctsem)
@@ -103,34 +107,67 @@ model <- ctModel(
 fit <- ctFit(milk, model)
 ```
 
-Anything not given to `ctModel()` takes a default. The effects between
-the two processes, for example, are estimated.
+Anything not given to `ctModel()` takes a default. Here the two
+processes can affect each other, and each cow has its own average levels
+and starting values.
 
 ``` r
 summary(fit)$popmeans
 #>                   mean    sd   2.5%    50%  97.5%   mode
-#> T0m_yield       -0.949 0.142 -1.209 -0.950 -0.663 -0.943
-#> T0m_fat          0.158 0.185 -0.212  0.155  0.506  0.151
-#> drift_yield     -0.041 0.004 -0.049 -0.041 -0.033 -0.041
-#> drift_yield_fat -0.020 0.004 -0.027 -0.020 -0.013 -0.020
-#> drift_fat_yield -0.006 0.004 -0.013 -0.006  0.002 -0.006
-#> drift_fat       -0.015 0.004 -0.024 -0.015 -0.009 -0.015
-#> diff_yield       0.136 0.004  0.129  0.136  0.143  0.136
-#> diff_fat_yield  -0.591 0.062 -0.708 -0.592 -0.472 -0.592
-#> diff_fat         0.116 0.005  0.106  0.116  0.125  0.116
+#> T0m_yield       -0.940 0.148 -1.227 -0.938 -0.654 -0.943
+#> T0m_fat          0.160 0.191 -0.206  0.158  0.527  0.150
+#> drift_yield     -0.041 0.004 -0.050 -0.040 -0.033 -0.041
+#> drift_yield_fat -0.020 0.004 -0.028 -0.020 -0.013 -0.020
+#> drift_fat_yield -0.006 0.004 -0.013 -0.006  0.001 -0.006
+#> drift_fat       -0.015 0.004 -0.025 -0.014 -0.008 -0.015
+#> diff_yield       0.136 0.004  0.128  0.136  0.143  0.136
+#> diff_fat_yield  -0.593 0.059 -0.714 -0.592 -0.481 -0.592
+#> diff_fat         0.116 0.005  0.107  0.116  0.126  0.116
 #> mvaryield        0.329 0.003  0.323  0.329  0.335  0.328
 #> mvarfat          0.582 0.005  0.573  0.582  0.591  0.582
-#> mm_yield        -0.053 0.123 -0.299 -0.052  0.187 -0.054
-#> mm_fat           0.141 0.108 -0.063  0.140  0.352  0.142
+#> mm_yield        -0.051 0.122 -0.286 -0.048  0.184 -0.054
+#> mm_fat           0.141 0.105 -0.049  0.138  0.358  0.142
 ```
 
-`drift_yield` and `drift_fat` are the auto effects: negative values mean
-each process tends back towards its equilibrium. `drift_yield_fat` is
-the effect of fat on yield, and `drift_fat_yield` the reverse. Higher
-fat is followed by lower yield, while yield has little or no effect on
-fat. The `diff` parameters describe the process noise, `mvar` the
-measurement error, `mm` the measurement intercepts and `T0m` the initial
-states.
+The `drift` parameters are rates of change per day, the time unit of the
+data. `drift_yield` and `drift_fat` are the auto effects, and
+`drift_yield_fat` is the effect of fat on the rate of change of yield,
+`drift_fat_yield` the reverse. The `diff` parameters describe the random
+shocks to the processes, `mvar` the measurement error, `mm` the average
+levels of the measurements and `T0m` the starting values.
+`diff_fat_yield` is a parameter for the correlation of the shocks, which
+`summary(fit)$parmatrices` reports as `DIFFUSIONcor`.
+`summary(fit)$popsd` gives how much the cows differ.
+
+Whether the processes return to equilibrium after a disturbance, and how
+quickly, depends on the whole drift matrix. They do when every
+eigenvalue of the matrix has a negative real part:
+
+``` r
+drift <- ctSummaryMatrices(fit)$estimate$DRIFT
+eigen(drift)$values
+#> [1] -0.04457955 -0.01083888
+log(2) / abs(eigen(drift)$values)    # half-lives in days
+#> [1] 15.54855 63.95007
+```
+
+A disturbance halves in about 16 days along one combination of the
+processes and 64 days along the other. That is slower than either auto
+effect alone would give, because the cross effects form a loop: higher
+fat lowers yield, and lower yield raises fat.
+
+``` r
+ctDiscretePars(fit, times = seq(0, 150, by = 1), plot = TRUE)
+```
+
+<img src="man/figures/README-firstdiscrete-1.png" alt="Auto and cross regression coefficients plotted against time intervals of up to 150 days. The autoregressions fall towards zero, and the effect of fat on yield becomes negative, is strongest at about six weeks, and then returns towards zero; the effect of yield on fat stays near zero." width="100%" />
+
+The same effects as regression coefficients, as they change with the
+time interval. A higher fat percentage is followed by a lower yield,
+most strongly after about six weeks, and yield has little effect on fat.
+The [dynamics
+vignette](https://cdriveraus.github.io/ctsem/articles/dynamics.html)
+explains how to read these.
 
 ``` r
 ctPredict(fit, subjects = unique(milk$cow)[1:2], plot = TRUE)
@@ -140,15 +177,6 @@ ctPredict(fit, subjects = unique(milk$cow)[1:2], plot = TRUE)
 
 Observations for two cows, with the model’s predictions and their
 uncertainty.
-
-``` r
-ctDiscretePars(fit, plot = TRUE)
-```
-
-<img src="man/figures/README-firstdiscrete-1.png" alt="Auto and cross regression coefficients plotted against the time interval. The effect of fat on yield grows steadily more negative; the reverse effect stays near zero." width="100%" />
-
-The auto and cross effects as regression coefficients, as they change
-with the time interval.
 
 ## Covariate effects
 
@@ -190,15 +218,25 @@ with `ctModelLavaan()`, `ctModelMplus()` and `ctModelFormula()`, see the
 vignette](https://cdriveraus.github.io/ctsem/articles/model-syntax.html).
 
 ``` r
+summary(f)$popmeans[c('a11', 'cint'), ]
+#>       mean    sd  2.5%   50% 97.5%  mode
+#> a11  0.032 0.003 0.026 0.032 0.039 0.032
+#> cint 0.095 0.008 0.079 0.095 0.111 0.095
 summary(f)$tipreds
 #>                  mean    sd   2.5%   50% 97.5%  mode     z
-#> tip_Diet_2_cint 0.021 0.013 -0.005 0.021 0.046 0.021 1.570
-#> tip_Diet_3_cint 0.050 0.013  0.025 0.050 0.074 0.051 3.983
-#> tip_Diet_4_cint 0.028 0.013  0.001 0.028 0.052 0.028 2.135
+#> tip_Diet_2_cint 0.022 0.013 -0.004 0.021 0.049 0.021 1.616
+#> tip_Diet_3_cint 0.051 0.013  0.026 0.051 0.077 0.051 3.844
+#> tip_Diet_4_cint 0.029 0.013  0.003 0.029 0.054 0.028 2.225
 ```
 
-Diets 3 and 4 raise the intercept, and so the growth rate, compared with
-diet 1.
+The rate at which a chick’s weight changes is `a11` times its current
+weight, plus `cint`. `a11` is positive, so the heavier a
+chick, the faster it grows. `cint` is the growth rate for diet 1 at the
+average weight. It varies between chicks, as a free intercept does by
+default, and the diets shift it. Diets 3 and 4 raise the growth rate at
+any weight, compared with diet 1, and because heavier chicks grow
+faster, the difference compounds over time. The effect of diet 2 is
+smaller and its interval includes zero.
 
 ``` r
 ctPredict(f, plot = TRUE, removeObs = TRUE, polygonalpha = 0,
@@ -217,7 +255,15 @@ Predicted growth for one chick on each diet, from the diet alone.
 - A [tutorial paper](https://osf.io/preprints/psyarxiv/4q9ex_v3) works
   through an applied example, with [code and
   materials](https://osf.io/xh6ue/).
-- Vignettes: [measurement
+- Vignettes: [getting
+  started](https://cdriveraus.github.io/ctsem/articles/ctsem.html),
+  [reading continuous time
+  dynamics](https://cdriveraus.github.io/ctsem/articles/dynamics.html),
+  [interventions and time dependent
+  predictors](https://cdriveraus.github.io/ctsem/articles/interventions.html),
+  [model
+  syntax](https://cdriveraus.github.io/ctsem/articles/model-syntax.html),
+  [measurement
   models](https://cdriveraus.github.io/ctsem/articles/measurement-models.html),
   [multilevel random
   effects](https://cdriveraus.github.io/ctsem/articles/laplace-multilevel.html),

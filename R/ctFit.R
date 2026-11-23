@@ -1048,247 +1048,42 @@ T0VARredundancies <- function(ctm) {
 #' @export
 #' @examples
 #' \donttest{
-#'
-#' #generate a modern ctsem model relying heavily on defaults
-#' model<-ctModel(type='ct',
-#'   latentNames=c('eta1','eta2'),
-#'   manifestNames=c('Y1','Y2'),
-#'   MANIFESTVAR=diag(.1,2),
-#'   TDpredNames='TD1',
-#'   TIpredNames=c('TI1','TI2','TI3'),
-#'   LAMBDA=diag(2))
-#'
-#' # The default backend is julia; ctJuliaInstall() sets it up.
+#' # The default backend is julia, which ctJuliaInstall() sets up.
 #' if (isTRUE(ctJuliaStatus()$available)) {
-#'   fit<-ctFit(ctstantestdat, model,priors=TRUE)
 #'
-#'   summary(fit)
+#' # Long format data: one row per subject and occasion, with an id, a time,
+#' # the measured variables Y1 and Y2, and a time dependent predictor TD1.
+#' head(ctstantestdat)
 #'
-#'   plot(fit,wait=FALSE)
+#' # Two processes, each measured by one variable, affected by TD1. Every
+#' # other part of the model takes the defaults of ctModel().
+#' model <- ctModel(LAMBDA = diag(2),
+#'   manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+#'   TDpredNames = 'TD1')
+#'
+#' # priors = TRUE helps with a data set this small (30 subjects).
+#' fit <- ctFit(ctstantestdat, model, priors = TRUE)
+#' summary(fit)
+#'
+#' # The effects over time intervals, and predictions for two subjects.
+#' ctDiscretePars(fit, times = seq(0, 5, by = 0.1), plot = TRUE)
+#' ctPredict(fit, subjects = 1:2, plot = TRUE)
+#'
+#' # A linear growth curve for Y1: no dynamics and no process noise, with a
+#' # slope (CINT) and an initial level (T0MEANS) that vary between subjects.
+#' growth <- ctModel(LAMBDA = matrix(1),
+#'   manifestNames = 'Y1', latentNames = 'level',
+#'   DRIFT = 0, DIFFUSION = 0, T0VAR = 0, MANIFESTMEANS = 0,
+#'   CINT = 'slope', T0MEANS = 'initial')
+#' fitgrowth <- ctFit(ctstantestdat, growth, priors = TRUE)
+#' summary(fitgrowth)$popmeans
+#' summary(fitgrowth)$popsd
+#'
+#' # Sampling the posterior instead of optimising:
+#' # ctFit(ctstantestdat, model, optimize = FALSE)
+#' # or, after a fit, ctFitUncertainty(fit, 'sample').
 #' }
-#'
-#' #### extended examples
-#'
-#' library(ctsem)
-#' set.seed(3)
-#'
-#' #  Data generation (run this, but no need to understand!) -----------------
-#'
-#' Tpoints <- 20
-#' nmanifest <- 4
-#' nlatent <- 2
-#' nsubjects<-20
-#'
-#' #random effects
-#' age <- rnorm(nsubjects) #standardised
-#' cint1<-rnorm(nsubjects,2,.3)+age*.5
-#' cint2 <- cint1*.5+rnorm(nsubjects,1,.2)+age*.5
-#' tdpredeffect <- rnorm(nsubjects,5,.3)+age*.5
-#'
-#' for(i in 1:nsubjects){
-#'   #generating model
-#'   gm<-ctModel(Tpoints=Tpoints,n.manifest = nmanifest,n.latent = nlatent,n.TDpred = 1,
-#'   type='omx',
-#'     LAMBDA = matrix(c(1,0,0,0, 0,1,.8,1.3),nrow=nmanifest,ncol=nlatent),
-#'     DRIFT=matrix(c(-.3, .2, 0, -.5),nlatent,nlatent),
-#'     TDPREDMEANS=matrix(c(rep(0,Tpoints-10),1,rep(0,9)),ncol=1),
-#'     TDPREDEFFECT=matrix(c(tdpredeffect[i],0),nrow=nlatent),
-#'     DIFFUSION = matrix(c(1, 0, 0, .5),2,2),
-#'     CINT = matrix(c(cint1[i],cint2[i]),ncol=1),
-#'     T0VAR=diag(2,nlatent,nlatent),
-#'     MANIFESTVAR = diag(.5, nmanifest))
-#'
-#'   #generate data
-#'   newdat <- ctGenerate(ctmodelobj = gm,n = 1,burnin = 2,
-#'     dtmat=rbind(c(rep(.5,8),3,rep(.5,Tpoints-9))))
-#'   newdat[,'id'] <- i #set id for each subject
-#'   newdat <- cbind(newdat,age[i]) #include time independent predictor
-#'   if(i ==1) {
-#'     dat <- newdat[1:(Tpoints-10),] #pre intervention data
-#'     dat2 <- newdat #including post intervention data
-#'   }
-#'   if(i > 1) {
-#'     dat <- rbind(dat, newdat[1:(Tpoints-10),])
-#'     dat2 <- rbind(dat2,newdat)
-#'   }
 #' }
-#' colnames(dat)[ncol(dat)] <- 'age'
-#' colnames(dat2)[ncol(dat)] <- 'age'
-#'
-#'
-#' #plot generated data for sanity
-#' plot(age)
-#' matplot(dat[,gm$manifestNames],type='l',pch=1)
-#' plotvar <- 'Y1'
-#' plot(dat[dat[,'id']==1,'time'],dat[dat[,'id']==1,plotvar],type='l',
-#'   ylim=range(dat[,plotvar],na.rm=TRUE))
-#' for(i in 2:nsubjects){
-#'   points(dat[dat[,'id']==i,'time'],dat[dat[,'id']==i,plotvar],type='l',col=i)
-#' }
-#'
-#'
-#' dat2[,gm$manifestNames][sample(1:length(dat2[,gm$manifestNames]),size = 100)] <- NA
-#'
-#'
-#' #data structure
-#' head(dat2)
-#'
-#'
-#' # Model fitting -----------------------------------------------------------
-#'
-#' ##simple univariate default model
-#'
-#' m <- ctModel(type = 'ct', manifestNames = c('Y1'), LAMBDA = diag(1))
-#' ctModelLatex(m)
-#'
-#' #Specify univariate linear growth curve
-#'
-#' m1 <- ctModel(type = 'ct',
-#'   manifestNames = c('Y1'), latentNames=c('eta1'),
-#'   DRIFT=matrix(0,nrow=1,ncol=1),
-#'   DIFFUSION=matrix(0,nrow=1,ncol=1),
-#'   T0VAR=matrix(0,nrow=1,ncol=1),
-#'   CINT=matrix(c('cint1'),ncol=1),
-#'   T0MEANS=matrix(c('t0m1'),ncol=1),
-#'   LAMBDA = diag(1),
-#'   MANIFESTMEANS=matrix(0,ncol=1),
-#'   MANIFESTVAR=matrix(c('merror'),nrow=1,ncol=1))
-#'
-#' ctModelLatex(m1)
-#'
-#' #fit
-#' if (isTRUE(ctJuliaStatus()$available)) {
-#'   f1 <- ctFit(datalong = dat2, model = m1, optimize=TRUE, priors=FALSE)
-#'
-#'   summary(f1)
-#'
-#'   #plots of individual subject models v data
-#'   ctPredict(f1,plot=TRUE,subjects=1,kalmanvec=c('y','yprior'),timestep=.01)
-#'   ctPredict(f1,plot=TRUE,subjects=1:3,kalmanvec=c('y','ysmooth'),timestep=.01,errorvec=NA)
-#'
-#'   #compare randomly generated data from the posterior to the observed data,
-#'   #including the lagged covariance structure and the mean trajectory over time
-#'   ctPostPredict(f1, wait=FALSE)
-#' }
-#'
-#'  ### Further example models
-#'
-#' #Include intervention
-#' m2 <- ctModel(type = 'ct',
-#'   manifestNames = c('Y1'), latentNames=c('eta1'),
-#'   n.TDpred=1,TDpredNames = 'TD1', #this line includes the intervention
-#'   TDPREDEFFECT=matrix(c('tdpredeffect'),nrow=1,ncol=1), #intervention effect
-#'   DRIFT=matrix(-1e-5,nrow=1,ncol=1),
-#'   DIFFUSION=matrix(0,nrow=1,ncol=1),
-#'   CINT=matrix(c('cint1'),ncol=1),
-#'   T0MEANS=matrix(c('t0m1'),ncol=1),
-#'   T0VAR=matrix(0,nrow=1,ncol=1),
-#'   LAMBDA = diag(1),
-#'   MANIFESTMEANS=matrix(0,ncol=1),
-#'   MANIFESTVAR=matrix(c('merror'),nrow=1,ncol=1))
-#'
-#'
-#'
-#' #Individual differences in intervention, Bayesian estimation, covariates
-#' m2i <- ctModel(type = 'ct',
-#'   manifestNames = c('Y1'), latentNames=c('eta1'),
-#'   TIpredNames = 'age',
-#'   TDpredNames = 'TD1', #this line includes the intervention
-#'   TDPREDEFFECT=matrix(c('tdpredeffect||TRUE'),nrow=1,ncol=1), #intervention effect
-#'   DRIFT=matrix(-1e-5,nrow=1,ncol=1),
-#'   DIFFUSION=matrix(0,nrow=1,ncol=1),
-#'   CINT=matrix(c('cint1'),ncol=1),
-#'   T0MEANS=matrix(c('t0m1'),ncol=1),
-#'   T0VAR=matrix(0,nrow=1,ncol=1),
-#'   LAMBDA = diag(1),
-#'   MANIFESTMEANS=matrix(0,ncol=1),
-#'   MANIFESTVAR=matrix(c('merror'),nrow=1,ncol=1))
-#'
-#'
-#' #Including covariate effects
-#' m2ic <- ctModel(type = 'ct',
-#'   manifestNames = c('Y1'), latentNames=c('eta1'),
-#'   n.TIpred = 1, TIpredNames = 'age',
-#'   n.TDpred=1,TDpredNames = 'TD1', #this line includes the intervention
-#'   TDPREDEFFECT=matrix(c('tdpredeffect'),nrow=1,ncol=1), #intervention effect
-#'   DRIFT=matrix(-1e-5,nrow=1,ncol=1),
-#'   DIFFUSION=matrix(0,nrow=1,ncol=1),
-#'   CINT=matrix(c('cint1'),ncol=1),
-#'   T0MEANS=matrix(c('t0m1'),ncol=1),
-#'   T0VAR=matrix(0,nrow=1,ncol=1),
-#'   LAMBDA = diag(1),
-#'   MANIFESTMEANS=matrix(0,ncol=1),
-#'   MANIFESTVAR=matrix(c('merror'),nrow=1,ncol=1))
-#'
-#' m2ic$pars$indvarying[m2ic$pars$matrix %in% 'TDPREDEFFECT'] <- TRUE
-#'
-#'
-#' #Include deterministic dynamics
-#' m3 <- ctModel(type = 'ct',
-#'   manifestNames = c('Y1'), latentNames=c('eta1'),
-#'   n.TDpred=1,TDpredNames = 'TD1', #this line includes the intervention
-#'   TDPREDEFFECT=matrix(c('tdpredeffect'),nrow=1,ncol=1), #intervention effect
-#'   DRIFT=matrix('drift11',nrow=1,ncol=1),
-#'   DIFFUSION=matrix(0,nrow=1,ncol=1),
-#'   CINT=matrix(c('cint1'),ncol=1),
-#'   T0MEANS=matrix(c('t0m1'),ncol=1),
-#'   T0VAR=matrix('t0var11',nrow=1,ncol=1),
-#'   LAMBDA = diag(1),
-#'   MANIFESTMEANS=matrix(0,ncol=1),
-#'   MANIFESTVAR=matrix(c('merror1'),nrow=1,ncol=1))
-#'
-#'
-#'
-#'
-#'
-#' #Add system noise to allow for fluctuations that persist in time
-#' m3n <- ctModel(type = 'ct',
-#'   manifestNames = c('Y1'), latentNames=c('eta1'),
-#'   n.TDpred=1,TDpredNames = 'TD1', #this line includes the intervention
-#'   TDPREDEFFECT=matrix(c('tdpredeffect'),nrow=1,ncol=1), #intervention effect
-#'   DRIFT=matrix('drift11',nrow=1,ncol=1),
-#'   DIFFUSION=matrix('diffusion',nrow=1,ncol=1),
-#'   CINT=matrix(c('cint1'),ncol=1),
-#'   T0MEANS=matrix(c('t0m1'),ncol=1),
-#'   T0VAR=matrix('t0var11',nrow=1,ncol=1),
-#'   LAMBDA = diag(1),
-#'   MANIFESTMEANS=matrix(0,ncol=1),
-#'   MANIFESTVAR=matrix(c(0),nrow=1,ncol=1))
-#'
-#'
-#'
-#' #include 2nd latent process
-#'
-#' m4 <- ctModel(n.manifest = 2,n.latent = 2, type = 'ct',
-#'   manifestNames = c('Y1','Y2'), latentNames=c('L1','L2'),
-#'   n.TDpred=1,TDpredNames = 'TD1',
-#'   TDPREDEFFECT=matrix(c('tdpredeffect1','tdpredeffect2'),nrow=2,ncol=1),
-#'   DRIFT=matrix(c('drift11','drift21','drift12','drift22'),nrow=2,ncol=2),
-#'   DIFFUSION=matrix(c('diffusion11','diffusion21',0,'diffusion22'),nrow=2,ncol=2),
-#'   CINT=matrix(c('cint1','cint2'),nrow=2,ncol=1),
-#'   T0MEANS=matrix(c('t0m1','t0m2'),nrow=2,ncol=1),
-#'   T0VAR=matrix(c('t0var11','t0var21',0,'t0var22'),nrow=2,ncol=2),
-#'   LAMBDA = matrix(c(1,0,0,1),nrow=2,ncol=2),
-#'   MANIFESTMEANS=matrix(c(0,0),nrow=2,ncol=1),
-#'   MANIFESTVAR=matrix(c('merror1',0,0,'merror2'),nrow=2,ncol=2))
-#'
-#' #dynamic factor model -- fixing CINT to 0 and freeing indicator level intercepts
-#'
-#' m3df <- ctModel(type = 'ct',
-#'   manifestNames = c('Y2','Y3'), latentNames=c('eta1'),
-#'   n.TDpred=1,TDpredNames = 'TD1', #this line includes the intervention
-#'   TDPREDEFFECT=matrix(c('tdpredeffect'),nrow=1,ncol=1), #intervention effect
-#'   DRIFT=matrix('drift11',nrow=1,ncol=1),
-#'   DIFFUSION=matrix('diffusion',nrow=1,ncol=1),
-#'   CINT=matrix(c(0),ncol=1),
-#'   T0MEANS=matrix(c('t0m1'),ncol=1),
-#'   T0VAR=matrix('t0var11',nrow=1,ncol=1),
-#'   LAMBDA = matrix(c(1,'Y3loading'),nrow=2,ncol=1),
-#'   MANIFESTMEANS=matrix(c('Y2_int','Y3_int'),nrow=2,ncol=1),
-#'   MANIFESTVAR=matrix(c('Y2residual',0,0,'Y3residual'),nrow=2,ncol=2))
-#'
-#' }
-
 ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
   fit=TRUE, intoverpop='auto', poprank='auto', sameInitialTimes=FALSE, stationary=FALSE,plot=FALSE,  derrind=NA,
   optimize=TRUE,  optimcontrol=list(),
