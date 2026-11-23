@@ -543,41 +543,13 @@ test_that("the probes search only where a unit can have a second maximum", {
 # test -- works from the unit's blocks (`_laplace_block_lowest`); made dense,
 # it was the unit's width cubed, hours for a study of thousands. The dense
 # decompositions are the oracle (`ctsem_set_block_eigen!(false)`).
-.modes_nested_data <- function(nstudy = 2, nperson = 12, ntime = 6) {
-  set.seed(5)
-  A0 <- matrix(c(-0.6, 0.15, 0.1, -0.5), 2, 2)
-  G <- t(chol(matrix(c(0.6, 0.1, 0.1, 0.5), 2, 2)))
-  out <- list()
-  for (s in seq_len(nstudy)) {
-    A <- A0 + matrix(rnorm(4, 0, 0.08), 2, 2)
-    for (p in seq_len(nperson)) {
-      mm <- rnorm(2); x <- rnorm(2)
-      times <- cumsum(c(0, runif(ntime - 1, 0.5, 1.5)))
-      X <- matrix(NA, ntime, 2); X[1, ] <- x
-      for (t in 2:ntime) {
-        dt <- times[t] - times[t - 1]; n <- ceiling(dt / 0.05); h <- dt / n
-        for (j in seq_len(n)) x <- x + A %*% x * h + G %*% rnorm(2, 0, sqrt(h))
-        X[t, ] <- x
-      }
-      Y <- X + matrix(mm, ntime, 2, byrow = TRUE) + matrix(rnorm(2 * ntime, 0, 0.4), ntime, 2)
-      out[[length(out) + 1]] <- data.frame(id = (s - 1) * nperson + p, study = s,
-        time = times, Y1 = Y[, 1], Y2 = Y[, 2])
-    }
-  }
-  do.call(rbind, out)
-}
+# (`.nested_panel_data()`, `.nested_panel_model()`: helper-nested.R)
 
 test_that("a nested unit's mode search reads its blocks, as its dense oracle does", {
   skip_without_julia()
   withr::local_options(ctsem.laplace.hybrid = FALSE)
-  m <- suppressMessages(ctModel(type = "ct", manifestNames = c("Y1", "Y2"),
-    latentNames = c("eta1", "eta2"), LAMBDA = diag(2),
-    MANIFESTMEANS = matrix(c("mm1", "mm2"), 2, 1), CINT = matrix(0, 2, 1),
-    id = c("id", "study"), time = "time", tipredDefault = FALSE))
-  free <- is.na(m$pars$value)
-  m$pars$indvarying <- ifelse(m$pars$matrix %in% c("MANIFESTMEANS", "T0MEANS") & free,
-    "id", ifelse(m$pars$matrix == "DRIFT" & free, "study", FALSE))
-  spec <- suppressMessages(ctFit(.modes_nested_data(), m, backend = "julia",
+  m <- .nested_panel_model("intercepts")
+  spec <- suppressMessages(ctFit(.nested_panel_data(), m, backend = "julia",
     intoverpop = "laplace", fit = FALSE, cores = 2))
   expect_null(spec$laplace$hybrid)
   obj <- ctsem:::.ctJuliaObjective(spec, hybrid = FALSE)
@@ -603,6 +575,74 @@ test_that("a nested unit's mode search reads its blocks, as its dense oracle doe
   subset <- ctsem:::.ctJuliaEval(paste0("o -> ContinuousTimeSEM._ctsem_subset_objective(",
     "o, [1]) isa ContinuousTimeSEM.CTSEMLaplaceObjective"))
   expect_true(isTRUE(subset(obj)))
+})
+
+# Persons with their own random drift under a random study drift, on the layer:
+# with wide population sds, short records leave a unit's curvature soft, and the
+# soft-direction quadrature's node floor binds. Where it does, the rule and its
+# reverse take it from the unit's blocks (the floored eigenpairs' low-rank
+# part, `_soft_floored_node_reverse!`), and the dense rule and reverse, which
+# take every eigenpair, are their oracle. The point is fixed; the test first
+# checks that a node there holds two floored pairs, so it fails if it stops
+# exercising them.
+test_that("a nested unit's soft quadrature takes a binding floor from its blocks", {
+  skip_without_julia()
+  withr::local_options(ctsem.laplace.hybrid = FALSE)
+  m <- .nested_panel_model("drift")
+  spec <- suppressMessages(ctFit(.nested_panel_data(3, 8, 12), m, backend = "julia",
+    intoverpop = "laplace", fit = FALSE, cores = 2))
+  obj <- ctsem:::.ctJuliaObjective(spec, hybrid = FALSE)
+  x <- rep(0, ctsem:::.ctBackendNpar(spec))
+  for (lv in spec$laplace$levels) x[lv$sd_index[lv$sd_index > 0]] <- 2.5
+  x <- x + 1.2 * as.numeric(ctsem:::.ctJuliaEval(
+    "n -> randn(ContinuousTimeSEM.Random.Xoshiro(37), n)")(length(x)))
+  compare <- ctsem:::.ctJuliaEval(paste(
+    "(o, x) -> begin",
+    "  C = ContinuousTimeSEM",
+    "  C.ctsem_laplace_evaluate(o, x; gradient = false)",
+    "  theta = C._laplace_extend(o, collect(Float64, x))",
+    "  Ls = C._laplace_popchols(theta, o.spec)",
+    "  aws = C._laplace_workspace!(o, Float64, length(theta))",
+    "  top = C._laplace_soft_node_curvature_floor_top()",
+    "  out = Float64[]",
+    "  for U in eachindex(o.units.members)",
+    "    u = o.modes[U]; blocks = o.units.blocks[U]",
+    "    curvf = z -> C._laplace_unit_curvature(o, U, theta, Ls, z)",
+    "    M = C._laplace_copy_blockmatrix(curvf(u))",
+    "    F0 = C._soft_shifted_factor(M, blocks, 0.0)",
+    "    F0 === nothing && continue",
+    "    eig = C._soft_smallest_eigenpair(M, blocks, F0)",
+    "    (eig === nothing || eig.lambda >= o.soft_blend_hi) && continue",
+    "    most = 0",
+    "    for xg in C._gauss_hermite(3)[1]",
+    "      abs(xg) < 1e-12 && continue",
+    "      ub = u .+ (sqrt(2) * xg / sqrt(max(eig.lambda, 1.0))) .* eig.v",
+    "      low = C._soft_node_low_pairs(curvf(ub), blocks, eig.v, top)",
+    "      most = max(most, low === nothing ? -1 : length(low.values))",
+    "    end",
+    "    most > 0 || continue",
+    "    inner = C._laplace_unit_objective_gradient(o, U, theta, Ls, u, aws)",
+    "    ok, logdetM, _, _ = C._laplace_block_factor(M, blocks)",
+    "    fac = C._laplace_soft_quadrature_factored(o, M, blocks, logdetM + 2 * inner.hlogdet,",
+    "      inner.value, u, z -> C._laplace_unit_objective_gradient(o, U, theta, Ls, z, aws), curvf)",
+    "    prev = C.ctsem_set_soft_quadrature_factored!(false)",
+    "    dense = try C._laplace_soft_quadrature_term(o, U, theta, Ls, u, aws) finally",
+    "      C.ctsem_set_soft_quadrature_factored!(prev) end",
+    "    st = C._laplace_soft_quadrature_setup(o, U, theta, u)",
+    "    gf = C._laplace_soft_quadrature_reverse_factored(o, st.z0, st.objf, st.curvb,",
+    "      st.blocks, st.G, length(theta))",
+    "    gd = C._laplace_soft_quadrature_reverse(o, st.z0, st.objf, st.curvf, st.G, length(theta))",
+    "    push!(out, most, fac === nothing ? NaN : fac.value, dense.value,",
+    "      gf === nothing ? NaN : maximum(abs.(gf .- gd)), maximum(abs, gd))",
+    "  end",
+    "  out",
+    "end", sep = "\n"))
+  r <- matrix(as.numeric(compare(obj, x)), nrow = 5)
+  # most floored pairs at a node, block value, dense value, gradient gap, scale
+  expect_gt(ncol(r), 0)
+  expect_gte(max(r[1, ]), 2)
+  expect_equal(r[2, ], r[3, ], tolerance = 1e-10)
+  expect_true(all(r[4, ] <= 1e-7 * pmax(1, r[5, ])))
 })
 
 # Known modes (`spec$laplace$known`, `_laplace_known_modes`): starts a unit's

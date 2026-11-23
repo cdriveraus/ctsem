@@ -558,6 +558,51 @@ test_that("the map couples each member to what its subject reads, its own TI val
   }
 })
 
+# A nested unit's conditional precision in the learnt map is built and factored
+# on the unit's blocks (`_jmap_unit_blocked`), its root the block elimination's
+# `K'`; dense, it was the unit's width squared in storage and cubed a leapfrog
+# step. Either root makes the change of variables exact, which the map's own
+# check measures, and at one joint point the latent density is the same under
+# the dense root (`ctsem_set_map_blocks!(false)`, the oracle).
+test_that("a nested unit's map conditional is built and factored on its blocks", {
+  skip_without_julia()
+  withr::local_options(ctsem.laplace.hybrid = FALSE)
+  spec <- suppressMessages(ctFit(.nested_panel_data(), .nested_panel_model("intercepts"),
+    backend = "julia", intoverpop = "laplace", fit = FALSE, cores = 2))
+  obj <- ctsem:::.ctJuliaObjective(spec, hybrid = FALSE)
+  module <- ctsem:::.ctJuliaModule(spec$project)
+  set.seed(7)
+  x <- ctsem:::.ctJuliaNumericVector(rnorm(ctsem:::.ctBackendNpar(spec), 0, 0.1))
+  check <- ctsem:::.ctJuliaGet(module$ctsem_sample_map_check(obj, x, nu = 20L))
+  expect_gt(check$coordinates, 100L)
+  expect_lt(check$gradient, 1e-7)
+  expect_lt(check$jacobian, 1e-9)
+  matched <- ctsem:::.ctJuliaEval(paste(
+    "(o, x) -> begin",
+    "  C = ContinuousTimeSEM",
+    "  npar = length(x)",
+    "  sampler = C.ctsem_sampler(o, npar)",
+    "  m, _ = C._jmap_build(sampler, collect(Float64, x),",
+    "    Matrix{Float64}(C.I, npar, npar); cross = true)",
+    "  d = C.CTSEMJointMapDensity(m, Threads.Atomic{Int}(0))",
+    "  xt = 0.4 .* sin.(1.3 .* (1:sampler.ndim))",
+    "  prev = C.ctsem_set_map_blocks!(true)",
+    "  try",
+    "    theta, u = C._jmap_point(m, xt)",
+    "    v1 = d(zeros(sampler.ndim), xt)",
+    "    back = C._jmap_inverse(m, theta, u)",
+    "    C.ctsem_set_map_blocks!(false)",
+    "    v2 = d(zeros(sampler.ndim), C._jmap_inverse(m, theta, u))",
+    "    [v1, v2, maximum(abs.(back .- xt))]",
+    "  finally",
+    "    C.ctsem_set_map_blocks!(prev)",
+    "  end",
+    "end", sep = "\n"))
+  r <- as.numeric(matched(obj, x))
+  expect_equal(r[1], r[2], tolerance = 1e-12)
+  expect_lt(r[3], 1e-12)
+})
+
 test_that("a stalled chain in a learning window finds its step size again", {
   skip_without_julia()
   # A window's draws are warm-up, so a chain whose transitions stop moving
