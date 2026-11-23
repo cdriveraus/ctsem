@@ -77,8 +77,10 @@ to only calculate effects for subjects where the tipreds of the denoted index ar
 is used to plot the output instead.}
 }
 \value{
-Either a three dimensional array of predictor effects, or nothing with a plot
-generated.
+With \code{plot = FALSE}, a list with \code{y}, a three
+dimensional array of predictor value by parameter by quantile, and
+\code{x}, the predictor values. With \code{plot = TRUE}, nothing, and a
+plot is drawn.
 }
 \description{
 Computes and plots combined effects and quantiles for effects of time independent predictors
@@ -86,6 +88,15 @@ on subject level parameters of a ctStanFit object.
 \code{ctStanTIpredeffects} is maintained as a backward-compatible alias.
 }
 \examples{
+# How the continuous time intercepts and the discrete time innovation
+# variance of eta2 change over the range of the time independent
+# predictor TI1, each as a median with a 95 per cent interval.
 ctTIpredEffects(ctstantestfit,
- whichpars=c('CINT','dtDIFFUSION[2,2]'), plot=TRUE)
+  whichpars = c('CINT', 'dtDIFFUSION[2,2]'), plot = TRUE)
+
+# The same numbers for the intercepts. x holds the TI1 values, and y their
+# quantiles at each value.
+effects <- ctTIpredEffects(ctstantestfit, whichpars = 'CINT')
+dimnames(effects$y)
+cbind(TI1 = effects$x[, 1], effects$y[, , 'Quantile0.5'])
 }

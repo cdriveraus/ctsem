@@ -16,7 +16,7 @@
 
 \item{wait}{Logical. Pause between plots?}
 
-\item{...}{Arguments to pass through to the specific plot functions. Bewar of clashes
+\item{...}{Arguments to pass through to the specific plot functions. Clashes
 may occur if types='all'. For details see the specific functions generating each type of plot.}
 }
 \value{
@@ -40,6 +40,11 @@ may be simpler in many cases to access those directly. They are:
 }
 \examples{
 \donttest{
-plot(ctstantestfit,types=c('regression','kalman','priorcheck'), wait=FALSE)
+# The discrete time regression coefficients against the time interval
+# ('regression', from ctDiscretePars), the first subject's data with the
+# model's predictions ('kalman', from ctPredict), and each parameter's prior
+# against its posterior ('priorcheck', from ctPlotPosterior).
+plot(ctstantestfit, types = c('regression', 'kalman', 'priorcheck'),
+  wait = FALSE)
 }
 }

@@ -48,7 +48,7 @@
 #'     LAMBDA = matrix(1))
 #'   model$pars$indvarying <- FALSE
 #'   fit <- ctFit(ctstantestdat, model, backend = 'julia', cores = 1)
-#'   ctTracePlot(fit)
+#'   print(ctTracePlot(fit))
 #'   # Julia keeps running between calls, holding what it has compiled;
 #'   # this ends it.
 #'   ctJuliaKill("session")

@@ -86,7 +86,7 @@ if (isTRUE(ctJuliaStatus()$available)) {
   # A linear Gaussian model, where the filter is exact: the difference
   # should be within a few standard errors of zero.
   check <- ctParticleLik(fit, particles = 1000, substeps = 5)
-  check[c('loglik', 'se', 'fit_loglik', 'difference')]
+  print(check[c('loglik', 'se', 'fit_loglik', 'difference')])
   # Julia keeps running between calls, holding what it has compiled;
   # this ends it.
   ctJuliaKill("session")

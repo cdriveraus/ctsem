@@ -23,3 +23,22 @@ across. A curve that crosses the bar on both sides gives a confidence
 interval, and one that stays near zero shows a direction the data do not
 determine.
 }
+\examples{
+\donttest{
+if (isTRUE(ctJuliaStatus()$available)) {
+model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
+  LAMBDA = matrix(1))
+model$pars$indvarying <- FALSE
+fit <- ctFit(ctstantestdat, model)
+result <- ctFitProfile(fit, parameters = c('drift_eta1', 'mm_Y1'))
+
+# A panel per parameter, with the drop in log likelihood against the raw
+# value the parameter was held at. The curve crosses the dashed bar at the
+# limits of the 95 per cent interval, marked by the vertical lines.
+plot(result)
+
+# One parameter only.
+plot(result, parameters = 'drift_eta1')
+}
+}
+}

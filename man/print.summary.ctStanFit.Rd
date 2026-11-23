@@ -29,3 +29,12 @@ Invisibly returns \code{x}.
 \description{
 Print ctStanFit summaries
 }
+\examples{
+s <- summary(ctstantestfit)
+
+# The section names are the names of the summary list.
+names(s)
+
+# Print only the population means and the log likelihood.
+print(s, sections = c('popmeans', 'loglik'))
+}

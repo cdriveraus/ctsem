@@ -34,11 +34,49 @@ time dependent predictors make a reported value depend on the evaluation
 point.
 
 Functions affected by this attach the cells as
-\code{attr(x, 'contextDependent')}, and give a message once.
+\code{attr(x, 'contextDependent')}, and give a message naming the point.
 \code{\link{ctModelIsNonlinear}} reports whether a model has such cells.
 With \code{backend='julia'} the evaluation point can be chosen with the
-\code{state} argument of \code{\link{ctBackendParMatrices}}.
+\code{state} argument of \code{\link{ctSummaryMatrices}},
+\code{\link{ctDiscretePars}}, \code{\link{ctExtract}} and
+\code{\link{ctNetwork}}: \code{'T0MEANS'}, \code{'mean'} (the mean smoothed
+latent state), \code{'asymptotic'} (the fixed point the processes settle
+at), or a numeric vector with one value per latent process.
+\code{\link{ctPhasePortrait}} and \code{\link{ctStateDependencePlot}} show
+how the dynamics change over the state.
+}
+\examples{
+\donttest{
+if (isTRUE(ctJuliaStatus()$available)) {
+# The auto effect of eta1 changes with the level of eta2, so DRIFT[1, 1]
+# has a value only at a given state of eta2.
+model <- ctModel(LAMBDA = diag(2),
+  manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+  PARS = c('a|-log1p_exp(param)', 'b'),
+  DRIFT = matrix(c('a + b * eta2', 'drift21', 0, 'drift22'), 2, 2),
+  CINT = matrix(c('cint1', 'cint2'), 2, 1), MANIFESTMEANS = 0)
+model$pars$indvarying <- FALSE
+fit <- ctFit(ctstantestdat, model)
+print(ctModelIsNonlinear(fit))
+
+# The population matrices at the default point, which the message names
+# as the T0MEANS state, with time dependent predictors at zero. The
+# attribute lists the cells that depend on the point.
+m <- ctSummaryMatrices(fit)
+print(m$estimate$DRIFT)
+print(attr(m, 'contextDependent'))
+
+# DRIFT[1, 1] at the fixed point the processes settle at, at the mean of
+# the smoothed latent states, and at a chosen state with eta1 at 8 and
+# eta2 at 14.
+print(ctSummaryMatrices(fit, state = 'asymptotic')$estimate$DRIFT)
+print(ctSummaryMatrices(fit, state = 'mean')$estimate$DRIFT)
+print(ctSummaryMatrices(fit, state = c(8, 14))$estimate$DRIFT)
+}
+}
+
 }
 \seealso{
-\code{\link{ctModelIsNonlinear}}, \code{\link{ctBackendParMatrices}}
+\code{\link{ctModelIsNonlinear}}, \code{\link{ctSummaryMatrices}},
+  \code{\link{ctPhasePortrait}}, \code{\link{ctStateDependencePlot}}
 }

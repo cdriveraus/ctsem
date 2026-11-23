@@ -81,8 +81,17 @@ fixed point. It can be drawn from a stan or a julia fit, but shows nothing
 beyond the DRIFT matrix. A nonlinear stan fit is refused.
 }
 \examples{
-# A linear stan fit needs no engine, so the bundled example fit is enough.
-ctPhasePortrait(ctstantestfit, gridsize = 7, plot = FALSE)
+# The arrows show the direction and speed in which the two processes of the
+# bundled fit move from each point of the plane. The lines are the
+# nullclines, where one process stops changing, and they cross at the fixed
+# point. The smoothed trajectories of three subjects are drawn over it.
+ctPhasePortrait(ctstantestfit, gridsize = 9, trajectories = 3)
+
+# The same as data: one row of the field per arrow, with its position
+# (x, y), direction (dx, dy) and speed, and the fixed point.
+pp <- ctPhasePortrait(ctstantestfit, gridsize = 7, plot = FALSE)
+head(pp$field)
+pp$fixedpoint
 }
 \seealso{
 \code{\link{ctContextDependence}}, \code{\link{ctDiscretePars}}
