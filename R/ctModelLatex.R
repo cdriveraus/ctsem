@@ -494,7 +494,7 @@ ctModelLatexDynamicsBlock <- function(ctmodel, showd, continuoustime, matrixname
       \\underbrace{
         ",bmatrix(matrix(ctmodel$TDpredNames))," 
       }_{\\vect{\\chi} (t)}"))
-  diffusion <- paste0("\\underbrace{UcorSDtoChol\\left\\{
+  diffusion <- paste0("\\underbrace{\\mathrm{root}\\left\\{
       ",bmatrix(ctmodel$DIFFUSION),"\\right\\}
     ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{G}}",ifelse(!matrixnames,"}","_\\textrm{DIFFUSION}}"),"
     \\underbrace{",showd,"
@@ -542,7 +542,7 @@ ctModelLatexMeasurementBlock <- function(ctmodel, matrixnames=TRUE,
         \\underbrace{
           ",bmatrix(ctmodel$MANIFESTMEANS)," 
         ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\tau}}",ifelse(!matrixnames,"}","_\\textrm{MANIFESTMEANS}}"))
-    noise <- paste0("\\underbrace{UcorSDtoChol \\left\\{
+    noise <- paste0("\\underbrace{\\mathrm{root} \\left\\{
                 ",bmatrix(ctmodel$MANIFESTVAR),"\\right\\}  
               ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\Theta}}",ifelse(!matrixnames,"}","_\\textrm{MANIFESTVAR}}"),"
               \\underbrace{
@@ -1174,7 +1174,7 @@ pars <- unique(c(rownames(popcov),unlist(lapply(extracov,rownames)),
               \\underbrace{
         ",bmatrix(ctmodel$T0MEANS),"
       ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{}}",ifelse(!matrixnames,"}","_\\textrm{T0MEANS}}"),",
-      \\underbrace{UcorSDtoCov \\left\\{","
+      \\underbrace{\\mathrm{cov} \\left\\{","
         ",bmatrix(ctmodel$T0VAR),"\\right\\}"," 
       ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{Q^{*}}_{t0}}",ifelse(!matrixnames,"}","_\\textrm{T0VAR}}"),"
       \\right) \\\\
@@ -1196,9 +1196,8 @@ pars <- unique(c(rownames(popcov),unlist(lapply(extracov,rownames)),
           &",ifelse(continuoustime,'\\Delta ',''),"\\big[W_{j \\in [1,",ctmodel$n.latent,"]}\\big](t",
       ifelse(continuoustime,'-u',''),")   \\sim  \\mathrm{N}(0,",W,") \\\\ \\\\
       \\end{aligned} \\\\",
-      if(includeNote) paste0("&\\textrm{Note: } UcorSDtoChol\\textrm{ converts lower tri matrix of standard deviations and covariance parameters to Cholesky factor,} \\\\
-&UcorSDtoCov =\\textrm{ transposed cross product of UcorSDtoChol, to give covariance, See Driver \\& Voelkle (2018) p11.} \\\\
-&\\textrm{The model's covmattransform sets how the parameters below the diagonal give correlations, see ?ctCov.} \\\\",
+      if(includeNote) paste0("&\\textrm{Note: } \\mathrm{cov}\\textrm{ gives the covariance from the standard deviations on a matrix's diagonal and the parameters below it,} \\\\
+&\\textrm{as the model's covmattransform sets (see ?ctCov), and } \\mathrm{root} \\textrm{ gives a matrix whose product with its own transpose is that covariance.} \\\\",
         if(dopop) paste0(if(length(extracov)) "&\\textrm{Unit specific notation (subscripts) only shown for the parameter distribution -- pop. means shown elsewhere.} \\\\
 " else "&\\textrm{Individual specific notation (subscript i) only shown for subject parameter distribution -- pop. means shown elsewhere.} \\\\
 ",if(linearise) "&\\textrm{Linearised approximation of subject parameter distribution shown.} \\\\",

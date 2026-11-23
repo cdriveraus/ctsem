@@ -18,6 +18,7 @@ vignette: >
 ```{r setup, include = FALSE}
 knitr::opts_chunk$set(collapse = TRUE, comment = "#>", message = FALSE,
   warning = FALSE, fig.width = 7, fig.height = 4)
+source('latex-figure.R')
 ```
 
 ```{r libs}
@@ -141,7 +142,14 @@ m_dissipate <- ctModel(LAMBDA = matrix(c(1, 0), 1, 2),
   DIFFUSION = matrix(c('diff_mood', 0, 0, 0), 2, 2),
   T0MEANS = matrix(c('T0m_mood', 0), 2, 1),
   T0VAR = matrix(c('T0var_mood', 0, 0, 0), 2, 2))
-m_dissipate
+```
+
+`ctModelLatex(m_dissipate)` writes the model as equations. The treatment
+enters the input process through `TDPREDEFFECT`, and the input reaches mood
+through the drift matrix:
+
+```{r latex-dissipate, echo = FALSE, out.width = '100%'}
+latexFigure(m_dissipate)
 ```
 
 Other shapes follow from the same idea. A direct effect in `TDPREDEFFECT`

@@ -18,6 +18,7 @@ vignette: >
 ```{r setup, include = FALSE}
 knitr::opts_chunk$set(collapse = TRUE, comment = "#>", message = FALSE,
   warning = FALSE, fig.width = 7, fig.height = 4)
+source('latex-figure.R')
 ```
 
 This article works through one analysis from start to end: the model, the
@@ -164,7 +165,20 @@ model
 
 Printing the model shows each matrix, with the name of each free parameter
 and the value of each fixed one. Everything not given to `ctModel()` takes the
-defaults in the table above. To change a matrix, give it to `ctModel()`. A
+defaults in the table above. `ctModelLatex(model)` writes the same model as
+equations, and opens them as a pdf if LaTeX is installed:
+
+```{r latex-model, echo = FALSE, out.width = '100%'}
+latexFigure(model)
+```
+
+The first line is the distribution of the random effects: each person's
+starting values and measurement intercepts are drawn from a normal
+distribution, on the raw scale of the parameters, and then transformed. The
+next two lines are the dynamics, the two after them the measurement, and the
+last line the distribution of the random shocks over an interval.
+
+To change a matrix, give it to `ctModel()`. A
 number fixes a cell, and a name estimates it. This drift matrix would fix the
 effect of mood on stress at zero:
 

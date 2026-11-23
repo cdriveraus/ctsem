@@ -1,0 +1,221 @@
+---
+title: "Discrete time models"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+    self-contained-math: true
+execute:
+  message: false
+  warning: false
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7,
+  fig.height = 4, message = FALSE, warning = FALSE)
+source('latex-figure.R')
+```
+
+Everything ctsem does in continuous time it can also do in discrete time,
+where the model describes change from one occasion to the next: vector
+autoregressions, cross-lagged panel models with random intercepts, factor
+models for the processes, and checks of the fit. A discrete time model treats
+the occasions as equally spaced, so it suits data collected at a fixed
+interval, and its parameters refer to that interval.
+[Why continuous time](continuous-time.html) says more about the choice
+between the two.
+
+```{r libs}
+library(ctsem)
+library(ggplot2)
+```
+
+# Data
+
+The example follows 100 workers through their first ten weeks in a new job.
+Stress is measured by two questionnaire items, `Stress` and `Stress2`, and
+the quality of each worker's output by `Quality`. The questions are how stress
+and quality change after starting the job, whether one affects the other, and
+how people differ in where they start and where they settle.
+
+The data are simulated from a discrete time model in which stress lowers the
+next week's quality, workers start stressed and settle at their own long run
+levels, and those with a higher long run level of stress have a lower long run
+level of quality:
+
+```{r generate}
+set.seed(2)
+gm <- ctModel(type = 'dt',
+  manifestNames = c('Stress', 'Stress2', 'Quality'),
+  latentNames = c('stress', 'quality'),
+  LAMBDA = matrix(c(
+    1, 0,
+    0.8, 0,
+    0, 1), 3, 2, byrow = TRUE),
+  DRIFT = matrix(c(
+    0.6, 0,
+    -0.3, 0.7), 2, 2, byrow = TRUE),
+  DIFFUSION = diag(c(0.8, 0.5)),
+  CINT = c('cint_stress', 'cint_quality'),
+  T0MEANS = c('t0_stress', 't0_quality'),
+  MANIFESTMEANS = c(0, 1, 0),
+  MANIFESTVAR = diag(0.5, 3))
+dat <- data.frame(ctGenerate(gm, n = 100, Tpoints = 10, backend = 'julia',
+  values = list(
+    popmeans = c(cint_stress = 1, cint_quality = 1.5,
+      t0_stress = 4, t0_quality = 0),
+    popsd = c(cint_stress = 0.4, cint_quality = 0.4,
+      t0_stress = 1, t0_quality = 1),
+    rawpopcorr = c(cint_stress__cint_quality = -0.6))))
+head(dat)
+```
+
+# A bivariate model
+
+The first model uses one indicator per process, leaving out `Stress2`. In
+discrete time the `DRIFT` matrix holds the autoregressions on its diagonal and
+the cross-lagged effects off it. `DRIFT[2, 1]` is the effect of this week's
+stress on next week's quality. The measurement intercepts (`MANIFESTMEANS`)
+are each person's long run levels, since the processes return to zero, and
+they vary over people, as do the starting values (`T0MEANS`). Most of this is
+ctsem's default, but the model is written out in full here to show each part:
+
+```{r model}
+model <- ctModel(type = 'dt',
+  manifestNames = c('Stress', 'Quality'),
+  latentNames = c('stress', 'quality'),
+  LAMBDA = diag(2),
+  T0MEANS = c('t0_stress', 't0_quality'),
+  MANIFESTMEANS = c('mi_stress, indvarying = TRUE',
+    'mi_quality, indvarying = TRUE'),
+  MANIFESTVAR = c(
+    'merr_stress', 0,
+    0, 'merr_quality'),
+  DRIFT = c(
+    'a11', 'a12',
+    'a21', 'a22'),
+  DIFFUSION = c(
+    'diff11', 0,
+    'diff21', 'diff22'),
+  CINT = 0)
+```
+
+A vector given for a matrix fills it row by row. `DIFFUSION` and
+`MANIFESTVAR` hold standard deviations on their diagonals and correlation
+parameters below them.
+
+```{r latex-model, echo = FALSE, out.width = '100%'}
+latexFigure(model)
+```
+
+```{r fit}
+fit <- ctFit(dat, model, cores = 2)
+s <- summary(fit)
+s$popmeans
+```
+
+`a21`, the effect of stress on next week's quality, is negative, with an
+interval well away from zero, and `a12`, the effect of quality on stress, is
+near zero. These match the values the data were generated from (-0.3 and 0).
+`rawpopcorr` holds the correlations of the random effects:
+
+```{r popcorr}
+s$rawpopcorr
+```
+
+Those with a higher long run level of stress (`mi_stress`) have a lower long
+run level of quality (`mi_quality`), as generated. The starting values were
+generated independently of the rest, and their estimated correlations are
+small.
+
+# Predictions and effects over time
+
+`ctPredict()` gives the predicted values for each person from their earlier
+observations (`yprior`), and the smoothed values from all of them
+(`ysmooth`):
+
+```{r predict}
+ctPredict(fit, subjects = 1:2, plot = TRUE, kalmanvec = c('y', 'yprior'))
+ctPredict(fit, subjects = 1:2, plot = TRUE, kalmanvec = c('y', 'ysmooth'))
+```
+
+With `removeObs = TRUE` the predictions use no observations at all, only the
+population parameters. This is the average course of a new worker:
+
+```{r removeobs}
+ctPredict(fit, subjects = 1, plot = TRUE, kalmanvec = c('y', 'yprior'),
+  removeObs = TRUE)
+```
+
+`ctDiscretePars()` shows the effect of a change in one process on each
+process, one or more weeks later. It is still a first order model. A change
+this week affects next week directly, and later weeks through the weeks in
+between.
+
+```{r discrete}
+ctDiscretePars(fit, plot = TRUE)
+```
+
+# Checking the model
+
+`ctFitCheckCov()` compares the correlations in the data, within and across
+weeks, with those the model implies:
+
+```{r checkcov}
+ctFitCheckCov(fit)
+```
+
+`ctFitAdequacy()` tests the one-step-ahead predictions: whether the
+prediction errors have the mean, variance and correlations over time that the
+model says they should:
+
+```{r adequacy}
+adequacy <- ctFitAdequacy(fit)
+adequacy
+```
+
+# A factor model for stress
+
+Adding the second stress item gives stress two indicators. The loading of
+`Stress2` is free, and the loading of `Stress` is fixed to 1, which sets the
+scale of the stress process. Stable differences between people now belong to
+the processes rather than to each item, so they go in the continuous time
+intercepts (`CINT`, the intercepts of the processes, in discrete time added at
+each step). The measurement intercepts are fixed to zero except that of
+`Stress2`, which is the same for everyone:
+
+```{r factormodel}
+factormodel <- ctModel(type = 'dt',
+  manifestNames = c('Stress', 'Stress2', 'Quality'),
+  latentNames = c('stress', 'quality'),
+  LAMBDA = c(
+    1, 0,
+    'stressLoading', 0,
+    0, 1),
+  CINT = c('cint_stress', 'cint_quality'),
+  MANIFESTMEANS = c(0, 'mi_stress2, indvarying = FALSE', 0))
+```
+
+```{r latex-factor, echo = FALSE, out.width = '100%'}
+latexFigure(factormodel)
+```
+
+```{r factorfit}
+factorfit <- ctFit(dat, factormodel, cores = 2)
+summary(factorfit)$popmeans
+```
+
+The loading and intercept of `Stress2` come out near the generating 0.8 and 1,
+and the drift near its generating values.
+
+`ctScoreTest()` checks, without refitting, whether a parameter the model
+holds fixed or the same for everyone should be freed or allowed to vary:
+
+```{r scoretest}
+ctScoreTest(factorfit)
+```
+
+None of the tests is significant after adjusting for the number of tests,
+which is what should happen when the model is the one that generated the
+data. `vignette('score-tests')` explains the tests and their output.

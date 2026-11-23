@@ -1,0 +1,223 @@
+---
+title: "Accelerated longitudinal and multiple group designs"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+    self-contained-math: true
+execute:
+  message: false
+  warning: false
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7,
+  fig.height = 4, message = FALSE, warning = FALSE)
+source('latex-figure.R')
+```
+
+An accelerated longitudinal design follows several cohorts, each over a short
+span of age, to learn about development over a longer span. The cohorts may
+differ, for instance because they grew up at different times or were measured
+with different instruments. In ctsem the cohorts are time independent
+predictors, which can affect any parameter, so no separate multiple group
+model is needed. This article fits such a design, finds which parameters
+differ between cohorts, and shows how to make the starting values refer to a
+common age.
+
+```{r libs}
+library(ctsem)
+library(ggplot2)
+```
+
+# Data
+
+Four cohorts of 50 children are each followed for two years, from ages 0, 1,
+2 and 3, so that neighbouring cohorts overlap by a year. In every cohort a
+single process grows towards an equilibrium that differs between children.
+The cohorts differ in how strongly the process is pulled towards that
+equilibrium (the auto effect in `DRIFT`), and the older cohorts were measured
+with a more precise instrument. The code simulates each cohort from age 0 and
+keeps its two years:
+
+```{r generate}
+set.seed(1)
+drift <- c(-0.3, -0.4, -0.5, -0.6)
+errorsd <- c(0.6, 0.6, 0.3, 0.3)
+dat <- NULL
+for (cohort in 1:4) {
+  gm <- ctModel(type = 'ct', silent = TRUE,
+    manifestNames = 'Y', latentNames = 'eta',
+    LAMBDA = 1, DRIFT = drift[cohort], DIFFUSION = 0.5,
+    CINT = 'cint', T0MEANS = 0, T0VAR = 0.1,
+    MANIFESTMEANS = 0, MANIFESTVAR = 0)
+  d <- data.frame(ctGenerate(gm, n = 50, Tpoints = 26, dtmean = 0.2,
+    backend = 'julia',
+    values = list(popmeans = c(cint = 5), popsd = c(cint = 1))))
+  d <- d[d$time >= cohort - 1 & d$time < cohort + 1, ]
+  d$id <- paste0('cohort', cohort, '_', d$id)
+  d$cohort <- cohort
+  d$Yobs <- d$Y + rnorm(nrow(d), 0, errorsd[cohort])
+  dat <- rbind(dat, d)
+}
+dat$cohort2 <- as.numeric(dat$cohort == 2)
+dat$cohort3 <- as.numeric(dat$cohort == 3)
+dat$cohort4 <- as.numeric(dat$cohort == 4)
+head(dat)
+```
+
+The true scores `Y` are kept to plot. The analysis uses `Yobs`, which has
+measurement error, shown faintly:
+
+```{r plotdata}
+ggplot(dat, aes(time, Y, colour = factor(cohort), group = id)) +
+  geom_line() + geom_line(aes(y = Yobs), alpha = .2) +
+  labs(x = 'age', colour = 'cohort') + theme_bw()
+```
+
+# A common starting age
+
+The initial values of the processes, `T0MEANS`, apply at each subject's first
+observation. In an accelerated design the first observation is at a
+different age in each cohort, so `T0MEANS` would mean a different thing for
+each. Giving every child a row at the earliest age in the data, with the
+observed variables missing but the covariates kept, makes `T0MEANS` the
+value at that age for everyone:
+
+```{r startrow}
+start <- dat[!duplicated(dat$id), ]
+start$time <- min(dat$time)
+start$Y <- start$Yobs <- NA
+dat <- rbind(start, dat)
+dat <- dat[order(dat$id, dat$time), ]
+```
+
+# Ignoring the cohorts
+
+The first model ignores the cohorts. The continuous time intercept `CINT`
+drives the growth, and by default it varies over children, as does the
+starting value. The measurement intercept is fixed to 0, since `T0MEANS` and
+`CINT` set the level.
+
+```{r m1}
+m1 <- ctModel(type = 'ct',
+  manifestNames = 'Yobs', latentNames = 'eta',
+  LAMBDA = 1, CINT = 'cint', MANIFESTMEANS = 0)
+f1 <- ctFit(dat, m1, cores = 2)
+summary(f1)$popmeans
+```
+
+# Which parameters differ between cohorts?
+
+`ctScoreTest()` tests, without refitting, whether a covariate would improve
+the model, here the cohort as a factor, and for which parameters:
+
+```{r scoretest}
+covariates <- unique(dat[, c('id', 'cohort')])
+covariates$cohort <- factor(covariates$cohort)
+ctScoreTest(f1, covariates = covariates, tests = 'covariates')
+```
+
+The cohorts differ in the drift and the measurement error, as generated, and
+the tests find nothing for the other parameters.
+
+# Cohort effects
+
+In the model, the cohorts are dummy variables, with the first cohort as the
+reference. `tipredDefault = FALSE` stops them from affecting every parameter,
+and the `tipreds` field of the drift and measurement error names the
+predictors that affect them. The cohorts shift these parameters, while the
+size of the individual differences stays the same in every cohort.
+
+```{r m2}
+cohorts <- 'tipreds = c(cohort2, cohort3, cohort4)'
+m2 <- ctModel(type = 'ct',
+  manifestNames = 'Yobs', latentNames = 'eta',
+  LAMBDA = 1, CINT = 'cint', MANIFESTMEANS = 0,
+  TIpredNames = c('cohort2', 'cohort3', 'cohort4'), tipredDefault = FALSE,
+  DRIFT = paste('drift_eta', cohorts, sep = ', '),
+  MANIFESTVAR = paste('mvar_Yobs', cohorts, sep = ', '))
+f2 <- ctFit(dat, m2, cores = 2)
+```
+
+```{r latex-m2, echo = FALSE, out.width = '100%'}
+latexFigure(m2)
+```
+
+`summary()` reports the cohort effects as `tipreds`, each on the scale of the
+parameter it affects:
+
+```{r tipreds}
+summary(f2)$tipreds
+```
+
+Compared with the first cohort, the drift of the older cohorts is more
+negative, and their measurement error smaller.
+
+# Cohort differences in the individual differences
+
+A random effect has one standard deviation for everyone. To let the size of
+the individual differences differ between cohorts too, the stable
+differences can be written as a second latent process instead. That process,
+`intercept`, never changes (its drift and diffusion are 0) and drives `eta`
+with a fixed effect of 1. Its starting value differs between children through
+`T0VAR`, and the cohorts can then affect that variance. The random effects
+are turned off, since `T0VAR` now holds the individual differences.
+
+```{r m3}
+m3 <- ctModel(type = 'ct',
+  manifestNames = 'Yobs', latentNames = c('eta', 'intercept'),
+  LAMBDA = matrix(c(1, 0), nrow = 1),
+  CINT = 0,
+  DRIFT = c(
+    paste('drift_eta', cohorts, sep = ', '), 1,
+    0, 0),
+  DIFFUSION = c(
+    'diffusion_eta', 0,
+    0, 0),
+  T0MEANS = c('t0_eta, indvarying = FALSE',
+    't0_intercept, indvarying = FALSE'),
+  T0VAR = c(
+    't0var_eta', 0,
+    't0var_intercept_eta', paste('t0var_intercept', cohorts, sep = ', ')),
+  MANIFESTMEANS = 0,
+  MANIFESTVAR = paste('mvar_Yobs', cohorts, sep = ', '),
+  TIpredNames = c('cohort2', 'cohort3', 'cohort4'), tipredDefault = FALSE)
+f3 <- ctFit(dat, m3, cores = 2)
+```
+
+```{r latex-m3, echo = FALSE, out.width = '100%'}
+latexFigure(m3)
+```
+
+# Comparing the models
+
+`anova()` gives the log likelihood, AIC and BIC of each fit, and likelihood
+ratio tests of each against the one above it:
+
+```{r anova}
+anova(f1, f2, f3)
+```
+
+The cohort effects on the drift and measurement error improve the fit a lot.
+The cohort effects on the size of the individual differences do not, which
+is how the data were generated. `ctLOO()` compares models by how well they
+predict data they were not fitted to, by refitting or by importance sampling.
+
+# Predictions by cohort
+
+`ctPredict()` with `removeObs = TRUE` gives the expected course for a child
+from each cohort, from the covariates alone, here over the whole age range:
+
+```{r predict}
+firsts <- dat$id[!duplicated(dat$cohort)]
+ctPredict(f2, subjects = firsts, timerange = c(0, 4), timestep = 0.05,
+  removeObs = TRUE, plot = TRUE, kalmanvec = 'yprior')
+```
+
+Each cohort's course is drawn beyond the two years it was observed in, and
+outside those years the curves show only what each cohort's parameters
+imply. The
+cohort with the weakest pull towards equilibrium, the first, keeps growing
+the longest and settles highest.
