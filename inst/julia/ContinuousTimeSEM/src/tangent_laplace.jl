@@ -183,11 +183,28 @@ Unit `U`'s kept columns (`CTSEMUnitColumns`) for a curvature pass at `values`,
 `base` and `mode`: as they are where an earlier pass at the same point left
 them -- a unit's curvature is several passes, a block each -- and emptied
 otherwise. `nothing` with the switch off.
+
+Under the unit's lock: a nested unit's blocks of one level are passes run at
+once (`_laplace_by_level`), and unlocked, two of them each found the record
+stale and resized it together -- Julia's `ConcurrencyViolationError` on the
+first evaluation at four threads of a study with 100 persons -- or one emptied
+what the other had filled. Their columns go to their own members' slices.
 """
 function _tan_keep_begin!(ctx::TanLaplaceContext, laplace::CTSEMLaplaceObjective, U::Int,
     values::AbstractVector{Float64}, base::AbstractVector{Float64}, mode::Int)
     _LAPLACE_KEEP_COLUMNS[] || return nothing
     k = laplace.columns[U]
+    lock(k.lock)
+    try
+        return _tan_keep_start!(k, ctx, laplace, U, values, base, mode)
+    finally
+        unlock(k.lock)
+    end
+end
+
+function _tan_keep_start!(k::CTSEMUnitColumns, ctx::TanLaplaceContext,
+    laplace::CTSEMLaplaceObjective, U::Int, values::AbstractVector{Float64},
+    base::AbstractVector{Float64}, mode::Int)
     rows = _laplace_unit_rows(laplace, U)
     (k.mode == mode && k.rows == rows && k.values == values && k.base == base) && return k
     pos = _tan_member_positions!(ctx, laplace)

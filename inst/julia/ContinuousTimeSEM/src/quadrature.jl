@@ -1123,7 +1123,7 @@ end
 ################################################################################
 
 """
-    ctsem_laplace_expansion(laplace, values; h=0.01, gate=1.0)
+    ctsem_laplace_expansion(laplace, values; h=0.01, gate=1.0, budget=Inf)
 
 Each unit's integral by Laplace's expansion to O(1/n), and a bound on its
 error: the deterministic counterpart of the product rules above, at about
@@ -1158,9 +1158,16 @@ eigenvalue without the `2q` curvatures of the correction, which grow as `q^2`
 sweeps and would be thrown away. A unit with no effect coordinates is its
 exact term, with no correction and no bound; one whose curvature at `f`'s mode
 does not factor, or that fails to evaluate, is NaN.
+
+`budget`: the unit evaluations a caller has already spent on each unit some
+other way (the random-effects check's frozen draws). A unit whose `2q + 1`
+curvatures exceed it is left NaN, for the caller's other answer: those
+curvatures cost a unit evaluation each at least, and the correction's whitened
+third derivatives are `q^3` numbers made from dense `q` by `q` products, which
+for a study of thousands of persons is terabytes.
 """
 function ctsem_laplace_expansion(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    h::Real=0.01, gate::Real=1.0)
+    h::Real=0.01, gate::Real=1.0, budget::Real=Inf)
     theta = _laplace_extend(laplace, collect(Float64, values))
     _laplace_check_indices(laplace, length(theta))
     nunits = length(laplace.units.members)
@@ -1174,7 +1181,7 @@ function ctsem_laplace_expansion(laplace::CTSEMLaplaceObjective, values::Abstrac
     ranges = _ctsem_chunk_assignment(_laplace_unit_weights(laplace), nchunks)
     _laplace_parallel(laplace, 1:nchunks) do c
         _expansion_chunk!(laplace, theta, Ls, ranges[c], term, correction, bound,
-            mineig, Float64(h), Float64(gate))
+            mineig, Float64(h), Float64(gate), Float64(budget))
         return true
     end
     return (term=term, correction=correction, bound=bound, mineig=mineig)
@@ -1186,9 +1193,10 @@ a reason to integrate it some other way, not to lose the rest."""
 function _expansion_chunk!(laplace::CTSEMLaplaceObjective, theta::Vector{Float64},
     Ls::Vector{Matrix{Float64}}, units, term::Vector{Float64},
     correction::Vector{Float64}, bound::Vector{Float64}, mineig::Vector{Float64},
-    h::Float64, gate::Float64)
+    h::Float64, gate::Float64, budget::Float64=Inf)
     aws = _laplace_workspace!(laplace, Float64, length(theta))
     for U in units
+        2 * laplace.units.dims[U] + 1 > budget && continue
         try
             if isempty(laplace.units.blocks[U])
                 # No effect coordinates: the term is the members' exact integral

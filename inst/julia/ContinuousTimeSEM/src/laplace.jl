@@ -630,7 +630,9 @@ the same columns (`_laplace_seeded_unit_gradient!`): `H[r, c, m]` is member
 `c`th coordinate, its levels' dimensions in turn (`coff[l] + q`), and `filled`
 says which were formed. They are the columns at `values`, `base` (the unit's
 coordinates), the hybrid `mode` and the members' `rows` of data, and are read
-only there: a pass at another point starts them afresh.
+only there: a pass at another point starts them afresh. `lock` serialises that
+start: a nested unit's blocks of one level are passes run at once
+(`_laplace_by_level`), each writing its own members' columns.
 """
 mutable struct CTSEMUnitColumns
     values::Vector{Float64}
@@ -641,9 +643,10 @@ mutable struct CTSEMUnitColumns
     filled::Matrix{Bool}
     pos::Vector{Int}
     coff::Vector{Int}
+    lock::ReentrantLock
 end
 CTSEMUnitColumns() = CTSEMUnitColumns(Float64[], Float64[], typemin(Int), -1,
-    zeros(Float64, 0, 0, 0), fill(false, 0, 0), Int[], Int[])
+    zeros(Float64, 0, 0, 0), fill(false, 0, 0), Int[], Int[], ReentrantLock())
 
 """
 A unit's exact curvature at its anchor, the first matrix of its anchored
@@ -2481,6 +2484,17 @@ _laplace_copy_blockmatrix(M::CTSEMBlockMatrix{T}) where {T} =
     CTSEMBlockMatrix{T}([copy(b) for b in M.diag],
         [[copy(c) for c in row] for row in M.coupling])
 
+"""`M` copied into `dest`, a block matrix of the same shape."""
+function _laplace_copy_blockmatrix!(dest::CTSEMBlockMatrix, M::CTSEMBlockMatrix)
+    for b in eachindex(M.diag)
+        copyto!(dest.diag[b], M.diag[b])
+        for t in eachindex(M.coupling[b])
+            copyto!(dest.coupling[b][t], M.coupling[b][t])
+        end
+    end
+    return dest
+end
+
 """An all-zero block matrix shaped for one unit."""
 function CTSEMBlockMatrix(::Type{T}, blocks::Vector{CTSEMLaplaceBlock}) where {T}
     diag = [zeros(T, b.size, b.size) for b in blocks]
@@ -4056,14 +4070,24 @@ function _laplace_partner_modes!(set, laplace::CTSEMLaplaceObjective, U::Integer
     values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws)
     d = laplace.units.dims[U]
     d == 0 && return set
+    blocks = laplace.units.blocks[U]
     for i in 1:length(set)
         u = copy(set[i].u)
-        M = _laplace_block_dense(_laplace_unit_curvature(laplace, U, values, Ls, u),
-            laplace.units.blocks[U], d)
-        all(isfinite, M) || continue
-        E = _ctsem_symeig(_dense_sym(Matrix{Float64}(M)))
-        E.values[1] < _LAPLACE_MODE_FADE || continue
-        v = E.vectors[:, 1]
+        # The softest direction from the curvature's own blocks
+        # (`_laplace_block_lowest`): a nested unit made dense was its width
+        # cubed, hours at each maximum for a study of thousands.
+        M = _laplace_unit_curvature(laplace, U, values, Ls, u)
+        low = _laplace_block_lowest(M, blocks, _LAPLACE_MODE_FADE)
+        if low === nothing
+            Md = _laplace_block_dense(M, blocks, d)
+            all(isfinite, Md) || continue
+            E = _ctsem_symeig(_dense_sym(Matrix{Float64}(Md)))
+            E.values[1] < _LAPLACE_MODE_FADE || continue
+            v = E.vectors[:, 1]
+        else
+            isempty(low.values) && continue
+            v = low.vectors[:, 1]
+        end
         for s in (0.25, 0.5, 1.0, 2.0), sgn in (1.0, -1.0)
             r = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, u .+ (sgn * s) .* v)
             (r.converged && isfinite(r.value)) || continue
@@ -4252,8 +4276,10 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     # the distance to the mode.
     sr1 = _LAPLACE_INNER_SR1[] && d > 0 && length(blocks) == 1
     # Taken whether or not they are used: a local that is either `nothing` or
-    # an array makes every call on it dynamic.
-    B = _laplace_scratch_matrix!(laplace, Float64, d, d, :newton_sr1)
+    # an array makes every call on it dynamic. Empty where SR1 does not run: a
+    # nested unit's `d` by `d` was a gigabyte a slot for a study of thousands.
+    B = _laplace_scratch_matrix!(laplace, Float64, sr1 ? d : 0, sr1 ? d : 0,
+        :newton_sr1)
     sstep = _laplace_scratch_vector!(laplace, Float64, d, :newton_sr1_s)
     rvec = _laplace_scratch_vector!(laplace, Float64, d, :newton_sr1_r)
     exact = true
@@ -4334,8 +4360,8 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
             Mwork
         end
         used_exact = exact
-        keep && used_exact && (curvature = _laplace_block_dense!(_laplace_scratch_matrix!(laplace,
-            Float64, d, d, :probe_curvature), M, laplace.units.blocks[U]))
+        keep && used_exact && (curvature = _laplace_copy_blockmatrix!(
+            _laplace_scratch_blockmatrix!(laplace, Float64, U, blocks, :probe_curvature), M))
         fac = _laplace_factor_repaired!(M, blocks; store=fstore)
         factored_exact = used_exact && fac.ok && !fac.repaired
         repaired |= fac.repaired
@@ -4577,21 +4603,22 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, found;
     set=nothing)
     d = length(found.u)
-    M = found.curvature === nothing ?
-        _laplace_block_dense(_laplace_unit_curvature(laplace, U, values, Ls,
-            copy(found.u)), laplace.units.blocks[U], d) : found.curvature
-    # A copy: `found.curvature` is the slot's scratch, and the probes'
-    # own solves overwrite it. This copy, the decomposition and the factor are
-    # the slot's too, under tags no solve uses: they run for every unit,
-    # probed or not.
-    Msym = _laplace_scratch_matrix!(laplace, Float64, d, d, :probe_M)
-    @inbounds for j in 1:d, i in 1:d
-        Msym[i, j] = (M[i, j] + M[j, i]) / 2
+    blocks = laplace.units.blocks[U]
+    # A copy, in the unit's own block storage: `found.curvature` is the slot's
+    # scratch, and the probes' own solves overwrite it. Never dense: for a
+    # nested unit of thousands of members, its width squared in memory and
+    # cubed in time (`_laplace_block_lowest`). Its diagonal blocks are
+    # symmetrised, as the factorization symmetrises its own copies.
+    M = _laplace_copy_blockmatrix!(
+        _laplace_scratch_blockmatrix!(laplace, Float64, U, blocks, :probe_M),
+        found.curvature === nothing ?
+            _laplace_unit_curvature(laplace, U, values, Ls, copy(found.u)) :
+            found.curvature)
+    for D in M.diag
+        _laplace_symmetrise!(D)
     end
-    M = Msym
-    F = _ctsem_cholesky(copyto!(_laplace_scratch_matrix!(laplace, Float64, d, d,
-        :probe_F), M), d)
-    screened = issuccess(F)
+    F = _soft_shifted_factor(M, blocks, 0.0)
+    screened = F !== nothing
     # The soft directions, each a column of `D` already scaled to its reach,
     # softest first. Over the span a second mode can
     # lie in (`_laplace_probe_span`): there a direction's precision is its
@@ -4602,18 +4629,20 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     # factor.
     span = screened ? _laplace_probe_span(laplace, U, Ls, d) : nothing
     if span === nothing
-        E = _ctsem_symeig!(_laplace_scratch_symeig!(laplace, d), M)
-        all(isfinite, E.values) || return found
         # The values ascend, so the soft directions are the first `nsoft`.
-        nsoft = 0
-        while nsoft < d && E.values[nsoft + 1] < _LAPLACE_PROBE_SOFT
-            nsoft += 1
+        low = _laplace_block_lowest(M, blocks, _LAPLACE_PROBE_SOFT)
+        if low === nothing
+            E = _ctsem_symeig(_laplace_block_dense(M, blocks, d))
+            all(isfinite, E.values) || return found
+            n = count(<(_LAPLACE_PROBE_SOFT), E.values)
+            low = (values=E.values[1:n], vectors=E.vectors[:, 1:n])
         end
+        nsoft = length(low.values)
         D = _laplace_scratch_matrix!(laplace, Float64, d, nsoft, :probe_dirs)
         @inbounds for j in 1:nsoft
-            reach = min(_LAPLACE_PROBE_REACH / sqrt(max(E.values[j], 1e-8)), 3.0)
+            reach = min(_LAPLACE_PROBE_REACH / sqrt(max(low.values[j], 1e-8)), 3.0)
             for i in 1:d
-                D[i, j] = reach * E.vectors[i, j]
+                D[i, j] = reach * low.vectors[i, j]
             end
         end
         reflected = any(!iszero, found.u)
@@ -4622,8 +4651,8 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
         # No span: the unit is concave, or the prior's quadratic, everywhere.
         n == 0 && return found
         X = _laplace_scratch_matrix!(laplace, Float64, d, n, :probe_X)
-        @inbounds for t in 1:n
-            ldiv!(view(X, :, t), F, view(span, :, t))
+        for t in 1:n
+            copyto!(view(X, :, t), _soft_solve(F, blocks, view(span, :, t)))
         end
         C = _laplace_scratch_matrix!(laplace, Float64, n, n, :probe_C)
         @inbounds for b in 1:n, a in 1:n
@@ -4677,6 +4706,8 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     atgrad = _laplace_scratch_vector!(laplace, Float64, d, :probe_grad)
     miss = _laplace_scratch_vector!(laplace, Float64, d, :probe_miss)
     solved = _laplace_scratch_vector!(laplace, Float64, d, :probe_solve)
+    delta = _laplace_scratch_vector!(laplace, Float64, d, :probe_delta)
+    moved = _laplace_scratch_vector!(laplace, Float64, d, :probe_moved)
     # Each soft direction either way, then the reflection.
     for probe in 1:(2 * nsoft + (reflected ? 1 : 0))
         # The slot's: Newton reads its start and does not keep it.
@@ -4703,15 +4734,11 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
             _CTSEM_OPCOUNT.probe_values[] += 1
             tol = probe <= 2 * nsoft ? _LAPLACE_PROBE_VALUE_TOL :
                 _LAPLACE_PROBE_REFLECT_TOL
+            # `moved` = M (p - u), by the curvature's blocks.
+            delta .= start .- found.u
+            _soft_block_mulvec!(moved, M, blocks, delta)
             if isfinite(v)
-                drop = 0.0
-                @inbounds for i in 1:d
-                    acc = 0.0
-                    for k in 1:d
-                        acc += M[i, k] * (start[k] - found.u[k])
-                    end
-                    drop += (start[i] - found.u[i]) * acc
-                end
+                drop = dot(delta, moved)
                 abs(v - dot(start, start) / 2 - (found.value - drop / 2)) < tol &&
                     continue
             end
@@ -4720,14 +4747,9 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
             _CTSEM_OPCOUNT.probe_gradients[] += 1
             isfinite(at.value) || continue
             # miss = a + M (p - u)
-            @inbounds for i in 1:d
-                acc = at.gradient[i]
-                for k in 1:d
-                    acc += M[i, k] * (start[k] - found.u[k])
-                end
-                miss[i] = acc
-            end
-            dot(miss, ldiv!(solved, F, miss)) > 1 || continue
+            miss .= at.gradient .+ moved
+            dot(miss, _laplace_block_solve!(solved, F.factors, F.coupling, blocks,
+                miss)) > 1 || continue
             _CTSEM_OPCOUNT.probe_nongaussian[] += 1
             # And only where a second maximum can lie on the line: past the
             # found one the line falls, and a maximum beyond a valley makes it
@@ -6005,10 +6027,15 @@ function _laplace_probe_span(laplace::CTSEMLaplaceObjective, U::Integer,
     inert = laplace.inert
     prune = _LAPLACE_PRUNE[] && !isempty(inert)
     (isempty(affine) && !prune) && return nothing
-    G = _laplace_scratch_matrix!(laplace, Float64, d, d, :probe_G)
-    fill!(G, 0.0)
     spec = laplace.spec
     units = laplace.units
+    blocks = units.blocks[U]
+    # A row adds only to the block its level holds at its member's offset, so
+    # the loadings' Gram matrix is block diagonal over the unit's blocks and is
+    # decomposed a block at a time. Made dense, a study of thousands of persons
+    # took its width cubed, hours, at every search.
+    blockat = Dict{Int,Int}(b.offset => t for (t, b) in enumerate(blocks))
+    G = Matrix{Float64}[zeros(Float64, b.size, b.size) for b in blocks]
     left = 0
     @inbounds for (m, i) in enumerate(units.members[U])
         offsets = units.offsets[U][m]
@@ -6017,7 +6044,7 @@ function _laplace_probe_span(laplace::CTSEMLaplaceObjective, U::Integer,
             k = nrandomeffects(level)
             r = nlatent(level)
             (k == 0 || r == 0) && continue
-            base = offsets[l]
+            Gb = G[blockat[offsets[l]]]
             L = Ls[l]
             g = level.group[i]
             for p in 1:k
@@ -6029,7 +6056,7 @@ function _laplace_probe_span(laplace::CTSEMLaplaceObjective, U::Integer,
                     lb = L[p, b]
                     iszero(lb) && continue
                     for a in 1:r
-                        G[base + a, base + b] += L[p, a] * lb
+                        Gb[a, b] += L[p, a] * lb
                     end
                 end
             end
@@ -6038,20 +6065,35 @@ function _laplace_probe_span(laplace::CTSEMLaplaceObjective, U::Integer,
     # Every row reaches and moves a nonlinear effect: the loadings span every
     # coordinate, and the probes are as before.
     left == 0 && return nothing
-    top = maximum(abs, G)
-    n = 0
-    if top > 0
-        E = _ctsem_symeig!(_laplace_scratch_symeig!(laplace, d), G)
-        # Ascending, so the span is the last `n`: rows whose loadings are
-        # roundoff of the largest add nothing a probe could reach.
-        while n < d && E.values[d - n] > 1e-12 * E.values[d]
-            n += 1
+    # Each block's eigenpairs, largest first within it (the order a dense
+    # decomposition read them in), then by value over the unit: rows whose
+    # loadings are roundoff of the largest add nothing a probe could reach.
+    pairs = Tuple{Float64,Int,Int}[]
+    vecs = Vector{Matrix{Float64}}(undef, length(blocks))
+    for (t, Gb) in enumerate(G)
+        if iszero(maximum(abs, Gb; init=0.0))
+            vecs[t] = zeros(Float64, size(Gb, 1), 0)
+            continue
         end
-        n == d && return nothing
+        E = _ctsem_symeig(Gb)
+        vecs[t] = E.vectors
+        for j in length(E.values):-1:1
+            push!(pairs, (E.values[j], t, j))
+        end
     end
+    sort!(pairs; by=first, rev=true, alg=Base.Sort.DEFAULT_STABLE)
+    biggest = isempty(pairs) ? 0.0 : pairs[1][1]
+    n = biggest > 0 ? count(q -> q[1] > 1e-12 * biggest, pairs) : 0
+    n == d && return nothing
     Q = _laplace_scratch_matrix!(laplace, Float64, d, n, :probe_span)
-    @inbounds for t in 1:n, i in 1:d
-        Q[i, t] = E.vectors[i, d + 1 - t]
+    fill!(Q, 0.0)
+    @inbounds for c in 1:n
+        _, t, j = pairs[c]
+        o = blocks[t].offset
+        V = vecs[t]
+        for i in 1:blocks[t].size
+            Q[o + i, c] = V[i, j]
+        end
     end
     return Q
 end
@@ -6853,9 +6895,14 @@ _soft_solve(F, blocks::Vector{CTSEMLaplaceBlock}, rhs::AbstractVector{Float64}) 
     _laplace_block_solve(F.factors, F.coupling, blocks, collect(Float64, rhs))
 
 """`M x` for a unit's block curvature, by its blocks and couplings."""
-function _soft_block_mulvec(M::CTSEMBlockMatrix{Float64},
+_soft_block_mulvec(M::CTSEMBlockMatrix{Float64}, blocks::Vector{CTSEMLaplaceBlock},
+    x::AbstractVector{Float64}) = _soft_block_mulvec!(zeros(Float64, length(x)), M,
+    blocks, x)
+
+"""`_soft_block_mulvec` into `y`, which is overwritten."""
+function _soft_block_mulvec!(y::AbstractVector{Float64}, M::CTSEMBlockMatrix{Float64},
     blocks::Vector{CTSEMLaplaceBlock}, x::AbstractVector{Float64})
-    y = zeros(Float64, length(x))
+    fill!(y, 0.0)
     @inbounds for (b, block) in enumerate(blocks)
         ob, kb = block.offset, block.size
         Db = M.diag[b]
@@ -6873,6 +6920,209 @@ function _soft_block_mulvec(M::CTSEMBlockMatrix{Float64},
         end
     end
     return y
+end
+
+"""Rounds of `_laplace_block_lowest`'s subspace iteration before it declines."""
+const _LAPLACE_LOWEST_ROUNDS = 500
+
+"""Whether `_laplace_block_lowest` works from a nested unit's blocks, or
+declines so its callers decompose the unit densely."""
+const _LAPLACE_BLOCK_EIGEN = Ref(true)
+
+"""
+    ctsem_set_block_eigen!(on)
+
+Take a nested unit's softest eigenpairs -- for the mode search's probes and
+partner modes and SAEM's start -- from its block storage (`true`, the default),
+or from a dense decomposition, the same pairs at `d^3` (`false`, the oracle).
+Returns the previous setting.
+"""
+function ctsem_set_block_eigen!(on::Bool)
+    previous = _LAPLACE_BLOCK_EIGEN[]
+    _LAPLACE_BLOCK_EIGEN[] = on
+    return previous
+end
+export ctsem_set_block_eigen!
+
+"""
+    _laplace_block_lowest(M, blocks, threshold)
+
+The eigenpairs of a unit's curvature `M` whose eigenvalues lie below
+`threshold`, as `(values, vectors)`: the values ascending, the vectors
+orthonormal columns. A unit of one block is that block, decomposed as it stands
+(`_ctsem_symeig`). A unit of nested blocks is never made dense: how many
+eigenvalues lie below `threshold` is the inertia of `M - threshold I`
+(`_laplace_count_below`), and the pairs come from subspace iteration on `(M -
+sigma I)^-1`, `sigma` bisected to just below the least eigenvalue on whether
+`M - sigma I` factors, with a Rayleigh-Ritz step each round and a few vectors
+beyond the count so that those near `threshold` settle too. Every step is a
+block elimination or product with `M`'s own sparsity (`_soft_shifted_factor`,
+`_soft_solve`, `_soft_block_mulvec!`), so the cost is linear in the unit's
+members. The start is fixed and the vectors signed (`_ctsem_signed_columns!`),
+so the result is a function of `M`. `nothing` where a value is not finite, the
+count cannot be read, the iteration has not settled in
+`_LAPLACE_LOWEST_ROUNDS`, or the vectors needed are over half the unit's
+width, where a dense decomposition costs no more; the caller then decomposes
+the unit densely.
+
+Dense, a nested unit's decomposition is `O(d^3)` in its width: for a study of
+1,000 persons with four effects each (`d` = 4,004), the engine's Jacobi had not
+finished one in twelve minutes, and the mode search asked for one at every mode
+it found.
+"""
+function _laplace_block_lowest(M::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, threshold::Real)
+    d = sum(b.size for b in blocks; init=0)
+    if length(blocks) <= 1
+        d == 0 && return (values=Float64[], vectors=zeros(Float64, 0, 0))
+        E = _ctsem_symeig(M.diag[1])
+        all(isfinite, E.values) || return nothing
+        k = count(<(threshold), E.values)
+        return (values=E.values[1:k], vectors=E.vectors[:, 1:k])
+    end
+    _LAPLACE_BLOCK_EIGEN[] || return nothing
+    all(D -> all(isfinite, D), M.diag) || return nothing
+    all(row -> all(C -> all(isfinite, C), row), M.coupling) || return nothing
+    k = _laplace_count_below(M, blocks, threshold)
+    k === nothing && return nothing
+    k == 0 && return (values=Float64[], vectors=zeros(Float64, d, 0))
+    p = min(d, k + max(4, k >> 2))
+    2 * p > d && return nothing
+    # `M - lo I` factors and `M - hi I` does not, so the least eigenvalue lies
+    # between; bisected until the shift sits close under it, where the
+    # iteration converges fastest.
+    top = Float64(threshold)
+    lo = top - max(1.0, abs(top))
+    F = _soft_shifted_factor(M, blocks, lo)
+    widen = 0
+    while F === nothing
+        (widen += 1) > 60 && return nothing
+        lo = top - 2 * (top - lo)
+        F = _soft_shifted_factor(M, blocks, lo)
+    end
+    hi = top
+    for _ in 1:40
+        hi - lo <= 1e-3 * max(abs(hi), 1.0) && break
+        mid = (lo + hi) / 2
+        Fm = _soft_shifted_factor(M, blocks, mid)
+        if Fm === nothing
+            hi = mid
+        else
+            lo, F = mid, Fm
+        end
+    end
+    V = Matrix{Float64}(undef, d, p)
+    @inbounds for j in 1:p, i in 1:d
+        V[i, j] = sin(1.7 * i * j + 0.9 * j) + 0.3 * cos(0.77 * i + 1.1 * j * j)
+    end
+    _laplace_orthonormalise!(V) || return nothing
+    W = similar(V)
+    AW = similar(V)
+    Y = similar(V)
+    H = Matrix{Float64}(undef, p, p)
+    for _ in 1:_LAPLACE_LOWEST_ROUNDS
+        for j in 1:p
+            copyto!(view(W, :, j), _soft_solve(F, blocks, view(V, :, j)))
+        end
+        _laplace_orthonormalise!(W) || return nothing
+        for j in 1:p
+            _soft_block_mulvec!(view(AW, :, j), M, blocks, view(W, :, j))
+        end
+        _ctsem_mulTN!(H, W, AW)
+        E = _ctsem_symeig(H)
+        all(isfinite, E.values) || return nothing
+        _ctsem_mul!(V, W, E.vectors)
+        _ctsem_mul!(Y, AW, E.vectors)
+        settled = true
+        @inbounds for j in 1:k
+            r = 0.0
+            for i in 1:d
+                r += (Y[i, j] - E.values[j] * V[i, j])^2
+            end
+            if sqrt(r) > 1e-9 * max(1.0, abs(E.values[j]))
+                settled = false
+                break
+            end
+        end
+        settled || continue
+        count(<(threshold), E.values) == k || return nothing
+        vectors = V[:, 1:k]
+        _ctsem_signed_columns!(vectors)
+        return (values=E.values[1:k], vectors=vectors)
+    end
+    return nothing
+end
+
+"""
+Orthonormalises `V`'s columns in place, by modified Gram-Schmidt twice over;
+false where a column has nothing left beside the ones before it.
+"""
+function _laplace_orthonormalise!(V::AbstractMatrix{Float64})
+    n, p = size(V)
+    @inbounds for pass in 1:2, j in 1:p
+        s0 = 0.0
+        for r in 1:n
+            s0 += V[r, j]^2
+        end
+        for i in 1:(j - 1)
+            c = 0.0
+            for r in 1:n
+                c += V[r, i] * V[r, j]
+            end
+            for r in 1:n
+                V[r, j] -= c * V[r, i]
+            end
+        end
+        s = 0.0
+        for r in 1:n
+            s += V[r, j]^2
+        end
+        (isfinite(s) && s > 1e-20 * s0 && s > 0) || return false
+        s = sqrt(s)
+        for r in 1:n
+            V[r, j] /= s
+        end
+    end
+    return true
+end
+
+"""
+    _laplace_block_draw(factors, coupling, blocks, z)
+
+`x` with covariance `M^-1` for standard normal `z`, from `M`'s block
+factorization (`_laplace_block_factor`): that elimination writes `M = K K'`,
+`K` block lower triangular, and `x = K^-T z`, back substitution alone,
+outermost block first. Each block's `K^-T` part is its Cholesky factor's inverse
+less what its ancestors' draws carry down through its couplings.
+"""
+function _laplace_block_draw(factors, coupling, blocks::Vector{CTSEMLaplaceBlock},
+    z::AbstractVector{Float64})
+    nb = length(blocks)
+    x = [zeros(Float64, blocks[b].size) for b in 1:nb]
+    for b in nb:-1:1
+        o, k = blocks[b].offset, blocks[b].size
+        R = factors[b].U
+        w = x[b]
+        @inbounds for i in k:-1:1
+            t = z[o + i]
+            for j in (i + 1):k
+                t -= R[i, j] * w[j]
+            end
+            w[i] = t / R[i, i]
+        end
+        ancestors = blocks[b].ancestors
+        isempty(ancestors) && continue
+        acc = zeros(Float64, k)
+        for (t, a) in enumerate(ancestors)
+            acc .+= coupling[b][t] * x[a]
+        end
+        w .-= factors[b] \ acc
+    end
+    out = zeros(Float64, sum(b.size for b in blocks; init=0))
+    for b in 1:nb
+        out[(blocks[b].offset + 1):(blocks[b].offset + blocks[b].size)] .= x[b]
+    end
+    return out
 end
 
 """How many inverse-iteration steps `_soft_smallest_eigenpair` and
