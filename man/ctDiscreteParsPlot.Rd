@@ -70,7 +70,7 @@ middle of \code{quantiles}. \code{'median'} draws the middle of
 A ggplot2 object. This can be modified by the various ggplot2 functions, or displayed using print(x).
 }
 \description{
-Plots the output from \code{\link{ctDiscretePars}}, for model implied regression strengths at specified times for continuous time models fit with ctStanFit.
+Plots the output from \code{\link{ctDiscretePars}}, for model implied regression strengths at specified times for continuous time models fit with \code{\link{ctFit}}.
 \code{ctStanDiscreteParsPlot} is maintained as a backward-compatible alias.
 }
 \details{

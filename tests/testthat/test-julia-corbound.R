@@ -21,7 +21,7 @@
   silent = TRUE)
 
 .cb_spec <- function(route) structure(suppressWarnings(suppressMessages(ctFit(
-  ctstantestdat, .cb_model(), backend = "julia", intoverpop = route, priors = FALSE,
+  ctsemtestdat, .cb_model(), backend = "julia", intoverpop = route, priors = FALSE,
   fit = FALSE))), class = c("ctJuliaModel", "ctFitModel"))
 
 # The wall, from the correlation matrix the block's coordinates build.
@@ -131,7 +131,7 @@ test_that("the wall is finite however far out a 'z' correlation is", {
 test_that("a fit whose covariance the data put on the singular boundary ends on the bound", {
   skip_without_julia()
   warnings <- character()
-  fit <- withCallingHandlers(suppressMessages(ctFit(ctstantestdat, .cb_model(),
+  fit <- withCallingHandlers(suppressMessages(ctFit(ctsemtestdat, .cb_model(),
     backend = "julia", intoverpop = "augmented", priors = FALSE, cores = 1, verbose = 0)),
     warning = function(w) {
       warnings <<- c(warnings, conditionMessage(w))

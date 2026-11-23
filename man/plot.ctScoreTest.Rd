@@ -30,7 +30,7 @@ model <- ctModel(LAMBDA = diag(2),
   manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
   TDpredNames = 'TD1',
   DIFFUSION = matrix(c('diff_eta1', 0, 0, 'diff_eta2'), 2, 2))
-fit <- ctFit(ctstantestdat, model, priors = TRUE)
+fit <- ctFit(ctsemtestdat, model, priors = TRUE)
 st <- ctScoreTest(fit)
 
 # A panel per family, with a point per relaxation at its adjusted

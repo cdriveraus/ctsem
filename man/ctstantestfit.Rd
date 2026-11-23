@@ -2,10 +2,11 @@
 % Please edit documentation in R/ctDataHelp.R
 \name{ctstantestfit}
 \alias{ctstantestfit}
-\title{ctstantestfit}
+\title{Example fit for ctsem}
 \format{
 ctStanFit object
 }
 \description{
-Dummy fit for testing functions from ctsem package.
+A fit of \code{\link{ctsemtestdat}} with \code{backend = 'stan'}, used in
+the examples and tests.
 }

@@ -86,7 +86,7 @@ skip_on_32bit()
       TIpredNames=c('TI1','TI2')))
     m$pars$indvarying <- FALSE
 
-    f <- ctFit(ctstantestdat, m, backend='stan', cores=1, verbose=0,
+    f <- ctFit(ctsemtestdat, m, backend='stan', cores=1, verbose=0,
       optimcontrol=list(estonly=TRUE, carefulfit=FALSE))
 
     expect_s3_class(f, 'ctStanFit')
@@ -100,7 +100,7 @@ skip_on_32bit()
       sum(apply(f$standata$TIPREDEFFECTsetup,1,sum) > 0))
 
     #and the estonly path agrees with the full one
-    ffull <- ctFit(ctstantestdat, m, backend='stan', cores=1, verbose=0,
+    ffull <- ctFit(ctsemtestdat, m, backend='stan', cores=1, verbose=0,
       optimcontrol=list(carefulfit=FALSE))
     expect_equal(ms$tipred, ffull$setup$matsetup$tipred)
     expect_equal(f$standata$ntipredeffects, ffull$standata$ntipredeffects)

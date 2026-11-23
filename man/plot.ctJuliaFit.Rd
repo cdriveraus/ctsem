@@ -39,7 +39,7 @@ of a sampled fit (\code{\link{ctTracePlot}}). The stan plot types
 # Needs a working julia backend, so the example is inert where Julia is
 # absent -- including on CRAN, whose check machines have none.
 if (isTRUE(ctJuliaStatus()$available)) {
-  data <- ctstantestdat
+  data <- ctsemtestdat
   model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
     LAMBDA = matrix(1))
   model$pars$indvarying <- FALSE

@@ -1,6 +1,6 @@
 #' Regenerate ctsem's shipped test data and/or test fit
 #'
-#' Regenerates \code{data/ctstantestdat.rda} and/or \code{data/ctstantestfit.rda},
+#' Regenerates \code{data/ctsemtestdat.rda} and/or \code{data/ctstantestfit.rda},
 #' the fixtures a number of tests compare against.
 #'
 #' Deliberately not exported: it overwrites data shipped with the package,
@@ -10,14 +10,14 @@
 #' for interactive \code{T}/\code{F} confirmation and regenerates both
 #' objects. \code{confirm} and \code{what} exist so automated tooling can call
 #' it without hanging on \code{readline()} and without moving
-#' \code{ctstantestdat} (which many tests pin numbers against) when only
+#' \code{ctsemtestdat} (which many tests pin numbers against) when only
 #' \code{ctstantestfit} needs a refresh -- generation behaviour has changed
 #' more than once this cycle, and refreshing the fit alone is normally what
 #' that calls for.
 #'
 #' @param what Character vector, some of \code{c("data", "fit")}. Which
 #'   object(s) to regenerate. Defaults to both, matching prior behaviour.
-#'   \code{"fit"} alone loads the currently-shipped \code{ctstantestdat}
+#'   \code{"fit"} alone loads the currently-shipped \code{ctsemtestdat}
 #'   (rather than regenerating it) and fits against that.
 #' @param confirm Ask for interactive \code{T}/\code{F} confirmation before
 #'   doing anything, exactly as this always has. Defaults to \code{TRUE};
@@ -62,22 +62,22 @@ ctdataupdate <- function(what = c("data", "fit"), confirm = TRUE, forcerecompile
         dat_i <- ctGenerate(gm_i,n=1,burnin=3,logdtsd=.4,dtmean = .3)
         dat_i[,'id'] <- i
         dat_i <- cbind(dat_i, matrix(tipreds_i, nrow=nrow(dat_i), ncol=n.TIpred, byrow=TRUE))
-        if(i == 1) ctstantestdat <- dat_i else ctstantestdat <- rbind(ctstantestdat, dat_i)
+        if(i == 1) ctsemtestdat <- dat_i else ctsemtestdat <- rbind(ctsemtestdat, dat_i)
       }
-      colnames(ctstantestdat)[(ncol(ctstantestdat)-n.TIpred+1):ncol(ctstantestdat)] <- paste0('TI',1:n.TIpred)
+      colnames(ctsemtestdat)[(ncol(ctsemtestdat)-n.TIpred+1):ncol(ctsemtestdat)] <- paste0('TI',1:n.TIpred)
 
-      ctstantestdat[2,'Y1'] <- NA
-      ctstantestdat[ctstantestdat[,'id']==2,'TI1'] <- NA
-      ctstantestdat[2,'TD1'] <- NA
+      ctsemtestdat[2,'Y1'] <- NA
+      ctsemtestdat[ctsemtestdat[,'id']==2,'TI1'] <- NA
+      ctsemtestdat[2,'TD1'] <- NA
 
-      save(ctstantestdat,file=file.path('data','ctstantestdat.rda'))
+      save(ctsemtestdat,file=file.path('data','ctsemtestdat.rda'))
     } else {
       # "fit" requested alone: fit against the currently-shipped data rather
-      # than regenerating it, so a fit-only refresh cannot move ctstantestdat
+      # than regenerating it, so a fit-only refresh cannot move ctsemtestdat
       # out from under tests that pin numbers against it.
       e <- new.env(parent = emptyenv())
-      utils::data("ctstantestdat", package = "ctsem", envir = e)
-      ctstantestdat <- e$ctstantestdat
+      utils::data("ctsemtestdat", package = "ctsem", envir = e)
+      ctsemtestdat <- e$ctsemtestdat
     }
 
     if ("fit" %in% what) {
@@ -91,7 +91,7 @@ ctdataupdate <- function(what = c("data", "fit"), confirm = TRUE, forcerecompile
         CINT=matrix(c('cint1||||TI1','cint2||||TI1'),ncol=1),
         LAMBDA=diag(2),tipredDefault=FALSE)
 
-      ctstantestfit<-ctFit(ctstantestdat,checkm,cores=1,inits=0,backend='stan',
+      ctstantestfit<-ctFit(ctsemtestdat,checkm,cores=1,inits=0,backend='stan',
         optimize = TRUE,optimcontrol=list(finishsamples=20,stochastic=T,tol=1e-5),priors=TRUE)
 
       ctstantestfit <- ctGenerateFromFit(ctstantestfit,nsamples = 20,fullposterior = TRUE,cores=1)
@@ -100,7 +100,7 @@ ctdataupdate <- function(what = c("data", "fit"), confirm = TRUE, forcerecompile
     }
 
     written <- file.path('data', paste0(
-      c(data = 'ctstantestdat', fit = 'ctstantestfit')[what], '.rda'))
+      c(data = 'ctsemtestdat', fit = 'ctstantestfit')[what], '.rda'))
     paths <- sort(Sys.glob(written))
     tools::resaveRdaFiles(paths)
     invisible(NULL)

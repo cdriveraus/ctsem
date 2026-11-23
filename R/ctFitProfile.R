@@ -108,7 +108,7 @@
 #'   model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
 #'     LAMBDA = matrix(1))
 #'   model$pars$indvarying <- FALSE
-#'   fit <- ctFit(ctstantestdat, model, backend = 'julia', cores = 1)
+#'   fit <- ctFit(ctsemtestdat, model, backend = 'julia', cores = 1)
 #'
 #'   # Two named parameters; parameters = "flagged" profiles only those the
 #'   # fit's own diagnostics doubt, and NULL profiles every one.
@@ -596,7 +596,7 @@ ctFitProfile <- function(fit, parameters = NULL, points = 8L, step = NULL,
 #' model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
 #'   LAMBDA = matrix(1))
 #' model$pars$indvarying <- FALSE
-#' fit <- ctFit(ctstantestdat, model)
+#' fit <- ctFit(ctsemtestdat, model)
 #' result <- ctFitProfile(fit, parameters = c('drift_eta1', 'mm_Y1'))
 #'
 #' # Each parameter's estimate and the limits of its 95 per cent profile
@@ -664,7 +664,7 @@ print.ctFitProfile <- function(x, digits = 3, ...) {
 #' model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
 #'   LAMBDA = matrix(1))
 #' model$pars$indvarying <- FALSE
-#' fit <- ctFit(ctstantestdat, model)
+#' fit <- ctFit(ctsemtestdat, model)
 #' result <- ctFitProfile(fit, parameters = c('drift_eta1', 'mm_Y1'))
 #'
 #' # A panel per parameter, with the drop in log likelihood against the raw

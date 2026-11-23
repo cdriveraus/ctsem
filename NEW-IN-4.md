@@ -147,6 +147,7 @@ A fit saved with ctsem 3 and passed to `ctFitUpdate()` is refitted with Stan.
 |---|---|
 | `ctOptimUncertainty()` | `ctFitUncertainty()` (old name still works) |
 | `ctFitCovCheck()` | `ctFitCheckCov()` (old name still works) |
+| `ctstantestdat` | `ctsemtestdat` (old name still works) |
 | `ctGenerateFromPriors()` | `ctGenerate(fromPriors = TRUE)` |
 | `ctModelCoverage_check()` | `ctCoverageCheck()` |
 | `ctCheckFit()` | `ctPostPredPlots()` and `ctFitCheckCov()` |

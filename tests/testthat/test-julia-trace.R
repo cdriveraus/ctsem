@@ -153,7 +153,7 @@ test_that("a sampled fit's trace is each chain's draws, and plot() offers it", {
   model <- suppressMessages(ctModel(type = "ct", manifestNames = "Y1",
     latentNames = "eta1", LAMBDA = matrix(1)))
   model$pars$indvarying <- FALSE
-  fit <- suppressMessages(ctFit(ctstantestdat, model, backend = "julia",
+  fit <- suppressMessages(ctFit(ctsemtestdat, model, backend = "julia",
     cores = 1, priors = TRUE))
   sampled <- suppressWarnings(suppressMessages(ctFitUncertainty(fit, "sample",
     cores = 1, control = list(chains = 2, minESS = 50, rhatTarget = 1.1,

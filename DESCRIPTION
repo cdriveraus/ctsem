@@ -17,8 +17,8 @@ Description: Hierarchical continuous (and discrete) time state space modelling,
     augmented Kalman filter or a Laplace approximation, or sampled. Estimation
     is by maximum likelihood or maximum a posteriori optimisation, with
     uncertainty from the Hessian, importance sampling or the bootstrap, or by
-    sampling the posterior, using either 'Stan' or an optional 'Julia' engine
-    that ctJuliaInstall() sets up.
+    sampling the posterior, using the 'Julia' engine that ctJuliaInstall() sets
+    up, or 'Stan'.
     See <https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf>
     for details, and <https://osf.io/preprints/psyarxiv/4q9ex_v3> for a detailed
     tutorial. For the conceptual overview of the hierarchical Bayesian linear SDE

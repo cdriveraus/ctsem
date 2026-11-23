@@ -12,7 +12,7 @@ test_that("a stan model with log1p_exp in a state-dependent drift is written", {
   model <- suppressMessages(ctModel(LAMBDA = diag(2), manifestNames = c("Y1", "Y2"),
     latentNames = ln, DRIFT = DRIFT, PARS = c("dself1", "dself2", "dbylevel"),
     type = "ct", silent = TRUE))
-  prepared <- suppressMessages(ctFit(ctstantestdat, model, backend = "stan",
+  prepared <- suppressMessages(ctFit(ctsemtestdat, model, backend = "stan",
     fit = FALSE))
   expect_match(prepared$stanmodeltext, "log1p_exp", fixed = TRUE)
   parsed <- rstan::stanc(model_code = prepared$stanmodeltext, verbose = FALSE)

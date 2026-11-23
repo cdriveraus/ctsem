@@ -158,7 +158,7 @@ test_that("the defaults a sampled or reduced-rank fit resolves to combine", {
     manifestNames = c("Y1", "Y2"), MANIFESTVAR = diag(.1, 2),
     TDpredNames = "TD1", TIpredNames = c("TI1", "TI2", "TI3"),
     LAMBDA = diag(2)))
-  prep <- function(...) suppressWarnings(suppressMessages(ctFit(ctstantestdat,
+  prep <- function(...) suppressWarnings(suppressMessages(ctFit(ctsemtestdat,
     m, backend = "julia", fit = FALSE, ...)))
   # Sampling integrates random intercepts with Gaussian indicators exactly and
   # samples the exact marginal ('laplace'), and the missing value with it:
@@ -168,19 +168,19 @@ test_that("the defaults a sampled or reduced-rank fit resolves to combine", {
   expect_identical(sampled$ti_imputed$predictor, 1L)
   # The missing TD1 value is zero in the frame the specification keeps, which
   # a prediction over a time grid rebuilds from, as in the prepared data.
-  expect_true(anyNA(ctstantestdat[, "TD1"]))
+  expect_true(anyNA(ctsemtestdat[, "TD1"]))
   expect_false(anyNA(sampled$data$TD1))
   # Sampling keeps the priors it is given, the default included -- it is not
   # switched to TRUE -- and a scope that leaves parameters flat warns before
   # the run. priors = TRUE is the way out, and says nothing.
   expect_identical(sampled$args$resolved$priors, FALSE)
   expect_identical(prep()$args$resolved$priors, FALSE)
-  expect_warning(suppressMessages(ctFit(ctstantestdat, m, backend = "julia",
+  expect_warning(suppressMessages(ctFit(ctsemtestdat, m, backend = "julia",
     fit = FALSE, optimize = FALSE)), "Sampling with priors=FALSE")
-  expect_warning(suppressMessages(ctFit(ctstantestdat, m, backend = "julia",
+  expect_warning(suppressMessages(ctFit(ctsemtestdat, m, backend = "julia",
     fit = FALSE, optimize = FALSE, priors = "randomCorr")),
     "population sds without a prior")
-  expect_no_warning(suppressMessages(ctFit(ctstantestdat, m, backend = "julia",
+  expect_no_warning(suppressMessages(ctFit(ctsemtestdat, m, backend = "julia",
     fit = FALSE, optimize = FALSE, priors = TRUE)), message = "without a prior")
   # Under laplace a rank below the varying T0MEANS fixed the initial state
   # along a direction (-5481 against -1034, reported converged).

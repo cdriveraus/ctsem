@@ -2,7 +2,7 @@
 % Please edit documentation in R/ctDiscretiseData.R
 \name{ctDiscretiseData}
 \alias{ctDiscretiseData}
-\title{Discretise long format continuous time (ctsem) data to specific timestep.}
+\title{Discretise long format continuous time (ctsem) data to specific timestep}
 \usage{
 ctDiscretiseData(
   dlong,
@@ -39,6 +39,6 @@ Any columns specified by TDpredNames have zeroes rather than NA's inserted
 specified by TIpredNames are left as NA's in inserted rows.
 }
 \examples{
-long <- ctDiscretiseData(dlong=ctstantestdat, timestep = .1,
+long <- ctDiscretiseData(dlong=ctsemtestdat, timestep = .1,
 TDpredNames=c('TD1'),TIpredNames=c('TI1','TI2','TI3'))
 }

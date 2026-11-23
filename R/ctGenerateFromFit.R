@@ -57,7 +57,7 @@ ctGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErrors=
       fullposterior=fullposterior,cores=cores,intoverstates=intoverstates,
       effects=match.arg(effects)))
   }
-  if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object!')
+  if(!'ctStanFit' %in% class(fit)) stop('Not a fit from ctFit().')
   if(!missing(effects)) stop(
     "effects is a backend='julia' option: the generated Stan model draws ",
     'random effects as the fit carried them. Drop the argument, or refit ',

@@ -142,7 +142,7 @@ With \code{plot = TRUE}, a ggplot object.
 }
 \description{
 Calculate model implied regressions for a sequence of time intervals (if ct) or steps (if dt) based on
-a ctStanFit object, for specified subjects. Wrap with print() when used inside for loops!
+a fit from \code{\link{ctFit}}, for specified subjects. Wrap with print() when used inside for loops!
 \code{ctStanDiscretePars} is maintained as a backward-compatible alias.
 }
 \details{

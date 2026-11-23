@@ -1,7 +1,7 @@
 #' Get time independent predictor effect estimates
 #' 
 #' Computes and plots combined effects and quantiles for effects of time independent predictors
-#' on subject level parameters of a ctStanFit object.
+#' on subject level parameters of a fit from \code{\link{ctFit}}.
 #' \code{ctStanTIpredeffects} is maintained as a backward-compatible alias.
 #'
 #' @param fit fit object from \code{\link{ctFit}}

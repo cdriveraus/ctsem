@@ -69,7 +69,7 @@ spline through the estimates with a band from their bootstrap spread (see \code{
 \examples{
 data.table::setDTthreads(1) #ignore this line
 # Example usage:
-head(ctstantestdat)
-ctACF(ctstantestdat,varnames=c('Y1'),idcol='id',timecol='time',nboot=5)
+head(ctsemtestdat)
+ctACF(ctsemtestdat,varnames=c('Y1'),idcol='id',timecol='time',nboot=5)
 
 }

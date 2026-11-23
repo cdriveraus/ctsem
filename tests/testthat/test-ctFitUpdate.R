@@ -33,7 +33,7 @@ suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
 # What an update should rebuild is what ctFit() builds now from the call the
 # fit was made with (R/ctdataupdate.R), not the stored fit's own `$standata`,
 # whose layout is whatever the format was when the fixture was last saved.
-.stan_rebuilt <- function() .quietly(ctFit(ctstantestdat,
+.stan_rebuilt <- function() .quietly(ctFit(ctsemtestdat,
   ctstantestfit$ctstanmodelbase, priors = TRUE, fit = FALSE, backend = 'stan'))
 
 test_that("a stan fit updates without refitting, unchanged and without warnings", {
