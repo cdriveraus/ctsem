@@ -1660,6 +1660,26 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 #' @param family One family, or NULL for all of them.
 #' @param ... Unused.
 #' @return A ggplot.
+#' @examples
+#' \donttest{
+#' if (isTRUE(ctJuliaStatus()$available)) {
+#' model <- ctModel(LAMBDA = diag(2),
+#'   manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+#'   TDpredNames = 'TD1')
+#' fit <- ctFit(ctstantestdat, model, priors = TRUE)
+#' adequacy <- ctFitAdequacy(fit)
+#'
+#' # One point per family of checks at its adjusted p-value. A family left of
+#' # the dashed line at alpha, drawn in red, detects misfit.
+#' plot(adequacy)
+#'
+#' # The correlations of the one-step-ahead errors of each pair of variables,
+#' # by the time gap between rows, each with its 95 per cent interval.
+#' # Correlations near zero mean the model accounts for how the variables
+#' # follow each other over time.
+#' plot(adequacy, family = 'residuals')
+#' }
+#' }
 #' @export
 plot.ctFitAdequacy <- function(x, family = NULL, ...) {
   flag <- scale_colour_manual(values = c(`FALSE` = 'grey35', `TRUE` = 'red3'), guide = 'none')

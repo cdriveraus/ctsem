@@ -508,13 +508,46 @@ ctModelIsNonlinear <- function(x) {
 #' point.
 #'
 #' Functions affected by this attach the cells as
-#' \code{attr(x, 'contextDependent')}, and give a message once.
+#' \code{attr(x, 'contextDependent')}, and give a message naming the point.
 #' \code{\link{ctModelIsNonlinear}} reports whether a model has such cells.
 #' With \code{backend='julia'} the evaluation point can be chosen with the
-#' \code{state} argument of \code{\link{ctBackendParMatrices}}.
+#' \code{state} argument of \code{\link{ctSummaryMatrices}},
+#' \code{\link{ctDiscretePars}}, \code{\link{ctExtract}} and
+#' \code{\link{ctNetwork}}: \code{'T0MEANS'}, \code{'mean'} (the mean smoothed
+#' latent state), \code{'asymptotic'} (the fixed point the processes settle
+#' at), or a numeric vector with one value per latent process.
+#' \code{\link{ctPhasePortrait}} and \code{\link{ctStateDependencePlot}} show
+#' how the dynamics change over the state.
+#'
+#' @examples
+#' \donttest{
+#' if (isTRUE(ctJuliaStatus()$available)) {
+#' # The auto effect of eta1 changes with the level of eta2, so DRIFT[1, 1]
+#' # has a value only at a given state of eta2.
+#' model <- ctModel(LAMBDA = diag(2),
+#'   manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+#'   PARS = c('a|-log1p_exp(param)', 'b'),
+#'   DRIFT = matrix(c('a + b * eta2', 'drift21', 0, 'drift22'), 2, 2))
+#' model$pars$indvarying <- FALSE
+#' fit <- ctFit(ctstantestdat, model)
+#' ctModelIsNonlinear(fit)
+#'
+#' # The population matrices at the default point. The message names the
+#' # point, and the attribute lists the cells that depend on it.
+#' m <- ctSummaryMatrices(fit)
+#' m$estimate$DRIFT
+#' attr(m, 'contextDependent')
+#'
+#' # The same matrix at the fixed point, and at a chosen state with eta1 at 0
+#' # and eta2 at 2.
+#' ctSummaryMatrices(fit, state = 'asymptotic')$estimate$DRIFT
+#' ctSummaryMatrices(fit, state = c(0, 2))$estimate$DRIFT
+#' }
+#' }
 #'
 #' @name ctContextDependence
-#' @seealso \code{\link{ctModelIsNonlinear}}, \code{\link{ctBackendParMatrices}}
+#' @seealso \code{\link{ctModelIsNonlinear}}, \code{\link{ctSummaryMatrices}},
+#'   \code{\link{ctPhasePortrait}}, \code{\link{ctStateDependencePlot}}
 NULL
 
 

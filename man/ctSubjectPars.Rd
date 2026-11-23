@@ -67,7 +67,15 @@ column by column (\code{cov}). The draws with \code{uncertainty='total'}
 come from this posterior.
 }
 \examples{
+# Each subject's values of the parameters that vary over subjects, at the
+# fit's estimate. The array has one row for the estimate, a column for each
+# subject (named by its id) and a slice for each parameter.
 indpars <- ctSubjectPars(ctstantestfit)
-dimnames(indpars)
-plot(indpars[1,,'cint1'],indpars[1,,'cint2'])
+dimnames(indpars)$param
+indpars[1, 1:5, ]
+
+# The continuous time intercepts of the two processes, one point per
+# subject.
+plot(indpars[1, , 'cint1'], indpars[1, , 'cint2'],
+  xlab = 'cint1', ylab = 'cint2')
 }

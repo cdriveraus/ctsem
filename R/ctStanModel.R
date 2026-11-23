@@ -355,6 +355,29 @@ ctModelUnlist<-function(ctmodelobj,
 #'
 #' @return \code{ctModelMatrices()} returns a named list of matrices. The
 #' replacement form returns the updated \code{ctStanModel}.
+#' @examples
+#' model <- ctModel(LAMBDA = diag(2), manifestNames = c('Y1', 'Y2'),
+#'   latentNames = c('eta1', 'eta2'))
+#'
+#' # The model as matrices. A label is a free parameter and a number a fixed
+#' # value. DRIFT[1, 2] is the effect of eta2 on eta1.
+#' mats <- ctModelMatrices(model)
+#' mats$DRIFT
+#'
+#' # Fix the effect of eta2 on eta1 to zero, and give both auto effects the
+#' # same label so that they are estimated as one parameter.
+#' mats$DRIFT[1, 2] <- 0
+#' mats$DRIFT[2, 2] <- 'drift_eta1'
+#' ctModelMatrices(model) <- mats
+#' model$pars[model$pars$matrix == 'DRIFT', c('row', 'col', 'param', 'value')]
+#'
+#' # A single cell can be changed through model$matrices.
+#' model$matrices$DRIFT[1, 2] <- 'drift_eta1_eta2'
+#'
+#' # The spread over subjects of the individually varying parameters, here
+#' # the initial means and the manifest means: standard deviations on the
+#' # diagonal and correlation parameters below it.
+#' model$RAWPOPVAR
 #' @export
 ctModelMatrices <- function(x){
   if(!'ctStanModel' %in% class(x)) stop('x must be a ctStanModel object')

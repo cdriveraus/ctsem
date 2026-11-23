@@ -448,8 +448,20 @@ ctFitCovCheck <- ctFitCheckCov
 #' @param ... not used.
 #' @return ggplot object.
 #' @examples
-#' \dontrun{
-#' ctFitCovCheckPlot(ctFitCheckCov(ctstantestfit,cor=TRUE,plot=FALSE),maxlag=3)
+#' \donttest{
+#' # The lagged correlations in the data, and the same correlations in data
+#' # generated from the fit: one row per pair of variables and lag.
+#' check <- ctFitCheckCov(ctstantestfit, cor = TRUE, plot = FALSE)
+#' head(check[, c('rowvar', 'colvar', 'lag', 'empirical', 'q025', 'q975')])
+#'
+#' # One plot per variable, with its correlation with each variable at lags
+#' # 0 to 3: the data's as a point, and the 95 per cent interval of the
+#' # generated data's as a bar. Points outside their bar show where the model
+#' # does not reproduce the data.
+#' ctFitCovCheckPlot(check, maxlag = 3)
+#'
+#' # Only the plot for Y1.
+#' ctFitCovCheckPlot(check, maxlag = 3, vars = 'Y1')
 #' }
 #' @export
 #'  

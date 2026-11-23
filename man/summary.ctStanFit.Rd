@@ -79,5 +79,20 @@ time independent predictor effects, the parameter matrices, and the log
 likelihood and AIC.
 }
 \examples{
-summary(ctstantestfit)
+s <- summary(ctstantestfit)
+
+# Printed, the summary shows each section with a note on how to read it.
+s
+
+# The population means of the free parameters, and the standard deviations
+# over subjects of those that vary, each with its uncertainty.
+s$popmeans
+s$popsd
+
+# The model matrices. dtDRIFT holds the autoregressive and cross-lagged
+# effects over one unit of time (the timeinterval argument).
+s$parmatrices[s$parmatrices$matrix \%in\% c('DRIFT', 'dtDRIFT'), ]
+
+s$loglik
+s$aic
 }

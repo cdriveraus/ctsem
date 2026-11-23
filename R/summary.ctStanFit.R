@@ -253,9 +253,17 @@ ctStanContinuousPars <- ctSummaryMatrices
 #' @export
 #'
 #' @examples
+#' # Each subject's values of the parameters that vary over subjects, at the
+#' # fit's estimate. The array has one row for the estimate, a column for each
+#' # subject (named by its id) and a slice for each parameter.
 #' indpars <- ctSubjectPars(ctstantestfit)
-#' dimnames(indpars)
-#' plot(indpars[1,,'cint1'],indpars[1,,'cint2'])
+#' dimnames(indpars)$param
+#' indpars[1, 1:5, ]
+#'
+#' # The continuous time intercepts of the two processes, one point per
+#' # subject.
+#' plot(indpars[1, , 'cint1'], indpars[1, , 'cint2'],
+#'   xlab = 'cint1', ylab = 'cint2')
 ctSubjectPars <- function(fit,pointest=TRUE,cores=getOption("mc.cores", 2L),nsamples='all',level=NULL,
   uncertainty=NULL){
 
@@ -429,7 +437,22 @@ getparnames <- function(fit,reonly=FALSE, subjvariationonly=FALSE, popstatesonly
 #'   \code{T0cov}, \code{DIFFUSIONcov}, \code{MANIFESTcov},
 #'   \code{asymDIFFUSIONcov} and the correlation matrices.
 #' @examples
-#' summary(ctstantestfit)
+#' s <- summary(ctstantestfit)
+#'
+#' # Printed, the summary shows each section with a note on how to read it.
+#' s
+#'
+#' # The population means of the free parameters, and the standard deviations
+#' # over subjects of those that vary, each with its uncertainty.
+#' s$popmeans
+#' s$popsd
+#'
+#' # The model matrices. dtDRIFT holds the autoregressive and cross-lagged
+#' # effects over one unit of time (the timeinterval argument).
+#' s$parmatrices[s$parmatrices$matrix %in% c('DRIFT', 'dtDRIFT'), ]
+#'
+#' s$loglik
+#' s$aic
 #' @method summary ctStanFit
 #' @export
 
@@ -750,6 +773,14 @@ summaryCtStanFitLoglikDuplicatesPosterior <- function(x){
 #' @param row.names Logical. Print row names for data frame sections?
 #' @param ... Additional arguments passed to \code{\link{print}} for individual sections.
 #' @return Invisibly returns \code{x}.
+#' @examples
+#' s <- summary(ctstantestfit)
+#'
+#' # The section names are the names of the summary list.
+#' names(s)
+#'
+#' # Print only the population means and the log likelihood.
+#' print(s, sections = c('popmeans', 'loglik'))
 #' @method print summary.ctStanFit
 #' @export
 print.summary.ctStanFit <- function(x,width=getOption('width'),sections=names(x),row.names=TRUE,...){

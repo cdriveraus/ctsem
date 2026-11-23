@@ -56,10 +56,17 @@ Nothing. Generates plots.
 1st margin of $Y sets line values, 2nd sets variables, 3rd quantiles.
 }
 \examples{
-\donttest{#'
-input<-ctTIpredEffects(ctstantestfit, plot=FALSE, whichpars='CINT',
- nsamples=10,nsubjects=10)
-    
-ctPlotArray(input=input)
+\donttest{
+# The continuous time intercepts at 10 values of the time independent
+# predictor TI1. input$x holds the TI1 values, and input$y is an array of
+# TI1 value by parameter by quantile (the 2.5, 50 and 97.5 per cent
+# quantiles).
+input <- ctTIpredEffects(ctstantestfit, plot = FALSE, whichpars = 'CINT',
+  nsamples = 10, nsubjects = 10)
+dimnames(input$y)
+
+# One line per parameter for the median, with the interval between the
+# outer quantiles shaded.
+ctPlotArray(input = input)
 }
 }

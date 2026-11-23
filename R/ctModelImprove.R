@@ -290,7 +290,10 @@ ctModelImprove <- function(fit, covariates = NULL,
   .ctBackendResolveThreads(cores)
   relax <- match.arg(relax, several.ok = TRUE)
   criterion <- match.arg(criterion)
-  if (!is.null(changes) && (!inherits(changes, 'ctModelProposals') || !nrow(changes)))
+  # A row of NAs, as indexing an empty table by row number gives, has no
+  # proposal in it.
+  if (!is.null(changes) && (!inherits(changes, 'ctModelProposals') || !nrow(changes) ||
+      !all(vapply(changes$proposal, is.list, TRUE))))
     stop("changes takes rows of ctModelProposals().", call. = FALSE)
   if (!is.null(changes) && is.null(covariates) && any(changes$family %in% 'covariates'))
     stop("A covariate's change needs the covariates it was proposed from: pass ",
