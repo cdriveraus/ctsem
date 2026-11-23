@@ -666,7 +666,9 @@ beta` and its step `s = P grad`; `P` is `V (V' Mb V)^-1 V'`, so `dP = -P dMb
 P`. Each point's trace adjoint is then a multiple of its curvature's inverse
 plus outer products (`_SoftGamma`), and the eigenvector's own derivative,
 `-(M0 - lambda1)^+ dM0 v1`, is a solve in `v1`'s complement
-(`_soft_deflated_solve`).
+(`_soft_deflated_solve`). Where the floor binds, the centre's floored
+eigenvalues add `phi'(lambda_k) w_k w_k'` to the mode's trace adjoint and a
+node's take `_soft_floored_node_reverse!`.
 """
 function _laplace_soft_quadrature_reverse_factored(laplace::CTSEMLaplaceObjective,
     z0::Vector{Float64}, objf, curvb, blocks::Vector{CTSEMLaplaceBlock}, G,
@@ -700,7 +702,8 @@ function _laplace_soft_quadrature_reverse_factored(laplace::CTSEMLaplaceObjectiv
     end
     iszero(w) && return plain()
     top = _laplace_soft_node_curvature_floor_top()
-    _soft_second_above(M0, blocks, v1, lam1, top) || return nothing
+    centre = _soft_centre_floor(M0, blocks, v1, lam1, top)
+    centre === nothing && return nothing
     lap = g0 - F0.logdet / 2
     lam1c = max(lam1, 1.0)
     xs, ws = _gauss_hermite(3)
@@ -710,7 +713,7 @@ function _laplace_soft_quadrature_reverse_factored(laplace::CTSEMLaplaceObjectiv
     for j in 1:nn
         x = xs[j]
         if abs(x) < 1e-12
-            h = g0 - (F0.logdet - log(lam1)) / 2
+            h = g0 - (F0.logdet - log(lam1) + centre.logratio) / 2
             nodes[j] = (kind=:centre,)
         else
             a = sqrt(2) * x / sqrt(lam1c)
@@ -722,19 +725,30 @@ function _laplace_soft_quadrature_reverse_factored(laplace::CTSEMLaplaceObjectiv
                 continue
             end
             rgrad = Vector{Float64}(rb.gradient)
-            Mb = curvb(ub)
-            _soft_shifted_factor(Mb, blocks, top) === nothing && return nothing
-            Fb = _soft_shifted_factor(Mb, blocks, 0.0)
+            # A copy: a nested unit's curvature is the slot's scratch, and the
+            # next node's overwrites it before the reverse reads this one's.
+            Mb = _laplace_copy_blockmatrix(curvb(ub))
+            Fb = _soft_node_factor(Mb, blocks)
             Fb === nothing && return nothing
+            low = _soft_node_low_pairs(Mb, blocks, v1, top)
+            low === nothing && return nothing
             q = _soft_solve(Fb, blocks, v1)
             beta = dot(v1, q)
             y = _soft_solve(Fb, blocks, rgrad)
-            s = y .- q .* (dot(v1, y) / beta)
+            s0 = y .- q .* (dot(v1, y) / beta)
+            s = copy(s0)
+            ratio = 0.0
+            for (k, mu) in enumerate(low.values)
+                wk = view(low.vectors, :, k)
+                s .+= wk .* (_soft_floor_inverse_gap(mu) * dot(wk, rgrad))
+                ratio += _soft_floor_logratio(mu)
+            end
             zz = ub .+ s
             hb, hs = Float64(rb.value), Float64(objf(zz).value)
-            h = _laplace_soft_node_stepped(hb, hs) - (Fb.logdet + log(beta)) / 2
+            h = _laplace_soft_node_stepped(hb, hs) - (Fb.logdet + log(abs(beta)) + ratio) / 2
             nodes[j] = (kind=:node, a=a, ub=ub, Fb=Fb, q=q, beta=beta, y=y, s=s, zz=zz,
-                ps=_laplace_soft_node_stepped_slope(hb, hs))
+                ps=_laplace_soft_node_stepped_slope(hb, hs), low=low, rgrad=rgrad, Mb=Mb,
+                s0=s0)
         end
         terms[j] = h + log(ws[j]) + x^2
     end
@@ -750,6 +764,9 @@ function _laplace_soft_quadrature_reverse_factored(laplace::CTSEMLaplaceObjectiv
     gbar0, c0 = 0.0, 0.0
     v1bar = zeros(Float64, D)
     zbar0 = zeros(Float64, D)
+    # The mode's trace adjoint beyond `c0 M0^-1`: the centre's floored
+    # eigenvalues, `d lambda_k = w_k' dM0 w_k`.
+    cw, ca = Float64[], Vector{Float64}[]
     for j in 1:nn
         hbar = softbar * ex[j] / total
         node = nodes[j]
@@ -759,6 +776,10 @@ function _laplace_soft_quadrature_reverse_factored(laplace::CTSEMLaplaceObjectiv
             gbar0 += hbar
             c0 -= hbar / 2
             lam1bar += hbar / (2 * lam1)
+            for (k, mu) in enumerate(centre.values)
+                push!(cw, -(hbar / 2) * _soft_floor_logratio_slope(mu))
+                push!(ca, centre.vectors[:, k])
+            end
             continue
         end
         # The stepped point's share, as in the dense reverse.
@@ -769,6 +790,18 @@ function _laplace_soft_quadrature_reverse_factored(laplace::CTSEMLaplaceObjectiv
         q, beta, y, s = node.q, node.beta, node.y, node.s
         ys = _soft_solve(node.Fb, blocks, zzbar)
         t = ys .- q .* (dot(v1, ys) / beta)
+        if !isempty(node.low.values)
+            back = _soft_floored_node_reverse!(thetabar, G, node, zzbar, t, hbar, hz, v1,
+                blocks)
+            back === nothing && return nothing
+            ubbar = zzbar .+ back.ub
+            @inbounds for i in 1:D
+                v1bar[i] += back.v1[i] + node.a * ubbar[i]
+                zbar0[i] += ubbar[i]
+            end
+            lam1 > 1.0 && (lam1bar += dot(v1, ubbar) * (-node.a / (2 * lam1c)))
+            continue
+        end
         # -(hbar / 2) P from the logdet, -sym(s t') from the step.
         Gb = _SoftGamma(-hbar / 2, node.Fb, blocks, [hbar / (2 * beta), -1.0], [q, s],
             [q, t])
@@ -790,8 +823,83 @@ function _laplace_soft_quadrature_reverse_factored(laplace::CTSEMLaplaceObjectiv
     y1 === nothing && return nothing
     gbar0 += lapbar
     c0 -= lapbar / 2
-    G0 = _SoftGamma(c0, F0, blocks, [lam1bar, -1.0], [v1, y1], [v1, v1])
+    G0 = _SoftGamma(c0, F0, blocks, vcat([lam1bar, -1.0], cw), vcat([v1, y1], ca),
+        vcat([v1, v1], ca))
     return _soft_factored_close!(thetabar, G, z0, gbar0, G0, zbar0, F0, blocks)
+end
+
+"""
+A node's share of `_laplace_soft_quadrature_reverse_factored` where its
+complement's floor binds: `node.low` holds the complement's eigenpairs `mu_k,
+w_k` below the floor's top, and the forward took the step `s = N g`, `N = Pb +
+sum_k (1 / f(mu_k) - 1 / mu_k) w_k w_k'` (`Pb = Mb^-1 - q q' / beta`), and the
+logdet `logdet Mb + log beta + sum_k (log f(mu_k) - log mu_k)`. With `zzbar`
+the stepped point's cotangent and `t = Pb zzbar`, the gradient in the
+complement's curvature `C` is, in the unit's coordinates,
+
+    Lbar (Pb + sum_k phi'(mu_k) w_k w_k') - sym(t s0')
+      + sum_jk [delta]_jk (w_j' Nbar w_k) w_j w_k' - sum_k delta_k 2 sym(w_k r_k'),
+
+`Lbar = -hbar / 2`, `phi = log f - log`, `delta = 1/f - 1/mu` and `[delta]` its
+divided difference, `Nbar = sym(zzbar g')`, `s0 = Pb g`, and `r_k = (C_H -
+mu_k)^-1` of `Nbar w_k`'s part off `v1` and the `w` (`_soft_high_solve`): the
+floor's Daleckii-Krein adjoint in low rank, the dense reverse's
+`_soft_node_floored_curvature_adjoint` without the dense eigenbasis. `g`'s
+cotangent is `N zzbar`, and `v1`'s, through the projection, `-s (v1'zzbar) -
+(N zzbar)(v1'g) - 2 Bbar Mb v1`, the dense reverse's basis term in the unit's
+coordinates. Returns the node point's cotangent from the trace and gradient
+terms (`ub`) and `v1`'s (`v1`), or `nothing` where a solve fails.
+"""
+function _soft_floored_node_reverse!(thetabar::Vector{Float64}, G, node,
+    zzbar::Vector{Float64}, t::Vector{Float64}, hbar::Float64, hz::Float64,
+    v1::Vector{Float64}, blocks::Vector{CTSEMLaplaceBlock})
+    low, g, Mb = node.low, node.rgrad, node.Mb
+    q, beta, s, s0 = node.q, node.beta, node.s, node.s0
+    W, mu = low.vectors, low.values
+    k = length(mu)
+    Lbar = -hbar / 2
+    aw = [dot(view(W, :, i), zzbar) for i in 1:k]
+    gw = [dot(view(W, :, i), g) for i in 1:k]
+    gap = [_soft_floor_inverse_gap(m) for m in mu]
+    rbar = copy(t)
+    for i in 1:k
+        rbar .+= view(W, :, i) .* (gap[i] * aw[i])
+    end
+    wts, as, bs = [-1.0], [s0], [t]
+    for i in 1:k
+        wi = W[:, i]
+        push!(wts, Lbar * _soft_floor_logratio_slope(mu[i]))
+        push!(as, wi)
+        push!(bs, wi)
+        for i2 in i:k
+            c = _soft_floor_inverse_gap_divided(mu[i], mu[i2]) *
+                (aw[i] * gw[i2] + gw[i] * aw[i2]) / 2
+            iszero(c) && continue
+            push!(wts, i == i2 ? c : 2 * c)
+            push!(as, wi)
+            push!(bs, W[:, i2])
+        end
+    end
+    Z = hcat(v1, W)
+    for i in 1:k
+        r = _soft_high_solve(Mb, blocks, Z, mu[i], (zzbar .* gw[i] .+ g .* aw[i]) ./ 2)
+        r === nothing && return nothing
+        push!(wts, -2 * gap[i])
+        push!(as, W[:, i])
+        push!(bs, r)
+    end
+    # Lbar Pb is `Lbar Mb^-1` and `-(Lbar / beta) q q'`.
+    Gb = _SoftGamma(Lbar, node.Fb, blocks, vcat(-Lbar / beta, wts), vcat([q], as),
+        vcat([q], bs))
+    ub = _laplace_soft_quadrature_vjp!(thetabar, G, node.ub, hbar - hz, rbar, Gb)
+    ub === nothing && return nothing
+    # Pb Mb v1 = v1 - q / beta.
+    Mbv = _soft_block_mulvec(Mb, blocks, v1)
+    BMv = Lbar .* (v1 .- q ./ beta)
+    for (wt, a, b) in zip(wts, as, bs)
+        BMv .+= (wt / 2) .* (a .* dot(b, Mbv) .+ b .* dot(a, Mbv))
+    end
+    return (ub=ub, v1=.-(s .* dot(v1, zzbar)) .- (rbar .* dot(v1, g)) .- 2 .* BMv)
 end
 
 """`_laplace_soft_quadrature_close!` on a factorization: the mode's own terms,
