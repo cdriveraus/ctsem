@@ -7094,17 +7094,25 @@ factorization (`_laplace_block_factor`): that elimination writes `M = K K'`,
 `K` block lower triangular, and `x = K^-T z`, back substitution alone,
 outermost block first. Each block's `K^-T` part is its Cholesky factor's inverse
 less what its ancestors' draws carry down through its couplings.
+
+`K = Lbar D^1/2`, `Lbar` the elimination's unit block lower triangle (`B_b' D_b^-1`
+below block `b`'s diagonal, `B_b` its couplings to its ancestors after its
+descendants' elimination, `D_b = U_b'U_b` its pivot) and `D^1/2` the pivots'
+lower factors `U_b'`, so `K' = blockdiag(U_b) Lbar'`. The map sampler takes
+`K'` as a unit's root (`_jmap_unit`), with `_laplace_block_lsolve` and
+`_laplace_block_rmul` the rest of its algebra.
 """
 function _laplace_block_draw(factors, coupling, blocks::Vector{CTSEMLaplaceBlock},
-    z::AbstractVector{Float64})
+    z::AbstractVector)
     nb = length(blocks)
-    x = [zeros(Float64, blocks[b].size) for b in 1:nb]
+    T = promote_type(eltype(factors[1].U), eltype(z))
+    x = [zeros(T, blocks[b].size) for b in 1:nb]
     for b in nb:-1:1
         o, k = blocks[b].offset, blocks[b].size
         R = factors[b].U
         w = x[b]
         @inbounds for i in k:-1:1
-            t = z[o + i]
+            t = T(z[o + i])
             for j in (i + 1):k
                 t -= R[i, j] * w[j]
             end
@@ -7112,15 +7120,111 @@ function _laplace_block_draw(factors, coupling, blocks::Vector{CTSEMLaplaceBlock
         end
         ancestors = blocks[b].ancestors
         isempty(ancestors) && continue
-        acc = zeros(Float64, k)
+        acc = zeros(T, k)
         for (t, a) in enumerate(ancestors)
             acc .+= coupling[b][t] * x[a]
         end
         w .-= factors[b] \ acc
     end
-    out = zeros(Float64, sum(b.size for b in blocks; init=0))
-    for b in 1:nb
-        out[(blocks[b].offset + 1):(blocks[b].offset + blocks[b].size)] .= x[b]
+    return _laplace_block_gather(x, blocks, T)
+end
+
+"""
+    _laplace_block_lsolve(factors, coupling, blocks, b)
+
+`K^-1 b` for `M = K K'` (`_laplace_block_draw`): the elimination's forward
+pass, innermost block first, each block's pivot solved through its lower factor
+`U_b'` and what it leaves carried to its ancestors. The transpose of
+`_laplace_block_draw`'s map: the gradient's pullback through `x = K^-T z`.
+"""
+function _laplace_block_lsolve(factors, coupling, blocks::Vector{CTSEMLaplaceBlock},
+    b::AbstractVector)
+    nb = length(blocks)
+    T = promote_type(eltype(factors[1].U), eltype(b))
+    y = [T.(b[(blocks[c].offset + 1):(blocks[c].offset + blocks[c].size)]) for c in 1:nb]
+    out = [zeros(T, blocks[c].size) for c in 1:nb]
+    for c in 1:nb
+        k = blocks[c].size
+        R = factors[c].U
+        t = out[c]
+        @inbounds for i in 1:k
+            s = y[c][i]
+            for j in 1:(i - 1)
+                s -= R[j, i] * t[j]
+            end
+            t[i] = s / R[i, i]
+        end
+        ancestors = blocks[c].ancestors
+        isempty(ancestors) && continue
+        # D_c^-1 y_c = U_c^-1 t, then into the ancestors through the couplings.
+        wc = similar(t)
+        @inbounds for i in k:-1:1
+            s = t[i]
+            for j in (i + 1):k
+                s -= R[i, j] * wc[j]
+            end
+            wc[i] = s / R[i, i]
+        end
+        for (s, a) in enumerate(ancestors)
+            y[a] .-= transpose(coupling[c][s]) * wc
+        end
+    end
+    return _laplace_block_gather(out, blocks, T)
+end
+
+"""
+    _laplace_block_rmul(factors, coupling, blocks, x)
+
+`K' x` for `M = K K'` (`_laplace_block_draw`): each block's own part plus its
+pivot's inverse applied to what its couplings take from its ancestors, then
+its upper factor. `_laplace_block_draw`'s inverse.
+"""
+function _laplace_block_rmul(factors, coupling, blocks::Vector{CTSEMLaplaceBlock},
+    x::AbstractVector)
+    nb = length(blocks)
+    T = promote_type(eltype(factors[1].U), eltype(x))
+    out = [zeros(T, blocks[c].size) for c in 1:nb]
+    part(c) = x[(blocks[c].offset + 1):(blocks[c].offset + blocks[c].size)]
+    for c in 1:nb
+        k = blocks[c].size
+        y = T.(part(c))
+        ancestors = blocks[c].ancestors
+        if !isempty(ancestors)
+            acc = zeros(T, k)
+            for (s, a) in enumerate(ancestors)
+                acc .+= coupling[c][s] * part(a)
+            end
+            y .+= factors[c] \ acc
+        end
+        R = factors[c].U
+        @inbounds for i in 1:k
+            s = zero(T)
+            for j in i:k
+                s += R[i, j] * y[j]
+            end
+            out[c][i] = s
+        end
+    end
+    return _laplace_block_gather(out, blocks, T)
+end
+
+"""`log det K` for `M = K K'` (`_laplace_block_draw`): half `M`'s log determinant."""
+function _laplace_block_halflogdet(factors, blocks::Vector{CTSEMLaplaceBlock})
+    total = zero(eltype(factors[1].U))
+    for c in eachindex(blocks)
+        R = factors[c].U
+        @inbounds for i in 1:blocks[c].size
+            total += log(R[i, i])
+        end
+    end
+    return total
+end
+
+"""Per-block vectors laid out in the unit's coordinates."""
+function _laplace_block_gather(parts, blocks::Vector{CTSEMLaplaceBlock}, ::Type{T}) where {T}
+    out = zeros(T, sum(b.size for b in blocks; init=0))
+    for c in eachindex(blocks)
+        out[(blocks[c].offset + 1):(blocks[c].offset + blocks[c].size)] .= parts[c]
     end
     return out
 end
