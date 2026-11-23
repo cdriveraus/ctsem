@@ -7099,8 +7099,9 @@ end
 A factorization of `M - sigma I` (`_soft_shifted_factor`) with `sigma` just
 under `M`'s least eigenvalue, which lies below `top`: bisection on whether `M -
 s I` factors, from a point where it does up to `top`, where it does not, to a
-relative 1e-3. Subspace iteration on its inverse converges fastest there.
-`(sigma, F)`, or `nothing` where no point that factors is found.
+relative 1e-3, then a bracket's width below it. Subspace iteration on its
+inverse converges fastest near the least eigenvalue. `(sigma, F)`, or `nothing`
+where no point that factors is found.
 """
 function _laplace_lowest_shift(M::CTSEMBlockMatrix{Float64},
     blocks::Vector{CTSEMLaplaceBlock}, top::Real)
@@ -7124,7 +7125,15 @@ function _laplace_lowest_shift(M::CTSEMBlockMatrix{Float64},
             lo, F = mid, Fm
         end
     end
-    return (sigma=lo, F=F)
+    # A bracket's width below the bracket, so the factor's least pivot is at
+    # least that far from singular. At the bracket's lower end the least
+    # eigenvalue can sit within roundoff of the shift -- a test unit's lay
+    # exactly on a bisection point, factored there on Linux and not on Windows
+    # -- and every solve through that factor is noise.
+    sigma = lo - (hi - lo)
+    Fs = _soft_shifted_factor(M, blocks, sigma)
+    Fs === nothing && return nothing
+    return (sigma=sigma, F=Fs)
 end
 
 """
