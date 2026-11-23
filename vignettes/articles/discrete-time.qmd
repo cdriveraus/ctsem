@@ -115,19 +115,27 @@ s <- summary(fit)
 s$popmeans
 ```
 
-`a21`, the effect of stress on next week's quality, is negative, with an
-interval well away from zero, and `a12`, the effect of quality on stress, is
-near zero. These match the values the data were generated from (-0.3 and 0).
-`rawpopcorr` holds the correlations of the random effects:
+`a21`, the effect of stress on next week's quality, is -0.30, as generated,
+with an interval well away from zero. `a12`, the effect of quality on stress,
+was generated as 0 and is estimated at 0.08, with an interval that only just
+excludes zero. With a 95% interval for each of several parameters, one now
+and then lands just beside its true value. `rawpopcorr` holds the
+correlations of the random effects:
 
 ```{r popcorr}
 s$rawpopcorr
 ```
 
 Those with a higher long run level of stress (`mi_stress`) have a lower long
-run level of quality (`mi_quality`), as generated. The starting values were
-generated independently of the rest, and their estimated correlations are
-small.
+run level of quality (`mi_quality`). The generating values imply a
+correlation of about -0.86 between the two.
+
+The starting values `t0_stress` and `t0_quality` are deviations from each
+person's long run level, because the processes return to zero and the
+measurement intercepts hold the long run levels. The data were generated
+with starting levels unrelated to the long run levels, so someone with a
+higher long run level starts further below it, and each starting value
+correlates negatively with its own long run level.
 
 # Predictions and effects over time
 

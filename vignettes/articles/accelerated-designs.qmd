@@ -119,8 +119,12 @@ covariates$cohort <- factor(covariates$cohort)
 ctScoreTest(f1, covariates = covariates, tests = 'covariates')
 ```
 
-The cohorts differ in the drift and the measurement error, as generated, and
-the tests find nothing for the other parameters.
+The tests flag several parameters. In a model that leaves the cohorts out,
+one cohort difference can show up in several parameters: a cohort's smaller
+measurement error, for instance, can look like smaller random change in the
+process (`diff_eta`). The drift and the measurement error are the differences
+the design suggests, so the next model adds those, and the tests are run
+again on it.
 
 # Cohort effects
 
@@ -154,6 +158,15 @@ summary(f2)$tipreds
 
 Compared with the first cohort, the drift of the older cohorts is more
 negative, and their measurement error smaller.
+
+```{r scoretest2}
+ctScoreTest(f2, covariates = covariates, tests = 'covariates')
+```
+
+With the drift and measurement error effects in the model, the tests find
+nothing more for the cohorts to explain. The diffusion and the starting values
+were flagged before because the model without cohorts had no other way to
+show the differences in drift and measurement error.
 
 # Cohort differences in the individual differences
 
@@ -212,7 +225,7 @@ from each cohort, from the covariates alone, here over the whole age range:
 
 ```{r predict}
 firsts <- dat$id[!duplicated(dat$cohort)]
-ctPredict(f2, subjects = firsts, timerange = c(0, 4), timestep = 0.05,
+ctPredict(f2, subjects = firsts, timerange = c(0, 5), timestep = 0.05,
   removeObs = TRUE, plot = TRUE, kalmanvec = 'yprior')
 ```
 

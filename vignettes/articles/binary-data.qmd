@@ -95,8 +95,17 @@ s <- summary(f)
 s$popmeans
 ```
 
-The drift parameters are close to the generating -1, 0.5, 0 and -1, and the
-standard deviations of the intercepts over people close to 1:
+The auto effects (`drift_eta1`, `drift_eta2`) are close to the generating -1.
+The cross effects are much less certain. The effect of `eta1` on `eta2`
+(`drift_eta2_eta1`), generated as 0.5, comes out at 0.21 with a standard
+error of 0.19, and the effect of `eta2` on `eta1`, generated as 0, at -0.22.
+A yes or no answer says much less about the process than a continuous
+measurement would, so effects that involve a process measured only that way
+need many more observations to pin down. A second binary item for `eta2`, or
+a continuous one, would help most.
+
+The standard deviations of the intercepts over people are close to the
+generating 1:
 
 ```{r popsd}
 s$popsd
@@ -105,8 +114,9 @@ s$popsd
 # Dynamics
 
 `ctDiscretePars()` shows the effect of a change in one process on both,
-over time. A change in `eta1` raises `eta2` over the next few time units,
-while a change in `eta2` has no effect on `eta1`:
+over time. Here a change in `eta1` raises `eta2` a little over the next few
+time units, and a change in `eta2` lowers `eta1` a little, both with wide
+intervals, as the cross effects above suggest:
 
 ```{r discrete}
 ctDiscretePars(f, plot = TRUE)

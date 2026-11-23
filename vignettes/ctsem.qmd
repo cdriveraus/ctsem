@@ -172,7 +172,7 @@ equations, and opens them as a pdf if LaTeX is installed:
 latexFigure(model)
 ```
 
-The first line is the distribution of the random effects: each person's
+The first line is the distribution of the random effects. Each person's
 starting values and measurement intercepts are drawn from a normal
 distribution, on the raw scale of the parameters, and then transformed. The
 next two lines are the dynamics, the two after them the measurement, and the
@@ -360,3 +360,7 @@ data, and `ctModelImprove()` searches for a better model step by step.
   groups.
 - `vignette('uncertainty')`: standard errors, sampling and priors.
 - `vignette('score-tests')`: checking and improving a model.
+- The [website](https://cdriveraus.github.io/ctsem/articles/) has worked
+  examples of a single long time series, growth curves, discrete time models,
+  accelerated designs and the Kalman filter and smoother, and an article on
+  why ctsem models change in continuous time.
