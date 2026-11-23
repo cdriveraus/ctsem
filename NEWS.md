@@ -41,6 +41,7 @@ A major release. ctsem has a second estimation engine, written in Julia, which m
 - `ctCheckFit()` is defunct, replaced by `ctPostPredPlots()` and `ctFitCheckCov()`.
 - `ctFitUpdateModel()` and `ctStanUpdModel()` are defunct. Use `ctFitUpdate()`.
 - The `vb` argument of `ctFit()` (Stan's variational inference) is removed.
+- `ctEmpiricalBayesFit()` is removed. Fit random effects with `ctFit()` and get each subject's estimates with `ctSubjectPars()`.
 - Fixed: standard errors for combinations of parameters the data do not identify came from numerical rounding, and could inflate the standard errors of other parameters. Such parameters are now reported as unidentified.
 - Fixed: computing quantities over several posterior draws with `cores > 1` could stop with a Stan exception, or return draws out of order, in `ctGenerateFromPriors()`, `ctKalman()`, `ctPredict()` and `plot()`.
 - Fixed: `backend='stan'` with `optimcontrol$estonly=TRUE` failed for models with time independent predictors, which also stopped `ctLOO()`.

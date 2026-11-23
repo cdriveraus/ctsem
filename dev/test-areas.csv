@@ -135,7 +135,6 @@
 "test-tdeffectvariation_covtest.R","stan","extended"
 "test_behavGenNLcor.R","stan","release"
 "test-backend-uncertainty.R","uncertainty","core"
-"test-ctEmpiricalBayesFit.R","uncertainty","core"
 "test-ctOptimUncertainty.R","uncertainty","core"
 "test-julia-particle-correct.R","uncertainty","core"
 "test-julia-sample.R","uncertainty","core"
