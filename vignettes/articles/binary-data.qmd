@@ -1,0 +1,145 @@
+---
+title: "Binary and continuous indicators together"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+    self-contained-math: true
+execute:
+  message: false
+  warning: false
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7,
+  fig.height = 4, message = FALSE, warning = FALSE)
+source('latex-figure.R')
+```
+
+Two latent processes, one measured by a continuous variable and the other by
+a yes or no answer, with the first process driving the second and with stable
+differences between people. This article simulates such data, fits the
+model, and shows the predictions for the binary variable.
+`vignette('measurement-models')` covers the other kinds of variable ctsem
+can use: ordinal, count and censored.
+
+```{r libs}
+library(ctsem)
+library(ggplot2)
+```
+
+# Data
+
+`ctGenerate()` simulates from a model with every parameter given. The first
+process affects the second with a cross effect of 0.5, and each process has
+a continuous time intercept (`CINT`) that differs between people, with a
+standard deviation of 1. The binary variable is 1 with probability
+`inv_logit(eta2)`, and the continuous one has measurement error with a
+standard deviation of 0.2:
+
+```{r generate}
+set.seed(1)
+gm <- ctModel(type = 'ct',
+  manifestNames = c('Y1', 'Y2binary'), latentNames = c('eta1', 'eta2'),
+  manifesttype = c(0, 1),
+  LAMBDA = diag(2),
+  DRIFT = matrix(c(
+    -1, 0,
+    0.5, -1), 2, 2, byrow = TRUE),
+  DIFFUSION = diag(2),
+  CINT = c('cint1', 'cint2'),
+  T0MEANS = 0, T0VAR = diag(2),
+  MANIFESTMEANS = 0,
+  MANIFESTVAR = diag(c(0.2, 0)))
+dat <- data.frame(ctGenerate(gm, n = 100, Tpoints = 50, dtmean = 0.1,
+  backend = 'julia',
+  values = list(popmeans = c(cint1 = 0, cint2 = 0),
+    popsd = c(cint1 = 1, cint2 = 1))))
+head(dat)
+```
+
+Each of the 100 people is observed 50 times, 0.1 time units apart.
+
+# Model
+
+The estimation model gives the second variable `manifesttype = 1`, binary,
+and leaves the dynamics free. Stable differences between people could be put
+on the measurement intercepts (`MANIFESTMEANS`) or on the latent processes
+(`CINT`). Here they belong to the processes, so the measurement intercepts
+are fixed to 0 and the `CINT` parameters are free, and by default they vary
+over people. With continuous indicators the two choices often fit the same.
+With a binary one they differ. A shift in the latent process carries through
+the dynamics, while a shift in the intercept of the binary variable changes
+only its probability of a 1.
+
+```{r model}
+m <- ctModel(type = 'ct',
+  manifestNames = c('Y1', 'Y2binary'), latentNames = c('eta1', 'eta2'),
+  manifesttype = c(0, 1),
+  LAMBDA = diag(2),
+  MANIFESTMEANS = 0,
+  CINT = c('cint1', 'cint2'))
+```
+
+```{r latex-model, echo = FALSE, out.width = '100%'}
+latexFigure(m)
+```
+
+A binary variable has no measurement error parameter: its variance given the
+latent process follows from the probability of a 1.
+
+```{r fit}
+f <- ctFit(dat, m, cores = 2)
+s <- summary(f)
+s$popmeans
+```
+
+The auto effects (`drift_eta1`, `drift_eta2`) are close to the generating -1.
+The cross effects are much less certain. The effect of `eta1` on `eta2`
+(`drift_eta2_eta1`), generated as 0.5, comes out at 0.21 with a standard
+error of 0.19, and the effect of `eta2` on `eta1`, generated as 0, at -0.22.
+A yes or no answer says much less about the process than a continuous
+measurement would, so effects that involve a process measured only that way
+need many more observations to pin down. A second binary item for `eta2`, or
+a continuous one, would help most.
+
+The standard deviations of the intercepts over people are close to the
+generating 1:
+
+```{r popsd}
+s$popsd
+```
+
+# Dynamics
+
+`ctDiscretePars()` shows the effect of a change in one process on both,
+over time. Here a change in `eta1` raises `eta2` a little over the next few
+time units, and a change in `eta2` lowers `eta1` a little, both with wide
+intervals, as the cross effects above suggest:
+
+```{r discrete}
+ctDiscretePars(f, plot = TRUE)
+```
+
+# Predictions for the binary variable
+
+For the binary variable, `yprior` is the predicted probability of a 1, given
+the person's earlier answers and their continuous measurements. Its band is
+1.96 standard deviations of a yes or no answer either side, so it covers
+both answers:
+
+```{r predict}
+ctPredict(f, subjects = c(2, 5), timestep = 0.02, plot = TRUE,
+  kalmanvec = c('y', 'yprior'))
+```
+
+The smoothed latent processes use all of each person's observations:
+
+```{r smooth}
+ctPredict(f, subjects = c(2, 5), timestep = 0.02, plot = TRUE,
+  kalmanvec = 'etasmooth')
+```
+
+The binary answers carry less information than the continuous measurements,
+so the estimates of `eta2` are less certain than those of `eta1`.

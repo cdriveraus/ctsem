@@ -17,8 +17,6 @@ home:
     href: https://github.com/cdriveraus/ctsem/discussions
   - text: Tutorial preprint
     href: https://osf.io/preprints/psyarxiv/4q9ex_v3
-  - text: Blog posts on ctsem
-    href: https://cdriver.netlify.app/
 
 navbar:
   structure:
@@ -42,7 +40,18 @@ articles:
   contents:
   - ctsem
   - dynamics
+  - continuous-time
   - interventions
+- title: Examples
+  navbar: Examples
+  contents:
+  - sunspots
+  - kalman-filter
+  - growth-curves
+  - discrete-time
+  - accelerated-designs
+  - binary-data
+  - heterogeneity
 - title: Specifying models
   navbar: Specifying models
   contents:
