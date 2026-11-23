@@ -485,7 +485,7 @@ test_that("the Laplace Hessian takes a smooth's columns from its target's", {
   npar <- ctsem:::.ctBackendNpar(spec)
   x <- suppressMessages(ctsem:::.ctJuliaInitsFromFit(fit, spec, npar))
   objective <- ctsem:::.ctJuliaObjective(structure(spec,
-    class = c("ctJuliaModel", "ctFitModel")), hybrid = TRUE)
+    class = c("ctJuliaModel", "ctFitModel")))
   module <- ctsem:::.ctJuliaModule(spec$project)
   ctsem:::.ctJuliaEval(paste0("ctsem_test_nderived(o, n) = ",
     "length(ContinuousTimeSEM._laplace_ti_derivable(o, collect(1:n)))"))

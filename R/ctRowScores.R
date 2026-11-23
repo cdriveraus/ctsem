@@ -15,7 +15,7 @@
     call. = FALSE)
   module <- .ctJuliaModule(fit$model_spec$project)
   out <- .ctBackendWithMaxChunks(cores, .ctBackendJuliaValue(module$ctsem_row_scores(
-    .ctJuliaObjective(fit, hybrid = TRUE), .ctJuliaNumericVector(as.numeric(est)),
+    .ctJuliaObjective(fit), .ctJuliaNumericVector(as.numeric(est)),
     .ctJuliaPut(directions))))
   matrix(as.numeric(out), ncol = ncol(directions),
     dimnames = list(NULL, colnames(directions)))
@@ -31,7 +31,7 @@
 .ctBackendPosteriorNodes <- function(fit, est, nodes = 5L, cores = 2L) {
   module <- .ctJuliaModule(fit$model_spec$project)
   out <- .ctBackendWithMaxChunks(cores, .ctBackendJuliaValue(
-    module$ctsem_laplace_posterior_nodes(.ctJuliaObjective(fit),
+    module$ctsem_laplace_posterior_nodes(.ctJuliaObjective(fit, layer = TRUE),
       .ctJuliaNumericVector(as.numeric(est)), nodes = as.integer(nodes))))
   W <- as.matrix(out$weights)
   d <- length(out$points) / max(1L, length(W))
@@ -44,5 +44,5 @@
 .ctBackendUnitDims <- function(fit) {
   module <- .ctJuliaModule(fit$model_spec$project)
   as.integer(.ctBackendJuliaValue(module$ctsem_laplace_unit_dims(
-    .ctJuliaObjective(fit))))
+    .ctJuliaObjective(fit, layer = TRUE))))
 }

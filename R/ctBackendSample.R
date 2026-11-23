@@ -84,7 +84,7 @@
   laplace <- fit$model_spec$laplace
   layout <- try(.ctJuliaGet(
     .ctJuliaModule(fit$model_spec$project)$ctsem_laplace_deviation_layout(
-      .ctJuliaObjective(fit))), silent = TRUE)
+      .ctJuliaObjective(fit, layer = TRUE))), silent = TRUE)
   if (inherits(layout, "try-error") || is.null(layout$position)) return(NULL)
   level_index <- as.integer(layout$level)
   # A level the fit does not describe means the two have gone out of step, and
@@ -759,45 +759,40 @@
     isTRUE(control$adapt_effects) || !is.null(control$settleTol)
 }
 
-# The placement a call's `control` resolves to: `.ctBackendPlacementName()`'s,
-# except that the map sampler starts from the fit's estimate and its Hessian,
-# which SAEM's placement does not give it -- 'fit' by default there, and
-# 'saem' refused by name rather than ignored.
+# Where the chains start, `control$placement` resolved against the sampler
+# (`control$sampler`, already resolved) and the target. 'fit' starts them
+# around the fit's estimate, with its Hessian as the metric: the NUTS samplers'
+# start, plain and through the map, which learns its map from there. 'saem'
+# runs SAEM from the fit's estimate (or, under `ctFit(optimize = FALSE)`, from
+# the start and prior warm-up alone) and starts the chains from its state --
+# its estimate, which targets the exact marginal posterior where the fit's
+# optimum targets the Laplace approximation to it, and its chains' effects --
+# which is SAEM's kernel's own start and its default. A marginal or
+# state-explicit target has no effects to start, and takes 'fit'.
 #' @keywords internal
 .ctBackendPlacementFor <- function(control, marginal) {
-  if (identical(control$sampler, "map")) {
-    if (identical(control$placement, "saem")) {
-      stop("control$placement = 'saem' does not apply to control$sampler = 'map', ",
-        "which starts from the fit's estimate and learns its map from there.",
-        call. = FALSE)
+  placement <- control$placement
+  if (!is.null(placement) && (!is.character(placement) || length(placement) != 1L ||
+      !placement %in% c("saem", "fit"))) {
+    stop("control$placement must be 'saem' or 'fit'.", call. = FALSE)
+  }
+  if (isTRUE(marginal)) {
+    if (identical(placement, "saem")) {
+      stop("control$placement = 'saem' starts the chains from SAEM's draws of the ",
+        "random effects, and this run samples the marginal or the latent states, ",
+        "which has none to start. Use placement = 'fit'.", call. = FALSE)
     }
     return("fit")
   }
-  .ctBackendPlacementName(control$placement, marginal)
-}
-
-# Where the chains start, `control$placement`. 'saem', the default on the joint
-# target for SAEM's kernel and NUTS (the map starts from the fit's estimate,
-# `.ctBackendPlacementFor()`), runs SAEM from the fit's estimate (or, under
-# `ctFit(optimize = FALSE)`, from the start and prior warm-up alone) and
-# starts the chains from
-# its state: its estimate, which targets the exact marginal posterior where the
-# fit's optimum targets the Laplace approximation to it, and its chains'
-# effects. 'fit' starts them around the fit's own estimate, as before. A
-# marginal or state-explicit target has no effects to start, and takes 'fit'.
-#' @keywords internal
-.ctBackendPlacementName <- function(placement, marginal) {
-  if (is.null(placement)) return(if (isTRUE(marginal)) "fit" else "saem")
-  if (!is.character(placement) || length(placement) != 1L ||
-      !placement %in% c("saem", "fit")) {
-    stop("control$placement must be 'saem' or 'fit'.", call. = FALSE)
+  if (!identical(control$sampler, "saem")) {
+    if (identical(placement, "saem")) {
+      stop("control$placement = 'saem' does not apply to control$sampler = '",
+        .ctJuliaOr(control$sampler, "map"), "', which starts from the fit's ",
+        "estimate. SAEM's placement is for control$sampler = 'saem'.", call. = FALSE)
+    }
+    return("fit")
   }
-  if (isTRUE(marginal) && identical(placement, "saem")) {
-    stop("control$placement = 'saem' starts the chains from SAEM's draws of the ",
-      "random effects, and this run samples the marginal or the latent states, ",
-      "which has none to start. Use placement = 'fit'.", call. = FALSE)
-  }
-  placement
+  .ctJuliaOr(placement, "saem")
 }
 
 # The sampler settings, from either spelling of the control list.
@@ -1201,17 +1196,17 @@
 # The objective a target names, in whichever process asks for it. Both branches
 # are cached per process and keyed on content, so a worker pays for the build
 # once and the parent's own handle is reused rather than rebuilt.
+#
+# Every sampler samples the fit's objective: on the joint target the effects
+# its filter integrates are integrated in the density, whichever sampler
+# draws it, and reported from their exact conditional (`report` in
+# `.ctBackendSampleEngine()`). The one exception is SAEM's kernel, which
+# steps a full-rank covariance from sampled deviations and so samples every
+# effect, on the layer.
 #' @keywords internal
-.ctBackendSampleObjective <- function(fit, target, hybrid = FALSE) {
-  if (isTRUE(target$state_explicit)) {
-    .ctJuliaJointObjective(fit, target$npar)
-  } else {
-    # The marginal target is the objective the fit optimised; the joint one
-    # samples every effect, own variances' included -- except for the map
-    # sampler (`hybrid`), whose joint density integrates the effects the
-    # filter integrates exactly and reports them from their conditional.
-    .ctJuliaObjective(fit, hybrid = isTRUE(target$marginal) || isTRUE(hybrid))
-  }
+.ctBackendSampleObjective <- function(fit, target, sampler = NULL) {
+  if (isTRUE(target$state_explicit)) .ctJuliaJointObjective(fit, target$npar) else
+    .ctJuliaObjective(fit, layer = identical(sampler, "saem") && !isTRUE(target$marginal))
 }
 
 # How many draws per chain a run starts with and may extend to, given the count
@@ -1313,18 +1308,21 @@
   settings$max_draws <- budget$max_draws
   module <- .ctJuliaModule(fit$model_spec$project)
   mapped <- identical(settings$sampler, "map")
-  objective <- .ctBackendSampleObjective(fit, target, hybrid = mapped)
+  saem <- identical(settings$sampler, "saem")
+  objective <- .ctBackendSampleObjective(fit, target, settings$sampler)
   # A marginal target is the fit's objective, read at the fit's modes held:
   # a function of the parameters given the fit, which a chain's own history
   # would not give (R/ctJuliaFitModes.R).
   if (isTRUE(target$marginal) && !isTRUE(target$state_explicit)) {
     .ctJuliaHoldModes(fit$model_spec, .ctJuliaFitModes(fit))
   }
-  # The map sampler reports the effects in the layer's layout, which labels
-  # them (`.ctBackendEffectIndex()`): on the hybrid objective a unit whose
-  # effects are all integrated keeps no block. A marginal sample reports none.
-  report <- if (mapped && !isTRUE(target$marginal))
-    .ctBackendSampleObjective(fit, target) else NULL
+  # The joint NUTS samplers report the effects in the layer's layout, which
+  # labels them (`.ctBackendEffectIndex()`): on the hybrid objective a unit
+  # whose effects are all integrated keeps no block. Where nothing is
+  # integrated the layer is the same cached objective. SAEM's kernel samples
+  # on the layer, and a marginal sample reports no effects.
+  report <- if (!isTRUE(target$marginal) && !isTRUE(target$state_explicit) && !saem)
+    .ctJuliaObjective(fit, layer = TRUE) else NULL
 
   # Chains are the parallel axis, and in one session they can only be concurrent
   # if it was started with threads for them. Said once, here, because the
@@ -1341,7 +1339,6 @@
     }
   }
 
-  saem <- identical(settings$sampler, "saem")
   # On a marginal target the map starts where tempered SMC's particles would
   # (`.ctBackendSmcStart()`), the DAIS normal's centre where the call made one,
   # with its covariance as the whitening (`target$metric`).
@@ -1404,8 +1401,8 @@
     arguments$npar <- as.integer(target$npar)
     arguments$save_effects <- isTRUE(saveEffects) && !isTRUE(target$marginal)
     if (!saem && !mapped) arguments$adapt_effects <- settings$adapt_effects
-    if (identical(target$placement, "saem") && !mapped) arguments$saem <- TRUE
-    if (mapped && !is.null(report)) arguments$report <- report
+    if (saem && identical(target$placement, "saem")) arguments$saem <- TRUE
+    if (!is.null(report)) arguments$report <- report
     if (mapped) arguments$nwarmup <- NULL
   } else if (!identical(target$gradient, "adjoint")) {
     # `ctsem_sample_marginal`'s own default is `:adjoint`; only said
@@ -2436,7 +2433,9 @@ print.ctSampleDiagnostics <- function(x, ...) {
   placementcores <- if (overlap) as.integer(cores) - workers else cores
   handles <- if (overlap) {
     .ctBackendWarmWorkers(spec0, workers = workers, values = start0,
-      threads = .ctBackendWorkerThreads(cores, workers))
+      threads = .ctBackendWorkerThreads(cores, workers),
+      layer = isTRUE(intoverstates) && identical(intoverpop, "none") &&
+        identical(control$sampler, "saem"))
   } else NULL
 
   # Placement: `.ctJuliaOptimiseFit()` (R/ctJuliaBackend.R) is the whole

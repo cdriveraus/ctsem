@@ -1101,7 +1101,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 }
 
 # Drops a specification's objectives from the cache -- the one whose own
-# variances the filter integrates (`hybrid = TRUE`) and the one without -- so
+# variances the filter integrates and the layer (`layer = TRUE`) -- so
 # that once no caller holds them, R's collector releases the proxies and
 # JuliaConnectoR lets go of them. For an objective built for data no later
 # call will see again, a cross-validation fold's training data, which the
@@ -2732,7 +2732,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # deviations out: on short records with a random drift, one unit in a fit of
 # 100 often took a term up to a nat apart on the two
 # (`scripts/burstict-2026-11/repro_zero.R`). A comparison that needs one
-# function reads both on the layer (`hybrid = FALSE`), every effect a
+# function reads both on the layer (`layer = TRUE`), every effect a
 # coordinate. Where the side with the hybrid is quadratic, every unit has one
 # maximum and the two agree.
 .ctLaplaceCoordinatesDiffer <- function(a, b) {
@@ -5030,25 +5030,23 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   !is.null(spec$laplace$hybrid) && !identical(.ctBackendIntOverPop(spec), "none")
 }
 
-.ctJuliaObjective <- function(object, hybrid = FALSE) {
+.ctJuliaObjective <- function(object, layer = FALSE) {
   stopifnot(inherits(object, "ctJuliaModel") || inherits(object, "ctJuliaFit"))
   spec <- if (inherits(object, "ctJuliaFit")) object$model_spec else object
-  # Effects the subject filter integrates (`.ctJuliaLaplaceHybrid`: own
-  # variances, and a full-rank level's affine effects as a block) leave the
-  # Laplace layer with no coordinate for them: no mode, no deviation, no
-  # column of the population root. So only the paths that evaluate the
-  # objective a fit optimises ask for it -- the optimiser, evaluation, the
-  # Hessian and scores, the marginal sampler, the quadrature check and
-  # corrections (which integrate the deviations exactly at every node) -- and
-  # the reports that read them back (`.ctBackendHybridReports`). Every other
-  # reader gets the objective with each such effect a coordinate: where every
-  # coordinate is a mean effect the same function, slower. Beside an effect
-  # that moves a covariance or the dynamics it is the one-step Laplace term
-  # over the coordinates and those effects together, where the hybrid's
-  # default integrates them exactly given the coordinates (`.ctLaplaceTerm()`,
-  # `ctsem_set_hybrid_term!` in laplace.jl), so a reader of the fit's
-  # objective asks for the hybrid.
-  if (!isTRUE(hybrid) && !is.null(spec$laplace$hybrid)) spec$laplace$hybrid <- NULL
+  # The fit's objective: where the subject filter integrates some effects
+  # (`.ctJuliaLaplaceHybrid`: own variances, and a full-rank level's affine
+  # effects as a block), the hybrid. `layer = TRUE` gives the same model with
+  # every random effect a Laplace coordinate, for the readers that need one
+  # per effect: generation and the deviation layout (the hybrid has no
+  # coordinate, mode or root column for an integrated effect), the effect
+  # information and posterior nodes, SAEM's kernel, which steps a full-rank
+  # covariance from sampled deviations, and comparisons with a fit that has
+  # no hybrid (`.ctLaplaceCoordinatesDiffer()`). Where every coordinate is a
+  # mean effect the layer is the same function, slower; beside an effect that
+  # moves a covariance or the dynamics it is the one-step Laplace term
+  # (`.ctLaplaceTerm()`). A model with nothing integrated has one objective,
+  # and `layer` changes nothing.
+  if (isTRUE(layer) && !is.null(spec$laplace$hybrid)) spec$laplace$hybrid <- NULL
   inputs <- .ctJuliaObjectiveInputs(spec)
   key <- .ctJuliaObjectiveKey(spec, inputs)
   cached <- .ctJuliaCached(key)
@@ -5183,17 +5181,18 @@ ctJuliaEvaluate <- function(object, pars = NULL, gradient = TRUE, contributions 
     gradient_method = match.arg(gradient_method), cores = cores)
 }
 
-# ctJuliaEvaluate() on the fit's objective (`hybrid = TRUE`) or on the layer,
-# every random effect a Laplace coordinate (`.ctLaplaceCoordinatesDiffer()`).
+# ctJuliaEvaluate() on the fit's objective, or with `layer = TRUE` on the
+# layer, every random effect a Laplace coordinate
+# (`.ctLaplaceCoordinatesDiffer()`).
 .ctJuliaEvaluate <- function(object, pars = NULL, gradient = TRUE, contributions = FALSE,
-  gradient_method = "adjoint", cores = getOption("mc.cores", 2L), hybrid = TRUE) {
+  gradient_method = "adjoint", cores = getOption("mc.cores", 2L), layer = FALSE) {
   if (!inherits(object, c("ctJuliaModel", "ctJuliaFit"))) stop("object must be a ctJuliaModel or ctJuliaFit", call. = FALSE)
   if (is.null(pars)) {
     if (inherits(object, "ctJuliaFit")) pars <- object$estimate$raw else stop("pars must be supplied for a prepared ctJuliaModel", call. = FALSE)
   }
   module <- .ctJuliaModule(if (inherits(object, "ctJuliaFit")) object$model_spec$project else object$project)
   result <- .ctBackendWithMaxChunks(cores, module$ctsem_evaluate(
-    .ctJuliaObjective(object, hybrid = hybrid), .ctJuliaNumericVector(pars),
+    .ctJuliaObjective(object, layer = layer), .ctJuliaNumericVector(pars),
     gradient = isTRUE(gradient), contributions = isTRUE(contributions),
     gradient_method = gradient_method))
   .ctJuliaGet(result)
@@ -5935,7 +5934,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # 885 iterations, spent the last 300 of them with a predicted gain of
   # 1e-8, and stopped 387 nats short with neither rule having fired once.
   state_explicit <- !is.null(objective)
-  if (is.null(objective)) objective <- .ctJuliaObjective(spec, hybrid = TRUE)
+  if (is.null(objective)) objective <- .ctJuliaObjective(spec)
   # The objective keeps the curvature its last run ended with -- the pairs
   # where asked (`pairs`) and the local curvature (`lbfgs_local`) -- and the
   # runs of this call go on from it: a resume on new modes, or on a jump.
@@ -6540,7 +6539,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       model_spec$laplace$known <- known
       spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
       ran <- objective
-      objective <- .ctJuliaObjective(spec, hybrid = TRUE)
+      objective <- .ctJuliaObjective(spec)
       # The curvature the run left on the objective it ran on goes to the
       # one built with its modes, which a resume here and the fit's next
       # stage start from.
@@ -7240,7 +7239,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   smoothing <- is.null(jointobjective) && !is.null(model_spec$penalty) &&
     NROW(model_spec$penalty) > 0L
   heldobjective <- function(spec) .ctJuliaObjective(structure(spec,
-    class = c("ctJuliaModel", "ctFitModel")), hybrid = TRUE)
+    class = c("ctJuliaModel", "ctFitModel")))
   if (smoothing) .ctJuliaCall("ContinuousTimeSEM.ctsem_lbfgs_forget!",
     heldobjective(model_spec))
   result <- keepknown(.ctJuliaOptimise(model_spec, start,
@@ -8181,7 +8180,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # session had, and left the worker pool at full width behind it.
   # The fit's modes held on the layer the passes evaluate, for the units
   # whose layout is the hybrid's (R/ctJuliaFitModes.R).
-  .ctJuliaHoldModes(out$model_spec, out$laplace[["modes"]], hybrid = FALSE)
+  .ctJuliaHoldModes(out$model_spec, out$laplace[["modes"]], layer = TRUE)
   effectcheck <- if (isTRUE(intoverstates)) .ctBackendWithMaxChunks(cores,
     .ctEffectInformation(out$model_spec, out$estimate$raw,
       point = "at the estimate", alone = !isTRUE(optimcontrol$estonly),

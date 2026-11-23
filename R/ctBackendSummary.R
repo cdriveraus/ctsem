@@ -645,7 +645,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   fitspec <- .ctBackendSpec(fit)
   if (is.null(fitspec$laplace) || nrow(samples) < 2L) return(NULL)
   module <- .ctJuliaModule(fitspec$project)
-  objective <- .ctJuliaObjective(fit, hybrid = .ctBackendHybridReports(fitspec))
+  objective <- .ctJuliaObjective(fit, layer = !.ctBackendHybridReports(fitspec))
   sampled <- identical(fit$sample$target, "joint") &&
     length(fit$sample$effect_mean) > 0L
   saved <- fit$sample$effects
@@ -681,7 +681,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   if (laplace && is.null(plausible)) return(NULL)
   storage.mode(samples) <- "double"
   module <- .ctJuliaModule(spec$project)
-  arguments <- list(.ctJuliaObjective(spec, hybrid = .ctBackendHybridReports(spec)),
+  arguments <- list(.ctJuliaObjective(spec, layer = !.ctBackendHybridReports(spec)),
     .ctJuliaPut(as.matrix(samples)))
   if (laplace) {
     arguments$from_level <- 1L
@@ -1743,8 +1743,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # modes, and linearises them with the effects for draws
   # (`.ctBackendHybridReports`); a fit that sampled its effects has a draw of
   # every coordinate, so it reads them from the layer holding them.
-  objective <- .ctJuliaObjective(fit, hybrid = !sampled && ti_effects &&
-    .ctBackendHybridReports(spec))
+  objective <- .ctJuliaObjective(fit, layer = sampled || !ti_effects ||
+    !.ctBackendHybridReports(spec))
   effects <- NULL
   if (!is.null(draws) && sampled) {
     saved <- fit$sample$effects

@@ -64,7 +64,7 @@
     "    kinds = sort(unique(h.kind)), served = why === nothing, taken = taken,",
     "    err = maximum(abs.(H1 .- H0)) / maximum(abs.(H0)))",
     "end", sep = "\n"))
-  f(ctsem:::.ctJuliaObjective(fit, hybrid = TRUE),
+  f(ctsem:::.ctJuliaObjective(fit),
     ctsem:::.ctJuliaNumericVector(as.numeric(at)))
 }
 
@@ -128,7 +128,7 @@
     "  (errM = errM, errF = errF, errH = errH, errJ = errJ, ncross = ncross, units = units,",
     "    served = served)",
     "end", sep = "\n"))
-  f(ctsem:::.ctJuliaObjective(fit, hybrid = TRUE),
+  f(ctsem:::.ctJuliaObjective(fit),
     ctsem:::.ctJuliaNumericVector(as.numeric(at)))
 }
 

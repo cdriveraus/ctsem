@@ -477,7 +477,7 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
   draws <- as.matrix(draws)
   storage.mode(draws) <- "double"
   module <- .ctJuliaModule(spec$project)
-  arguments <- list(.ctJuliaObjective(.ctBackendAsModel(spec), hybrid = TRUE),
+  arguments <- list(.ctJuliaObjective(.ctBackendAsModel(spec)),
     .ctJuliaPut(draws))
   if (length(subjects)) arguments$subjects <- .ctJuliaVector(as.integer(subjects))
   res <- .ctBackendJuliaValue(do.call(module$ctsem_unit_terms, arguments))
@@ -1343,7 +1343,7 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
   model <- .ctFitModelObject(fit)
   seed <- sample.int(.Machine$integer.max, 1L)
   res <- .ctBackendJuliaValue(module$ctsem_laplace_effect_draws(
-    .ctJuliaObjective(fit, hybrid = TRUE), .ctJuliaNumericVector(est), as.integer(ndraws),
+    .ctJuliaObjective(fit), .ctJuliaNumericVector(est), as.integer(ndraws),
     seed = as.integer(seed), scale = as.numeric(scale)))
   llrow <- matrix(as.numeric(res$llrow), ncol = ndraws)      # rows x draws
   logq <- matrix(as.numeric(res$logq), ncol = ndraws)        # units x draws

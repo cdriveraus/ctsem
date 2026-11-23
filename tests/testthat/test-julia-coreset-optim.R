@@ -54,7 +54,7 @@ test_that("coreset stages reach the full objective's optimum", {
   for (f in list(on, off)) {
     at <- as.numeric(f$uncertainty$evaluated_at)
     full <- ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_laplace_hessian",
-      ctsem:::.ctJuliaObjective(f, hybrid = TRUE), at)
+      ctsem:::.ctJuliaObjective(f), at)
     expect_equal(f$uncertainty$hessian, matrix(as.numeric(full), length(at)),
       tolerance = 1e-8)
   }
@@ -95,7 +95,7 @@ test_that("a stage begins on what the full evaluation at its start left", {
   x <- as.numeric(fit$estimate$raw) + rnorm(length(fit$estimate$raw), 0, 0.05)
   for (hybrid in c(TRUE, FALSE)) {
     r <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall("_ctsem_test_anchor",
-      ctsem:::.ctJuliaObjective(fit, hybrid = hybrid), ctsem:::.ctJuliaNumericVector(x),
+      ctsem:::.ctJuliaObjective(fit, layer = !hybrid), ctsem:::.ctJuliaNumericVector(x),
       ctsem:::.ctJuliaVector(c(3L, 40L, 41L, 117L, 300L)),
       ctsem:::.ctJuliaVector(c(30, 55, 12.5, 80, 40))))
     expect_true(isTRUE(r$valid))

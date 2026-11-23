@@ -265,7 +265,10 @@ test_that("a near-singular unit is scored near its exact integral", {
     backend = "julia", intoverpop = "laplace", fit = FALSE,
     optimcontrol = list(laplace_soft_directions = "logdet_floor"))))
   module <- ctsem:::.ctJuliaModule(spec$project)
-  objective <- ctsem:::.ctJuliaObjective(spec)
+  # On the layer, the intercept and the drift both coordinates: its one-step
+  # term is the one with the soft direction. The fit's two-step term integrates
+  # the intercept exactly and reads this unit 0.3 nats under its integral.
+  objective <- ctsem:::.ctJuliaObjective(spec, layer = TRUE)
   raw <- ctsem:::.ctJuliaNumericVector(c(0.127421404395785, 2.72694414423615,
     -1.14068954877124, -1.61124260961682, 0.181949396643791, -0.379492126290006,
     1.2518601566922, -0.261116183475529, 0.501589410182815, 0.472211311761145,
@@ -275,7 +278,7 @@ test_that("a near-singular unit is scored near its exact integral", {
     raw, gradient = FALSE))
   quadrature <- JuliaConnectoR::juliaGet(module$ctsem_laplace_quadrature(
     objective, raw, nodes = 5L, contributions = TRUE))
-  # The fit's own term over-credits this unit by three nats; that is why it is
+  # The layer's term over-credits this unit by three nats; that is why it is
   # the case to test.
   expect_gt(as.numeric(laplace$subject_loglik)[4] - exact, 2.5)
   # Scaled by the unclipped curvature the rule scattered its nodes thirty prior

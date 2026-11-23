@@ -242,11 +242,12 @@ test_that("NUTS samples the joint posterior through the same runner", {
   npar <- length(fit$estimate$raw)
   neffects <- length(fit$model_spec$subject_starts) *
     length(fit$model_spec$laplace$re_index)
-  # control$sampler = 'nuts': NUTS on the parameters and every effect at once,
-  # the alternative to the default SAEM kernel on the joint posterior
-  # (`ctsem_sample`, checked against SAEM's kernel in the engine suite),
-  # placed and stopped as the default is. What is left for here is that it
-  # reaches the same assembly with the same shape.
+  # control$sampler = 'nuts': NUTS on the parameters and the effects together,
+  # on the map's target -- the effects the filter integrates integrated, and
+  # reported as the map reports them, from their exact conditional -- started
+  # and stopped as the map is (`ctsem_sample`, checked against SAEM's kernel
+  # in the engine suite). What is left for here is that it reaches the same
+  # assembly with the same shape, every effect reported.
   nuts <- suppressWarnings(suppressMessages(
     ctFitUncertainty(fit, method = "sample", intoverpop = "none", cores = 1,
       control = list(chains = 2, warmup = 80, draws = 80,
@@ -263,9 +264,13 @@ test_that("NUTS samples the joint posterior through the same runner", {
   expect_length(d$effect_mean, neffects)
   expect_true(all(d$effect_sd > 0))
   expect_output(print(d), "ctsem Hamiltonian sample")
-  # Placed by SAEM's state by default on the joint target, whichever sampler.
-  expect_identical(d$placement$method, "saem")
+  # Started from the fit's estimate, as the map is; SAEM's placement is for
+  # SAEM's kernel, and refused here by name.
+  expect_identical(d$placement$method, "fit")
   expect_equal(d$start, nuts$estimate$placed_raw)
+  expect_error(ctFitUncertainty(fit, method = "sample", intoverpop = "none",
+    control = list(sampler = "nuts", placement = "saem")),
+    "does not apply to control$sampler = 'nuts'", fixed = TRUE)
 })
 
 # The map sampler on one fit, and what it is checked against. Its change of
@@ -320,7 +325,7 @@ test_that("NUTS samples the joint posterior through the same runner", {
   # Jacobian and pullback the learnt one uses.
   checks <- lapply(c(FALSE, TRUE), function(tri)
     ctsem:::.ctJuliaGet(ctsem:::.ctJuliaModule(fit$model_spec$project)$
-      ctsem_sample_map_check(ctsem:::.ctJuliaObjective(fit, hybrid = TRUE),
+      ctsem_sample_map_check(ctsem:::.ctJuliaObjective(fit),
         as.numeric(fit$estimate$raw),
         hessian = ctsem:::.ctJuliaPut(as.matrix(fit$uncertainty$hessian)), tri = tri)))
   check <- checks[[1]]
@@ -510,7 +515,7 @@ test_that("the map couples each member to what its subject reads, its own TI val
   expect_equal(nrow(cells), 3L)
   x <- seq(-.2, .2, length.out = npar)
   x[cells$parameter] <- cells$mu + c(.3, -.4, .5)
-  obj <- ctsem:::.ctJuliaObjective(spec, hybrid = TRUE)
+  obj <- ctsem:::.ctJuliaObjective(spec)
   ctsem:::.ctJuliaEval(paste(
     "function __jmap_coupling(laplace, x::Vector{Float64})",
     "  CT = ContinuousTimeSEM",
@@ -569,7 +574,7 @@ test_that("a nested unit's map conditional is built and factored on its blocks",
   withr::local_options(ctsem.laplace.hybrid = FALSE)
   spec <- suppressMessages(ctFit(.nested_panel_data(), .nested_panel_model("intercepts"),
     backend = "julia", intoverpop = "laplace", fit = FALSE, cores = 2))
-  obj <- ctsem:::.ctJuliaObjective(spec, hybrid = FALSE)
+  obj <- ctsem:::.ctJuliaObjective(spec, layer = TRUE)
   module <- ctsem:::.ctJuliaModule(spec$project)
   set.seed(7)
   x <- ctsem:::.ctJuliaNumericVector(rnorm(ctsem:::.ctBackendNpar(spec), 0, 0.1))
@@ -666,7 +671,7 @@ test_that("theta's triangular map is the same fitted on the pool, and says how f
   # them on the pool (`_jmap_tri_fit(parallel = true)`); on the reanalysis
   # 2,868 of them were fitted one after another with nothing said.
   fit <- .sample_fixture()
-  obj <- ctsem:::.ctJuliaObjective(fit, hybrid = TRUE)
+  obj <- ctsem:::.ctJuliaObjective(fit)
   ctsem:::.ctJuliaEval(paste(
     "function __tri_pool(laplace)",
     "  CT = ContinuousTimeSEM",

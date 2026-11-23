@@ -203,7 +203,7 @@
     return(.ctRandomEffectsStore(fit, at$posterior))
   }
   layout <- .ctJuliaGet(.ctJuliaModule(spec$project)$ctsem_laplace_deviation_layout(
-    .ctJuliaObjective(fit)))
+    .ctJuliaObjective(fit, layer = TRUE)))
   level <- as.integer(layout$level)
   within <- as.integer(layout$within)
   first <- as.integer(layout$first_member)

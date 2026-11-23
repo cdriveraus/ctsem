@@ -1473,7 +1473,7 @@ test_that("a fit under the soft-direction quadrature carries its rule to post-fi
   # higher there depends on the term (the joint one's was the total floor's).
   module <- .ctJuliaModule(quad$model_spec$project)
   under <- function(fit, at) .ctBackendJuliaValue(module$ctsem_laplace_evaluate(
-    .ctJuliaObjective(fit, hybrid = TRUE), .ctJuliaVector(as.numeric(at)),
+    .ctJuliaObjective(fit), .ctJuliaVector(as.numeric(at)),
     gradient = FALSE)$value)
   expect_gt(abs(under(after, inits) - under(quad, inits)), 1)
   expect_gte(as.integer(JuliaConnectoR::juliaCall("getfield",

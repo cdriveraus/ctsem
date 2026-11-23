@@ -558,7 +558,7 @@ test_that("row scores sum to the subjects' scores, on the filter and the Laplace
   module <- ctsem:::.ctJuliaModule(lfit$model_spec$project)
   # The nodes are the layer's, where both effects are coordinates.
   quad <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_quadrature(
-    ctsem:::.ctJuliaObjective(lfit), ctsem:::.ctJuliaNumericVector(lest),
+    ctsem:::.ctJuliaObjective(lfit, layer = TRUE), ctsem:::.ctJuliaNumericVector(lest),
     nodes = 3L, contributions = TRUE))
   expect_equal(p3$logmarginal, as.numeric(quad$subject_loglik), tolerance = 1e-10)
   # Every unit's term is a concave quadratic here, so the nodes are placed from
@@ -568,7 +568,8 @@ test_that("row scores sum to the subjects' scores, on the filter and the Laplace
   evaluated <- lfit$model_spec
   evaluated$laplace$quadratic <- FALSE
   pe <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_posterior_nodes(
-    ctsem:::.ctJuliaObjective(structure(evaluated, class = c("ctJuliaModel", "ctFitModel"))),
+    ctsem:::.ctJuliaObjective(structure(evaluated, class = c("ctJuliaModel", "ctFitModel")),
+      layer = TRUE),
     ctsem:::.ctJuliaNumericVector(lest), nodes = 3L))
   expect_equal(p3$points, array(as.numeric(pe$points), dim(p3$points)), tolerance = 1e-8)
   expect_equal(p3$weights, as.matrix(pe$weights), tolerance = 1e-8)
@@ -609,7 +610,7 @@ test_that("row scores sum to the subjects' scores, on the filter and the Laplace
   # filter integrates them, so there is nothing to sample (ESS Inf) and the
   # mixture is exact.
   for (hybrid in c(FALSE, TRUE)) {
-    obj <- ctsem:::.ctJuliaObjective(lfit, hybrid = hybrid)
+    obj <- ctsem:::.ctJuliaObjective(lfit, layer = !hybrid)
     old <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_sequential(obj,
       ctsem:::.ctJuliaNumericVector(lest)))
     mix <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_sequential_mixture(obj,
@@ -955,7 +956,7 @@ test_that("a unit with two maxima does not stop the extended families", {
     verbose = 0, optimcontrol = list(checks = FALSE, laplace_onestep = TRUE))))
   est <- fit$estimate$raw
   apart <- ctsem:::.ctJuliaEvaluate(fit, est, gradient = FALSE, cores = 1,
-    hybrid = FALSE)$value - ctJuliaEvaluate(fit, est, gradient = FALSE, cores = 1)$value
+    layer = TRUE)$value - ctJuliaEvaluate(fit, est, gradient = FALSE, cores = 1)$value
   skip_if(abs(apart) < 1e-3, 'this fit stopped where no unit has two maxima')
   st <- suppressMessages(ctScoreTest(fit, tests = 'statedependence', cores = 1,
     nboot = 99L, verbose = FALSE))

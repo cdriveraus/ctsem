@@ -97,7 +97,7 @@
     built <- NULL
     function() {
       if (is.null(built)) built <<- list(module = .ctJuliaModule(fit$model_spec$project),
-        objective = .ctJuliaObjective(fit, hybrid = TRUE))
+        objective = .ctJuliaObjective(fit))
       built
     }
   })
@@ -854,13 +854,13 @@
     error = function(e) FALSE))
   result <- try(.ctBackendJuliaValue(
     if (reporting_available) {
-      module$ctsem_hessian_progress(.ctJuliaObjective(fit, hybrid = TRUE),
+      module$ctsem_hessian_progress(.ctJuliaObjective(fit),
         .ctJuliaVector(as.numeric(est)),
         forward = identical(hessian_fn_name, "ctsem_hessian_forward"),
         progress = !is.null(sink), progress_sink = sink,
         progress_overwrite = .ctProgressOverwrite(verbose), progress_label = "hessian")
     } else {
-      module[[hessian_fn_name]](.ctJuliaObjective(fit, hybrid = TRUE),
+      module[[hessian_fn_name]](.ctJuliaObjective(fit),
         .ctJuliaVector(as.numeric(est)))
     }), silent = TRUE)
   # Ends the in-place line, if the loop ran long enough for one to be open,
@@ -891,7 +891,7 @@
 .ctBackendScoreMatrix <- function(fit, est, prior = TRUE) {
   module <- .ctJuliaModule(fit$model_spec$project)
   result <- .ctJuliaGet(module$ctsem_subject_gradients(
-    .ctJuliaObjective(fit, hybrid = TRUE), .ctJuliaVector(as.numeric(est)),
+    .ctJuliaObjective(fit), .ctJuliaVector(as.numeric(est)),
     prior = isTRUE(prior)))
   scores <- as.matrix(result$scores)
   if (any(!is.finite(scores))) {

@@ -174,7 +174,7 @@
   handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
   module <- .ctJuliaModule(spec$project)
   result <- try(.ctBackendJuliaValue(module$ctsem_effect_information(
-    .ctJuliaObjective(handle), .ctJuliaNumericVector(values))), silent = TRUE)
+    .ctJuliaObjective(handle, layer = TRUE), .ctJuliaNumericVector(values))), silent = TRUE)
   if (inherits(result, "try-error") || is.null(result$determined)) return(NULL)
   determined <- result$determined
   if (!is.list(determined)) determined <- list(determined)

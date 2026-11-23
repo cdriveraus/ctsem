@@ -118,7 +118,7 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
   module <- .ctJuliaModule(fit$model_spec$project)
   # The objective the fit maximised: the quadrature integrates the deviations
   # its filter integrates exactly at every node, and spans only the rest.
-  objective <- .ctJuliaObjective(fit, hybrid = TRUE)
+  objective <- .ctJuliaObjective(fit)
   # Restored on exit: this is a diagnostic, and it has no business changing how
   # fast everything else in the session runs afterwards.
   if (!is.null(cores)) {

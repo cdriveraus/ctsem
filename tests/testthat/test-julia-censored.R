@@ -282,7 +282,7 @@ test_that("a censored indicator with no floor differentiates below -1", {
   # The per-subject scores ctIdentify and casewise leave-one-out read.
   module <- .ctJuliaModule(handle$project)
   scores <- as.matrix(.ctJuliaGet(module$ctsem_subject_gradients(
-    .ctJuliaObjective(handle, hybrid = TRUE), .ctJuliaVector(at),
+    .ctJuliaObjective(handle), .ctJuliaVector(at),
     prior = FALSE))$scores)
   expect_equal(colSums(scores), adjoint, tolerance = 1e-8)
   hessian <- .ctBackendHessianAt(handle, at)

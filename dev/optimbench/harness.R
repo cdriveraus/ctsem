@@ -221,7 +221,7 @@ ctrl <- tryCatch({
   at <- rep(0, npar)
   t0 <- .now(); invisible(ctJuliaEvaluate(spec, at, gradient = TRUE)); first <- .now() - t0
   if (!isTRUE(REFJL)) stop("reference.jl did not load: ", REFJL_ERR)
-  tg <- jget(jcall("bench_time_gradient", ctsem:::.ctJuliaObjective(spec), jvec(at)))
+  tg <- jget(jcall("bench_time_gradient", ctsem:::.ctJuliaObjective(spec, layer = TRUE), jvec(at)))
   list(first = first, reps = as.numeric(tg$seconds), batch = .int1(tg$batch))
 }, error = function(e) list(first = NA_real_, reps = rep(NA_real_, 3),
   error = conditionMessage(e)))
@@ -507,7 +507,7 @@ if (DOREF && !isTRUE(V$costs) && !is.null(est) && length(est) == npar &&
     out <- list()
     ensure_refjl()
     fresh_objectives()
-    obj <- ctsem:::.ctJuliaObjective(if (!is.null(fit)) fit else spec)
+    obj <- ctsem:::.ctJuliaObjective(if (!is.null(fit)) fit else spec, layer = TRUE)
     if (laplace) {
       ev <- jget(jcall("ctsem_laplace_evaluate", obj, jvec(est), gradient = FALSE))
       out$rescored <- .num1(ev$value)
@@ -530,7 +530,7 @@ if (DOREF && !isTRUE(V$costs) && !is.null(est) && length(est) == npar &&
       # Units, their dimensions and curvature; then the reference.
       if (!isTRUE(REFJL)) stop("reference.jl did not load: ", REFJL_ERR)
       fresh_objectives()
-      obj <- ctsem:::.ctJuliaObjective(if (!is.null(fit)) fit else spec)
+      obj <- ctsem:::.ctJuliaObjective(if (!is.null(fit)) fit else spec, layer = TRUE)
       PU <- as.matrix(jget(jcall("bench_probe_units", obj, jvec(est))))
       nunit <- nrow(PU); dmax <- ncol(PU) - 6L
       eig <- PU[, 7:ncol(PU), drop = FALSE]
@@ -619,7 +619,7 @@ if (!is.null(fit) && length(est) == npar && all(is.finite(est))) {
   probe <- tryCatch({
     setTimeLimit(elapsed = REFCAP, transient = TRUE)
     fresh_objectives()
-    obj <- ctsem:::.ctJuliaObjective(fit)
+    obj <- ctsem:::.ctJuliaObjective(fit, layer = TRUE)
     t0 <- .now()
     pb <- jget(jcall("ctsem_pullback", obj, jvec(est), tolerance = 1e-6))
     list(secs = .now() - t0, found = .lgl1(pb$found), gain = .num1(pb$gain))
@@ -642,7 +642,7 @@ if (isTRUE(V$costs) && !is.null(fit) && length(est) == npar && all(is.finite(est
     if (!isTRUE(REFJL)) stop("reference.jl did not load: ", REFJL_ERR)
     ensure_refjl()
     fresh_objectives()
-    obj <- ctsem:::.ctJuliaObjective(fit, hybrid = TRUE)
+    obj <- ctsem:::.ctJuliaObjective(fit)
     jget(jcall("bench_time_costs", obj, jvec(est)))
   }, error = function(e) list(error = conditionMessage(e)))
   setTimeLimit()

@@ -75,9 +75,13 @@
 #'   all or one per worker (`.ctBackendWorkerThreads()`). Fixed when the
 #'   session starts, so a pool warmed at other widths is replaced rather than
 #'   reused.
+#' @param layer Whether the work the workers will do evaluates the layer
+#'   (`.ctJuliaObjective(layer = TRUE)`, SAEM's kernel) rather than the fit's
+#'   objective, so each builds and compiles the objective its chains use.
 #' @return A list of future handles, or `NULL` when warming is unavailable.
 #' @keywords internal
-.ctBackendWarmWorkers <- function(object, workers, values = NULL, threads = 1L) {
+.ctBackendWarmWorkers <- function(object, workers, values = NULL, threads = 1L,
+  layer = FALSE) {
   workers <- suppressWarnings(as.integer(workers))
   if (!.ctBackendCanWarm() || !isTRUE(workers >= 1L)) return(NULL)
   threads <- suppressWarnings(as.integer(threads))
@@ -169,7 +173,7 @@
       # in a worker process, where only the installed ctsem exists. `ctsem:::`
       # would do the same job but draws a CRAN NOTE for ::: on our own objects.
       future::future(utils::getFromNamespace(".ctBackendWarmSession",
-        "ctsem")(object, values, threads[k]), seed = TRUE),
+        "ctsem")(object, values, threads[k], isTRUE(layer)), seed = TRUE),
       error = function(e) NULL)
   })
   if (!length(handles) || all(vapply(handles, is.null, logical(1)))) return(NULL)
@@ -218,7 +222,7 @@
 # Runs inside a worker. Wrapped, because a worker that cannot warm should leave
 # the parent to sample with threads rather than take the fit down with it.
 #' @keywords internal
-.ctBackendWarmSession <- function(object, values, threads = 1L) {
+.ctBackendWarmSession <- function(object, values, threads = 1L, layer = FALSE) {
   tryCatch({
     # Only when this process has no Julia yet. Asking again warns that the
     # thread count cannot be changed on a running session, which is true and
@@ -235,12 +239,12 @@
     # which is the parent's business; how each one got there is not.
     suppressMessages({
       if (is.null(.ct_julia_cache$module)) ctsem::ctJuliaSetup(threads = threads)
-      # One evaluation does both jobs: `ctJuliaEvaluate` builds the objective,
-      # which marshals the data, and evaluating it forces the specialisation.
-      # The objective cache is per process and keyed on content, and this
-      # process has an empty one, so nothing here is shared with the parent.
-      invisible(ctsem::ctJuliaEvaluate(object, values, gradient = TRUE,
-        cores = 1L))
+      # One evaluation does both jobs: it builds the objective the chains will
+      # evaluate, which marshals the data, and evaluating it forces the
+      # specialisation. The objective cache is per process and keyed on
+      # content, so a chain on the same objective finds it built.
+      invisible(.ctJuliaEvaluate(object, values, gradient = TRUE, cores = 1L,
+        layer = layer))
     })
     # A list rather than a bare TRUE, so the parent can check that this worker
     # is running the same build it is. `.ctBackendWarmWait()` accepts both
