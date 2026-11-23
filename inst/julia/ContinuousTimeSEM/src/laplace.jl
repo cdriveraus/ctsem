@@ -7044,8 +7044,13 @@ orthonormal columns. A unit of one block is that block, decomposed as it stands
 eigenvalues lie below `threshold` is the inertia of `M - threshold I`
 (`_laplace_count_below`), and the pairs come from subspace iteration on `(M -
 sigma I)^-1`, `sigma` bisected to just below the least eigenvalue on whether
-`M - sigma I` factors, with a Rayleigh-Ritz step each round and a few vectors
-beyond the count so that those near `threshold` settle too. Every step is a
+`M - sigma I` factors, with a Rayleigh-Ritz step each round, and a vector for
+every eigenvalue up to half again past `threshold` (`_laplace_lowest_margin`),
+as many as half the width allows, so the pairs below it converge at a rate
+bounded away from one however their
+eigenvalues cluster about it: four vectors past the count left a cluster of
+alike leaves straddling it converging at 0.98 a round, and whether it settled
+in `_LAPLACE_LOWEST_ROUNDS` turned on the platform's roundoff. Every step is a
 block elimination or product with `M`'s own sparsity (`_soft_shifted_factor`,
 `_soft_solve`, `_soft_block_mulvec!`), so the cost is linear in the unit's
 members. The start is fixed and the vectors signed (`_ctsem_signed_columns!`),
@@ -7076,8 +7081,10 @@ function _laplace_block_lowest(M::CTSEMBlockMatrix{Float64},
     k = _laplace_count_below(M, blocks, threshold)
     k === nothing && return nothing
     k == 0 && return (values=Float64[], vectors=zeros(Float64, d, 0))
-    p = min(d, k + max(4, k >> 2))
-    2 * p > d && return nothing
+    need = k + max(4, k >> 2)
+    2 * need > d && return nothing
+    above = _laplace_count_below(M, blocks, _laplace_lowest_margin(threshold))
+    p = min(max(need, (above === nothing ? k : above) + 2), d >> 1)
     sh = _laplace_lowest_shift(M, blocks, threshold)
     sh === nothing && return nothing
     F = sh.F
@@ -7197,15 +7204,13 @@ iteration fails, or the pairs are over half `C`'s width.
 function _soft_complement_lowest(Mb::CTSEMBlockMatrix{Float64},
     blocks::Vector{CTSEMLaplaceBlock}, v::Vector{Float64}, threshold::Real)
     d = length(v)
-    Fl = _laplace_block_ldl(Mb, blocks, threshold)
-    Fl === nothing && return nothing
-    sv = dot(v, _laplace_block_ldl_solve(Fl, blocks, v))
-    (isfinite(sv) && !iszero(sv)) || return nothing
-    k = Fl.negative + (sv > 0 ? 1 : 0) - 1
-    k < 0 && return nothing
+    k = _soft_complement_count(Mb, blocks, v, threshold)
+    (k === nothing || k < 0) && return nothing
     k == 0 && return (values=Float64[], vectors=zeros(Float64, d, 0))
-    p = min(d - 1, k + max(4, k >> 2))
-    2 * p > d - 1 && return nothing
+    need = k + max(4, k >> 2)
+    2 * need > d - 1 && return nothing
+    above = _soft_complement_count(Mb, blocks, v, _laplace_lowest_margin(threshold))
+    p = min(max(need, (above === nothing ? k : above) + 2), (d - 1) >> 1)
     sh = _laplace_lowest_shift(Mb, blocks, threshold)
     sh === nothing && return nothing
     F = sh.F
@@ -7216,6 +7221,23 @@ function _soft_complement_lowest(Mb::CTSEMBlockMatrix{Float64},
         x -> _soft_off(_soft_block_mulvec(Mb, blocks, x), v),
         x -> _soft_off(collect(Float64, x), v), d, k, p, threshold)
 end
+
+"""How many eigenvalues of `P Mb P` on the unit vector `v`'s complement lie
+below `t` (`_soft_complement_lowest`), or `nothing` where `Mb - t I` is
+singular or `v'(Mb - t I)^-1 v` vanishes."""
+function _soft_complement_count(Mb::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, v::Vector{Float64}, t::Real)
+    Fl = _laplace_block_ldl(Mb, blocks, t)
+    Fl === nothing && return nothing
+    sv = dot(v, _laplace_block_ldl_solve(Fl, blocks, v))
+    (isfinite(sv) && !iszero(sv)) || return nothing
+    return Fl.negative + (sv > 0 ? 1 : 0) - 1
+end
+
+"""The point up to which `_laplace_block_lowest`'s subspace takes a vector for
+every eigenvalue: half again past `threshold`, at least 0.05 past it."""
+_laplace_lowest_margin(threshold::Real) =
+    Float64(threshold) + max(0.5 * abs(Float64(threshold)), 0.05)
 
 """`x` less its part along the unit vector `v`, in place."""
 function _soft_off(x::Vector{Float64}, v::Vector{Float64})
