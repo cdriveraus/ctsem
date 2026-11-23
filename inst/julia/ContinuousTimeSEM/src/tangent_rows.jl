@@ -412,7 +412,10 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     snap = 0
     _tan_copy!(x, mod.T0M)
     _tan_copy!(P, mod.T0V)
-    mod.nh > 0 && _tan_hybrid_start!(hs, mod.hyb)
+    # Initial means folded into the first state (`_hybrid_fold!`); R folds
+    # none where the first state is stationary.
+    mod.fold && _tan_fold_start!(P, hs.Xc, mod)
+    _tan_hcols(mod) && _tan_hybrid_start!(hs, mod.hyb)
     elements = _stationary_elements_on(sp.stationary_elements)
     if mod.stat || elements
         # The predict group once ahead of the stationary moments, which read
@@ -480,7 +483,7 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     forward && return _TAN_OK
     # The deviations the filter integrates: the closing term, whose reverse
     # starts the walk (`_tan_sweep!`'s).
-    if mod.nh > 0
+    if _tan_hcols(mod)
         (mod.fixed ? _tan_hybrid_closing!(hs, mod.G, mod.wlog, sw.ll, mod.dfix) :
             _tan_hybrid_closing!(hs, mod.G, mod.wlog, sw.ll)) || return _TAN_INVALID
         isfinite(sw.ll[1]) || return _TAN_INVALID
@@ -585,6 +588,11 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     _tan_lincomb!(acc.T0M, true, acc.T0M, 1.0, xbar)
     _tan_sym!(rv.Ps, Pbar)
     _tan_comb!(acc.T0V, ((1.0, rv.Ps),), true)
+    # A fold's factor cotangent, where the closing's would be.
+    if mod.fold
+        _tan_zero!(hs.Gbar)
+        _tan_fold_reverse!(hs.Gbar, hs.Tc, rv.Ps, hs.Xc, mod, 1.0)
+    end
     _tan_rows_flush!(R, acc, sp, R.base)
     # The hybrid factor's cotangent, unweighted as the walk is, left in `acc`
     # for the caller after the flushes that empty it.

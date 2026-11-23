@@ -68,18 +68,84 @@ end
 """
     _hybrid_inactive!(hb, h, categorical)
 
-Set the buffers to integrate nothing, before `_hybrid_start!` says what a
-pass integrates. A model with a non-Gaussian indicator stops here, as its
-filter has no hybrid hooks (`_ekf_gaussian_call`), and a specification that
-asks it for integrated deviations is refused.
+Set the buffers to integrate nothing, before `_hybrid_start!` or
+`_hybrid_fold!` says what a pass integrates. A model with a non-Gaussian
+indicator carries no columns, as its filter has no hooks for them
+(`_ekf_gaussian_call`): its integrated deviations can only be initial means,
+whole or at fixed values (`_hybrid_foldable`), and a specification that asks
+it for anything else is refused.
 """
 function _hybrid_inactive!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid,
     categorical::Bool) where {T}
     hb.active = false
+    hb.fold = false
     hb.q = 0
     hb.half_logdet = zero(T)
-    categorical && _hybrid_on(h) && hb.mode != _HYBRID_OFF && _ekf_hybrid_refused()
+    categorical && _hybrid_on(h) && hb.mode != _HYBRID_OFF &&
+        !_hybrid_foldable(h, hb.mode) && _ekf_hybrid_refused()
     return nothing
+end
+
+"""
+Whether the deviations can be folded into the first state (`_hybrid_fold!`):
+every item an initial mean, integrated whole or held at fixed values. Their
+profile is not a quantity a fold has: the first state's covariance carries
+their integral and nothing else.
+"""
+_hybrid_foldable(h::CTSEMHybrid, mode::Int) =
+    (mode == _HYBRID_FULL || mode == _HYBRID_FIXED) && all(==(2), h.kind)
+
+"""
+    _hybrid_fold!(hb, h, values, data, P, x, n, m, trace)
+
+Initial means the filter integrates beside a categorical indicator. A
+categorical update's gain depends on the predicted spread of its linear
+predictor, so deviations cannot ride along as columns whose gains ignore them
+(`_hybrid_update!`); but an initial mean's deviation is a shift of the first
+state and nothing else, so the filter can take it as it takes the state. With
+`C` the factor `G` in the latents' rows, their integral (`_HYBRID_FULL`)
+widens the first state's covariance, `P += C C'`, and at fixed deviations
+(`_HYBRID_FIXED`) the first mean moves, `x += C d`. In a linear Gaussian
+model the widened covariance is the columns' integral exactly; beside a
+categorical indicator the deviations are filtered as the states are, which
+forgets what the first answers' moment matching misses at the process's rate,
+where a Laplace coordinate for them is informed by those first answers alone.
+The level's other effects stay coordinates, and `G` is the deviations' factor
+given them (`_hybrid_factor!`), as for columns. Recorded for
+`_reverse_hybrid_fold!`; false where the factor does not exist.
+"""
+function _hybrid_fold!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid, values::AbstractVector,
+    data, P::AbstractMatrix, x::AbstractVecOrMat, n::Int, m::Int, trace) where {T}
+    # The items, as columns would take them: every initial mean, always.
+    _hybrid_start!(hb, h, data, n, m)
+    hb.active = false
+    hb.fold = true
+    q = hb.q
+    rd = _hybrid_factor!(hb, h, values)
+    rd > 0 || return false
+    G = hb.G
+    if hb.mode == _HYBRID_FIXED
+        length(hb.dfix) >= rd || throw(ArgumentError(string(
+            "the fixed deviations hold ", length(hb.dfix), " values for ", rd, " dimensions")))
+        d = hb.dfix
+        @inbounds for c in 1:q
+            acc = zero(T)
+            for f in 1:rd
+                acc += G[c, f] * d[f]
+            end
+            x[hb.clat[c]] += acc
+        end
+    else
+        @inbounds for e in 1:q, c in 1:q
+            acc = zero(T)
+            for f in 1:rd
+                acc += G[c, f] * G[e, f]
+            end
+            P[hb.clat[c], hb.clat[e]] += acc
+        end
+    end
+    _record_hybrid_fold!(trace, hb, h, values)
+    return true
 end
 
 """Start a pass: which hybrid items this subject carries, and their state."""
@@ -562,7 +628,24 @@ end
 _record_hybrid!(trace, hb, h, values) = nothing
 function _record_hybrid!(tape::CTSEMAdjointTape{T}, hb::CTSEMHybridBuffers{T},
     h::CTSEMHybrid, values::AbstractVector) where {T}
-    rec = tape.hyb
+    _record_hybrid_state!(tape.hyb, hb, h, values)
+    _tape_push!(tape, :hybrid, 0)
+    return nothing
+end
+
+# A fold has no closing term, so no `:hybrid` entry: its reverse runs at
+# `:init` (`_reverse_hybrid_fold!`).
+_record_hybrid_fold!(trace, hb, h, values) = nothing
+function _record_hybrid_fold!(tape::CTSEMAdjointTape{T}, hb::CTSEMHybridBuffers{T},
+    h::CTSEMHybrid, values::AbstractVector) where {T}
+    _record_hybrid_state!(tape.hyb, hb, h, values)
+    tape.hyb.fold = true
+    return nothing
+end
+
+"""What a pass ended with, onto the tape's hybrid record (`CTSEMHybridTape`)."""
+function _record_hybrid_state!(rec::CTSEMHybridTape{T}, hb::CTSEMHybridBuffers{T},
+    h::CTSEMHybrid, values::AbstractVector) where {T}
     q = hb.q
     rd = hb.rd
     rec.active = true
@@ -570,7 +653,7 @@ function _record_hybrid!(tape::CTSEMAdjointTape{T}, hb::CTSEMHybridBuffers{T},
     rec.q = q
     rec.rd = rd
     rec.block = h.block
-    q == 0 && return _tape_push!(tape, :hybrid, 0)
+    q == 0 && return nothing
     nh = length(hb.gv)
     if length(rec.g) < nh
         rec.g = zeros(T, nh)
@@ -607,7 +690,6 @@ function _record_hybrid!(tape::CTSEMAdjointTape{T}, hb::CTSEMHybridBuffers{T},
             rec.lvals[j] = values[h.lparams[j]]
         end
     end
-    _tape_push!(tape, :hybrid, 0)
     return nothing
 end
 
@@ -628,22 +710,7 @@ function _reverse_hybrid_marginal!(rec::CTSEMHybridTape{T}, n::Int, nh::Int,
     h::CTSEMHybrid) where {T}
     q = rec.q
     rd = rec.rd
-    length(rec.psibar) == nh || (rec.psibar = zeros(T, nh))
-    fill!(rec.psibar, zero(T))
-    np = length(h.lparams)
-    length(rec.lpbar) == np || (rec.lpbar = zeros(T, np))
-    fill!(rec.lpbar, zero(T))
-    if size(rec.Sbar, 1) < nh || size(rec.Xbar, 1) != n
-        rec.Sbar = zeros(T, nh, nh)
-        rec.sbar = zeros(T, nh)
-        rec.Xbar = zeros(T, n, nh)
-        rec.Mw = zeros(T, nh, nh)
-        rec.C = zeros(T, nh, nh)
-        rec.wv = zeros(T, nh)
-        rec.uv = zeros(T, nh)
-        rec.beta = zeros(T, nh)
-        rec.Gbar = zeros(T, nh, nh)
-    end
+    _reverse_hybrid_begin!(rec, n, nh, h)
     q == 0 && return nothing
     G, S, s = rec.G, rec.S, rec.s
     Sbar, sbar, Xbar, Gbar = rec.Sbar, rec.sbar, rec.Xbar, rec.Gbar
@@ -729,6 +796,43 @@ function _reverse_hybrid_marginal!(rec::CTSEMHybridTape{T}, n::Int, nh::Int,
             end
         end
     end
+    _hybrid_gbar_pullback!(rec, h, Gbar, q, rd)
+    return nothing
+end
+
+"""
+The reverse's per-item arrays sized and its accumulators zeroed: `psibar`,
+`lpbar`, and the scratch the closing's and the rows' reverse use. Before
+either reverse (`_reverse_hybrid_marginal!`, `_reverse_hybrid_fold!`).
+"""
+function _reverse_hybrid_begin!(rec::CTSEMHybridTape{T}, n::Int, nh::Int,
+    h::CTSEMHybrid) where {T}
+    length(rec.psibar) == nh || (rec.psibar = zeros(T, nh))
+    fill!(rec.psibar, zero(T))
+    np = length(h.lparams)
+    length(rec.lpbar) == np || (rec.lpbar = zeros(T, np))
+    fill!(rec.lpbar, zero(T))
+    if size(rec.Sbar, 1) < nh || size(rec.Xbar, 1) != n
+        rec.Sbar = zeros(T, nh, nh)
+        rec.sbar = zeros(T, nh)
+        rec.Xbar = zeros(T, n, nh)
+        rec.Mw = zeros(T, nh, nh)
+        rec.C = zeros(T, nh, nh)
+        rec.wv = zeros(T, nh)
+        rec.uv = zeros(T, nh)
+        rec.beta = zeros(T, nh)
+        rec.Gbar = zeros(T, nh, nh)
+    end
+    return nothing
+end
+
+"""
+`Gbar`, the cotangent of the factor `G` (`q x rd`), on to each item's own sd
+(`psibar`, by hybrid item; only `G`'s diagonal moves with it) or the level's
+free scales and correlations (`lpbar`, `_hybrid_block_pullback!`).
+"""
+function _hybrid_gbar_pullback!(rec::CTSEMHybridTape{T}, h::CTSEMHybrid,
+    Gbar::AbstractMatrix{T}, q::Int, rd::Int) where {T}
     if rec.block
         _hybrid_block_pullback!(rec, h, Gbar, q, rd)
     else
@@ -736,6 +840,48 @@ function _reverse_hybrid_marginal!(rec::CTSEMHybridTape{T}, n::Int, nh::Int,
             rec.psibar[rec.item[c]] += Gbar[c, c] * rec.dg[c]
         end
     end
+    return nothing
+end
+
+"""
+    _reverse_hybrid_fold!(rec, xbar, Pbar, n, nh, h)
+
+Reverse of `_hybrid_fold!`, at `:init` with the first state's cotangents
+before they go on to T0MEANS and T0VAR: with `C` the factor in the latents'
+rows, `P += C C'` gives `Gbar[c, f] = sum_e (Pbar + Pbar')[l_c, l_e] G[e, f]`,
+and at fixed deviations `x += C d` gives `Gbar[c, f] = xbar[l_c] d[f]`; then
+`Gbar` on to the level (`_hybrid_gbar_pullback!`). The fixed deviations' own
+cotangent, `C' xbar`, is the raw gradient at the initial means' positions
+through the deviation map (`_hybrid_fold_member_modes`), so it needs no record.
+"""
+function _reverse_hybrid_fold!(rec::CTSEMHybridTape{T}, xbar::AbstractVector,
+    Pbar::AbstractMatrix, n::Int, nh::Int, h::CTSEMHybrid) where {T}
+    q = rec.q
+    rd = rec.rd
+    _reverse_hybrid_begin!(rec, n, nh, h)
+    q == 0 && return nothing
+    G, Gbar = rec.G, rec.Gbar
+    lat(c) = h.target[rec.item[c]]
+    if rec.mode == _HYBRID_FIXED
+        d = rec.dfix
+        @inbounds for c in 1:q
+            xl = xbar[lat(c)]
+            for f in 1:rd
+                Gbar[c, f] = xl * d[f]
+            end
+        end
+    else
+        @inbounds for c in 1:q, f in 1:rd
+            lc = lat(c)
+            acc = zero(T)
+            for e in 1:q
+                le = lat(e)
+                acc += (Pbar[lc, le] + Pbar[le, lc]) * G[e, f]
+            end
+            Gbar[c, f] = acc
+        end
+    end
+    _hybrid_gbar_pullback!(rec, h, Gbar, q, rd)
     return nothing
 end
 
@@ -994,6 +1140,16 @@ function _hybrid_accumulate!(dest::AbstractVector, src::AbstractVector)
         dest[i] += src[i]
     end
     return dest
+end
+
+"""`_hybrid_scatter!` after a pass of either kind: the columns' cotangents in an
+all-Gaussian model (`_ekf_gaussian_call`), a fold's beside a categorical
+indicator (`_hybrid_fold!`)."""
+function _hybrid_scatter_pass!(ws, gradient::AbstractVector, rec::CTSEMHybridTape,
+    h::CTSEMHybrid)
+    rec.fold && return _ctsem_barrier(_hybrid_scatter!, gradient, rec, h)
+    _ekf_gaussian_call(ws, _hybrid_scatter!, _ctsem_noop, gradient, rec, h)
+    return gradient
 end
 
 """Add the own-sd cotangents, or a block's level ones, to the raw gradient,

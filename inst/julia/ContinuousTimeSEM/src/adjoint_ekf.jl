@@ -236,9 +236,15 @@ the values they were taken at (`dkey`, `dLb`, `dok`, `dversion`;
 the per-row work beside it. Every array is sized by capacity -- the model's
 hybrid item count, the manifest count, the state count -- and grows only, so a
 pass after the first allocates nothing; loops read the leading block they need.
+
+`fold` marks a pass that folded initial means into the first state
+(`_hybrid_fold!`): no columns, no closing term and no `:hybrid` entry in the
+program, and `Gbar` comes from the first state's cotangents at `:init`
+(`_reverse_hybrid_fold!`).
 """
 mutable struct CTSEMHybridTape{T}
     active::Bool
+    fold::Bool
     mode::Int
     dfix::Vector{T}
     G::Matrix{T}
@@ -277,7 +283,8 @@ mutable struct CTSEMHybridTape{T}
     uv::Vector{T}
     beta::Vector{T}
 end
-CTSEMHybridTape{T}() where {T} = CTSEMHybridTape{T}(false, 0, T[], zeros(T, 0, 0), 0,
+CTSEMHybridTape{T}() where {T} = CTSEMHybridTape{T}(false, false, 0, T[],
+    zeros(T, 0, 0), 0,
     false, T[], zeros(T, 0, 0), T[], T[], zeros(T, 0, 0, 0), Bool[], -1, 0, Int[], Int[],
     zeros(T, 0, 0), T[], T[], T[], zeros(T, 0, 0), T[], zeros(T, 0, 0), T[],
     zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0),
@@ -662,6 +669,7 @@ function _tape_reset!(tape::CTSEMAdjointTape)
     tape.nbinaries = 0; tape.nstationaries = 0; tape.nrelins = 0
     tape.nmoments = 0
     tape.hyb.active = false
+    tape.hyb.fold = false
     return tape
 end
 
@@ -2456,6 +2464,11 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
             _reverse_stationary_elements!(x̄, P̄, θ̄ca, tape.stationaries[index], dyn,
                 n, aws, sp.stationary_elements)
         elseif kind === :init
+            # Initial means folded into the first state (`_hybrid_fold!`): the
+            # factor's cotangent from the first state's, before either is
+            # handed on below.
+            tape.hyb.fold && _reverse_hybrid_fold!(tape.hyb, x̄, P̄, n,
+                _hybrid_items(sp.hybrid), sp.hybrid)
             θ̄T0M = θ̄ca.T0MEANS
             @inbounds for i in 1:n
                 θ̄T0M[i] += x̄[i]

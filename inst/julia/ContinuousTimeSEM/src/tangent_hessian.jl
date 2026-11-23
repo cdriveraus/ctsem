@@ -25,18 +25,21 @@ route's carriers), TI predictors observed or sampled, TD predictors entering
 as impulses, initial moments stated, stationary or stationary by element,
 categorical indicators (`tangent_categorical.jl`), cells evaluated by row with
 the iterated update and the moment-matched prediction (`tangent_rows.jl`), and
-deviations the filter integrates, whole or profiled. What it refuses the
-filter does not take either: those deviations beside categorical indicators,
-an iterated update or a moment-matched prediction, none of which the filter
-integrates them beside (R builds them for linear Gaussian models alone);
+deviations the filter integrates, whole or profiled, and initial means folded
+into the first state beside categorical indicators, whole (`_hybrid_fold!`).
+What it refuses the filter does not take either: other deviations beside
+categorical indicators, deviations beside an iterated update or a
+moment-matched prediction (R builds them for linear Gaussian models alone);
 stationary moments in discrete time; and, for a Hessian, deviations at fixed
-values, which the Laplace route's joint curvature serves itself.
+values, which the Laplace route's joint curvature serves itself. The folds'
+fixed values the filter takes, and the joint curvature does not ask for them.
 """
 function _tan_refusal(objective::CTSEMObjective, hybrid_mode::Integer=_HYBRID_PROFILE)
     sp = objective.params
     if _hybrid_on(sp.hybrid) && hybrid_mode != _HYBRID_OFF
         any(t -> t != 0, sp.manifesttype) &&
-            return "integrated deviations beside categorical indicators"
+            !(hybrid_mode == _HYBRID_FULL && all(==(2), sp.hybrid.kind)) &&
+            return "integrated deviations beside categorical indicators, other than initial means whole"
         ws = _init_continuous_ekf_workspace(Float64, sp)
         (ws.relinearise || ws.moment) &&
             return "integrated deviations beside a measurement or drift that bends"
@@ -544,7 +547,8 @@ _tan_model_like(mod::TanModel{W}) where {W} = TanModel{W}(mod.n, mod.m,
     Ref(false), mod.gmask, mod.na, mod.dyn, mod.aug, TanMat{W}(mod.na, mod.na),
     TanMat{W}(length(mod.dyn), length(mod.dyn)), TanMat{W}(length(mod.dyn), length(mod.dyn)),
     mod.ntd, TanMat{W}(mod.n, mod.ntd), TanMat{W}(mod.n, mod.n),
-    mod.nh, mod.hyb, mod.G, mod.wlog, mod.fixed, mod.dfix, TanVec{W}(mod.cat.nxc), mod.cat)
+    mod.nh, mod.hyb, mod.G, mod.wlog, mod.fixed, mod.dfix, TanVec{W}(mod.cat.nxc), mod.cat,
+    mod.fold)
 
 """
 One block's subjects swept into `acc`. With a shared layer (`L === nothing`)

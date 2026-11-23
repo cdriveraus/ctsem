@@ -144,9 +144,15 @@ is the hybrid item each coordinate of `u` belongs to, and `_hybrid_ndev` reads
 `rd` for a pass that may not have run.
 `Lb` is a block's factor, kept with the level parameters it was built at
 (`lkey`, `lok`, `lversion`; `_hybrid_block_cached!`).
+
+`fold` marks a pass that integrated initial means beside a categorical
+indicator by widening the first state's covariance, or at fixed deviations
+moved its mean (`_hybrid_fold!`). `active`, which says columns were carried,
+is false there; `G`, `rd` and the items are the fold's.
 """
 mutable struct CTSEMHybridBuffers{T}
     active::Bool
+    fold::Bool
     mode::Int
     half_logdet::T
     dfix::Vector{T}
@@ -183,7 +189,7 @@ mutable struct CTSEMHybridBuffers{T}
     jv::Vector{T}
     piv::Vector{Int}
 end
-CTSEMHybridBuffers{T}() where {T} = CTSEMHybridBuffers{T}(false, _HYBRID_PROFILE,
+CTSEMHybridBuffers{T}() where {T} = CTSEMHybridBuffers{T}(false, false, _HYBRID_PROFILE,
     zero(T), T[], T[], T[], T[], T[], T[], zeros(T, 0, 0), zeros(T, 0, 0),
     zeros(T, 0, 0), 0, Int[], zeros(T, 0, 0), T[], false, -1, 0,
     Int[], Int[], Int[], Int[], Float64[], Int[],
@@ -438,13 +444,14 @@ _ekf_categorical_call(ws, f::F, args...) where {F} = _ctsem_barrier(f, args...)
 `f(args...)` where the workspace's model has only Gaussian indicators, and
 `g()` where it has a non-Gaussian one, by the workspace's type as
 `_ekf_categorical_call` decides. For the deviations the filter integrates
-(`CTSEMHybrid`): a model with a non-Gaussian indicator has none
-(`.ctJuliaLaplaceHybrid()` requires every indicator Gaussian, and
-`_hybrid_inactive!` refuses one that asks), so the filters compiled for such a
-model leave out the hybrid's hooks, its tape records and their reverse; `g` is
-what such a model does instead, `_ctsem_noop` or `_ekf_hybrid_refused`. It
-takes no arguments: handed the hook's, it boxed them in every categorical
-filter, which grew the update step by half.
+(`CTSEMHybrid`): a model with a non-Gaussian indicator carries no columns --
+its only integrated deviations are initial means, folded into the first
+state's covariance (`_hybrid_fold!`), and `_hybrid_inactive!` refuses anything
+else -- so the filters compiled for such a model leave out the columns' hooks,
+their tape records and their reverse; `g` is what such a model does instead,
+`_ctsem_noop` or `_ekf_hybrid_refused`. It takes no arguments: handed the
+hook's, it boxed them in every categorical filter, which grew the update step
+by half.
 
 On the workspace's existing flag rather than a flag of its own: the hybrid
 runs at nearly every number type a Gaussian model's filter does, and a type
@@ -464,9 +471,10 @@ nothing is integrated (`_ekf_gaussian_call`)."""
 _ctsem_noop() = nothing
 
 """The categorical arm of a hybrid hook that must not run there
-(`_ekf_gaussian_call`): a hybrid can only be active in an all-Gaussian model."""
-@noinline _ekf_hybrid_refused() = throw(ArgumentError(
-    "the filter integrates deviations only in a model whose indicators are all Gaussian"))
+(`_ekf_gaussian_call`): columns are carried only in an all-Gaussian model."""
+@noinline _ekf_hybrid_refused() = throw(ArgumentError(string(
+    "the filter integrates deviations only in a model whose indicators are all ",
+    "Gaussian, or initial means beside a categorical one, whole or at fixed values")))
 
 """
     _ekf_hybrid_tape(ws, tape)

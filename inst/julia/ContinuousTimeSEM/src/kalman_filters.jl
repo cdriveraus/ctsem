@@ -2153,6 +2153,14 @@ function _extended_kalman_filter_continuous!(
     _hybrid_inactive!(ws.hyb, sp.hybrid, _ekf_has_categorical(ws))
     _ekf_gaussian_call(ws, _hybrid_start!, _ctsem_noop, ws.hyb, sp.hybrid, data,
         ws.state_dim, ws.manifest_dim)
+    # Beside a categorical indicator, initial means into the first state
+    # instead (`_hybrid_fold!`), once a pass, behind a barrier so a
+    # categorical model without them compiles none of it.
+    if _ekf_has_categorical(ws) && _hybrid_on(sp.hybrid) && ws.hyb.mode != _HYBRID_OFF
+        _ctsem_barrier(_hybrid_fold!, ws.hyb, sp.hybrid, params, data,
+            ws.P_predict.data, ws.state, ws.state_dim, ws.manifest_dim, trace)::Bool ||
+            return _invalid_ekf_loglikelihood(ws)
+    end
     # Split rather than handed a result that is `nothing` or the view: a union
     # of the two is not a bits union, so it was boxed on every traced subject
     # pass.

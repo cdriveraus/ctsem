@@ -735,7 +735,7 @@ function _ctsem_adjoint_chunk_body!(gradient::Vector{T}, totals::Vector{T},
         # Per subject and straight onto raw positions, so before or after a
         # shared parameter layer alike (`CTSEMHybrid`, a sampled TI predictor
         # a cell reads).
-        _ekf_gaussian_call(aws.ekf_ws, _hybrid_scatter!, _ctsem_noop, gradient, tape.hyb,
+        _hybrid_scatter_pass!(aws.ekf_ws, gradient, tape.hyb,
             subject_objective.params.hybrid)
         _ctsem_tipred_scatter!(gradient, aws, subject_objective.tipreds)
         # Kept for the shared parameter layer below, and for the deferred

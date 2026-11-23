@@ -127,9 +127,12 @@ is moment-matched (`momon`) the offset gains the cubature's mean correction
 `mc` (`_ekf_moment_cells!`). Where the filter
 integrates deviations, their spec, their factor `G` and the closing term's
 weight on the logdet (1 for the integral, 0 for the profile); or, `fixed`,
-the deviations held at `dfix` (`_HYBRID_FIXED`), one per item. Where
-manifests are categorical (`gmask`), the cells their extras read (`XC`) and
-how each row's are assembled from them (`cat`, `tangent_categorical.jl`).
+the deviations held at `dfix` (`_HYBRID_FIXED`), one per item. Beside a
+categorical manifest they are initial means folded into the first state
+(`fold`, `_hybrid_fold!`): `G` and its cotangent without columns
+(`_tan_hcols`). Where manifests are categorical (`gmask`), the cells their
+extras read (`XC`) and how each row's are assembled from them (`cat`,
+`tangent_categorical.jl`).
 """
 struct TanModel{W}
     n::Int
@@ -160,6 +163,7 @@ struct TanModel{W}
     dfix::TanVec{W}
     XC::TanVec{W}
     cat::TanCatPlan
+    fold::Bool
 end
 TanModel(n::Int, m::Int, W::Int; ct::Bool=true, stat::Bool=false, rows::Bool=false,
     gmask::Vector{Bool}=Bool[], na::Int=n, dyn::Vector{Int}=collect(1:n), ntd::Int=0,
@@ -171,7 +175,56 @@ TanModel(n::Int, m::Int, W::Int; ct::Bool=true, stat::Bool=false, rows::Bool=fal
     na, dyn, na < n || dyn != 1:n, TanMat{W}(na, na), TanMat{W}(length(dyn), length(dyn)),
     TanMat{W}(length(dyn), length(dyn)), ntd, TanMat{W}(n, ntd), TanMat{W}(n, n), nh, hyb,
     TanMat{W}(nh, nh), wlog, fixed, _tan_setnz!(TanVec{W}(nh), false), TanVec{W}(cat.nxc),
-    cat)
+    cat, nh > 0 && !isempty(gmask))
+
+"""Whether the sweep carries the hybrid's columns: integrated deviations
+that are not folded into the first state (`TanModel.fold`)."""
+@inline _tan_hcols(mod::TanModel) = mod.nh > 0 && !mod.fold
+
+"""
+The fold's start (`_hybrid_fold!`): `P += C C'`, `C` the factor `G` (with its
+tangents) in the initial means' latents' rows, built into `C`, which the
+reverse reads (`_tan_fold_reverse!`).
+"""
+function _tan_fold_start!(P::TanMat{W}, C::TanMat{W}, mod::TanModel{W}) where {W}
+    G, h = mod.G, mod.hyb
+    _tan_zero!(C)
+    on, son = _tan_nz(G), _tan_snz(G)
+    _tan_jet_check(C, son)
+    @inbounds for k in 1:mod.nh, f in 1:mod.nh
+        l = h.target[k]
+        C.v[l, f] = G.v[k, f]
+        on && _tan_put!(C, l, f, _tan_col(G, k, f))
+        son && (C.s[l, f] = G.s[k, f])
+    end
+    on ? (C.nz[] = true) : _tan_setnz!(C, false)
+    son ? (C.snz[] = true) : _tan_setsnz!(C, false)
+    _tan_mulNT!(P, C, C, true, true)
+    return P
+end
+
+"""
+The fold's reverse, from the first state's symmetrised cotangent `Ps`:
+`Gbar += 2 w (Ps C)` in the initial means' latents' rows, with tangents,
+`Cbar` scratch (`n x nh`).
+"""
+function _tan_fold_reverse!(Gbar::TanMat{W}, Cbar::TanMat{W}, Ps::TanMat{W},
+    C::TanMat{W}, mod::TanModel{W}, w::Float64) where {W}
+    h = mod.hyb
+    _tan_mul!(Cbar, Ps, C, 2.0 * w, false)
+    on, son = _tan_nz(Cbar), _tan_snz(Cbar)
+    _tan_jet_check(Gbar, son)
+    @inbounds for k in 1:mod.nh, f in 1:mod.nh
+        l = h.target[k]
+        Gbar.v[k, f] += Cbar.v[l, f]
+        on && _tan_put!(Gbar, k, f, _tan_axpby(1.0, _tan_col(Gbar, k, f), 1.0,
+            _tan_col(Cbar, l, f)))
+        son && (Gbar.s[k, f] += Cbar.s[l, f])
+    end
+    on && (Gbar.nz[] = true)
+    son && (Gbar.snz[] = true)
+    return Gbar
+end
 
 """
 Which manifests are Gaussian (`TanModel.gmask`), empty where every one is,
@@ -415,7 +468,7 @@ function _tan_predict!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W}, fw::TanFo
         _tan_mulNT!(P, fw.nn1, A, -1.0, true)
     end
     _tan_lower_to_upper!(P)
-    mod.nh > 0 && _tan_hybrid_predict!(hs, rec.Xh, rec.Xinc, mod.hyb, A, mod.JAx, fw.FJ,
+    _tan_hcols(mod) && _tan_hybrid_predict!(hs, rec.Xh, rec.Xinc, mod.hyb, A, mod.JAx, fw.FJ,
         fw.pivJ, Phi)
     return true
 end
@@ -443,7 +496,7 @@ function _tan_predict_dt!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W},
     _tan_mulNT!(P, fw.nn1, A)
     _tan_comb!(P, ((1.0, mod.Qc),), true)
     _tan_lower_to_upper!(P)
-    if mod.nh > 0
+    if _tan_hcols(mod)
         h = mod.hyb
         _tan_copy!(rec.Xh, hs.X)
         _tan_mul!(hs.X, A, rec.Xh)
@@ -496,7 +549,7 @@ function _tan_update!(x::TanVec{W}, P::TanMat{W}, rec::TanUpdRec{W}, fw::TanForw
     _tan_setnz!(rec.y, false)
     _tan_copy!(rec.P, P)
     _tan_copy!(rec.x, x)
-    mod.nh > 0 && _tan_copy!(rec.Xh, hs.X)
+    _tan_hcols(mod) && _tan_copy!(rec.Xh, hs.X)
     allstates = 1:n
     H, MM, R = rs.H, rs.MM, rs.R
     # The gain's loading, Jy, which is LAMBDA in a linear model; the mean's,
@@ -567,7 +620,7 @@ function _tan_update!(x::TanVec{W}, P::TanMat{W}, rec::TanUpdRec{W}, fw::TanForw
     _tan_mul!(rs.nm1, rs.K, R)
     _tan_mulNT!(P, rs.nm1, rs.K, true, true)
     _tan_lower_to_upper!(P)
-    mod.nh > 0 && _tan_hybrid_update!(hs, rs.hr, mod.hyb, o, H, Ui, e, rs.K)
+    _tan_hcols(mod) && _tan_hybrid_update!(hs, rs.hr, mod.hyb, o, H, Ui, e, rs.K)
     return true
 end
 
@@ -774,7 +827,7 @@ function _tan_reverse_predict!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPredRec
     _tan_ger!(Abar, true, xbar, rec.x, false)
     # Each branch a call of its own: an argument that is a matrix or `nothing`
     # made it a dynamic call every substep.
-    if mod.nh > 0
+    if _tan_hcols(mod)
         if sint
             _tan_hybrid_reverse_predict!(hs, mod.hyb, rec.Xh, rec.Xinc, A, Abar, JAxbar,
                 rv.JT, rv.FT, rv.pivT, rv.Phibar)
@@ -872,7 +925,7 @@ function _tan_reverse_predict_dt!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPred
         _tan_ger!(acc.DRIFT, w, xbar, rec.x, true)
         _tan_ger!(Abar, -1.0, xbar, rec.x, true)
     end
-    if mod.nh > 0
+    if _tan_hcols(mod)
         _tan_mulNT!(Abar, hs.Xbar, rec.Xh, true, true)
         _tan_copy!(hs.Xt, hs.Xbar)
         _tan_mulTN!(hs.Xbar, A, hs.Xt)
@@ -983,7 +1036,7 @@ function _tan_td!(x::TanVec{W}, P::TanMat{W}, sw::TanSweep{W}, mod::TanModel{W},
     _tan_mulvec!(x, mod.TDE, tdv, true, true)
     _tan_mul!(sw.tdn1, mod.Jtd, P)
     _tan_mulNT!(P, sw.tdn1, mod.Jtd)
-    if mod.nh > 0
+    if _tan_hcols(mod)
         h = mod.hyb
         @inbounds for k in eachindex(h.kind)
             h.kind[k] == 4 && (sw.hs.X.v[h.target[k], k] += td[h.pred[k]])
@@ -1053,7 +1106,7 @@ function _tan_reverse_row_update!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanUpdR
     # The hook in a branch of its own: a hook that is a NamedTuple or `nothing`
     # made the reverse a dynamic call each row, and its bytes a third of a
     # hybrid member sweep's.
-    ok = mod.nh > 0 ? _tan_reverse_update!(u,
+    ok = _tan_hcols(mod) ? _tan_reverse_update!(u,
         (hs=hs, hr=rs.hr, h=mod.hyb, o=o, Xh=rec.Xh)) : _tan_reverse_update!(u, nothing)
     ok || return false
     _tan_copy!(xbar, u.xbar)
@@ -1121,11 +1174,13 @@ function _tan_sweep!(acc::TanAcc{W}, sw::TanSweep{W}, mod::TanModel{W},
     else
         _tan_copy!(x, mod.T0M)
         _tan_copy!(P, mod.T0V)
+        # Initial means folded into the first state (`_hybrid_fold!`).
+        mod.fold && _tan_fold_start!(P, sw.hs.Xc, mod)
     end
     fill!(sw.ll, 0.0)
     fill!(sw.llprev, 0.0)
     hs = sw.hs
-    mod.nh > 0 && _tan_hybrid_start!(hs, mod.hyb)
+    _tan_hcols(mod) && _tan_hybrid_start!(hs, mod.hyb)
     for t in 1:T
         first[t] = npred + 1
         if t > 1
@@ -1157,7 +1212,7 @@ function _tan_sweep!(acc::TanAcc{W}, sw::TanSweep{W}, mod::TanModel{W},
     # The row scores need the forward alone.
     forward && return isfinite(sw.ll[1]) ? _TAN_OK : _TAN_INVALID
     # The closing term, and its reverse, which starts the walk.
-    if mod.nh > 0
+    if _tan_hcols(mod)
         (mod.fixed ? _tan_hybrid_closing!(hs, mod.G, mod.wlog, sw.ll, mod.dfix) :
             _tan_hybrid_closing!(hs, mod.G, mod.wlog, sw.ll)) || return _TAN_INVALID
         _tan_comb!(acc.Gbar, ((w, hs.Gbar),), true)
@@ -1181,6 +1236,7 @@ function _tan_sweep!(acc::TanAcc{W}, sw::TanSweep{W}, mod::TanModel{W},
         _tan_lincomb!(acc.T0M, true, acc.T0M, w, xbar)
         _tan_sym!(rv.Ps, Pbar)
         _tan_comb!(acc.T0V, ((w, rv.Ps),), true)
+        mod.fold && _tan_fold_reverse!(acc.Gbar, hs.Tc, rv.Ps, hs.Xc, mod, w)
     end
     return _TAN_OK
 end
@@ -1254,7 +1310,7 @@ function _tan_predict_aug!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W},
     _tan_lower_to_upper!(P)
     # The hybrid's columns, on scratch the intercept is done with; each branch
     # a call of its own, as `_tan_reverse_predict!`'s.
-    if mod.nh > 0
+    if _tan_hcols(mod)
         if sint
             _tan_hybrid_predict_aug!(hs, rec.Xh, rec.Xinc, mod.hyb, A, fa.Aa, mod.JAa,
                 fa.FJa, fa.pivJa, fa.seria.out, na, fa.ra)
@@ -1283,7 +1339,7 @@ function _tan_reverse_predict_aug!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPre
     # series intercept's column into Phibar before the intercept's own.
     _tan_ger!(Abar, true, xbar, rec.x, false)
     sint && _tan_zero!(fa.Phibar)
-    if mod.nh > 0
+    if _tan_hcols(mod)
         if sint
             _tan_hybrid_reverse_predict_aug!(hs, mod.hyb, rec.Xh, rec.Xinc, A, Abar, JAxbar,
                 fa.JTa, fa.FTa, fa.pivTa, fa.Phibar, na, fa.affa, fa.dINTa, fa.JAabar)

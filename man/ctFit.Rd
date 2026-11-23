@@ -96,6 +96,9 @@ or with \code{intoverstates=FALSE}.
 \code{'laplace'} (\code{backend='julia'}) integrates random effects on a
 manifest mean, initial mean or continuous intercept of a linear Gaussian
 model exactly, and all other random effects by a Laplace approximation.
+With binary, ordinal or other non-Gaussian indicators, random effects on
+initial means are integrated by the Kalman filter together with the
+states.
 
 \code{'augmented'} adds each random effect to the states of the Kalman
 filter. This is exact for random effects on means in a linear Gaussian
