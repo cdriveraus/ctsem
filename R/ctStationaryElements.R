@@ -13,7 +13,10 @@
 # every latent that drives them, through DRIFT. Its dynamics are autonomous,
 # so a marked latent driven by others is fine, and a random walk or a trait
 # elsewhere in the model does not get in the way -- only one in the closure
-# does.
+# does. A T0VAR block's closure holds only the drivers noise reaches: a clock
+# pair or a trait with no DIFFUSION, driving the block, shifts its mean and
+# adds nothing to its covariance, so it need not settle for a stationary
+# covariance (a stationary mean still needs it to).
 #
 # Here the marked cells become fixed placeholders the engine writes over --
 # T0MEANS 0, a T0VAR block the identity -- and the model carries the marks for
@@ -72,17 +75,25 @@
     "variance its random effect implies. Name the T0MEANS cell 'stationary' too, or set ",
     "its indvarying to FALSE.", call. = FALSE)
 
-  # The closure: the marked latents and whatever drives them.
-  closure <- .ctStationaryClosure(ctm, means | variance)
+  # The closure: the marked latents and whatever drives them. A mean needs
+  # every driver. A covariance needs only the drivers noise reaches: a latent
+  # that no DIFFUSION reaches through DRIFT, such as a clock pair, moves the
+  # means of what it drives and adds nothing to their covariance, so a T0VAR
+  # block's closure leaves it out and it need not settle. The engine then
+  # solves with it decoupled (`_ctsem_closure_drift`), which is the noisy
+  # part's own system, and its own initial covariance stays as written.
+  diffusion <- p[p$matrix %in% 'DIFFUSION' & p$row <= nl & p$col <= nl, , drop = FALSE]
+  dvalue <- suppressWarnings(as.numeric(diffusion$value))
+  noisy <- unique(diffusion$row[!is.na(diffusion$param) | (!is.na(dvalue) & dvalue != 0)])
+  reached <- .ctNoiseReached(ctm, noisy)
+  closure <- .ctStationaryClosure(ctm, means) |
+    (.ctStationaryClosure(ctm, variance) & (reached | variance))
   static <- .ctNeverSettles(ctm, which(closure))
   if (length(static)) stop("A 'stationary' initial condition needs the latents it depends on ",
     "to settle somewhere, and DRIFT, as fixed, leaves ", paste(static, collapse = ', '),
     " without a stationary state. Estimate T0MEANS and T0VAR for the latents they ",
     "drive instead.", call. = FALSE)
   # No noise reaching a block leaves it no stationary variance.
-  diffusion <- p[p$matrix %in% 'DIFFUSION' & p$row <= nl & p$col <= nl, , drop = FALSE]
-  dvalue <- suppressWarnings(as.numeric(diffusion$value))
-  noisy <- unique(diffusion$row[!is.na(diffusion$param) | (!is.na(dvalue) & dvalue != 0)])
   if (any(variance) && !any(closure[noisy])) stop("A 'stationary' T0VAR cell takes the ",
     "variance DIFFUSION builds up, and no DIFFUSION reaches ",
     paste(names[variance], collapse = ', '), ".", call. = FALSE)
@@ -147,6 +158,27 @@
     block <- setdiff(block, part)
   }
   out
+}
+
+# The latents noise reaches, one logical per latent: those with a DIFFUSION
+# cell that is free or fixed away from zero (`noisy`, their indices), and every
+# latent they drive through DRIFT, onward. A latent outside it is
+# deterministic given its start, whatever it drives.
+.ctNoiseReached <- function(ctm, noisy) {
+  p <- ctm$pars
+  nl <- ctm$n.latent
+  drift <- p[p$matrix %in% 'DRIFT' & p$row <= nl & p$col <= nl, , drop = FALSE]
+  value <- suppressWarnings(as.numeric(drift$value))
+  drives <- drift$row != drift$col & (!is.na(drift$param) | (!is.na(value) & value != 0))
+  reached <- logical(nl)
+  reached[noisy[noisy <= nl]] <- TRUE
+  repeat {
+    grown <- reached
+    grown[drift$row[drives & drift$col %in% which(reached)]] <- TRUE
+    if (identical(grown, reached)) break
+    reached <- grown
+  }
+  reached
 }
 
 # The latents whose stationary moments a model's 'stationary' cells need, one

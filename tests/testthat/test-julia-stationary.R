@@ -277,6 +277,38 @@ test_that("a 'stationary' element needs only its own latents to settle", {
     2, 2)), backend = "julia", fit = FALSE, stationary = TRUE)), "without a stationary state")
 })
 
+test_that("a 'stationary' covariance leaves out a driver that no noise reaches", {
+  # A clock pair drives a. It never settles, but it carries no noise, so it
+  # moves a's mean and adds nothing to the covariance: the block of a and b is
+  # the stationary covariance of their own system, and the clock's start,
+  # which varies by subject, stays as written.
+  dat <- ctPeriodicPhases(.stat_data(), period = 24)
+  m <- ctModelPeriodicComponent(.stat_marked(T0MEANS = c("t0a", "t0b"),
+    T0VAR = matrix(c("stationary", "stationary", 0, "stationary"), 2, 2)), 24, indices = 1)
+  spec <- suppressMessages(ctFit(dat, m, backend = "julia", fit = FALSE))
+  expect_equal(as.logical(spec$t0stationary$closure), c(TRUE, TRUE, FALSE, FALSE))
+  set.seed(11)
+  raw <- stats::rnorm(ctsem:::.ctBackendNpar(spec), 0, .3)
+  k <- ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_kalman",
+    ctsem:::.ctJuliaObjective(spec), ctsem:::.ctJuliaNumericVector(raw))
+  get <- .stat_matrices(spec, raw)
+  expected <- .stat_moments(get("DRIFT")[1:2, 1:2], c(0, 0), get("DIFFUSIONcov")[1:2, 1:2])$cov
+  for (f in match(unique(k$subject), k$subject)) {
+    expect_equal(k$etacov[1, f, 1:2, 1:2], expected, tolerance = 1e-8)
+    expect_equal(k$etacov[1, f, 1:2, 3:4], matrix(0, 2, 2), tolerance = 1e-12)
+    expect_gt(k$etacov[1, f, 3, 3], 1e-6)
+  }
+  adjoint <- as.numeric(ctJuliaEvaluate(spec, raw, gradient = TRUE,
+    gradient_method = "adjoint")$gradient)
+  forward <- as.numeric(ctJuliaEvaluate(spec, raw, gradient = TRUE,
+    gradient_method = "forward")$gradient)
+  expect_equal(adjoint, forward, tolerance = 1e-9)
+  # A stationary mean of a needs the clock to settle, which it never does.
+  m$pars$param[m$pars$matrix %in% "T0MEANS" & m$pars$row == 1] <- "stationary"
+  expect_error(suppressMessages(ctFit(dat, m, backend = "julia", fit = FALSE)),
+    "leaves cycle_cos, cycle_sin without a stationary state")
+})
+
 test_that("'stationary' elements are refused where they name no stationary value", {
   dat <- .stat_data(4)
   prep <- function(m, ...) suppressMessages(ctFit(dat, m, backend = "julia", fit = FALSE, ...))

@@ -1001,7 +1001,10 @@ T0VARredundancies <- function(ctm) {
 #' covariance among the latents it joins, named too. The stationary
 #' distribution is computed for the marked latents and the latents that drive
 #' them, so DRIFT, CINT and DIFFUSION need to be fixed within each subject
-#' only for those latents.
+#' only for those latents. For T0VAR cells, a driving latent with no noise,
+#' such as the clock of \code{\link{ctModelPeriodicComponent}}, is left out:
+#' it shifts the mean of what it drives and not its covariance, and need not
+#' settle.
 #' @param forcerecompile logical. For \code{backend='stan'}, recompiles the
 #' stan model regardless of apparent need (for development). For
 #' \code{backend='julia'}, compiles the model's state-dependent matrix cells
