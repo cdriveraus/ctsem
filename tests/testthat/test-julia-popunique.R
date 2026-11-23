@@ -1385,3 +1385,146 @@ test_that("a fit with own variances converges and reports them", {
   numeric <- vapply(kh, is.numeric, logical(1))
   expect_equal(kh[numeric], kl[numeric], tolerance = 1e-6)
 })
+
+# Beside a categorical indicator the filter integrates initial means alone, by
+# widening the first state's covariance (`_hybrid_fold!`): a Gaussian item
+# on one process, a binary item on the other, each process's initial mean and
+# intercept varying over people.
+.pu_fold_model <- function(ind = c("t0m1", "t0m2", "cint1", "cint2")) {
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    id = "id", manifestNames = c("Y1", "B2"), latentNames = c("eta1", "eta2"),
+    manifesttype = c(0, 1), LAMBDA = diag(2),
+    DRIFT = matrix(c(-0.8, 0.4, 0, -0.7), 2, 2),
+    DIFFUSION = matrix(c(0.8, 0, 0, 0.9), 2, 2), MANIFESTVAR = diag(c(0.5, 0)),
+    MANIFESTMEANS = matrix(0, 2, 1), T0VAR = diag(1, 2),
+    T0MEANS = matrix(c("t0m1", "t0m2"), 2, 1),
+    CINT = matrix(c("cint1", "cint2"), 2, 1))))
+  m$pars$indvarying <- m$pars$param %in% ind
+  m
+}
+
+.pu_fold_data <- function() {
+  set.seed(29)
+  n <- 30; t <- 10
+  d <- data.frame(id = rep(seq_len(n), each = t), time = rep(seq_len(t) - 1, n) * 0.5)
+  start <- matrix(rnorm(n * 2), n, 2)
+  level <- matrix(rnorm(n * 2, 0, 0.7), n, 2)
+  eta <- matrix(0, n * t, 2)
+  for (i in seq_len(n)) {
+    e <- start[i, ]
+    for (k in seq_len(t)) {
+      if (k > 1) e <- c(0.7 * e[1], 0.2 * e[1] + 0.7 * e[2]) + 0.3 * level[i, ] +
+        rnorm(2, 0, 0.6)
+      eta[(i - 1) * t + k, ] <- e
+    }
+  }
+  d$Y1 <- eta[, 1] + rnorm(n * t, 0, 0.5)
+  d$B2 <- rbinom(n * t, 1, plogis(eta[, 2]))
+  d$B2[d$id > 24 & d$time > 2] <- NA
+  d
+}
+
+test_that("beside a categorical indicator the filter integrates initial means alone", {
+  skip_without_julia()
+  d <- .pu_fold_data()
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  hy <- .pu_spec(d, .pu_fold_model())
+  expect_equal(hy$laplace$hybrid$kind, c(2L, 2L))
+  expect_true(isTRUE(hy$laplace$hybrid$fold))
+  expect_identical(ctsem:::.ctLaplaceTerm(hy), "twostep")
+  # A fold has no profile, so its one-step term is the layer's, every effect a
+  # coordinate, whether a comparison asks or a user does.
+  expect_null(ctsem:::.ctLaplaceOneStep(hy)$laplace$hybrid)
+  withr::with_options(list(pu.onestep = TRUE),
+    expect_null(.pu_spec(d, .pu_fold_model())$laplace$hybrid))
+  # The intercepts stay coordinates: the adjoint, the hand-coded sweeps'
+  # curvature and trace terms, against forward mode.
+  set.seed(37)
+  for (draw in 1:2) {
+    x <- rnorm(length(.pu_names(hy)), 0, 0.3)
+    rh <- .pu_eval(hy, x)
+    fw <- .pu_eval(hy, x, "forward")
+    expect_equal(rh$value, fw$value, tolerance = 1e-10)
+    expect_equal(as.numeric(rh$gradient), as.numeric(fw$gradient), tolerance = 1e-6)
+  }
+})
+
+test_that("initial means alone are folded as the augmented route integrates them", {
+  skip_without_julia()
+  skip_on_cran()
+  # No coordinate is left, so the evaluation sums the members' filters through
+  # the marginal route's chunk (`_laplace_filter_evaluate`): its value against
+  # the unit loop, its rows against forward mode, and its Hessian (forward
+  # over the adjoint, the fold's tangents through the factor) against central
+  # differences of those.
+  d <- .pu_fold_data()
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  m <- .pu_fold_model(c("t0m1", "t0m2"))
+  spec <- .pu_spec(d, m)
+  expect_true(isTRUE(spec$laplace$hybrid$fold))
+  handle <- function(s) structure(s, class = c("ctJuliaModel", "ctFitModel"))
+  module <- ctsem:::.ctJuliaModule(spec$project)
+  get <- ctsem:::.ctJuliaGet
+  value <- ctsem:::.ctBackendJuliaValue
+  o <- ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE)
+  expect_true(isTRUE(ctsem:::.ctJuliaCall("ContinuousTimeSEM._laplace_filter_only", o)))
+  set.seed(41)
+  x <- rnorm(length(.pu_names(spec)), 0, 0.3)
+  xx <- ctsem:::.ctJuliaNumericVector(x)
+  summed <- get(module$ctsem_laplace_evaluate(o, xx, gradient = TRUE))
+  loop <- get(module$ctsem_laplace_evaluate(o, xx, gradient = FALSE,
+    nested_gradient = TRUE))
+  expect_equal(summed$value, loop$value, tolerance = 1e-10)
+  forward <- function(y) as.matrix(get(ctsem:::.ctJuliaCall(
+    "ContinuousTimeSEM._laplace_subject_gradients_forward", o,
+    ctsem:::.ctJuliaNumericVector(y)))$scores)
+  expect_equal(as.numeric(summed$gradient), colSums(forward(x)), tolerance = 1e-7)
+  H <- as.matrix(value(module$ctsem_hessian(o, xx)))
+  step <- 1e-5
+  fd <- vapply(seq_along(x), function(j) {
+    e <- replace(numeric(length(x)), j, step)
+    (colSums(forward(x + e)) - colSums(forward(x - e))) / (2 * step)
+  }, numeric(length(x)))
+  expect_equal(H, (fd + t(fd)) / 2, tolerance = 1e-6)
+  # The augmented route adds the same population block to the first state's
+  # covariance, under its own parameters: the two maxima are one.
+  quiet <- function(x) suppressWarnings(suppressMessages(x))
+  fl <- quiet(ctFit(d, m, backend = "julia", intoverpop = "laplace", cores = 1,
+    optimcontrol = list(checks = FALSE)))
+  fa <- quiet(ctFit(d, m, backend = "julia", intoverpop = "augmented", cores = 1,
+    optimcontrol = list(checks = FALSE)))
+  expect_equal(fl$estimate$loglik, fa$estimate$loglik, tolerance = 1e-4)
+  expect_equal(summary(fl)$popsd[, "mode"], summary(fa)$popsd[, "mode"],
+    tolerance = 1e-2)
+})
+
+test_that("a fold's deviations are reported at their modes given the coordinates", {
+  skip_without_julia()
+  # The fold keeps no posterior of the deviations, so reports find each
+  # member's mode by Newton at fixed deviations (`_hybrid_fold_member_modes`):
+  # Laplace given the unit's coordinates, where the layer takes the joint
+  # mode. Both are modes of nearly the same posterior here.
+  d <- .pu_fold_data()
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  hy <- .pu_spec(d, .pu_fold_model())
+  options(ctsem.laplace.hybrid = FALSE)
+  la <- .pu_spec(d, .pu_fold_model())
+  handle <- function(s) structure(s, class = c("ctJuliaModel", "ctFitModel"))
+  module <- ctsem:::.ctJuliaModule(hy$project)
+  set.seed(43)
+  x <- rnorm(length(.pu_names(hy)), 0, 0.2)
+  subjects <- function(s) {
+    o <- ctsem:::.ctJuliaObjective(handle(s), hybrid = TRUE)
+    matrix(as.numeric(ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_subject_values(o,
+      ctsem:::.ctJuliaNumericVector(x)))), nrow = length(unique(d$id)))
+  }
+  sh <- subjects(hy)
+  sl <- subjects(la)
+  expect_true(all(is.finite(sh)))
+  t0 <- which(apply(sl, 2, stats::sd) > 1e-8)
+  expect_gt(length(t0), 0)
+  expect_gt(min(diag(stats::cor(sh[, t0], sl[, t0]))), 0.98)
+})

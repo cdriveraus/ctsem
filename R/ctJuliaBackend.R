@@ -4324,7 +4324,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     laplace <- .ctJuliaLaplaceSpec(model, parameter_table, prepared_data, dat)
     # SAEM samples every effect of a full-rank level to step its covariance,
     # so a fit that runs it keeps a block's effects in the layer.
-    if (isTRUE(laplace$hybrid$block) && isTRUE(laplacecontrol$saem)) laplace$hybrid <- NULL
+    # A fold too, whose deviations SAEM has no draw of.
+    if ((isTRUE(laplace$hybrid$block) || isTRUE(laplace$hybrid$fold)) &&
+        isTRUE(laplacecontrol$saem)) laplace$hybrid <- NULL
     # The one-step term, where asked for (`optimcontrol$laplace_onestep`) and
     # the filter integrates something it could change; for initial means
     # folded beside a categorical indicator, the layer's (`.ctLaplaceOneStep()`).
