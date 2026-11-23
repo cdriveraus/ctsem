@@ -630,7 +630,9 @@ the same columns (`_laplace_seeded_unit_gradient!`): `H[r, c, m]` is member
 `c`th coordinate, its levels' dimensions in turn (`coff[l] + q`), and `filled`
 says which were formed. They are the columns at `values`, `base` (the unit's
 coordinates), the hybrid `mode` and the members' `rows` of data, and are read
-only there: a pass at another point starts them afresh.
+only there: a pass at another point starts them afresh. `lock` serialises that
+start: a nested unit's blocks of one level are passes run at once
+(`_laplace_by_level`), each writing its own members' columns.
 """
 mutable struct CTSEMUnitColumns
     values::Vector{Float64}
@@ -641,9 +643,10 @@ mutable struct CTSEMUnitColumns
     filled::Matrix{Bool}
     pos::Vector{Int}
     coff::Vector{Int}
+    lock::ReentrantLock
 end
 CTSEMUnitColumns() = CTSEMUnitColumns(Float64[], Float64[], typemin(Int), -1,
-    zeros(Float64, 0, 0, 0), fill(false, 0, 0), Int[], Int[])
+    zeros(Float64, 0, 0, 0), fill(false, 0, 0), Int[], Int[], ReentrantLock())
 
 """
 A unit's exact curvature at its anchor, the first matrix of its anchored
