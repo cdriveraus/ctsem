@@ -67,6 +67,7 @@ end
 include("progress.jl")
 # Checked from progress.jl's per-iteration hooks.
 include("interrupt.jl")
+include("dense_census.jl")
 include("small_linalg.jl")
 include("opcounts.jl")
 include("parameters.jl")

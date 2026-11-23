@@ -892,6 +892,15 @@ function _saem_disperse!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     isempty(blocks) && return st
     mode = laplace.modes[U]
     M = _laplace_unit_curvature(laplace, U, st.theta, Ls, mode)
+    proposal = length(blocks) > 1 ? _saem_block_proposal(M, blocks) : nothing
+    if proposal !== nothing
+        for c in 1:st.chains
+            rng = _saem_rng(st, U, c, 0, 0, 4)
+            st.u[U][c] .= mode .+ _saem_block_draw(proposal, blocks,
+                randn(rng, length(mode)))
+        end
+        return st
+    end
     dense = _laplace_block_dense(M, blocks, length(mode))
     all(isfinite, dense) || return st
     F = _saem_proposal_factor(_laplace_symmetrise(Matrix{Float64}(dense)))
@@ -900,6 +909,45 @@ function _saem_disperse!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
         st.u[U][c] .= mode .+ F * randn(rng, length(mode))
     end
     return st
+end
+
+"""
+    _saem_block_proposal(M, blocks)
+
+What `_saem_disperse!` draws from for a unit of nested blocks, `N(mode,
+Mc^-1)` with `Mc` the curvature `M` clipped at the prior's, from `M`'s own block
+storage: its factorization, and its eigenpairs below 1, whose directions the
+clip raises to the prior's (`_laplace_block_lowest`). `nothing` where `M` does
+not factor or those pairs cannot be had, and the unit is decomposed densely.
+A nested unit's dense decomposition and factor are its width cubed: hours for a
+study of thousands of persons, before SAEM's first sweep.
+"""
+function _saem_block_proposal(M::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock})
+    F = _soft_shifted_factor(M, blocks, 0.0)
+    F === nothing && return nothing
+    low = _laplace_block_lowest(M, blocks, 1.0)
+    low === nothing && return nothing
+    return (factors=F.factors, coupling=F.coupling, vectors=low.vectors,
+        scale=sqrt.(low.values) .- 1)
+end
+
+"""
+A draw from `_saem_block_proposal`'s normal for standard normal `z`. `x0 = K^-T
+z` (`_laplace_block_draw`) has covariance `M^-1`, under which the components
+along `M`'s eigenvectors are independent, with variances one over their
+eigenvalues; each component below the prior's is rescaled to unit variance,
+which is the clipped matrix's inverse. A spectral function of `M`, so the draw
+does not turn on the eigenvectors' signs.
+"""
+function _saem_block_draw(P, blocks::Vector{CTSEMLaplaceBlock}, z::Vector{Float64})
+    x = _laplace_block_draw(P.factors, P.coupling, blocks, z)
+    V = P.vectors
+    for j in axes(V, 2)
+        c = P.scale[j] * dot(view(V, :, j), x)
+        x .+= c .* view(V, :, j)
+    end
+    return x
 end
 
 export ctsem_saem_init

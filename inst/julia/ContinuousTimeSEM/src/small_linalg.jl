@@ -105,6 +105,7 @@ report whether it was positive definite. `A` is read as symmetric through its
 upper triangle and is left partly overwritten when the answer is `false`.
 """
 function _ctsem_cholesky!(A::AbstractMatrix{T}, d::Int) where {T}
+    _dense_census("cholesky", d)
     @inbounds for j in 1:d
         s = A[j, j]
         for k in 1:(j - 1)
@@ -707,6 +708,7 @@ end
 # is diagonalised in place, `V` (the identity on entry) accumulates the rotations.
 function _ctsem_jacobi!(a::AbstractMatrix{Float64}, V::AbstractMatrix{Float64},
     A::AbstractMatrix{Float64}, n::Int, maxsweeps::Integer)
+    _dense_census("jacobi", n)
     @inbounds for j in 1:n, i in 1:n
         a[i, j] = (A[i, j] + A[j, i]) / 2
     end
