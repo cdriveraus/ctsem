@@ -16,7 +16,9 @@
 # package in which each <name>.qmd is replaced by <name>.Rmd: the rendered
 # page's body converted back to markdown by pandoc, outputs and figures
 # included, for pkgdown to lay out as an article. A vignette reaches the site
-# when its .html is rendered again and committed.
+# when its .html is rendered again and committed. Articles for the website
+# alone, not shipped with the package, are rendered the same way into
+# vignettes/articles.
 #
 # The copy also gets NEWS.md with pkgdown's heading layout ("# ctsem 4.0.0"
 # where the file has "## date" then "### 4.0.0"); the file itself is unchanged.
@@ -103,15 +105,32 @@ writeLines(c(
   "  return out",
   "end"), brackets)
 
-# The articles: every vignette that ships pre-rendered (an .html.asis stub).
+# The articles: every vignette that ships pre-rendered (an .html.asis stub),
+# and every rendered article for the website alone (vignettes/articles), whose
+# title is its source's.
 stubs <- list.files(file.path(root, "vignettes"), "\\.html\\.asis$")
 if (!length(stubs)) stop("No pre-rendered vignettes found in vignettes/.")
-for (stub in stubs) {
-  name <- sub("\\.html\\.asis$", "", stub)
-  page <- file.path(root, "vignettes", paste0(name, ".html"))
+titles <- vapply(stubs, function(stub) {
   entry <- grep("VignetteIndexEntry", readLines(file.path(root, "vignettes", stub)), value = TRUE)
-  title <- sub(".*\\\\VignetteIndexEntry\\{(.*)\\}.*", "\\1", entry)
-  if (!file.exists(page) || length(title) != 1) stop("vignettes/", stub, ": no page or no title.")
+  if (length(entry) != 1) stop("vignettes/", stub, ": no title.")
+  sub(".*\\\\VignetteIndexEntry\\{(.*)\\}.*", "\\1", entry)
+}, character(1))
+sources <- setNames(paste0("vignettes/", sub("\\.html\\.asis$", ".qmd", stubs)),
+  sub("\\.html\\.asis$", "", stubs))
+for (qmd in list.files(file.path(root, "vignettes", "articles"), "\\.qmd$")) {
+  name <- sub("\\.qmd$", "", qmd)
+  if (name %in% names(sources)) stop("vignettes/articles/", qmd, " has a vignette's name.")
+  head <- readLines(file.path(root, "vignettes", "articles", qmd), n = 10, encoding = "UTF-8")
+  title <- sub("^title: *[\"']?(.*?)[\"']? *$", "\\1", grep("^title:", head, value = TRUE))
+  if (length(title) != 1) stop("vignettes/articles/", qmd, ": no title.")
+  titles <- c(titles, title)
+  sources[name] <- paste0("vignettes/articles/", qmd)
+}
+names(titles) <- names(sources)
+for (name in names(sources)) {
+  page <- file.path(root, sub("\\.qmd$", ".html", sources[[name]]))
+  title <- titles[[name]]
+  if (!file.exists(page)) stop(sources[[name]], ": no rendered page.")
   html <- paste(readLines(page, encoding = "UTF-8", warn = FALSE), collapse = "\n")
   # pkgdown sets the title and the contents itself.
   html <- sub("(?s)<header id=\"title-block-header\">.*?</header>", "", html, perl = TRUE)
@@ -138,7 +157,7 @@ pkgdown::build_site(pkg, examples = FALSE, new_process = FALSE, install = FALSE,
   preview = FALSE, override = list(destination = docs))
 stopifnot(file.copy(file.path(root, "vignettes", "hierarchicalmanual.pdf"),
   file.path(docs, "articles"), overwrite = TRUE))
-built <- file.path(docs, "articles", paste0(sub("\\.html\\.asis$", "", stubs), ".html"))
+built <- file.path(docs, "articles", paste0(names(sources), ".html"))
 if (!all(file.exists(built))) stop("Articles missing from docs/: ", paste(built[!file.exists(built)], collapse = ", "))
 # An article's "Source:" link names the .Rmd made above; the source is the .qmd.
 # And the contents menu is a heading's text, in which a formula's TeX
@@ -148,7 +167,7 @@ for (page in built) {
   html <- paste(readLines(page, encoding = "UTF-8", warn = FALSE), collapse = "\n")
   rmd <- paste0("vignettes/", name, ".Rmd")
   if (!grepl(rmd, html, fixed = TRUE)) stop(page, ": no source link to ", rmd, ".")
-  html <- gsub(rmd, paste0("vignettes/", name, ".qmd"), html, fixed = TRUE)
+  html <- gsub(rmd, sources[[name]], html, fixed = TRUE)
   heads <- gregexpr("(?s)<h([1-6])[ >].*?</h\\1>", html, perl = TRUE)
   regmatches(html, heads) <- lapply(regmatches(html, heads), function(h)
     gsub("(?s)<annotation[^>]*>.*?</annotation>", "", h, perl = TRUE))

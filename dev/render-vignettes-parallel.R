@@ -14,6 +14,10 @@
 # (R CMD INSTALL -l <lib> . and R_LIBS=<lib>): the vignettes load the
 # installed ctsem, not the source. Logs go to dev/vignettes.
 #
+# Articles for the website alone are in vignettes/articles: rendered the same
+# way, written back beside their sources, with no stub, and kept out of the
+# tarball by .Rbuildignore. dev/build-site.R puts both kinds on the website.
+#
 # The shipped form is compact: Quarto's `minimal: true` and MathML rather than
 # the Bootstrap theme and an embedded MathJax, which took each vignette from
 # about 2.4 MB to its figures and text, styled by dev/vignette-cran.css. CRAN
@@ -103,6 +107,7 @@ find_script_path <- function() {
 script_path <- find_script_path()
 package_root <- normalizePath(file.path(dirname(script_path), ".."), mustWork = TRUE)
 vignettes_dir <- file.path(package_root, "vignettes")
+articles_dir <- file.path(vignettes_dir, "articles")
 output_dir <- file.path(package_root, "dev", "vignettes")
 
 publish_files <- function(files, output_dir) {
@@ -204,25 +209,39 @@ render_vignettes <- function(vignettes_dir, output_dir, requested_cores) {
   run_dir <- tempfile("ctsem-vignettes-", tmpdir = tempdir())
   on.exit(unlink(run_dir, recursive = TRUE, force = TRUE), add = TRUE)
 
-  source_entries <- list.files(vignettes_dir, all.files = TRUE, no.. = TRUE, full.names = TRUE)
-  names <- tools::file_path_sans_ext(basename(
-    grep("\\.(qmd|rmd)$", source_entries, value = TRUE, ignore.case = TRUE)
-  ))
-  if (!length(names)) {
+  # Each source with the directory it is staged from and published back to:
+  # the shipped vignettes, then the website's articles. An article's stage
+  # also gets the R helpers in vignettes/, such as latex-figure.R.
+  entries <- function(dir) {
+    found <- list.files(dir, all.files = TRUE, no.. = TRUE, full.names = TRUE)
+    if (identical(dir, articles_dir)) found <- c(found,
+      list.files(vignettes_dir, "\\.R$", full.names = TRUE))
+    found[basename(found) != basename(articles_dir)]
+  }
+  sources <- do.call(rbind, lapply(c(vignettes_dir, articles_dir), function(dir) {
+    found <- grep("\\.(qmd|rmd)$", entries(dir), value = TRUE, ignore.case = TRUE)
+    data.frame(name = tools::file_path_sans_ext(basename(found)), dir = rep(dir, length(found)),
+      stringsAsFactors = FALSE)
+  }))
+  if (is.null(sources) || !nrow(sources)) {
     stop("No .qmd or .Rmd vignettes were found in ", vignettes_dir, ".", call. = FALSE)
   }
+  if (anyDuplicated(sources$name)) stop("A vignette and an article share a name: ",
+    paste(unique(sources$name[duplicated(sources$name)]), collapse = ", "), call. = FALSE)
   if (length(only)) {
-    if (length(setdiff(only, names))) stop("--only names no vignette: ",
-      paste(setdiff(only, names), collapse = ", "), call. = FALSE)
-    names <- intersect(names, only)
+    if (length(setdiff(only, sources$name))) stop("--only names no vignette: ",
+      paste(setdiff(only, sources$name), collapse = ", "), call. = FALSE)
+    sources <- sources[sources$name %in% only, , drop = FALSE]
   }
+  names <- sources$name
+  source_dirs <- setNames(sources$dir, sources$name)
 
-  # One staged copy of the whole vignettes directory per vignette, so each
+  # One staged copy of the whole source directory per vignette, so each
   # render owns its .quarto scratch directory and its intermediate files.
   vignettes <- vapply(names, function(name) {
     work_dir <- file.path(run_dir, name)
     dir.create(work_dir, recursive = TRUE)
-    if (!all(file.copy(source_entries, work_dir, recursive = TRUE, copy.date = TRUE))) {
+    if (!all(file.copy(entries(source_dirs[[name]]), work_dir, recursive = TRUE, copy.date = TRUE))) {
       stop("Could not copy the vignette sources to ", work_dir, ".", call. = FALSE)
     }
     matched <- list.files(work_dir, pattern = paste0("^", name, "\\.(qmd|rmd)$"),
@@ -248,15 +267,17 @@ render_vignettes <- function(vignettes_dir, output_dir, requested_cores) {
 
   # Publish before reporting, and publish regardless of failures: a vignette
   # that took twenty minutes should not be discarded because another one broke.
-  # Only a clean render is shipped; one that failed with a page written goes
-  # to dev/vignettes to be looked at.
+  # Only a clean render is kept; one that failed with a page written goes
+  # to dev/vignettes to be looked at. An article gets no stub, so it is on the
+  # website alone.
   publish_files(vapply(results, `[[`, character(1L), "log_file"), output_dir)
   for (result in results) {
     if (is.na(result$html_file)) next
     if (result$success) {
-      publish_files(result$html_file, vignettes_dir)
-      write_asis(file.path(vignettes_dir, basename(result$vignette)),
-        result$html_file, vignettes_dir)
+      dir <- source_dirs[[tools::file_path_sans_ext(basename(result$vignette))]]
+      publish_files(result$html_file, dir)
+      if (identical(dir, vignettes_dir)) write_asis(file.path(vignettes_dir,
+        basename(result$vignette)), result$html_file, vignettes_dir)
     } else {
       publish_files(result$html_file, output_dir)
     }
