@@ -81,7 +81,7 @@ likelihood and AIC.
 \examples{
 s <- summary(ctstantestfit)
 
-# Printed, the summary shows each section with a note on how to read it.
+# Printing shows every section, some with a note on how to read them.
 s
 
 # The population means of the free parameters, and the standard deviations

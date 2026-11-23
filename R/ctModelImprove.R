@@ -265,8 +265,8 @@
 #'   TDpredNames = 'TD1')
 #' fit <- ctFit(ctstantestdat, model, priors = TRUE)
 #' improved <- ctModelImprove(fit)
-#' improved$history    # each change tried, and whether it was kept
-#' summary(improved$fit)
+#' print(improved$history)  # each change tried, and whether it was kept
+#' print(summary(improved$fit))
 #'
 #' # Only simplify parts of the model the data do not identify.
 #' reduced <- ctModelImprove(fit, reduceOnly = TRUE)
@@ -601,6 +601,33 @@ ctModelImprove <- function(fit, covariates = NULL,
 #'   \code{family}, \code{p} (the evidence ranked by), \code{class}, and
 #'   \code{proposal}, what \code{ctModelImprove()} needs to make the change.
 #' @seealso \code{vignette('score-tests')}.
+#' @examples
+#' \donttest{
+#' if (isTRUE(ctJuliaStatus()$available)) {
+#' # A model in which the innovations of the two processes are uncorrelated,
+#' # with the DIFFUSION cell between them fixed at zero.
+#' model <- ctModel(LAMBDA = diag(2),
+#'   manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+#'   TDpredNames = 'TD1',
+#'   DIFFUSION = matrix(c('diff_eta1', 0, 0, 'diff_eta2'), 2, 2))
+#' fit <- ctFit(ctstantestdat, model, priors = TRUE)
+#'
+#' # The changes the score tests point to, with the p-value each is ranked
+#' # by. Here the score tests propose freeing that covariance.
+#' score <- ctScoreTest(fit)
+#' proposals <- ctModelProposals(fit, score = score)
+#' print(proposals)
+#'
+#' # Refit with the first change, and keep it if the likelihood ratio test
+#' # favours it. The history says whether it was kept.
+#' step <- ctModelImprove(fit, changes = proposals[1, ], maxsteps = 1)
+#' print(step$history)
+#'
+#' # With an adequacy check as well, the structural changes its families
+#' # point to are listed too, such as a slow process or a cycle.
+#' print(ctModelProposals(fit, score = score, adequacy = ctFitAdequacy(fit)))
+#' }
+#' }
 #' @export
 ctModelProposals <- function(fit, score = NULL, adequacy = NULL, covariates = NULL,
   relax = c('heterogeneity', 'covariates', 'statedependence', 'volatility', 'fixed', 'level',
@@ -2308,6 +2335,25 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
 #' @param x A \code{ctModelImprove}.
 #' @param ... Unused.
 #' @return A ggplot.
+#' @examples
+#' \donttest{
+#' if (isTRUE(ctJuliaStatus()$available)) {
+#' # A model with no cross effects and uncorrelated innovations.
+#' model <- ctModel(LAMBDA = diag(2),
+#'   manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+#'   TDpredNames = 'TD1',
+#'   DRIFT = matrix(c('drift_eta1', 0, 0, 'drift_eta2'), 2, 2),
+#'   DIFFUSION = matrix(c('diff_eta1', 0, 0, 'diff_eta2'), 2, 2))
+#' fit <- ctFit(ctstantestdat, model, priors = TRUE)
+#' improved <- ctModelImprove(fit)
+#'
+#' # A row per refit, numbered by round, as a line from the log likelihood
+#' # its round started at to the one it reached, both as gains over the
+#' # starting fit. Here round 1 keeps the freed innovation covariance (filled
+#' # point), and round 2 tries further changes and keeps none (open points).
+#' print(plot(improved))
+#' }
+#' }
 #' @export
 plot.ctModelImprove <- function(x, ...) {
   h <- x$history

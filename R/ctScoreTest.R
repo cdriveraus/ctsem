@@ -399,11 +399,33 @@
 #'   Sorbom, D. (1989). Model modification. Psychometrika, 54, 371-384.
 #' @seealso \code{vignette('score-tests')} for three worked examples.
 #' @examples
-#' \dontrun{
-#' fit <- ctFit(dat, model, backend = 'julia')
-#' st <- ctScoreTest(fit, covariates = subjectdata)
-#' st
-#' st$heterogeneity
+#' \donttest{
+#' if (isTRUE(ctJuliaStatus()$available)) {
+#' # A model in which the innovations of the two processes are uncorrelated,
+#' # with the DIFFUSION cell between them fixed at zero.
+#' model <- ctModel(LAMBDA = diag(2),
+#'   manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+#'   TDpredNames = 'TD1',
+#'   DIFFUSION = matrix(c('diff_eta1', 0, 0, 'diff_eta2'), 2, 2))
+#' fit <- ctFit(ctstantestdat, model, priors = TRUE)
+#'
+#' # Every family of relaxations, tested from this one fit. Under "Fixed
+#' # cells, freed", freeing DIFFUSION[eta2,eta1] has a small p-value, so the
+#' # data are not consistent with a zero covariance.
+#' st <- ctScoreTest(fit)
+#' print(st)
+#'
+#' # One family's table: each fixed cell with its test, and an estimate of
+#' # the parameter if it were freed.
+#' print(st$fixed$cells)
+#'
+#' # Whether subject level covariates, here the time independent predictors
+#' # in the data, predict any parameter. The joint test is over all
+#' # parameters.
+#' stc <- ctScoreTest(fit,
+#'   covariates = ctstantestdat[, c('id', 'TI1', 'TI2', 'TI3')])
+#' print(stc$covariates$TI1$joint)
+#' }
 #' }
 #' @export
 ctScoreTest <- function(fit, covariates = NULL,
@@ -2555,6 +2577,26 @@ ctScoreTest <- function(fit, covariates = NULL,
 #' @param top Relaxations shown per family, the strongest.
 #' @param ... Unused.
 #' @return A ggplot.
+#' @examples
+#' \donttest{
+#' if (isTRUE(ctJuliaStatus()$available)) {
+#' # A model in which the innovations of the two processes are uncorrelated.
+#' model <- ctModel(LAMBDA = diag(2),
+#'   manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+#'   TDpredNames = 'TD1',
+#'   DIFFUSION = matrix(c('diff_eta1', 0, 0, 'diff_eta2'), 2, 2))
+#' fit <- ctFit(ctstantestdat, model, priors = TRUE)
+#' st <- ctScoreTest(fit)
+#'
+#' # A panel per family, with a point per relaxation at its adjusted
+#' # p-value. Points left of the dashed line at .05, drawn in red, are the
+#' # relaxations the data support, here freeing DIFFUSION[eta2,eta1].
+#' print(plot(st))
+#'
+#' # Two of the families, with the three strongest relaxations of each.
+#' print(plot(st, family = c('fixed', 'heterogeneity'), top = 3))
+#' }
+#' }
 #' @export
 plot.ctScoreTest <- function(x, family = NULL, top = 10, ...) {
   rows <- list()

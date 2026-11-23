@@ -440,7 +440,7 @@ if (isTRUE(ctJuliaStatus()$available)) {
 
 # Long format data: one row per subject and occasion, with an id, a time,
 # the measured variables Y1 and Y2, and a time dependent predictor TD1.
-head(ctstantestdat)
+print(head(ctstantestdat))
 
 # Two processes, each measured by one variable, affected by TD1. Every
 # other part of the model takes the defaults of ctModel().
@@ -450,11 +450,11 @@ model <- ctModel(LAMBDA = diag(2),
 
 # priors = TRUE helps with a data set this small (30 subjects).
 fit <- ctFit(ctstantestdat, model, priors = TRUE)
-summary(fit)
+print(summary(fit))
 
 # The effects over time intervals, and predictions for two subjects.
-ctDiscretePars(fit, times = seq(0, 5, by = 0.1), plot = TRUE)
-ctPredict(fit, subjects = 1:2, plot = TRUE)
+print(ctDiscretePars(fit, times = seq(0, 5, by = 0.1), plot = TRUE))
+print(ctPredict(fit, subjects = 1:2, plot = TRUE))
 
 # A linear growth curve for Y1: no dynamics and no process noise, with a
 # slope (CINT) and an initial level (T0MEANS) that vary between subjects.
@@ -463,7 +463,7 @@ growth <- ctModel(LAMBDA = matrix(1),
   DRIFT = 0, DIFFUSION = 0, T0VAR = 0, MANIFESTMEANS = 0,
   CINT = 'slope', T0MEANS = 'initial')
 fitgrowth <- ctFit(ctstantestdat, growth, priors = TRUE)
-summary(fitgrowth)$popmeans
+print(summary(fitgrowth)$popmeans)
 summary(fitgrowth)$popsd
 
 # Sampling the posterior instead of optimising:

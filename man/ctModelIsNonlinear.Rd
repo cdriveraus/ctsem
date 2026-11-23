@@ -25,5 +25,13 @@ References to the state that carries an individually varying parameter
 parameters, reported exactly.
 }
 \examples{
+# FALSE: no cell of the bundled fit's model reads a latent state or a time
+# dependent predictor.
 ctModelIsNonlinear(ctstantestfit)
+
+# TRUE for a model in which the auto effect of eta1 changes with eta2.
+model <- ctModel(LAMBDA = diag(2), manifestNames = c('Y1', 'Y2'),
+  latentNames = c('eta1', 'eta2'), PARS = c('a|-log1p_exp(param)', 'b'),
+  DRIFT = matrix(c('a + b * eta2', 'drift21', 0, 'drift22'), 2, 2))
+ctModelIsNonlinear(model)
 }

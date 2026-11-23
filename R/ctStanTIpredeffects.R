@@ -61,7 +61,7 @@
 #' ctTIpredEffects(ctstantestfit,
 #'   whichpars = c('CINT', 'dtDIFFUSION[2,2]'), plot = TRUE)
 #'
-#' # The same numbers for the intercepts: x holds the TI1 values, and y their
+#' # The same numbers for the intercepts. x holds the TI1 values, and y their
 #' # quantiles at each value.
 #' effects <- ctTIpredEffects(ctstantestfit, whichpars = 'CINT')
 #' dimnames(effects$y)

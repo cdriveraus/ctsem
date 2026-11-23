@@ -69,7 +69,7 @@ model$pars[model$pars$matrix == 'DRIFT', c('row', 'col', 'param', 'value')]
 model$matrices$DRIFT[1, 2] <- 'drift_eta1_eta2'
 
 # The spread over subjects of the individually varying parameters, here
-# the initial means and the manifest means: standard deviations on the
-# diagonal and correlation parameters below it.
+# the initial means and the manifest means. Standard deviations are on
+# the diagonal and correlation parameters below it.
 model$RAWPOPVAR
 }

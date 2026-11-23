@@ -37,13 +37,15 @@ adequacy <- ctFitAdequacy(fit)
 
 # One point per family of checks at its adjusted p-value. A family left of
 # the dashed line at alpha, drawn in red, detects misfit.
-plot(adequacy)
+print(plot(adequacy))
 
 # The correlations of the one-step-ahead errors of each pair of variables,
 # by the time gap between rows, each with its 95 per cent interval.
 # Correlations near zero mean the model accounts for how the variables
-# follow each other over time.
-plot(adequacy, family = 'residuals')
+# follow each other over time. A red point's interval excludes zero, but
+# the family's adjusted p-value, which allows for the number of
+# correlations, is the test.
+print(plot(adequacy, family = 'residuals'))
 }
 }
 }

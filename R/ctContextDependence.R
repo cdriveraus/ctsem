@@ -467,7 +467,15 @@
 #' @param x A \code{ctStanModel}, \code{ctStanFit} or \code{ctJuliaFit}.
 #' @return Logical.
 #' @examples
+#' # FALSE: no cell of the bundled fit's model reads a latent state or a time
+#' # dependent predictor.
 #' ctModelIsNonlinear(ctstantestfit)
+#'
+#' # TRUE for a model in which the auto effect of eta1 changes with eta2.
+#' model <- ctModel(LAMBDA = diag(2), manifestNames = c('Y1', 'Y2'),
+#'   latentNames = c('eta1', 'eta2'), PARS = c('a|-log1p_exp(param)', 'b'),
+#'   DRIFT = matrix(c('a + b * eta2', 'drift21', 0, 'drift22'), 2, 2))
+#' ctModelIsNonlinear(model)
 #' @export
 ctModelIsNonlinear <- function(x) {
   cells <- try(.ctFitConditionalCells(x), silent = TRUE)
@@ -527,21 +535,25 @@ ctModelIsNonlinear <- function(x) {
 #' model <- ctModel(LAMBDA = diag(2),
 #'   manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
 #'   PARS = c('a|-log1p_exp(param)', 'b'),
-#'   DRIFT = matrix(c('a + b * eta2', 'drift21', 0, 'drift22'), 2, 2))
+#'   DRIFT = matrix(c('a + b * eta2', 'drift21', 0, 'drift22'), 2, 2),
+#'   CINT = matrix(c('cint1', 'cint2'), 2, 1), MANIFESTMEANS = 0)
 #' model$pars$indvarying <- FALSE
 #' fit <- ctFit(ctstantestdat, model)
-#' ctModelIsNonlinear(fit)
+#' print(ctModelIsNonlinear(fit))
 #'
-#' # The population matrices at the default point. The message names the
-#' # point, and the attribute lists the cells that depend on it.
+#' # The population matrices at the default point, which the message names
+#' # as the T0MEANS state, with time dependent predictors at zero. The
+#' # attribute lists the cells that depend on the point.
 #' m <- ctSummaryMatrices(fit)
-#' m$estimate$DRIFT
-#' attr(m, 'contextDependent')
+#' print(m$estimate$DRIFT)
+#' print(attr(m, 'contextDependent'))
 #'
-#' # The same matrix at the fixed point, and at a chosen state with eta1 at 0
-#' # and eta2 at 2.
-#' ctSummaryMatrices(fit, state = 'asymptotic')$estimate$DRIFT
-#' ctSummaryMatrices(fit, state = c(0, 2))$estimate$DRIFT
+#' # DRIFT[1, 1] at the fixed point the processes settle at, at the mean of
+#' # the smoothed latent states, and at a chosen state with eta1 at 8 and
+#' # eta2 at 14.
+#' print(ctSummaryMatrices(fit, state = 'asymptotic')$estimate$DRIFT)
+#' print(ctSummaryMatrices(fit, state = 'mean')$estimate$DRIFT)
+#' print(ctSummaryMatrices(fit, state = c(8, 14))$estimate$DRIFT)
 #' }
 #' }
 #'

@@ -309,8 +309,8 @@ model <- ctModel(LAMBDA = diag(2),
   TDpredNames = 'TD1')
 fit <- ctFit(ctstantestdat, model, priors = TRUE)
 improved <- ctModelImprove(fit)
-improved$history    # each change tried, and whether it was kept
-summary(improved$fit)
+print(improved$history)  # each change tried, and whether it was kept
+print(summary(improved$fit))
 
 # Only simplify parts of the model the data do not identify.
 reduced <- ctModelImprove(fit, reduceOnly = TRUE)

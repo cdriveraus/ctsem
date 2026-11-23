@@ -264,6 +264,28 @@ ctStanContinuousPars <- ctSummaryMatrices
 #' # subject.
 #' plot(indpars[1, , 'cint1'], indpars[1, , 'cint2'],
 #'   xlab = 'cint1', ylab = 'cint2')
+#'
+#' \donttest{
+#' if (isTRUE(ctJuliaStatus()$available)) {
+#' model <- ctModel(LAMBDA = diag(2),
+#'   manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+#'   TDpredNames = 'TD1')
+#' fit <- ctFit(ctstantestdat, model, priors = TRUE)
+#'
+#' # Draws show how well each subject's values are known, with the draw in
+#' # the first dimension. The standard deviation of the draws of mm_Y1 for
+#' # the first five subjects:
+#' draws <- ctSubjectPars(fit, pointest = FALSE, nsamples = 100)
+#' print(apply(draws[, 1:5, 'mm_Y1'], 2, sd))
+#'
+#' # The default uncertainty = 'total' includes the uncertainty of the
+#' # population parameters. 'conditional' holds them at the estimate, so the
+#' # spread is smaller.
+#' conditional <- ctSubjectPars(fit, pointest = FALSE, nsamples = 100,
+#'   uncertainty = 'conditional')
+#' print(apply(conditional[, 1:5, 'mm_Y1'], 2, sd))
+#' }
+#' }
 ctSubjectPars <- function(fit,pointest=TRUE,cores=getOption("mc.cores", 2L),nsamples='all',level=NULL,
   uncertainty=NULL){
 
@@ -439,7 +461,7 @@ getparnames <- function(fit,reonly=FALSE, subjvariationonly=FALSE, popstatesonly
 #' @examples
 #' s <- summary(ctstantestfit)
 #'
-#' # Printed, the summary shows each section with a note on how to read it.
+#' # Printing shows every section, some with a note on how to read them.
 #' s
 #'
 #' # The population means of the free parameters, and the standard deviations
