@@ -18,7 +18,7 @@ names_by <- vapply(seq_len(npar), function(i)
   paste(unique(pt$param[!is.na(pt$parnumber) & pt$parnumber == i]), collapse = "/"),
   character(1))
 module <- .ctJuliaModule(spec$project)
-obj <- .ctJuliaObjective(structure(spec, class = c("ctJuliaModel", "ctFitModel")))
+obj <- .ctJuliaObjective(structure(spec, class = c("ctJuliaModel", "ctFitModel")), layer = TRUE)
 H_of <- function(fn, x) {
   out <- try(.ctBackendJuliaValue(module[[fn]](obj, .ctJuliaVector(x))), silent = TRUE)
   if (inherits(out, "try-error")) return(structure(NA, err = as.character(out)))
