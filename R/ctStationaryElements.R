@@ -75,35 +75,55 @@
     "variance its random effect implies. Name the T0MEANS cell 'stationary' too, or set ",
     "its indvarying to FALSE.", call. = FALSE)
 
-  # The closure: the marked latents and whatever drives them. A mean needs
-  # every driver. A covariance needs only the drivers noise reaches: a latent
-  # that no DIFFUSION reaches through DRIFT, such as a clock pair, moves the
-  # means of what it drives and adds nothing to their covariance, so a T0VAR
-  # block's closure leaves it out and it need not settle. The engine then
-  # solves with it decoupled (`_ctsem_closure_drift`), which is the noisy
-  # part's own system, and its own initial covariance stays as written.
-  diffusion <- p[p$matrix %in% 'DIFFUSION' & p$row <= nl & p$col <= nl, , drop = FALSE]
-  dvalue <- suppressWarnings(as.numeric(diffusion$value))
-  noisy <- unique(diffusion$row[!is.na(diffusion$param) | (!is.na(dvalue) & dvalue != 0)])
+  # The closure: the marked latents and whatever drives them, through DRIFT.
+  # A driver that DRIFT's fixed cells keep from ever settling and that no
+  # noise reaches -- a clock pair, a trait, a trend -- has no stationary state
+  # of its own, but what it drives settles onto the path it sets. Such
+  # drivers leave the closure and are passed as `drivers`: the marked latents
+  # start where they would have settled given the drivers' start (their T0MEANS
+  # and T0VAR as written), with the noise's stationary covariance on top
+  # (`_ctsem_stationary_drive!`), so subjects whose clock starts apart start
+  # apart on it too. A latent that settles but carries no noise moves the
+  # means of what it drives and nothing of their covariance, so a T0VAR
+  # block's closure leaves it out. A driver that never settles and carries
+  # noise leaves what it drives no stationary distribution at all.
+  noisy <- .ctNoisyLatents(ctm)
   reached <- .ctNoiseReached(ctm, noisy)
-  closure <- .ctStationaryClosure(ctm, means) |
-    (.ctStationaryClosure(ctm, variance) & (reached | variance))
-  static <- .ctNeverSettles(ctm, which(closure))
-  if (length(static)) stop("A 'stationary' initial condition needs the latents it depends on ",
-    "to settle somewhere, and DRIFT, as fixed, leaves ", paste(static, collapse = ', '),
-    " without a stationary state. Estimate T0MEANS and T0VAR for the latents they ",
-    "drive instead.", call. = FALSE)
+  full <- .ctStationaryClosure(ctm, means | variance)
+  static <- match(.ctNeverSettles(ctm, which(full)), names)
+  wander <- static[reached[static]]
+  marked_names <- paste(names[means | variance], collapse = ', ')
+  if (length(wander)) stop("The 'stationary' initial conditions of ", marked_names,
+    " depend on ", paste(names[wander], collapse = ', '), ", which DRIFT, as fixed, keeps ",
+    "from settling while DIFFUSION moves it (a random walk, or a trait or trend with ",
+    "noise), so there is no stationary distribution to start from. Estimate T0MEANS ",
+    "and T0VAR for those latents instead, or give ", paste(names[wander], collapse = ', '),
+    " a drift that settles.", call. = FALSE)
+  drivers <- logical(nl)
+  drivers[static] <- TRUE
+  own <- drivers & (means | variance)
+  if (any(own)) stop(paste(names[own], collapse = ', '), " never settles and carries no ",
+    "noise, so it has no stationary state of its own: give its T0MEANS and T0VAR as ",
+    "values or parameters. The latents it drives can still start stationary, on the path ",
+    "it sets.", call. = FALSE)
+  closure <- (.ctStationaryClosure(ctm, means) |
+    (.ctStationaryClosure(ctm, variance) & (reached | variance))) & !drivers
   # No noise reaching a block leaves it no stationary variance.
   if (any(variance) && !any(closure[noisy])) stop("A 'stationary' T0VAR cell takes the ",
     "variance DIFFUSION builds up, and no DIFFUSION reaches ",
-    paste(names[variance], collapse = ', '), ".", call. = FALSE)
+    paste(names[variance], collapse = ', '), ". Give their T0VAR as values or parameters.",
+    call. = FALSE)
 
   # The cells become placeholders the engine writes over.
   effects <- grep('_effect$', names(p), value = TRUE)
   levelflags <- grep('^indvarying_', names(p), value = TRUE)
-  t0mark <- mark | (p$matrix %in% 'T0VAR' & p$row != p$col & block[pmin(p$row, nl)] > 0L &
-    block[pmin(p$col, nl)] > 0L & block[pmin(p$row, nl)] == block[pmin(p$col, nl)] &
-    p$row <= nl & p$col <= nl)
+  # A block's covariances with the drivers are the stationary start's too.
+  inside <- p$row <= nl & p$col <= nl
+  rb <- block[pmin(p$row, nl)]
+  cb <- block[pmin(p$col, nl)]
+  t0mark <- mark | (p$matrix %in% 'T0VAR' & p$row != p$col & inside &
+    ((rb > 0L & cb > 0L & rb == cb) | (rb > 0L & drivers[pmin(p$col, nl)]) |
+      (cb > 0L & drivers[pmin(p$row, nl)])))
   p$param[t0mark] <- NA_character_
   p$value[t0mark] <- ifelse(p$matrix[t0mark] %in% 'T0VAR' & p$row[t0mark] == p$col[t0mark],
     1, 0)
@@ -116,8 +136,47 @@
   # `t0stationary` rather than a name starting `stationary`: `$` matches a
   # prefix, so that would answer `model$stationary` on a model without it.
   ctm$t0stationary <- list(means = means, block = as.integer(block),
-    closure = closure)
+    closure = closure, drivers = drivers)
   ctm
+}
+
+# The latents with noise of their own: a DIFFUSION cell in their row that is
+# free or fixed away from zero, as indices.
+.ctNoisyLatents <- function(ctm) {
+  p <- ctm$pars
+  nl <- ctm$n.latent
+  diffusion <- p[p$matrix %in% 'DIFFUSION' & p$row <= nl & p$col <= nl, , drop = FALSE]
+  dvalue <- suppressWarnings(as.numeric(diffusion$value))
+  unique(diffusion$row[!is.na(diffusion$param) | (!is.na(dvalue) & dvalue != 0)])
+}
+
+# stationary = TRUE as single elements, where the model has drivers that never
+# settle and carry no noise (`.ctStationaryElements`): every T0MEANS and T0VAR
+# cell of the other latents named 'stationary', the drivers' own as written.
+# NULL where there is no such driver, and stationary = TRUE stays the whole
+# start; an error, naming them, where a latent that never settles carries
+# noise.
+.ctStationaryAsElements <- function(ctm) {
+  nl <- ctm$n.latent
+  names <- ctm$latentNames
+  static <- match(.ctNeverSettles(ctm), names)
+  if (!length(static)) return(NULL)
+  reached <- .ctNoiseReached(ctm, .ctNoisyLatents(ctm))
+  wander <- static[reached[static]]
+  if (length(wander)) stop("stationary = TRUE needs every latent process to settle ",
+    "somewhere or be driven only by latents that carry no noise, and DRIFT, as fixed, ",
+    "keeps ", paste(names[wander], collapse = ', '), " from settling while DIFFUSION ",
+    "moves it. Estimate T0MEANS and T0VAR instead, or give it a drift that settles.",
+    call. = FALSE)
+  p <- ctm$pars
+  others <- setdiff(seq_len(nl), static)
+  cells <- p$matrix %in% c('T0MEANS', 'T0VAR') & p$row %in% others &
+    (p$matrix %in% 'T0MEANS' | p$col %in% others)
+  p$param[cells] <- 'stationary'
+  p$value[cells] <- NA
+  p$transform[cells] <- NA
+  ctm$pars <- p
+  .ctStationaryElements(ctm)
 }
 
 # The names of the latents among `which` that DRIFT's fixed cells keep from

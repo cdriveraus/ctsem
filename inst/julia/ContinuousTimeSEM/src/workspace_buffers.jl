@@ -216,6 +216,32 @@ struct CTSEMMomentClass
 end
 
 """
+    CTSEMStationaryDrive{T}
+
+Scratch for stationary elements beside drivers that never settle and carry no
+noise (`_ctsem_stationary_drive!`): `D`, how the closure settles onto the
+drivers' path (affine processes by drivers); `K`, `r` and `piv`, the
+Sylvester system that gives it, as one square solve; `Y` and `P1`, the
+marked latents' rows in transit and the initial covariance before the drive,
+which the record reads. Empty for a model without such drivers.
+"""
+struct CTSEMStationaryDrive{T}
+    D::Matrix{T}
+    K::Matrix{T}
+    r::Vector{T}
+    piv::Vector{Int}
+    Y::Matrix{T}
+    P1::Matrix{T}
+end
+function CTSEMStationaryDrive{T}(naff::Int, nz::Int, n::Int) where {T}
+    nz == 0 && return CTSEMStationaryDrive{T}(zeros(T, 0, 0), zeros(T, 0, 0), T[],
+        Int[], zeros(T, 0, 0), zeros(T, 0, 0))
+    N = naff * nz
+    return CTSEMStationaryDrive{T}(zeros(T, naff, nz), zeros(T, N, N), zeros(T, N),
+        zeros(Int, N), zeros(T, n, n), zeros(T, n, n))
+end
+
+"""
     ContinuousEKFWorkspace
 
 Reusable workspace for continuous-time extended Kalman filter evaluations.
@@ -362,6 +388,9 @@ struct ContinuousEKFWorkspace{T, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF, DBUF
     moment_acc::Vector{T}
     moment_saved::Vector{T}
     moment_dvals::Vector{T}
+    # Stationary elements beside drivers that never settle; see
+    # `CTSEMStationaryDrive`.
+    stationary_drive::CTSEMStationaryDrive{T}
 end
 
 """
@@ -669,6 +698,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         zeros(T, length(moment_avg)),
         zeros(T, length(moment_oth)),
         zeros(T, ndvals),
+        CTSEMStationaryDrive{T}(affine_dim, length(sp.stationary_elements.drivers), n),
     )
 end
 
