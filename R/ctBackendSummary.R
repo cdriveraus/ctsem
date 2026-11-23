@@ -2175,13 +2175,18 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 }
 
 # The rows of the cached draws that `samples` are, or NULL where any is not
-# among them. Exact, because a caller's draws are the fit's own rows, copied.
+# among them. Exact, because a caller's draws are the fit's own rows, copied:
+# found by their first value and then compared whole, so that a first value
+# two draws share sends the lookup to the engine rather than to a wrong row.
 .ctBackendCachedRows <- function(cached, samples) {
-  if (!is.matrix(cached$samples) || nrow(cached$samples) < 2L ||
-      ncol(cached$samples) != ncol(samples)) return(NULL)
-  key <- function(m) apply(m, 1L, function(r) paste(sprintf("%a", r), collapse = " "))
-  rows <- match(key(samples), key(cached$samples))
-  if (anyNA(rows)) NULL else rows
+  stored <- cached$samples
+  if (!is.matrix(stored) || nrow(stored) < 2L || ncol(stored) != ncol(samples) ||
+      !ncol(samples)) return(NULL)
+  rows <- match(samples[, 1L], stored[, 1L])
+  if (anyNA(rows)) return(NULL)
+  same <- vapply(seq_along(rows), function(i)
+    isTRUE(all(samples[i, ] == stored[rows[i], ])), NA)
+  if (all(same)) rows else NULL
 }
 
 # The cached constrain step at some of its draws. `flat` holds a draw per
