@@ -6344,18 +6344,19 @@ function _laplace_exceeds_identity(M::CTSEMBlockMatrix{T},
 end
 
 """
-    _laplace_count_below(M, blocks, shift)
+    _laplace_block_ldl(M, blocks, shift)
 
-How many eigenvalues of `M` lie below `shift`: the inertia of `M - shift I`,
-by Sylvester's law of inertia, read off the same innermost-first elimination
-`_laplace_block_factor` performs. The elimination is a congruence with a block
-unit-triangular matrix, so `M - shift I` and the block diagonal of eliminated
-pivots have the same inertia; each pivot is decomposed by `_ctsem_symeig`
-rather than Cholesky-factored, so an indefinite one is counted instead of
-refused. `nothing` when a pivot is singular to working precision -- `shift` is
-an eigenvalue there, and the caller treats it as one.
+`M - shift I` eliminated as `_laplace_block_factor` eliminates it, innermost
+block first, each pivot decomposed (`_ctsem_symeig`) rather than
+Cholesky-factored, so an indefinite matrix factors too: `(pivots, coupling,
+logabsdet, negative)`, `pivots[b]` the eigenpairs of block `b`'s eliminated
+pivot, `coupling` the couplings as the elimination used them, `negative` how
+many eigenvalues of `M` lie below `shift`. The elimination is a congruence with
+a block unit-triangular matrix, so by Sylvester's law of inertia `M - shift I`
+and its block diagonal of pivots have the same inertia. `nothing` where a pivot
+is singular to working precision -- `shift` is an eigenvalue there.
 """
-function _laplace_count_below(M::CTSEMBlockMatrix{Float64},
+function _laplace_block_ldl(M::CTSEMBlockMatrix{Float64},
     blocks::Vector{CTSEMLaplaceBlock}, shift::Real)
     nb = length(blocks)
     diag = [Matrix{Float64}(d) for d in M.diag]
@@ -6363,12 +6364,19 @@ function _laplace_count_below(M::CTSEMBlockMatrix{Float64},
         for i in axes(d, 1); d[i, i] -= shift; end
     end
     coupling = [[Matrix{Float64}(c) for c in row] for row in M.coupling]
-    count = 0
+    pivots = Vector{NamedTuple{(:values, :vectors),Tuple{Vector{Float64},Matrix{Float64}}}}(
+        undef, nb)
+    negative = 0
+    logabsdet = 0.0
     for b in 1:nb
         E = _ctsem_symeig(diag[b])
         scale = max(maximum(abs, E.values; init=0.0), 1.0)
         any(v -> abs(v) <= 1e-13 * scale, E.values) && return nothing
-        count += Base.count(<(0.0), E.values)
+        negative += Base.count(<(0.0), E.values)
+        for v in E.values
+            logabsdet += log(abs(v))
+        end
+        pivots[b] = (values=E.values, vectors=E.vectors)
         ancestors = blocks[b].ancestors
         isempty(ancestors) && continue
         Dinv = E.vectors * Diagonal(1 ./ E.values) * transpose(E.vectors)
@@ -6384,7 +6392,87 @@ function _laplace_count_below(M::CTSEMBlockMatrix{Float64},
             end
         end
     end
-    return count
+    return (pivots=pivots, coupling=coupling, logabsdet=logabsdet, negative=negative)
+end
+
+"""`(M - shift I)^-1 b` from `_laplace_block_ldl`'s factorization `F`: the block
+solve's forward and back substitution (`_laplace_block_solve`), each pivot
+inverted through its eigenpairs."""
+function _laplace_block_ldl_solve(F, blocks::Vector{CTSEMLaplaceBlock}, rhs::AbstractVector)
+    nb = length(blocks)
+    y = [Vector{Float64}(rhs[(blocks[b].offset + 1):(blocks[b].offset + blocks[b].size)])
+        for b in 1:nb]
+    for b in 1:nb
+        ancestors = blocks[b].ancestors
+        isempty(ancestors) && continue
+        w = _laplace_ldl_pivot_solve(F.pivots[b], y[b])
+        for (t, a) in enumerate(ancestors)
+            y[a] .-= transpose(F.coupling[b][t]) * w
+        end
+    end
+    x = [zeros(Float64, blocks[b].size) for b in 1:nb]
+    for b in nb:-1:1
+        acc = copy(y[b])
+        for (t, a) in enumerate(blocks[b].ancestors)
+            acc .-= F.coupling[b][t] * x[a]
+        end
+        x[b] = _laplace_ldl_pivot_solve(F.pivots[b], acc)
+    end
+    return _laplace_block_gather(x, blocks, Float64)
+end
+
+"""A pivot's inverse applied to `x`, through its eigenpairs."""
+_laplace_ldl_pivot_solve(P, x::AbstractVector) =
+    P.vectors * ((transpose(P.vectors) * x) ./ P.values)
+
+"""
+A pivot of `_laplace_block_ldl` by its eigenpairs, which solves (`\\`) and
+inverts (`inv`) as a Cholesky pivot of `_laplace_block_factor` does, so the
+block solve and selected inverse (`_laplace_block_solve`,
+`_laplace_selected_inverse`) take an indefinite elimination as they take a
+definite one.
+"""
+struct _LDLPivot
+    values::Vector{Float64}
+    vectors::Matrix{Float64}
+end
+Base.:\(P::_LDLPivot, x::AbstractVector) = _laplace_ldl_pivot_solve(P, x)
+Base.:\(P::_LDLPivot, X::AbstractMatrix) =
+    P.vectors * ((transpose(P.vectors) * X) ./ P.values)
+Base.inv(P::_LDLPivot) = P.vectors * Diagonal(1 ./ P.values) * transpose(P.vectors)
+
+"""
+    _soft_node_factor(Mb, blocks)
+
+A soft-direction node's curvature factored for the rule's bordered algebra
+(`_laplace_soft_quadrature_factored`): by Cholesky where it is positive definite
+(`_soft_shifted_factor`), and otherwise by its indefinite elimination
+(`_laplace_block_ldl`) with `_LDLPivot`s, `logdet` then `log |det Mb|`. A node
+lies along the soft direction, and `Mb` can turn indefinite along it while its
+complement, all the rule reads, stays positive. `nothing` where `Mb` is
+singular to working precision.
+"""
+function _soft_node_factor(Mb::CTSEMBlockMatrix{Float64}, blocks::Vector{CTSEMLaplaceBlock})
+    F = _soft_shifted_factor(Mb, blocks, 0.0)
+    F === nothing || return F
+    Fl = _laplace_block_ldl(Mb, blocks, 0.0)
+    Fl === nothing && return nothing
+    return (logdet=Fl.logabsdet, factors=[_LDLPivot(p.values, p.vectors) for p in Fl.pivots],
+        coupling=Fl.coupling)
+end
+
+"""
+    _laplace_count_below(M, blocks, shift)
+
+How many eigenvalues of `M` lie below `shift`: the inertia of `M - shift I`
+from its block elimination (`_laplace_block_ldl`). `nothing` when a pivot is
+singular to working precision -- `shift` is an eigenvalue there, and the caller
+treats it as one.
+"""
+function _laplace_count_below(M::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, shift::Real)
+    F = _laplace_block_ldl(M, blocks, shift)
+    return F === nothing ? nothing : F.negative
 end
 
 """
@@ -6828,12 +6916,14 @@ end
 #
 # Each is a block factorization of the unit's own sparsity, no fill-in, so a
 # nested unit costs what its members do rather than `d^3`, and a unit of one
-# block a Cholesky where the dense rule took three Jacobi decompositions. The
-# floor is the identity at the mode where `lambda2` is at least its top
-# (`_laplace_soft_node_curvature_floor_top`), and at a node whose curvature is
-# (by interlacing the complement's eigenvalues are no smaller than `Mb`'s).
-# Elsewhere, and where `M` does not factor at the mode, the unit takes the
-# dense rule, which computes the same function, at any width: until
+# block a Cholesky where the dense rule took three Jacobi decompositions.
+# Where the floor binds, at the centre (`lambda2` under its top,
+# `_laplace_soft_node_curvature_floor_top`) or at a node (its complement's
+# eigenvalues under it), it changes only the eigenvalues below its top, so
+# those eigenpairs, from the blocks too, correct the step and the logdet by
+# their low-rank part (`_soft_centre_floor`, `_soft_node_low_pairs`). Where `M`
+# or a node's curvature does not factor, the unit takes the dense rule, which
+# computes the same function, at any width: until
 # 2026-10-31 a unit wider than 64 took the total floor instead, so the
 # objective changed at the 65th effect, and a study of 30 people in the SNSF
 # pilot over-credited its term by up to 4.6 nats
@@ -6954,8 +7044,13 @@ orthonormal columns. A unit of one block is that block, decomposed as it stands
 eigenvalues lie below `threshold` is the inertia of `M - threshold I`
 (`_laplace_count_below`), and the pairs come from subspace iteration on `(M -
 sigma I)^-1`, `sigma` bisected to just below the least eigenvalue on whether
-`M - sigma I` factors, with a Rayleigh-Ritz step each round and a few vectors
-beyond the count so that those near `threshold` settle too. Every step is a
+`M - sigma I` factors, with a Rayleigh-Ritz step each round, and a vector for
+every eigenvalue up to half again past `threshold` (`_laplace_lowest_margin`),
+as many as half the width allows, so the pairs below it converge at a rate
+bounded away from one however their
+eigenvalues cluster about it: four vectors past the count left a cluster of
+alike leaves straddling it converging at 0.98 a round, and whether it settled
+in `_LAPLACE_LOWEST_ROUNDS` turned on the platform's roundoff. Every step is a
 block elimination or product with `M`'s own sparsity (`_soft_shifted_factor`,
 `_soft_solve`, `_soft_block_mulvec!`), so the cost is linear in the unit's
 members. The start is fixed and the vectors signed (`_ctsem_signed_columns!`),
@@ -6986,12 +7081,31 @@ function _laplace_block_lowest(M::CTSEMBlockMatrix{Float64},
     k = _laplace_count_below(M, blocks, threshold)
     k === nothing && return nothing
     k == 0 && return (values=Float64[], vectors=zeros(Float64, d, 0))
-    p = min(d, k + max(4, k >> 2))
-    2 * p > d && return nothing
-    # `M - lo I` factors and `M - hi I` does not, so the least eigenvalue lies
-    # between; bisected until the shift sits close under it, where the
-    # iteration converges fastest.
-    top = Float64(threshold)
+    need = k + max(4, k >> 2)
+    2 * need > d && return nothing
+    above = _laplace_count_below(M, blocks, _laplace_lowest_margin(threshold))
+    p = min(max(need, (above === nothing ? k : above) + 2), d >> 1)
+    sh = _laplace_lowest_shift(M, blocks, threshold)
+    sh === nothing && return nothing
+    F = sh.F
+    return _laplace_subspace_lowest(x -> _soft_solve(F, blocks, x),
+        x -> _soft_block_mulvec(M, blocks, x), x -> collect(Float64, x), d, k, p,
+        threshold)
+end
+
+"""
+    _laplace_lowest_shift(M, blocks, top)
+
+A factorization of `M - sigma I` (`_soft_shifted_factor`) with `sigma` just
+under `M`'s least eigenvalue, which lies below `top`: bisection on whether `M -
+s I` factors, from a point where it does up to `top`, where it does not, to a
+relative 1e-3, then a bracket's width below it. Subspace iteration on its
+inverse converges fastest near the least eigenvalue. `(sigma, F)`, or `nothing`
+where no point that factors is found.
+"""
+function _laplace_lowest_shift(M::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, top::Real)
+    top = Float64(top)
     lo = top - max(1.0, abs(top))
     F = _soft_shifted_factor(M, blocks, lo)
     widen = 0
@@ -7011,9 +7125,37 @@ function _laplace_block_lowest(M::CTSEMBlockMatrix{Float64},
             lo, F = mid, Fm
         end
     end
+    # A bracket's width below the bracket, so the factor's least pivot is at
+    # least that far from singular. At the bracket's lower end the least
+    # eigenvalue can sit within roundoff of the shift -- a test unit's lay
+    # exactly on a bisection point, factored there on Linux and not on Windows
+    # -- and every solve through that factor is noise.
+    sigma = lo - (hi - lo)
+    Fs = _soft_shifted_factor(M, blocks, sigma)
+    Fs === nothing && return nothing
+    return (sigma=sigma, F=Fs)
+end
+
+"""
+    _laplace_subspace_lowest(solve, mul, project, d, k, p, threshold)
+
+The `k` eigenpairs below `threshold` of a symmetric operator on `R^d` or a
+subspace of it, by subspace iteration of `p > k` vectors on `solve`, its
+shifted inverse, with a Rayleigh-Ritz step on `mul`, the operator, each round;
+`project` keeps vectors in the operator's subspace. Settled when the `k`
+lowest Ritz pairs' residuals are under 1e-9 of their values (at least 1);
+`nothing` where they have not settled in `_LAPLACE_LOWEST_ROUNDS` rounds or the
+Ritz values below `threshold` are not `k`. The start is fixed and the vectors
+signed (`_ctsem_signed_columns!`), so the result is a function of the operator.
+"""
+function _laplace_subspace_lowest(solve, mul, project, d::Int, k::Int, p::Int,
+    threshold::Real)
     V = Matrix{Float64}(undef, d, p)
     @inbounds for j in 1:p, i in 1:d
         V[i, j] = sin(1.7 * i * j + 0.9 * j) + 0.3 * cos(0.77 * i + 1.1 * j * j)
+    end
+    for j in 1:p
+        copyto!(view(V, :, j), project(view(V, :, j)))
     end
     _laplace_orthonormalise!(V) || return nothing
     W = similar(V)
@@ -7022,11 +7164,11 @@ function _laplace_block_lowest(M::CTSEMBlockMatrix{Float64},
     H = Matrix{Float64}(undef, p, p)
     for _ in 1:_LAPLACE_LOWEST_ROUNDS
         for j in 1:p
-            copyto!(view(W, :, j), _soft_solve(F, blocks, view(V, :, j)))
+            copyto!(view(W, :, j), project(solve(view(V, :, j))))
         end
         _laplace_orthonormalise!(W) || return nothing
         for j in 1:p
-            _soft_block_mulvec!(view(AW, :, j), M, blocks, view(W, :, j))
+            copyto!(view(AW, :, j), mul(view(W, :, j)))
         end
         _ctsem_mulTN!(H, W, AW)
         E = _ctsem_symeig(H)
@@ -7051,6 +7193,121 @@ function _laplace_block_lowest(M::CTSEMBlockMatrix{Float64},
         return (values=E.values[1:k], vectors=vectors)
     end
     return nothing
+end
+
+"""
+    _soft_complement_lowest(Mb, blocks, v, threshold)
+
+The eigenpairs below `threshold` of `C = P Mb P` on the complement of the unit
+vector `v` (`P = I - v v'`), whose eigenvalues a soft-direction node floors
+(`_laplace_soft_quadrature_factored`), from `Mb`'s blocks. How many: the
+bordered matrix `[Mb - t I, v; v', 0]` has `C - t`'s inertia plus one of each
+sign, and its own is `Mb - t I`'s plus the sign of `-v'(Mb - t I)^-1 v`, so the
+count is `Mb - t I`'s negative eigenvalues, plus one where `v'(Mb - t I)^-1 v >
+0`, less one (`_laplace_block_ldl`). The pairs: subspace iteration on `C`'s
+shifted inverse on the complement, `(Mb - sigma I)^-1 x - q q'x / beta` with
+`q = (Mb - sigma I)^-1 v` and `beta = v'q`, `sigma` under `Mb`'s least
+eigenvalue (`_laplace_subspace_lowest`). `nothing` where a count, factor or
+iteration fails, or the pairs are over half `C`'s width.
+"""
+function _soft_complement_lowest(Mb::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, v::Vector{Float64}, threshold::Real)
+    d = length(v)
+    k = _soft_complement_count(Mb, blocks, v, threshold)
+    (k === nothing || k < 0) && return nothing
+    k == 0 && return (values=Float64[], vectors=zeros(Float64, d, 0))
+    need = k + max(4, k >> 2)
+    2 * need > d - 1 && return nothing
+    above = _soft_complement_count(Mb, blocks, v, _laplace_lowest_margin(threshold))
+    p = min(max(need, (above === nothing ? k : above) + 2), (d - 1) >> 1)
+    sh = _laplace_lowest_shift(Mb, blocks, threshold)
+    sh === nothing && return nothing
+    F = sh.F
+    q = _soft_solve(F, blocks, v)
+    beta = dot(v, q)
+    return _laplace_subspace_lowest(
+        x -> _soft_off(_soft_solve(F, blocks, x) .- q .* (dot(q, x) / beta), v),
+        x -> _soft_off(_soft_block_mulvec(Mb, blocks, x), v),
+        x -> _soft_off(collect(Float64, x), v), d, k, p, threshold)
+end
+
+"""How many eigenvalues of `P Mb P` on the unit vector `v`'s complement lie
+below `t` (`_soft_complement_lowest`), or `nothing` where `Mb - t I` is
+singular or `v'(Mb - t I)^-1 v` vanishes."""
+function _soft_complement_count(Mb::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, v::Vector{Float64}, t::Real)
+    Fl = _laplace_block_ldl(Mb, blocks, t)
+    Fl === nothing && return nothing
+    sv = dot(v, _laplace_block_ldl_solve(Fl, blocks, v))
+    (isfinite(sv) && !iszero(sv)) || return nothing
+    return Fl.negative + (sv > 0 ? 1 : 0) - 1
+end
+
+"""The point up to which `_laplace_block_lowest`'s subspace takes a vector for
+every eigenvalue: half again past `threshold`, at least 0.05 past it."""
+_laplace_lowest_margin(threshold::Real) =
+    Float64(threshold) + max(0.5 * abs(Float64(threshold)), 0.05)
+
+"""`x` less its part along the unit vector `v`, in place."""
+function _soft_off(x::Vector{Float64}, v::Vector{Float64})
+    c = dot(v, x)
+    @inbounds for i in eachindex(x)
+        x[i] -= c * v[i]
+    end
+    return x
+end
+
+"""
+    _soft_high_solve(Mb, blocks, Z, mu, e)
+
+`(C_H - mu)^-1` applied to `e`'s part in `C_H`'s space: `C = P Mb P` on the
+complement of `v`, `C_H` its restriction to the complement of its low
+eigenvectors as well, `Z = [v W]` orthonormal (`v` and those eigenvectors), and
+`mu` one of the low eigenvalues, so `C_H - mu` is positive definite. The
+bordered system `(Mb - mu I) r + Z eta = e`, `Z'r = 0`, by `Mb - mu I`'s
+indefinite block elimination (`_laplace_block_ldl`) and its `Z'(Mb - mu I)^-1
+Z` Schur complement; what the floor's Daleckii-Krein cross terms between a low
+eigenvector and the rest of `C` need. `nothing` where `mu` is an eigenvalue of
+`Mb` to working precision or the Schur complement is singular.
+"""
+function _soft_high_solve(Mb::CTSEMBlockMatrix{Float64}, blocks::Vector{CTSEMLaplaceBlock},
+    Z::Matrix{Float64}, mu::Float64, e::Vector{Float64})
+    Fl = _laplace_block_ldl(Mb, blocks, mu)
+    Fl === nothing && return nothing
+    nz = size(Z, 2)
+    AZ = Matrix{Float64}(undef, size(Z, 1), nz)
+    for i in 1:nz
+        AZ[:, i] .= _laplace_block_ldl_solve(Fl, blocks, view(Z, :, i))
+    end
+    Ae = _laplace_block_ldl_solve(Fl, blocks, e)
+    S = _laplace_symmetrise(transpose(Z) * AZ)
+    E = _ctsem_symeig(S)
+    scale = maximum(abs, E.values; init=0.0)
+    (scale > 0 && all(l -> abs(l) > 1e-12 * scale, E.values)) || return nothing
+    rhs = transpose(Z) * Ae
+    eta = E.vectors * ((transpose(E.vectors) * rhs) ./ E.values)
+    r = Ae .- AZ * eta
+    r .-= Z * (transpose(Z) * r)
+    return r
+end
+
+# The node floor's low-rank pieces, `f` its function (`_laplace_soft_node_curvature_floor`),
+# for an eigenvalue `mu` of a node's complement below the floor's top, where a
+# Laplace term reads `log mu` and a Newton step `1 / mu`:
+# `log f - log mu`, its slope, `1 / f - 1 / mu`, and that one's slope.
+_soft_floor_logratio(mu::Float64) = log(_laplace_soft_node_curvature_floor(mu)) - log(abs(mu))
+_soft_floor_logratio_slope(mu::Float64) =
+    _laplace_soft_node_curvature_floor_slope(mu) / _laplace_soft_node_curvature_floor(mu) -
+    1 / mu
+_soft_floor_inverse_gap(mu::Float64) = 1 / _laplace_soft_node_curvature_floor(mu) - 1 / mu
+_soft_floor_inverse_gap_slope(mu::Float64) =
+    -_laplace_soft_node_curvature_floor_slope(mu) /
+    _laplace_soft_node_curvature_floor(mu)^2 + 1 / mu^2
+# Its divided difference between two eigenvalues, the slope where they coincide
+# (the dense rule's coincidence test, `_soft_node_floored_curvature_adjoint`).
+function _soft_floor_inverse_gap_divided(a::Float64, b::Float64)
+    abs(a - b) <= 1e-12 * max(1.0, abs(a)) && return _soft_floor_inverse_gap_slope(a)
+    return (_soft_floor_inverse_gap(a) - _soft_floor_inverse_gap(b)) / (a - b)
 end
 
 """
@@ -7094,17 +7351,25 @@ factorization (`_laplace_block_factor`): that elimination writes `M = K K'`,
 `K` block lower triangular, and `x = K^-T z`, back substitution alone,
 outermost block first. Each block's `K^-T` part is its Cholesky factor's inverse
 less what its ancestors' draws carry down through its couplings.
+
+`K = Lbar D^1/2`, `Lbar` the elimination's unit block lower triangle (`B_b' D_b^-1`
+below block `b`'s diagonal, `B_b` its couplings to its ancestors after its
+descendants' elimination, `D_b = U_b'U_b` its pivot) and `D^1/2` the pivots'
+lower factors `U_b'`, so `K' = blockdiag(U_b) Lbar'`. The map sampler takes
+`K'` as a unit's root (`_jmap_unit`), with `_laplace_block_lsolve` and
+`_laplace_block_rmul` the rest of its algebra.
 """
 function _laplace_block_draw(factors, coupling, blocks::Vector{CTSEMLaplaceBlock},
-    z::AbstractVector{Float64})
+    z::AbstractVector)
     nb = length(blocks)
-    x = [zeros(Float64, blocks[b].size) for b in 1:nb]
+    T = promote_type(eltype(factors[1].U), eltype(z))
+    x = [zeros(T, blocks[b].size) for b in 1:nb]
     for b in nb:-1:1
         o, k = blocks[b].offset, blocks[b].size
         R = factors[b].U
         w = x[b]
         @inbounds for i in k:-1:1
-            t = z[o + i]
+            t = T(z[o + i])
             for j in (i + 1):k
                 t -= R[i, j] * w[j]
             end
@@ -7112,15 +7377,111 @@ function _laplace_block_draw(factors, coupling, blocks::Vector{CTSEMLaplaceBlock
         end
         ancestors = blocks[b].ancestors
         isempty(ancestors) && continue
-        acc = zeros(Float64, k)
+        acc = zeros(T, k)
         for (t, a) in enumerate(ancestors)
             acc .+= coupling[b][t] * x[a]
         end
         w .-= factors[b] \ acc
     end
-    out = zeros(Float64, sum(b.size for b in blocks; init=0))
-    for b in 1:nb
-        out[(blocks[b].offset + 1):(blocks[b].offset + blocks[b].size)] .= x[b]
+    return _laplace_block_gather(x, blocks, T)
+end
+
+"""
+    _laplace_block_lsolve(factors, coupling, blocks, b)
+
+`K^-1 b` for `M = K K'` (`_laplace_block_draw`): the elimination's forward
+pass, innermost block first, each block's pivot solved through its lower factor
+`U_b'` and what it leaves carried to its ancestors. The transpose of
+`_laplace_block_draw`'s map: the gradient's pullback through `x = K^-T z`.
+"""
+function _laplace_block_lsolve(factors, coupling, blocks::Vector{CTSEMLaplaceBlock},
+    b::AbstractVector)
+    nb = length(blocks)
+    T = promote_type(eltype(factors[1].U), eltype(b))
+    y = [T.(b[(blocks[c].offset + 1):(blocks[c].offset + blocks[c].size)]) for c in 1:nb]
+    out = [zeros(T, blocks[c].size) for c in 1:nb]
+    for c in 1:nb
+        k = blocks[c].size
+        R = factors[c].U
+        t = out[c]
+        @inbounds for i in 1:k
+            s = y[c][i]
+            for j in 1:(i - 1)
+                s -= R[j, i] * t[j]
+            end
+            t[i] = s / R[i, i]
+        end
+        ancestors = blocks[c].ancestors
+        isempty(ancestors) && continue
+        # D_c^-1 y_c = U_c^-1 t, then into the ancestors through the couplings.
+        wc = similar(t)
+        @inbounds for i in k:-1:1
+            s = t[i]
+            for j in (i + 1):k
+                s -= R[i, j] * wc[j]
+            end
+            wc[i] = s / R[i, i]
+        end
+        for (s, a) in enumerate(ancestors)
+            y[a] .-= transpose(coupling[c][s]) * wc
+        end
+    end
+    return _laplace_block_gather(out, blocks, T)
+end
+
+"""
+    _laplace_block_rmul(factors, coupling, blocks, x)
+
+`K' x` for `M = K K'` (`_laplace_block_draw`): each block's own part plus its
+pivot's inverse applied to what its couplings take from its ancestors, then
+its upper factor. `_laplace_block_draw`'s inverse.
+"""
+function _laplace_block_rmul(factors, coupling, blocks::Vector{CTSEMLaplaceBlock},
+    x::AbstractVector)
+    nb = length(blocks)
+    T = promote_type(eltype(factors[1].U), eltype(x))
+    out = [zeros(T, blocks[c].size) for c in 1:nb]
+    part(c) = x[(blocks[c].offset + 1):(blocks[c].offset + blocks[c].size)]
+    for c in 1:nb
+        k = blocks[c].size
+        y = T.(part(c))
+        ancestors = blocks[c].ancestors
+        if !isempty(ancestors)
+            acc = zeros(T, k)
+            for (s, a) in enumerate(ancestors)
+                acc .+= coupling[c][s] * part(a)
+            end
+            y .+= factors[c] \ acc
+        end
+        R = factors[c].U
+        @inbounds for i in 1:k
+            s = zero(T)
+            for j in i:k
+                s += R[i, j] * y[j]
+            end
+            out[c][i] = s
+        end
+    end
+    return _laplace_block_gather(out, blocks, T)
+end
+
+"""`log det K` for `M = K K'` (`_laplace_block_draw`): half `M`'s log determinant."""
+function _laplace_block_halflogdet(factors, blocks::Vector{CTSEMLaplaceBlock})
+    total = zero(eltype(factors[1].U))
+    for c in eachindex(blocks)
+        R = factors[c].U
+        @inbounds for i in 1:blocks[c].size
+            total += log(R[i, i])
+        end
+    end
+    return total
+end
+
+"""Per-block vectors laid out in the unit's coordinates."""
+function _laplace_block_gather(parts, blocks::Vector{CTSEMLaplaceBlock}, ::Type{T}) where {T}
+    out = zeros(T, sum(b.size for b in blocks; init=0))
+    for c in eachindex(blocks)
+        out[(blocks[c].offset + 1):(blocks[c].offset + blocks[c].size)] .= parts[c]
     end
     return out
 end
@@ -7233,13 +7594,49 @@ function _soft_deflated_solve(eig, blocks::Vector{CTSEMLaplaceBlock},
 end
 
 """
+The centre node's floored complement (`_laplace_soft_quadrature_factored`):
+`M`'s eigenpairs after the smallest, `(lambda1, v1)`, that lie below the
+floor's `top`, and the `log f - log lambda` they add to the logdet: none where
+the second eigenvalue is at least `top`. `nothing` where they cannot be had
+from `M`'s blocks (`_laplace_block_lowest`).
+"""
+function _soft_centre_floor(M::CTSEMBlockMatrix{Float64}, blocks::Vector{CTSEMLaplaceBlock},
+    v1::Vector{Float64}, lam1::Float64, top::Float64)
+    d = length(v1)
+    _soft_second_above(M, blocks, v1, lam1, top) &&
+        return (values=Float64[], vectors=zeros(Float64, d, 0), logratio=0.0)
+    low = _laplace_block_lowest(M, blocks, top)
+    (low === nothing || length(low.values) < 2) && return nothing
+    values = low.values[2:end]
+    return (values=values, vectors=low.vectors[:, 2:end],
+        logratio=sum(_soft_floor_logratio, values; init=0.0))
+end
+
+"""
+A node's floored complement: the eigenpairs below the floor's `top` of `Mb`'s
+complement to `v1` (`_soft_complement_lowest`), none where `Mb - top I`
+factors, since its complement's eigenvalues are then no smaller (interlacing).
+"""
+function _soft_node_low_pairs(Mb::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, v1::Vector{Float64}, top::Float64)
+    _soft_shifted_factor(Mb, blocks, top) === nothing ||
+        return (values=Float64[], vectors=zeros(Float64, length(v1), 0))
+    return _soft_complement_lowest(Mb, blocks, v1, top)
+end
+
+"""
     _laplace_soft_quadrature_factored(laplace, M, blocks, logdetM, g, u, objf, curvf)
 
 `_laplace_soft_quadrature_term`'s Float64 value, past its gate, by block
 factorizations (see the section comment), returned as the term returns it; or
-`nothing` where the unit takes the dense rule: `M` not factoring at the mode,
-one coordinate, the floor binding at the mode or at a node, or an iteration
-not settling. `objf(z)` and `curvf(z)` are the unit objective and its block
+`nothing` where the unit takes the dense rule: `M` not factoring at the mode
+or a node's curvature at the node, one coordinate, or an eigenpair not to be
+had from the blocks. Where the floor binds -- the centre's complement, `M`'s
+eigenvalues after the first, or a node's complement has eigenvalues below its
+top -- those eigenpairs carry it (`_soft_centre_floor`, `_soft_node_low_pairs`):
+with `mu_k, w_k` the node complement's, the step on the floored complement is
+the bordered step plus `sum_k (1 / f(mu_k) - 1 / mu_k) w_k w_k' grad`, and its
+logdet the bordered logdet plus `sum_k (log f(mu_k) - log mu_k)`. `objf(z)` and `curvf(z)` are the unit objective and its block
 curvature, `logdetM` the term's joint logdet and `g` the objective at `u`.
 """
 function _laplace_soft_quadrature_factored(laplace::CTSEMLaplaceObjective,
@@ -7259,28 +7656,39 @@ function _laplace_soft_quadrature_factored(laplace::CTSEMLaplaceObjective,
     w = _laplace_smoothstep_weight(lam1, lo, hi)
     iszero(w) && return (value=lap, flagged=true, logdet_floor=false)
     top = _laplace_soft_node_curvature_floor_top()
-    _soft_second_above(M, blocks, v1, lam1, top) || return nothing
+    # The centre's complement is M's other eigenpairs, and those below the
+    # floor's top are floored: their `log f - log lambda` added to the logdet.
+    centre = _soft_centre_floor(M, blocks, v1, lam1, top)
+    centre === nothing && return nothing
     lam1c = max(lam1, 1.0)
     xs, ws = _gauss_hermite(3)
     terms = zeros(Float64, length(xs))
     for j in eachindex(xs)
         x = xs[j]
         h = if abs(x) < 1e-12
-            g - (F0.logdet - log(lam1)) / 2
+            g - (F0.logdet - log(lam1) + centre.logratio) / 2
         else
             ub = u .+ (sqrt(2) * x / sqrt(lam1c)) .* v1
             r = objf(ub)
             _laplace_soft_node_outside(r.value) && (terms[j] = -Inf; continue)
             Mb = curvf(ub)
-            _soft_shifted_factor(Mb, blocks, top) === nothing && return nothing
-            Fb = _soft_shifted_factor(Mb, blocks, 0.0)
+            Fb = _soft_node_factor(Mb, blocks)
             Fb === nothing && return nothing
+            low = _soft_node_low_pairs(Mb, blocks, v1, top)
+            low === nothing && return nothing
             q = _soft_solve(Fb, blocks, v1)
             beta = dot(v1, q)
             y = _soft_solve(Fb, blocks, r.gradient)
             zz = ub .+ y .- q .* (dot(v1, y) / beta)
+            ratio = 0.0
+            # The floored eigenvalues' share of the step and of the logdet.
+            for (k, mu) in enumerate(low.values)
+                wk = view(low.vectors, :, k)
+                zz .+= wk .* (_soft_floor_inverse_gap(mu) * dot(wk, r.gradient))
+                ratio += _soft_floor_logratio(mu)
+            end
             _laplace_soft_node_stepped(Float64(r.value), Float64(objf(zz).value)) -
-                (Fb.logdet + log(beta)) / 2
+                (Fb.logdet + log(abs(beta)) + ratio) / 2
         end
         terms[j] = h + log(ws[j]) + x^2
     end

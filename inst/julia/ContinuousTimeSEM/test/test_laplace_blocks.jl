@@ -131,3 +131,162 @@ end
         end
     end
 end
+
+@testset "a nested unit's indefinite elimination counts, solves and inverts" begin
+    for (name, M0, blocks, d) in (("two levels", _blocks_nested(30)...),
+                                  ("three levels", _blocks_nested(24; leaf=3, nmid=4)...))
+        dense0 = _CB._laplace_block_dense(M0, blocks, d)
+        lam0 = eigvals(Symmetric(dense0))
+        for c in (lam0[1] - 0.3, lam0[2] + 1e-3, (lam0[5] + lam0[6]) / 2)
+            M = _blocks_shift(M0, c)
+            A = Symmetric(dense0 - c * I)
+            for s in (0.0, 0.2)
+                F = _CB._laplace_block_ldl(M, blocks, s)
+                @test F !== nothing
+                @test F.negative == count(<(s), eigvals(A))
+                @test isapprox(F.logabsdet, logabsdet(Matrix(A) - s * I)[1]; rtol=1e-10)
+                x = [sin(0.3 * i) for i in 1:d]
+                @test isapprox(_CB._laplace_block_ldl_solve(F, blocks, x),
+                    (Matrix(A) - s * I) \ x; rtol=1e-9)
+            end
+            # A node's factor: Cholesky where definite, the elimination's
+            # pivots otherwise, which the block solve and the selected inverse
+            # take alike.
+            F = _CB._soft_node_factor(M, blocks)
+            Ainv = inv(A)
+            x = [cos(0.7 * i) for i in 1:d]
+            @test isapprox(_CB._soft_solve(F, blocks, x), Ainv * x; rtol=1e-9)
+            @test isapprox(F.logdet, logabsdet(Matrix(A))[1]; rtol=1e-10)
+            Cd, Cc = _CB._laplace_selected_inverse(F.factors, F.coupling, blocks)
+            for (b, blk) in enumerate(blocks)
+                rb = (blk.offset + 1):(blk.offset + blk.size)
+                @test isapprox(Cd[b], Ainv[rb, rb]; rtol=1e-8, atol=1e-11)
+                for (t, a) in enumerate(blk.ancestors)
+                    ra = (blocks[a].offset + 1):(blocks[a].offset + blocks[a].size)
+                    @test isapprox(Cc[b][t], Ainv[rb, ra]; rtol=1e-8, atol=1e-11)
+                end
+            end
+        end
+    end
+end
+
+@testset "a soft node's floored complement and its high-space solves" begin
+    top = _CB._laplace_soft_node_curvature_floor_top()
+    for (name, M0, blocks, d) in (("two levels", _blocks_nested(30)...),
+                                  ("three levels", _blocks_nested(24; leaf=3, nmid=4)...))
+        dense0 = _CB._laplace_block_dense(M0, blocks, d)
+        lam0 = eigvals(Symmetric(dense0))
+        v = normalize([1 + 0.5 * sin(1.3 * i) for i in 1:d])
+        Vh = nullspace(transpose(v))
+        # Definite with a few pairs under the top, and indefinite.
+        for c in (lam0[1] - 0.05, lam0[2] + 1e-3)
+            M = _blocks_shift(M0, c)
+            A = Symmetric(dense0 - c * I)
+            E = eigen(Symmetric(transpose(Vh) * A * Vh))
+            k = count(<(top), E.values)
+            low = _CB._soft_complement_lowest(M, blocks, v, top)
+            @test low !== nothing
+            low === nothing && continue
+            @test length(low.values) == k
+            @test isapprox(low.values, E.values[1:k]; rtol=1e-8, atol=1e-10)
+            W = low.vectors
+            @test maximum(abs, transpose(W) * v; init=0.0) < 1e-10
+            for j in 1:k
+                r = _CB._soft_off(Vector(A * W[:, j]), v) .- low.values[j] .* W[:, j]
+                @test norm(r) <= 1e-8 * max(1.0, abs(low.values[j]))
+            end
+            # (C_H - mu)^-1 on the complement of v and the low pairs.
+            Z = hcat(v, W)
+            Ph = I - Z * transpose(Z)
+            e = [cos(0.4 * i) for i in 1:d]
+            for j in 1:k
+                r = _CB._soft_high_solve(M, blocks, Z, low.values[j], e)
+                @test r !== nothing
+                @test maximum(abs, transpose(Z) * r; init=0.0) < 1e-9
+                @test isapprox(Ph * (Matrix(A) * r .- low.values[j] .* r), Ph * e;
+                    rtol=1e-8, atol=1e-10)
+            end
+        end
+    end
+end
+
+@testset "the map's root from a nested unit's block elimination" begin
+    for (name, M, blocks, d) in (("two levels", _blocks_nested(30)...),
+                                 ("three levels", _blocks_nested(24; leaf=3, nmid=4)...))
+        dense = _CB._laplace_block_dense(M, blocks, d)
+        ok, _, factors, coupling = _CB._laplace_block_factor(M, blocks)
+        @test ok
+        Id = Matrix{Float64}(I, d, d)
+        # Q = K K': K^-T by columns, K^-1 its transpose, K' its inverse.
+        X = reduce(hcat, [_CB._laplace_block_draw(factors, coupling, blocks, Id[:, j])
+            for j in 1:d])
+        Y = reduce(hcat, [_CB._laplace_block_lsolve(factors, coupling, blocks, Id[:, j])
+            for j in 1:d])
+        R = reduce(hcat, [_CB._laplace_block_rmul(factors, coupling, blocks, Id[:, j])
+            for j in 1:d])
+        @test isapprox(X * transpose(X), inv(Symmetric(dense)); rtol=1e-9)
+        @test isapprox(Y, transpose(X); rtol=1e-9, atol=1e-12)
+        @test isapprox(R * X, Id; atol=1e-9)
+        @test isapprox(transpose(R) * R, dense; rtol=1e-10)
+        @test isapprox(_CB._laplace_block_halflogdet(factors, blocks),
+            logdet(Symmetric(dense)) / 2; rtol=1e-12)
+    end
+end
+
+@testset "the soft rule's centre takes a binding floor from the unit's blocks" begin
+    # A nested unit whose curvature at the mode has distinct eigenvalues under
+    # the floor's top -- one leaf, then two, given low ones -- on a cubic
+    # integrand: the factored rule's value against the dense rule's, which
+    # floors the centre's complement eigenvalue by eigenvalue. The objective's
+    # laplace object only lends its gate.
+    isdefined(@__MODULE__, :_LAPLACE_LINEAR_OBJECTIVE) ||
+        include(joinpath(@__DIR__, "laplace_fixtures.jl"))
+    laplace, _ = _fresh_twolevel()
+    ctsem_set_soft_directions!(laplace, :quadrature; lo=0.2, hi=0.7)
+    top = _CB._laplace_soft_node_curvature_floor_top()
+    Q4 = Matrix(qr([sin(1.1 * i + 0.7 * j) for i in 1:4, j in 1:4]).Q)
+    for lows in ([0.08, 0.2], [0.08, 0.2, 0.26])
+        Ab, blocks, d = _blocks_nested(30)
+        Ab.diag[1] .= Q4 * Diagonal([lows[1], lows[2], 1.5, 2.5]) * transpose(Q4)
+        if length(lows) > 2
+            Ab.diag[2] .= Q4 * Diagonal([lows[3], 1.2, 1.8, 2.2]) * transpose(Q4)
+        end
+        A = Symmetric(_CB._laplace_block_dense(Ab, blocks, d))
+        E = eigen(A)
+        lam = E.values
+        nlow = count(<(top), lam)
+        @test lam[1] > 0
+        @test nlow == length(lows)
+        @test lam[2] - lam[1] > 0.05
+        u = zeros(d)
+        k3 = [0.02 * sin(0.9 * i) for i in 1:d]
+        objf = z -> (value=-dot(z, A * z) / 2 + sum(k3 .* z .^ 3),
+            gradient=-(A * z) .+ 3 .* k3 .* z .^ 2, hlogdet=0.0)
+        curvf = z -> begin
+            M = _blocks_shift(Ab, 0.0)
+            for (b, blk) in enumerate(blocks), i in 1:blk.size
+                M.diag[b][i, i] -= 6 * k3[blk.offset + i] * z[blk.offset + i]
+            end
+            M
+        end
+        ok, logdetM, _, _ = _CB._laplace_block_factor(Ab, blocks)
+        @test ok
+        centre = _CB._soft_centre_floor(Ab, blocks, E.vectors[:, 1], lam[1], top)
+        @test centre !== nothing
+        centre === nothing && continue
+        @test isapprox(centre.values, lam[2:nlow]; rtol=1e-8)
+        fv = _CB._laplace_soft_quadrature_factored(laplace, Ab, blocks, logdetM, 0.0, u,
+            objf, curvf)
+        @test fv !== nothing
+        @test fv !== nothing && !fv.logdet_floor
+        previous = ctsem_set_soft_quadrature_factored!(false)
+        dv = try
+            _CB._laplace_soft_quadrature_term(laplace, 1, Float64[], Matrix{Float64}[], u,
+                nothing; M=Ab, logdetM=logdetM, inner=objf(u), objective=objf,
+                curvature=curvf, blocks=blocks)
+        finally
+            ctsem_set_soft_quadrature_factored!(previous)
+        end
+        fv === nothing || @test isapprox(fv.value, dv.value; rtol=1e-11)
+    end
+end

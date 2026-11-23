@@ -884,13 +884,18 @@ end
     return acc
 end
 
-# Unit U's conditional given theta for the members' summaries: Q_U factored in
-# place (`_ctsem_cholesky`, upper) and the mean m_U. `Ls`, `mu = theta[P]`,
-# `shift = theta[R] - thref[R]` and the extended theta `th` at theta. Lock-free
-# kernels throughout: it runs on every leapfrog step of chains that run at
-# once.
+# Unit U's conditional given theta for the members' summaries: Q_U factored
+# (`_JMapUnitFactor`) and the mean m_U. `Ls`, `mu = theta[P]`, `shift =
+# theta[R] - thref[R]` and the extended theta `th` at theta. Lock-free kernels
+# throughout: it runs on every leapfrog step of chains that run at once. A unit
+# of nested blocks -- persons in a study -- is built and factored on its blocks
+# (`_jmap_unit_blocked`); a unit of one block in place (`_ctsem_cholesky`,
+# upper).
 function _jmap_unit(m::CTSEMJointMap, Ls, mu::AbstractVector{T}, shift::AbstractVector,
     th::AbstractVector, U::Int) where {T}
+    blocks = m.sampler.laplace.units.blocks[U]
+    _JMAP_BLOCKS[] && length(blocks) > 1 &&
+        return _jmap_unit_blocked(m, Ls, mu, shift, th, U, blocks)
     d = m.sampler.udims[U]
     nP = length(m.P)
     Q = Matrix{T}(I, d, d)
@@ -912,7 +917,320 @@ function _jmap_unit(m::CTSEMJointMap, Ls, mu::AbstractVector{T}, shift::Abstract
     end
     F = _ctsem_cholesky(Q, d)
     F.ok || throw(DomainError(U, "a unit's conditional precision did not factor"))
-    return F, F \ c
+    return _JMapUnitFactor(F), F \ c
+end
+
+"""Whether the map builds a nested unit's `Q_U` from its blocks, or densely."""
+const _JMAP_BLOCKS = Ref(true)
+
+"""
+    ctsem_set_map_blocks!(on)
+
+Build a nested unit's conditional precision in the learnt map from the unit's
+blocks (`true`, the default), or densely (`false`, the oracle): the same
+precision and mean, its root differing by a rotation, at the unit's width
+squared in storage and cubed a leapfrog step. Returns the previous setting.
+"""
+function ctsem_set_map_blocks!(on::Bool)
+    previous = _JMAP_BLOCKS[]
+    _JMAP_BLOCKS[] = on
+    return previous
+end
+export ctsem_set_map_blocks!
+
+"""
+A unit's conditional precision `Q_U` factored as the map's root: densely, `Q_U
+= U'U` and the root `U` (`dense`), or for a unit of nested blocks from its
+block elimination, `Q_U = K K'` and the root `K'` (`factors`, `coupling`,
+`blocks`; `_laplace_block_draw`). Either root makes the change of variables
+exact; they differ by a rotation of the unit's latent coordinates.
+"""
+struct _JMapUnitFactor{T}
+    dense::CTSEMCholesky{T,Matrix{T}}
+    factors::Vector{CTSEMCholesky{T,Matrix{T}}}
+    coupling::Vector{Vector{Matrix{T}}}
+    blocks::Vector{CTSEMLaplaceBlock}
+end
+_JMapUnitFactor(F::CTSEMCholesky{T,Matrix{T}}) where {T} = _JMapUnitFactor{T}(F,
+    CTSEMCholesky{T,Matrix{T}}[], Vector{Matrix{T}}[], CTSEMLaplaceBlock[])
+_JMapUnitFactor(factors::Vector{CTSEMCholesky{T,Matrix{T}}},
+    coupling::Vector{Vector{Matrix{T}}}, blocks::Vector{CTSEMLaplaceBlock}) where {T} =
+    _JMapUnitFactor{T}(CTSEMCholesky(zeros(T, 0, 0), 0, true), factors, coupling, blocks)
+_jmap_blocked(F::_JMapUnitFactor) = !isempty(F.factors)
+
+# The root's algebra: `R^-1 b`, `R^-T b`, `R b` and `log det R`, for either root.
+_jmap_usolve(F::_JMapUnitFactor, b::AbstractVector) = _jmap_blocked(F) ?
+    _laplace_block_draw(F.factors, F.coupling, F.blocks, b) : _jmap_usolve(F.dense, b)
+_jmap_utsolve(F::_JMapUnitFactor, b::AbstractVector) = _jmap_blocked(F) ?
+    _laplace_block_lsolve(F.factors, F.coupling, F.blocks, b) : _jmap_utsolve(F.dense, b)
+_jmap_umul(F::_JMapUnitFactor, b::AbstractVector) = _jmap_blocked(F) ?
+    _laplace_block_rmul(F.factors, F.coupling, F.blocks, b) : _jmap_umul(F.dense, b)
+function _jmap_halflogdet(F::_JMapUnitFactor{T}) where {T}
+    _jmap_blocked(F) && return _laplace_block_halflogdet(F.factors, F.blocks)
+    acc = zero(T)
+    @inbounds for i in 1:F.dense.d
+        acc += log(F.dense.U[i, i])
+    end
+    return acc
+end
+
+"""A unit's blocks by their offset in its coordinates."""
+_jmap_blockat(blocks::Vector{CTSEMLaplaceBlock}) =
+    Dict{Int,Int}(b.offset => t for (t, b) in enumerate(blocks))
+
+"""
+Member `s`'s chain of blocks in unit `U`, innermost first: `(level, block,
+column)` for each level it has coordinates at, `column` where that block starts
+in the chain's own columns; and the chain's width. Each block after the first
+is an ancestor of every block before it.
+"""
+function _jmap_member_chain(m::CTSEMJointMap, U::Int, s::Int,
+    blocks::Vector{CTSEMLaplaceBlock}, blockat::Dict{Int,Int})
+    laplace = m.sampler.laplace
+    offsets = laplace.units.offsets[U][m.sampler.flat_member[s]]
+    chain = Tuple{Int,Int,Int}[]
+    col = 0
+    for (l, level) in enumerate(laplace.spec.levels)
+        (nrandomeffects(level) == 0 || nlatent(level) == 0) && continue
+        b = blockat[offsets[l]]
+        push!(chain, (l, b, col))
+        col += blocks[b].size
+    end
+    return chain, col
+end
+
+"""Member `s`'s `J_s` on its chain's columns, as `_jmap_jacobian!` lays it on
+the unit's."""
+function _jmap_chain_jacobian!(J::AbstractMatrix{T}, m::CTSEMJointMap, Ls,
+    chain::Vector{Tuple{Int,Int,Int}}) where {T}
+    spec = m.sampler.laplace.spec
+    fill!(J, zero(T))
+    @inbounds for (l, _, col) in chain
+        level = spec.levels[l]
+        L = Ls[l]
+        for p in 1:nrandomeffects(level)
+            i = m.row[level.re_index[p]]
+            for q in 1:nlatent(level)
+                J[i, col + q] += L[p, q]
+            end
+        end
+    end
+    return J
+end
+
+"""Where block `e` sits in block `c`'s chain, `c` then its ancestors: 1 for `c`
+itself, `nothing` where `e` is neither."""
+function _jmap_chain_slot(blocks::Vector{CTSEMLaplaceBlock}, c::Int, e::Int)
+    c == e && return 1
+    t = findfirst(==(e), blocks[c].ancestors)
+    return t === nothing ? nothing : t + 1
+end
+
+# Unit U's conditional for a unit of nested blocks: `Q_U` in the unit's block
+# storage, each member adding to its own chain's diagonal blocks and couplings,
+# factored by the block elimination, its mean by a block solve. Storage and
+# work are linear in the members, where the dense build was the width squared
+# and its factor the width cubed, at every leapfrog step.
+function _jmap_unit_blocked(m::CTSEMJointMap, Ls, mu::AbstractVector{T},
+    shift::AbstractVector, th::AbstractVector, U::Int,
+    blocks::Vector{CTSEMLaplaceBlock}) where {T}
+    nP = length(m.P)
+    Q = CTSEMBlockMatrix(T, blocks)
+    for D in Q.diag
+        for i in axes(D, 1)
+            D[i, i] = one(T)
+        end
+    end
+    c = zeros(T, m.sampler.udims[U])
+    blockat = _jmap_blockat(blocks)
+    lin = zeros(T, nP)
+    for s in m.members[U]
+        chain, nc = _jmap_member_chain(m, U, s, blocks, blockat)
+        Jc = zeros(T, nP, nc)
+        _jmap_chain_jacobian!(Jc, m, Ls, chain)
+        LJ = zeros(T, nP, nc)
+        _ctsem_mul!(LJ, m.Lam[s], Jc)
+        @inbounds for a in 1:nP
+            lin[a] = _jmap_lin(m, s, a, mu, shift, th)
+        end
+        for k1 in eachindex(chain)
+            _, b1, c1 = chain[k1]
+            r1 = blocks[b1].size
+            o1 = blocks[b1].offset
+            J1 = view(Jc, :, (c1 + 1):(c1 + r1))
+            @inbounds for q in 1:r1, a in 1:nP
+                c[o1 + q] += J1[a, q] * lin[a]
+            end
+            _ctsem_mulTN!(Q.diag[b1], J1, view(LJ, :, (c1 + 1):(c1 + r1)), true, true)
+            for k2 in (k1 + 1):length(chain)
+                _, b2, c2 = chain[k2]
+                t = findfirst(==(b2), blocks[b1].ancestors)::Int
+                _ctsem_mulTN!(Q.coupling[b1][t], J1,
+                    view(LJ, :, (c2 + 1):(c2 + blocks[b2].size)), true, true)
+            end
+        end
+    end
+    ok, _, factors, coupling = _laplace_block_factor(Q, blocks)
+    ok || throw(DomainError(U, "a unit's conditional precision did not factor"))
+    return _JMapUnitFactor(factors, coupling, blocks),
+        _laplace_block_solve(factors, coupling, blocks, c)
+end
+
+"""
+Murray's `P` (`_jmap_unit_adjoint!`) on blocks `a` by `a2`, in the block
+elimination's order -- block, then within it -- which is the order of the
+lower factor `K`: off the diagonal the later coordinate's `z` times the
+earlier's `w`, halved and negated; on it `-(z_i w_i + 1) / 2`.
+"""
+function _jmap_murray_block(z::Vector{Float64}, w::Vector{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, a::Int, a2::Int)
+    oa, ka = blocks[a].offset, blocks[a].size
+    ob, kb = blocks[a2].offset, blocks[a2].size
+    P = Matrix{Float64}(undef, ka, kb)
+    @inbounds for j in 1:kb, i in 1:ka
+        ii, jj = oa + i, ob + j
+        P[i, j] = if a == a2 && i == j
+            -(z[ii] * w[ii] + 1) / 2
+        elseif a > a2 || (a == a2 && i > j)
+            -z[ii] * w[jj] / 2
+        else
+            -z[jj] * w[ii] / 2
+        end
+    end
+    return P
+end
+
+# Unit U's reverse pass on its blocks: `_jmap_unit_adjoint!`'s algebra with the
+# root `K'` of the block elimination, which is the Cholesky factor of `Q` in the
+# elimination's order, so Murray's adjoint holds there. `X = K^-T` has a block
+# at `(c, a)` only for `a` in `c`'s chain, and `Q`, so its gradient `S`, is read
+# only on the pattern -- each block with itself and its ancestors -- whose
+# entries need `X` and `P` on chains alone. Each member then takes `S` on its
+# own chain, as the dense pass takes it on the unit.
+function _jmap_unit_adjoint_blocked!(work, m::CTSEMJointMap, Ls, mu,
+    shift, th, U::Int, F::_JMapUnitFactor{Float64}, u::Vector{Float64},
+    g::Vector{Float64}, z::AbstractVector)
+    sampler = m.sampler
+    spec = sampler.laplace.spec
+    blocks, factors, coupling = F.blocks, F.factors, F.coupling
+    nb = length(blocks)
+    nP = length(m.P)
+    nR = length(m.R)
+    coupled = !isempty(work.Rbar)
+    zv = collect(Float64, z)
+    y = _laplace_block_draw(factors, coupling, blocks, zv)
+    w = _laplace_block_lsolve(factors, coupling, blocks, g)
+    v = _laplace_block_draw(factors, coupling, blocks, w)
+    mean = u .- y
+    part(x, c) = view(x, (blocks[c].offset + 1):(blocks[c].offset + blocks[c].size))
+    # X's blocks along each chain, outermost block first: `X[c][1] = U_c^-1`,
+    # and at the chain's k-th ancestor `-D_c^-1` of the couplings times the
+    # ancestors' own blocks there.
+    X = Vector{Vector{Matrix{Float64}}}(undef, nb)
+    for c in nb:-1:1
+        anc = blocks[c].ancestors
+        Xc = Vector{Matrix{Float64}}(undef, 1 + length(anc))
+        Xc[1] = _ctsem_cholesky_uinv(factors[c])
+        for (k, a) in enumerate(anc)
+            acc = zeros(blocks[c].size, blocks[a].size)
+            for (t, at) in enumerate(anc)
+                slot = _jmap_chain_slot(blocks, at, a)
+                slot === nothing && continue
+                acc .+= coupling[c][t] * X[at][slot]
+            end
+            Xc[k + 1] = -(factors[c] \ acc)
+        end
+        X[c] = Xc
+    end
+    # S on the pattern: `S[c][k]` at block c and its chain's k-th block.
+    S = Vector{Vector{Matrix{Float64}}}(undef, nb)
+    for c in 1:nb
+        chc = vcat(c, blocks[c].ancestors)
+        Sc = Vector{Matrix{Float64}}(undef, length(chc))
+        for (k, e) in enumerate(chc)
+            che = vcat(e, blocks[e].ancestors)
+            acc = zeros(blocks[c].size, blocks[e].size)
+            for (i1, a) in enumerate(chc), (i2, a2) in enumerate(che)
+                acc .+= X[c][i1] * _jmap_murray_block(zv, w, blocks, a, a2) *
+                    transpose(X[e][i2])
+            end
+            vc, ve, mc, me = part(v, c), part(v, e), part(mean, c), part(mean, e)
+            @inbounds for j in axes(acc, 2), i in axes(acc, 1)
+                acc[i, j] -= (vc[i] * me[j] + mc[i] * ve[j]) / 2
+            end
+            Sc[k] = acc
+        end
+        S[c] = Sc
+    end
+    lin = work.lin
+    linb = work.linb
+    blockat = _jmap_blockat(blocks)
+    for s in m.members[U]
+        chain, nc = _jmap_member_chain(m, U, s, blocks, blockat)
+        Jc = zeros(nP, nc)
+        _jmap_chain_jacobian!(Jc, m, Ls, chain)
+        Lam = m.Lam[s]
+        LJ = zeros(nP, nc)
+        _ctsem_mul!(LJ, Lam, Jc)
+        Sch = zeros(nc, nc)
+        vch = zeros(nc)
+        for (k1, (_, b1, c1)) in enumerate(chain)
+            r1 = blocks[b1].size
+            vch[(c1 + 1):(c1 + r1)] .= part(v, b1)
+            for (k2, (_, b2, c2)) in enumerate(chain)
+                cols = (c2 + 1):(c2 + blocks[b2].size)
+                if k2 >= k1
+                    Sch[(c1 + 1):(c1 + r1), cols] .= S[b1][_jmap_chain_slot(blocks, b1, b2)::Int]
+                else
+                    Sch[(c1 + 1):(c1 + r1), cols] .=
+                        transpose(S[b2][_jmap_chain_slot(blocks, b2, b1)::Int])
+                end
+            end
+        end
+        @inbounds for a in 1:nP
+            lin[a] = _jmap_lin(m, s, a, mu, shift, th)
+            t = 0.0
+            for q in 1:nc
+                t += Jc[a, q] * vch[q]
+            end
+            linb[a] = t
+        end
+        Jb = zeros(nP, nc)
+        _ctsem_mul!(Jb, LJ, Sch, 2.0, false)
+        @inbounds for q in 1:nc, a in 1:nP
+            Jb[a, q] += lin[a] * vch[q]
+        end
+        @inbounds for a in 1:nP
+            acc = 0.0
+            for b in 1:nP
+                acc += Lam[a, b] * linb[b]
+            end
+            work.mubar[a] -= acc
+        end
+        if coupled
+            G = m.G[s]
+            own = m.own[s]
+            @inbounds for b in 1:(nR + length(own))
+                acc = 0.0
+                for a in 1:nP
+                    acc += G[a, b] * linb[a]
+                end
+                work.Rbar[b <= nR ? m.R[b] : own[b - nR]] -= acc
+            end
+        end
+        # The roots' cotangents, where `_jmap_chain_jacobian!` placed each entry.
+        @inbounds for (l, _, col) in chain
+            level = spec.levels[l]
+            Lb = work.Lbar[l]
+            for p in 1:nrandomeffects(level)
+                i = m.row[level.re_index[p]]
+                for q in 1:nlatent(level)
+                    Lb[p, q] += Jb[i, col + q]
+                end
+            end
+        end
+    end
+    return work
 end
 
 # `U \ b` and `U' \ b` for a factor's upper triangle.
@@ -978,14 +1296,14 @@ function _jmap_effects(m::CTSEMJointMap, theta::AbstractVector{T},
     shift = th[m.R] .- m.thref[m.R]
     nunits = sampler.nunits
     us = Vector{Vector{T}}(undef, nunits)
-    Fs = Vector{CTSEMCholesky{T,Matrix{T}}}(undef, nunits)
+    Fs = Vector{_JMapUnitFactor{T}}(undef, nunits)
     ljs = zeros(T, nunits)
     ok = _laplace_partition(laplace, nunits) do mine, _w
         for U in mine
             d = sampler.udims[U]
             if d == 0
                 us[U] = T[]
-                Fs[U] = CTSEMCholesky(zeros(T, 0, 0), 0, true)
+                Fs[U] = _JMapUnitFactor(CTSEMCholesky(zeros(T, 0, 0), 0, true))
                 continue
             end
             unit = try
@@ -998,11 +1316,7 @@ function _jmap_effects(m::CTSEMJointMap, theta::AbstractVector{T},
             F, mean = unit
             us[U] = mean .+ _jmap_usolve(F, view(xt, _sample_urange(sampler, U)))
             Fs[U] = F
-            acc = zero(T)
-            @inbounds for i in 1:d
-                acc -= log(F.U[i, i])
-            end
-            ljs[U] = acc
+            ljs[U] = -_jmap_halflogdet(F)
         end
         return true
     end
@@ -1113,8 +1427,11 @@ function _jmap_theta_adjoint!(gtheta::Vector{Float64}, m::CTSEMJointMap,
     mu = th[m.P]
     shift = th[m.R] .- m.thref[m.R]
     nP = length(m.P)
-    dmax = maximum(sampler.udims; init=0)
-    dmax == 0 && return gtheta
+    maximum(sampler.udims; init=0) == 0 && return gtheta
+    # Dense scratch for the units of one block; a nested unit's pass allocates
+    # on its blocks (`_jmap_unit_adjoint_blocked!`).
+    dmax = maximum((sampler.udims[U] for U in 1:sampler.nunits
+        if !_jmap_blocked(Fs[U])); init=0)
     Lbar = [zeros(size(L)) for L in Ls]
     mubar = zeros(nP)
     # The couplings' cotangent by raw position: `theta[R]` for every member,
@@ -1208,7 +1525,11 @@ _JMapAdjointWork(nP::Int, nR::Int, d::Int, Ls) = _JMapAdjointWork(zeros(d, d), z
 # member's own positions), and the levels' roots take `Jbar_s` back at the
 # positions `_jmap_jacobian!` put them.
 function _jmap_unit_adjoint!(work::_JMapAdjointWork, m::CTSEMJointMap, Ls, mu, shift,
-    th, U::Int, F, u::Vector{Float64}, g::Vector{Float64}, z::AbstractVector)
+    th, U::Int, Fu::_JMapUnitFactor{Float64}, u::Vector{Float64}, g::Vector{Float64},
+    z::AbstractVector)
+    _jmap_blocked(Fu) &&
+        return _jmap_unit_adjoint_blocked!(work, m, Ls, mu, shift, th, U, Fu, u, g, z)
+    F = Fu.dense
     sampler = m.sampler
     laplace = sampler.laplace
     spec = laplace.spec
