@@ -229,6 +229,69 @@ test_that("a measurement error covariance is offered only between errors with a 
     cells(m(matrix(c('mvar1', 0, 0, 0), 2, 2, byrow = TRUE))))
 })
 
+test_that("a zero covariance the model solves is freed at its solved value", {
+  # Under 'z', DIFFUSION[e3,e2] fixed at 0 with e2 and e3 both correlated with
+  # e1 is a zero covariance, its coordinate solved and not 0: freed at raw 0
+  # the extended model was another model and every extended family was
+  # refused. Three latents measured directly, no random effects.
+  set.seed(5)
+  G <- t(chol(matrix(c(1, .5, .5, .5, 1, 0, .5, 0, 1), 3, 3)))
+  d <- do.call(rbind, lapply(1:30, function(i) {
+    times <- cumsum(c(0, stats::rexp(14, 1)))
+    x <- stats::rnorm(3); xs <- matrix(0, 15, 3); xs[1, ] <- x
+    for (t in 2:15) {
+      n <- ceiling((times[t] - times[t - 1]) / 0.05); h <- (times[t] - times[t - 1]) / n
+      for (s in seq_len(n)) x <- x - 0.6 * x * h + as.numeric(G %*% stats::rnorm(3)) * sqrt(h)
+      xs[t, ] <- x
+    }
+    data.frame(id = i, time = times, xs + matrix(stats::rnorm(45, 0, 0.4), 15))
+  }))
+  names(d)[3:5] <- c('Y1', 'Y2', 'Y3')
+  m <- suppressMessages(ctModel(type = 'ct', manifestNames = c('Y1', 'Y2', 'Y3'),
+    latentNames = c('e1', 'e2', 'e3'), LAMBDA = diag(3),
+    DRIFT = matrix(c('a1', 0, 0, 0, 'a2', 0, 0, 0, 'a3'), 3, 3, byrow = TRUE),
+    DIFFUSION = matrix(c('q1', 0, 0, 'q21', 'q2', 0, 'q31', 0, 'q3'), 3, 3, byrow = TRUE),
+    CINT = matrix(0, 3, 1), MANIFESTMEANS = matrix(0, 3, 1),
+    T0MEANS = matrix(c('t1||FALSE', 't2||FALSE', 't3||FALSE'), 3, 1)))
+  expect_true(ctsem:::.ctCovSolvedCells(m, 'DIFFUSION')[3, 2])
+  fit <- fit_cached('scoretest solved zero covariance', suppressMessages(ctFit(d, m,
+    backend = 'julia', cores = 1, verbose = 0)))
+  st <- suppressMessages(ctScoreTest(fit, tests = 'fixed', cores = 1, verbose = FALSE,
+    nboot = 99))
+  expect_null(st$info$errors)
+  cell <- st$fixed$cells[st$fixed$cells$cell == 'DIFFUSION[e3,e2]', ]
+  expect_equal(nrow(cell), 1L)
+  expect_true(all(st$fixed$cells$at[st$fixed$cells$matrix == 'DRIFT'] == 0))
+  # At its value the matrix exponential is zero there: the fit's covariance.
+  est <- stats::setNames(ctsem:::.ctFitRawEstimate(fit), ctsem:::.ctFitRawParNames(fit))
+  A <- matrix(0, 3, 3)
+  A[2, 1] <- est[['q21']]; A[3, 1] <- est[['q31']]; A[3, 2] <- cell$at
+  A <- A + t(A)
+  e <- eigen(A, symmetric = TRUE)
+  expect_lt(abs((e$vectors %*% (exp(e$values) * t(e$vectors)))[3, 2]), 1e-10)
+  expect_gt(abs(cell$at), 0.01)
+  # ctModelImprove frees it as an ordinary parameter, started there.
+  base <- ctsem:::.ctFitBaseModel(fit)
+  props <- ctsem:::.ctImproveProposals(st, base, alpha = 1.01)
+  p <- props[[match('fixed:DIFFUSION[e3,e2]', vapply(props, `[[`, '', 'key'))]]
+  expect_equal(p$start, c(diffusion_e3_e2 = cell$at))
+  freed <- p$edit(base, d, NULL)$model
+  expect_false(any(ctsem:::.ctCovSolvedCells(freed, 'DIFFUSION')))
+  row <- freed$pars[freed$pars$param %in% 'diffusion_e3_e2', ]
+  expect_equal(nrow(row), 1L)
+  expect_false(as.logical(row$indvarying))
+  # Where the cells joined to it vary by subject, its value does too, and no
+  # one value of a new parameter is the fit: left out, and said so.
+  varying <- base
+  varying$pars$indvarying[varying$pars$param %in% 'q21'] <- TRUE
+  fx <- ctsem:::.ctScoreFixedModel(varying, est)
+  expect_false('DIFFUSION[e3,e2]' %in% fx$terms$cell)
+  expect_identical(fx$untested$cell, 'DIFFUSION[e3,e2]')
+  expect_match(fx$untested$reason, 'DIFFUSION\\[e2,e1\\]')
+  st$fixed$untested <- fx$untested
+  expect_output(print(st), 'Fixed cells not tested')
+})
+
 test_that("a drift that depends on the state is found by the extended model", {
   # A strong dependence (the drift moves by 0.4 across the state's range). On
   # such data the fitted model's curvature at the null can be indefinite in the
@@ -493,6 +556,21 @@ test_that("a family that fails is reported and the others stand", {
   expect_null(st$statedependence)
   expect_match(st$info$errors[['statedependence']], 'cannot extend')
   expect_output(print(st), 'Not tested')
+  # Families that share an extended model are tested one at a time where that
+  # model is refused, so one family's refusal leaves the others tested.
+  refused <- function(msg) stop(structure(class = c('ctScoreRefused', 'error', 'condition'),
+    list(message = msg, call = NULL)))
+  local_mocked_bindings(.ctScoreExtended = function(fit, est, families, ...) {
+    if (length(families) > 1L) refused('the shared model is refused')
+    if (identical(families, 'fixed')) refused('fixed is refused')
+    list(statedependence = list(terms = data.frame(term = 'x')))
+  })
+  st2 <- suppressWarnings(suppressMessages(ctScoreTest(x$fit,
+    tests = c('statedependence', 'fixed'), cores = 1, verbose = FALSE)))
+  expect_false(is.null(st2$statedependence))
+  expect_null(st2$fixed)
+  expect_identical(names(st2$info$errors), 'fixed')
+  expect_match(st2$info$errors[['fixed']], 'fixed is refused')
 })
 
 test_that("with priors on every parameter, the extended terms are tested on the likelihood", {

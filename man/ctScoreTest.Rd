@@ -94,8 +94,9 @@ An object of class \code{ctScoreTest}, a list with
   model's own predictors, marked by \code{joint$inmodel}),
   \code{statedependence} (a list of \code{terms}, a data frame, and
   \code{joint}, the tests per equation and overall), \code{volatility}
-  (the same, for the innovation sds), \code{fixed} (a list of \code{cells}
-  and their \code{joint} test), \code{instability} (a list of
+  (the same, for the innovation sds), \code{fixed} (a list of \code{cells},
+  their \code{joint} test, and \code{untested}, cells that could not be
+  tested and why), \code{instability} (a list of
   \code{parameters}, one row per ordering and parameter, and \code{joint},
   per ordering), and \code{info} (how the fit integrated its random
   effects, the number of subjects and parameters, the variance used, and
@@ -310,9 +311,16 @@ relaxations that matter before interpreting their sizes.
   This is the modification index (Sorbom, 1989), and \code{estimate} is
   the expected parameter change. \code{CINT} and \code{MANIFESTMEANS} are
   not offered, since with the other one free, either is identified only
-  through the initial transient. State dependence, volatility and fixed
-  cells are tested on one extended model, so asking for several costs one
-  preparation.
+  through the initial transient. Under \code{covmattransform = 'z'}, a
+  covariance fixed at zero between variables that other covariances
+  connect is held at zero by solving its cell. It is freed from that
+  solved value (\code{at} in \code{cells}), and \code{estimate} is the
+  change from it. If the solved value differs between subjects, because
+  a covariance it depends on has random or predictor effects, the cell is
+  not tested and is listed in \code{untested}. State dependence,
+  volatility and fixed cells are tested on one extended model, so asking
+  for several costs one preparation. If that model cannot be built, each
+  family is tested separately.
 }
 
 \section{Stability}{

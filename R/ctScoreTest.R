@@ -241,9 +241,16 @@
 #'   This is the modification index (Sorbom, 1989), and \code{estimate} is
 #'   the expected parameter change. \code{CINT} and \code{MANIFESTMEANS} are
 #'   not offered, since with the other one free, either is identified only
-#'   through the initial transient. State dependence, volatility and fixed
-#'   cells are tested on one extended model, so asking for several costs one
-#'   preparation.
+#'   through the initial transient. Under \code{covmattransform = 'z'}, a
+#'   covariance fixed at zero between variables that other covariances
+#'   connect is held at zero by solving its cell. It is freed from that
+#'   solved value (\code{at} in \code{cells}), and \code{estimate} is the
+#'   change from it. If the solved value differs between subjects, because
+#'   a covariance it depends on has random or predictor effects, the cell is
+#'   not tested and is listed in \code{untested}. State dependence,
+#'   volatility and fixed cells are tested on one extended model, so asking
+#'   for several costs one preparation. If that model cannot be built, each
+#'   family is tested separately.
 #'
 #' @section Stability: \code{tests = 'instability'}, run only when asked for,
 #'   tests whether each parameter is stable across the data, with the data
@@ -353,8 +360,9 @@
 #'   model's own predictors, marked by \code{joint$inmodel}),
 #'   \code{statedependence} (a list of \code{terms}, a data frame, and
 #'   \code{joint}, the tests per equation and overall), \code{volatility}
-#'   (the same, for the innovation sds), \code{fixed} (a list of \code{cells}
-#'   and their \code{joint} test), \code{instability} (a list of
+#'   (the same, for the innovation sds), \code{fixed} (a list of \code{cells},
+#'   their \code{joint} test, and \code{untested}, cells that could not be
+#'   tested and why), \code{instability} (a list of
 #'   \code{parameters}, one row per ordering and parameter, and \code{joint},
 #'   per ordering), and \code{info} (how the fit integrated its random
 #'   effects, the number of subjects and parameters, the variance used, and
@@ -631,17 +639,23 @@ ctScoreTest <- function(fit, covariates = NULL,
   }
   extended <- intersect(tests, c('statedependence', 'volatility', 'fixed'))
   information <- if (!is.null(pieces)) -pieces$Hsum else NULL
-  if (length(extended)) attempt(paste(extended, collapse = ' and '), {
-    say("Preparing the model extended at zero (", paste(extended, collapse = ', '), ")")
-    ext <- .ctScoreExtended(fit, est, extended, information, order = order,
+  # One extended model for these families, one compile of its shape. Where
+  # that model is refused, each family is tested on a model of its own, so
+  # that one family's refusal leaves the others tested.
+  extend <- function(families) {
+    say("Preparing the model extended at zero (", paste(families, collapse = ', '), ")")
+    ext <- .ctScoreExtended(fit, est, families, information, order = order,
       variance = variance, nboot = nboot, cores = cores, exact = exact,
       quadrature = intoverpop == 'quadrature')
-    out$statedependence <- ext$statedependence
-    out$volatility <- ext$volatility
-    out$fixed <- ext$fixed
-    if (isTRUE(ext$onestep)) out$info$onestep <- c(out$info$onestep, extended)
-    if (isTRUE(ext$quadrature)) out$info$quadrature <- c(out$info$quadrature, extended)
-  })
+    for (f in families) out[[f]] <<- ext[[f]]
+    if (isTRUE(ext$onestep)) out$info$onestep <<- c(out$info$onestep, families)
+    if (isTRUE(ext$quadrature)) out$info$quadrature <<- c(out$info$quadrature, families)
+  }
+  if (length(extended)) attempt(paste(extended, collapse = ' and '),
+    tryCatch(extend(extended), ctScoreRefused = function(e) {
+      if (length(extended) == 1L) stop(e)
+      for (f in extended) attempt(f, extend(f))
+    }))
   # A model of its own: its terms rewrite the cells the other families'
   # terms rewrite too.
   if ('level' %in% tests) attempt('level', {
@@ -1999,7 +2013,14 @@ ctScoreTest <- function(fit, covariates = NULL,
 # zero at zero, so the extended model is the fit at zero. CINT and
 # MANIFESTMEANS are left out: with the other free, either is identified only
 # by the transient from the initial state.
-.ctScoreFixedModel <- function(model) {
+#
+# A covariance cell the 'z' construction solves as a zero covariance is not
+# at raw zero in the fit: freed, it is the fit at its solved value (`at`,
+# from `est`, the fit's raw estimate named by parameter), which with the
+# other cells at the fit's values satisfies the remaining zeros, the one
+# solution there is. Where that value differs by subject, or `est` is not
+# given, the cell is not freed and is listed in `untested`.
+.ctScoreFixedModel <- function(model, est = NULL) {
   pars <- model$pars
   latent <- model$latentNames; manifest <- model$manifestNames
   tdpred <- model$TDpredNames
@@ -2033,22 +2054,100 @@ ctScoreTest <- function(fit, covariates = NULL,
   dims <- function(m) switch(m, DRIFT = list(latent, latent),
     DIFFUSION = list(latent, latent), MANIFESTVAR = list(manifest, manifest),
     LAMBDA = list(manifest, latent), TDPREDEFFECT = list(latent, tdpred))
-  terms <- list()
+  solved <- lapply(stats::setNames(nm = c('DIFFUSION', 'MANIFESTVAR')), function(m)
+    .ctScoreSolvedAt(model, est, m))
+  terms <- list(); untested <- list()
   for (k in candidate) {
     m <- pars$matrix[k]; r <- pars$row[k]; c <- pars$col[k]
     tf <- .ctModelDefaultFreePar(m, r, c, ct)$transform
     atzero <- try(eval(parse(text = tf), list(param = 0), ns), silent = TRUE)
     if (inherits(atzero, 'try-error') || !isTRUE(abs(atzero) < 1e-12)) next
     d <- dims(m)
+    cellname <- paste0(m, '[', d[[1]][r], ',', d[[2]][c], ']')
+    at <- 0
+    s <- solved[[m]]
+    if (!is.null(s) && isTRUE(s$solved[r, c])) {
+      # A covariance cell's default transform is the identity, so the solved
+      # coordinate is the raw value.
+      at <- s$value[r, c]
+      if (!is.finite(at) || !isTRUE(abs(eval(parse(text = tf), list(param = at), ns) - at) <
+          1e-12)) {
+        untested[[length(untested) + 1L]] <- data.frame(cell = cellname,
+          reason = s$reason, stringsAsFactors = FALSE)
+        next
+      }
+    }
     name <- paste0('ctscorefixed', length(terms) + 1L)
     pars <- .ctScoreFreeCell(pars, k, name, tf)
     terms[[length(terms) + 1L]] <- data.frame(name = name, matrix = m, row = r,
-      col = c, cell = paste0(m, '[', d[[1]][r], ',', d[[2]][c], ']'),
+      col = c, cell = cellname,
       suggested = paste0(tolower(m), '_', d[[1]][r], '_', d[[2]][c]),
-      transform = tf, stringsAsFactors = FALSE)
+      transform = tf, at = at, stringsAsFactors = FALSE)
   }
   model$pars <- pars
-  list(model = model, terms = if (length(terms)) do.call(rbind, terms) else NULL)
+  list(model = model, terms = if (length(terms)) do.call(rbind, terms) else NULL,
+    untested = if (length(untested)) do.call(rbind, untested) else NULL)
+}
+
+# For the covariance matrix `name` of `model`, the cells the 'z' construction
+# solves as zero covariances (`.ctCovSolvedCells()`) and the coordinate each
+# holds at the fit: the matrix's other cells below the diagonal at their
+# fitted values, from the raw estimate `est` named by parameter, and the
+# solved cells solved (`.ctCovZeroSolve()`), as the engine does. NA, with the
+# `reason`, where one of those other cells varies by subject -- a random or
+# predictor effect, or a cell that is no parameter of its own, such as an
+# expression -- since each subject's solution then differs, and where `est`
+# is not given. NULL where nothing is solved.
+.ctScoreSolvedAt <- function(model, est, name) {
+  solved <- .ctCovSolvedCells(model, name)
+  if (!any(solved)) return(NULL)
+  d <- nrow(solved)
+  out <- list(solved = solved, value = matrix(NA_real_, d, d), reason = NULL)
+  if (is.null(est) || is.null(names(est))) {
+    out$reason <- "the fit's estimates were not given"
+    return(out)
+  }
+  model <- .ctResolveLevels(model)
+  pars <- model$pars
+  varying <- .ctVaryingRows(model)
+  effects <- grep('_effect$', names(pars), value = TRUE)
+  A <- matrix(0, d, d)
+  for (k in which(pars$matrix %in% name & pars$row > pars$col)) {
+    r <- pars$row[k]; c <- pars$col[k]
+    if (solved[r, c]) next
+    if (is.na(pars$param[k]) || !nzchar(pars$param[k])) {
+      A[r, c] <- suppressWarnings(as.numeric(pars$value[k]))
+      next
+    }
+    # The row that holds the parameter, which for a PARS label is not this one.
+    p <- pars$param[k]
+    holder <- .ctParamRows(model, p)
+    labels <- if (name == 'DIFFUSION') model$latentNames else model$manifestNames
+    cell <- paste0(name, "[", labels[r], ",", labels[c], "]")
+    if (!p %in% names(est) || is.na(holder)) {
+      out$reason <- paste0("a zero covariance whose value in the fit depends on ",
+        cell, ", which is not a parameter of its own")
+      return(out)
+    }
+    if (varying[k] || varying[holder] ||
+        any(.ctTipredEffectActive(unlist(pars[c(k, holder), effects])))) {
+      out$reason <- paste0("a zero covariance whose value in the fit differs between ",
+        "subjects, since ", cell, " does")
+      return(out)
+    }
+    tf <- as.character(pars$transform[holder])
+    if (is.na(tf) || !nzchar(tf)) tf <- 'param'
+    A[r, c] <- tryCatch(as.numeric(eval(parse(text = tf), list(param = est[[p]]),
+      asNamespace('ctsem'))), error = function(e) NA_real_)
+  }
+  A <- A + t(A)
+  solution <- if (all(is.finite(A))) .ctCovZeroSolve(A, solved) else NULL
+  if (is.null(solution)) {
+    out$reason <- "a zero covariance whose value in the fit could not be solved"
+    return(out)
+  }
+  out$value[solved] <- solution[solved]
+  out
 }
 
 # A fixed cell written as a new parameter, shared by every extended model: no
@@ -2160,13 +2259,17 @@ ctScoreTest <- function(fit, covariates = NULL,
   nm1 <- as.character(.ctFitRawParNames(fit))
   nm2 <- as.character(.ctBackendRawParameterNames(list(model_spec = spec2),
     .ctBackendNpar(spec2)))
+  # Refused, with a class of its own, so that a caller testing several
+  # families on one extended model can test them one at a time instead.
+  refuse <- function(...) stop(structure(class = c('ctScoreRefused', 'error', 'condition'),
+    list(message = paste0(...), call = NULL)))
   lost <- setdiff(nm1, nm2)
-  if (length(lost) || anyDuplicated(nm2)) stop("The extended model's parameters ",
+  if (length(lost) || anyDuplicated(nm2)) refuse("The extended model's parameters ",
     "do not line up with the fit's (", paste(lost, collapse = ', '), "), so ",
-    label, " cannot be tested for this model.", call. = FALSE)
-  if (!setequal(setdiff(nm2, nm1), names_new)) stop("The extended model added ",
+    label, " cannot be tested for this model.")
+  if (!setequal(setdiff(nm2, nm1), names_new)) refuse("The extended model added ",
     "parameters other than its terms: ", paste(setdiff(setdiff(nm2, nm1), names_new),
-      collapse = ', '), call. = FALSE)
+      collapse = ', '))
   x2 <- setNames(numeric(length(nm2)), nm2)
   x2[nm1] <- est
   # New coordinates at zero, or where `at` says: a stated mean freed sits at
@@ -2209,10 +2312,10 @@ ctScoreTest <- function(fit, covariates = NULL,
   # terms x -0.919 = -36.76, which read as a model the rebuild had got wrong.
   priored <- isTRUE(fit$args$resolved$priors)
   offset <- if (priored) sum(stats::dnorm(x2[names_new], log = TRUE)) else 0
-  if (!isTRUE(abs(ev$value - value1 - offset) <= 1e-6 * max(1, abs(value1)))) stop(
+  if (!isTRUE(abs(ev$value - value1 - offset) <= 1e-6 * max(1, abs(value1)))) refuse(
     "The extended model does not reproduce the fit at zero (log likelihood ",
     signif(ev$value - offset, 8), " against ", signif(value1, 8), "), so its scores are ",
-    "not the fit's and ", label, " cannot be tested for this model.", call. = FALSE)
+    "not the fit's and ", label, " cannot be tested for this model.")
   list(spec = spec2, x2 = x2, gradient = setNames(as.numeric(ev$gradient), nm2),
     theta = match(nm1, nm2), delta = match(names_new, nm2), priored = priored,
     module = .ctJuliaModule(spec$project), objective = .ctJuliaObjective(spec2, layer = layer),
@@ -2292,14 +2395,14 @@ ctScoreTest <- function(fit, covariates = NULL,
     model <- vol$model
   }
   if ('fixed' %in% families) {
-    fixed <- .ctScoreFixedModel(model)
+    fixed <- .ctScoreFixedModel(model, stats::setNames(est, .ctFitRawParNames(fit)))
     model <- fixed$model
   }
   names_new <- c(state$terms$name, vol$terms$name, fixed$terms$name, lev$terms$name)
   if (!length(names_new)) return(list(statedependence = NULL, volatility = NULL,
-    fixed = NULL, level = NULL))
+    fixed = if (!is.null(fixed$untested)) list(untested = fixed$untested), level = NULL))
   ext <- .ctScoreExtendedSpec(fit, est, model, names_new, paste(families, collapse = ', '),
-    cores)
+    cores, at = if (!is.null(fixed$terms)) stats::setNames(fixed$terms$at, fixed$terms$name))
   x2 <- ext$x2
   grad <- ext$gradient
   theta <- ext$theta
@@ -2432,12 +2535,14 @@ ctScoreTest <- function(fit, covariates = NULL,
     terms <- fixed$terms
     table <- data.frame(cell = terms$cell, matrix = terms$matrix, row = terms$row,
       col = terms$col, per[idx, c('LM', 'p', 'estimate', 'se', 'projected')],
-      suggested = terms$suggested, transform = terms$transform, stringsAsFactors = FALSE)
+      suggested = terms$suggested, transform = terms$transform, at = terms$at,
+      stringsAsFactors = FALSE)
     table$p_adj <- .ctScoreBH(table$p)
     if (!is.null(Cstar)) table$class <- .ctScoreClasses(Cstar[, idx, drop = FALSE])
     out$fixed <- list(cells = table[order(table$p, -table$LM), , drop = FALSE],
       joint = jointtest(idx, 'all'))
   }
+  if (!is.null(fixed$untested)) out$fixed$untested <- fixed$untested
   if (!is.null(lev$terms)) {
     idx <- length(state$terms$name) + length(vol$terms$name) + length(fixed$terms$name) +
       seq_len(nrow(lev$terms))
@@ -2727,12 +2832,17 @@ print.ctScoreTest <- function(x, digits = 3, top = 10, ...) {
     fmt(x$instability$parameters[, c('ordering', 'parameter', 'L', 'p', 'p_adj')])
     if (!is.null(x$instability$note)) cat(x$instability$note, "\n")
   }
-  if (!is.null(x$fixed)) {
+  if (!is.null(x$fixed$cells)) {
     j <- x$fixed$joint
     cat("\nFixed cells, freed: joint LM = ", signif(j$LM, digits), ", df = ", j$df,
       ", p = ", signif(j$p, digits), "\n", sep = "")
     fmt(x$fixed$cells[, withclass(x$fixed$cells, c('cell', 'LM', 'p', 'p_adj',
       'estimate', 'se'))])
+  }
+  if (!is.null(x$fixed$untested)) {
+    u <- x$fixed$untested
+    cat("\nFixed cells not tested:\n")
+    for (r in seq_len(nrow(u))) cat("  ", u$cell[r], ": ", u$reason[r], "\n", sep = "")
   }
   if (!is.null(x$level)) {
     cat("\nParameters depending on a subject's level (a random intercept):\n")
