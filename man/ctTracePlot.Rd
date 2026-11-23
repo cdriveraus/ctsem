@@ -42,7 +42,7 @@ if (isTRUE(ctJuliaStatus()$available)) {
   model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
     LAMBDA = matrix(1))
   model$pars$indvarying <- FALSE
-  fit <- ctFit(ctstantestdat, model, backend = 'julia', cores = 1)
+  fit <- ctFit(ctsemtestdat, model, backend = 'julia', cores = 1)
   print(ctTracePlot(fit))
   # Julia keeps running between calls, holding what it has compiled;
   # this ends it.

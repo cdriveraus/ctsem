@@ -37,8 +37,8 @@
 #' @examples
 #' data.table::setDTthreads(1) #ignore this line
 #' # Example usage:
-#' head(ctstantestdat)
-#' ctACF(ctstantestdat,varnames=c('Y1'),idcol='id',timecol='time',nboot=5)
+#' head(ctsemtestdat)
+#' ctACF(ctsemtestdat,varnames=c('Y1'),idcol='id',timecol='time',nboot=5)
 #'
 #' @export
 ctACF <- function(dat, varnames='auto',ccfnames='all',idcol='id', timecol='time',
@@ -333,8 +333,8 @@ ctACFweightedSpline <- function(ctacfobj,quantiles=c(.025,.5,.975),df='auto'){
 #' @examples
 #' data.table::setDTthreads(1) #ignore this line
 #' # Example usage:
-#' head(ctstantestdat)
-#' ac=ctACF(ctstantestdat,varnames=c('Y1'),idcol='id',timecol='time',timestep=.5,nboot=5,plot=FALSE)
+#' head(ctsemtestdat)
+#' ac=ctACF(ctsemtestdat,varnames=c('Y1'),idcol='id',timecol='time',timestep=.5,nboot=5,plot=FALSE)
 #' plotctACF(ac, reducedXlim=0)
 plotctACF <- function(ctacfobj,df='auto',quantiles=c(.025,.5,.975),
   separateLearnRates=FALSE, reducedXlim=1,estimateSpline=TRUE,method=c('weighted','quantile')){

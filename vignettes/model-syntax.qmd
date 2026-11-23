@@ -135,7 +135,7 @@ model <- ctModelLavaan('
   eta1 ~ eta1 + eta2 + TD1
   eta2 ~ eta1 + eta2
 ')
-fit <- ctFit(ctstantestdat, model, priors = TRUE, cores = 2)
+fit <- ctFit(ctsemtestdat, model, priors = TRUE, cores = 2)
 round(summary(fit)$popmeans, 2)
 ```
 

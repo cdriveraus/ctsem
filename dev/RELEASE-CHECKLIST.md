@@ -46,7 +46,7 @@ fail. This happened when the `stateref` column was added: the shipped fit still
 carried a nine-column parameter setup array against code declaring ten, and
 `ctGenerateFromFit(ctstantestfit)` errored.
 
-**Do not regenerate `ctstantestdat` at the same time without meaning to.**
+**Do not regenerate `ctsemtestdat` at the same time without meaning to.**
 `ctsem:::ctdataupdate()` rebuilds both. The data is produced under a fixed seed, but
 generation behaviour changes, so regenerating it moves values that many tests
 compare against. Refresh the fit alone unless the data change is the point.

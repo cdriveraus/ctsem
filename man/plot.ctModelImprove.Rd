@@ -29,7 +29,7 @@ model <- ctModel(LAMBDA = diag(2),
   TDpredNames = 'TD1',
   DRIFT = matrix(c('drift_eta1', 0, 0, 'drift_eta2'), 2, 2),
   DIFFUSION = matrix(c('diff_eta1', 0, 0, 'diff_eta2'), 2, 2))
-fit <- ctFit(ctstantestdat, model, priors = TRUE)
+fit <- ctFit(ctsemtestdat, model, priors = TRUE)
 improved <- ctModelImprove(fit)
 
 # A row per refit, numbered by round, as a line from the log likelihood

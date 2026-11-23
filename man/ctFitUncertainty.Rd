@@ -487,7 +487,7 @@ if (isTRUE(ctJuliaStatus()$available)) {
   model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
     LAMBDA = matrix(1))
   model$pars$indvarying <- FALSE
-  jfit <- ctFit(ctstantestdat, model, backend = 'julia', cores = 1,
+  jfit <- ctFit(ctsemtestdat, model, backend = 'julia', cores = 1,
     priors = TRUE)
   # Posterior draws by MCMC, with lower targets for a quick look
   jfit <- ctFitUncertainty(jfit, method = 'sample', cores = 1,

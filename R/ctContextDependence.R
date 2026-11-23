@@ -538,7 +538,7 @@ ctModelIsNonlinear <- function(x) {
 #'   DRIFT = matrix(c('a + b * eta2', 'drift21', 0, 'drift22'), 2, 2),
 #'   CINT = matrix(c('cint1', 'cint2'), 2, 1), MANIFESTMEANS = 0)
 #' model$pars$indvarying <- FALSE
-#' fit <- ctFit(ctstantestdat, model)
+#' fit <- ctFit(ctsemtestdat, model)
 #' print(ctModelIsNonlinear(fit))
 #'
 #' # The population matrices at the default point, which the message names

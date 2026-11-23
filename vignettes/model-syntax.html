@@ -328,23 +328,23 @@ border-radius: 0 4px 4px 0;
 <span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="st">  eta1 ~ eta1 + eta2 + TD1</span></span>
 <span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="st">  eta2 ~ eta1 + eta2</span></span>
 <span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="st">&#39;</span>)</span>
-<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>fit <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(ctstantestdat, model, <span class="at">priors =</span> <span class="cn">TRUE</span>, <span class="at">cores =</span> <span class="dv">2</span>)</span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>fit <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(ctsemtestdat, model, <span class="at">priors =</span> <span class="cn">TRUE</span>, <span class="at">cores =</span> <span class="dv">2</span>)</span>
 <span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a><span class="fu">round</span>(<span class="fu">summary</span>(fit)<span class="sc">$</span>popmeans, <span class="dv">2</span>)</span>
 <span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                  mean   sd  2.5%   50% 97.5%  mode</span></span>
-<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; T0m_eta1         4.35 1.60  1.04  4.34  7.34  4.38</span></span>
-<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; T0m_eta2         7.66 3.96  0.39  7.50 15.85  7.65</span></span>
-<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_eta1      -0.49 0.27 -1.19 -0.43 -0.14 -0.42</span></span>
-<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_eta1_eta2 -0.09 0.15 -0.38 -0.09  0.20 -0.09</span></span>
-<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_eta2_eta1  0.37 0.24 -0.09  0.38  0.83  0.39</span></span>
-<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_eta2      -0.36 0.21 -0.87 -0.31 -0.09 -0.31</span></span>
-<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; diff_eta1        1.99 0.21  1.62  1.98  2.40  1.98</span></span>
-<span id="cb4-17"><a href="#cb4-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; diff_eta2_eta1   0.48 0.11  0.27  0.49  0.70  0.48</span></span>
-<span id="cb4-18"><a href="#cb4-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; diff_eta2        2.41 0.22  1.99  2.40  2.85  2.41</span></span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; T0m_eta1         4.45 1.52  1.63  4.50  7.47  4.38</span></span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; T0m_eta2         7.78 3.64  0.55  7.85 14.79  7.65</span></span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_eta1      -0.48 0.26 -1.17 -0.43 -0.14 -0.42</span></span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_eta1_eta2 -0.08 0.14 -0.36 -0.08  0.21 -0.09</span></span>
+<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_eta2_eta1  0.39 0.23 -0.07  0.39  0.84  0.39</span></span>
+<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_eta2      -0.35 0.20 -0.83 -0.31 -0.10 -0.31</span></span>
+<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; diff_eta1        1.99 0.20  1.62  1.98  2.40  1.98</span></span>
+<span id="cb4-17"><a href="#cb4-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; diff_eta2_eta1   0.47 0.10  0.28  0.48  0.68  0.48</span></span>
+<span id="cb4-18"><a href="#cb4-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; diff_eta2        2.42 0.21  2.02  2.41  2.85  2.41</span></span>
 <span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; mvarY1           0.60 0.09  0.45  0.60  0.79  0.60</span></span>
-<span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; mvarY2           0.47 0.14  0.25  0.45  0.80  0.45</span></span>
-<span id="cb4-21"><a href="#cb4-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; mm_Y1            2.10 1.55 -0.97  2.03  5.22  2.05</span></span>
-<span id="cb4-22"><a href="#cb4-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; mm_Y2            2.13 3.98 -6.06  2.39  9.54  2.12</span></span>
-<span id="cb4-23"><a href="#cb4-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; td_eta1_TD1      1.10 0.24  0.65  1.09  1.60  1.09</span></span></code></pre></div>
+<span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; mvarY2           0.46 0.14  0.25  0.44  0.76  0.45</span></span>
+<span id="cb4-21"><a href="#cb4-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; mm_Y1            1.99 1.53 -1.09  1.99  4.91  2.05</span></span>
+<span id="cb4-22"><a href="#cb4-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; mm_Y2            2.00 3.62 -5.06  1.98  9.12  2.12</span></span>
+<span id="cb4-23"><a href="#cb4-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; td_eta1_TD1      1.08 0.25  0.61  1.08  1.57  1.09</span></span></code></pre></div>
 </div>
 <p>The rows are named by parameter. <code>drift_eta1_eta2</code> is the effect of <code>eta2</code> on <code>eta1</code>, and <code>td_eta1_TD1</code> the effect of the predictor. These names are also how you refer to a parameter inside the syntax, which a later section uses.</p>
 <h1 id="fixing-freeing-and-labelling">Fixing, freeing and labelling</h1>

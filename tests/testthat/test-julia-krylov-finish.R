@@ -10,7 +10,7 @@
   m$pars$indvarying <- (m$pars$matrix %in% c("CINT", "T0MEANS") |
     (m$pars$matrix == "DRIFT" & m$pars$row == m$pars$col)) & is.na(m$pars$value)
   set.seed(1)
-  suppressWarnings(suppressMessages(ctFit(ctstantestdat, m, backend = "julia",
+  suppressWarnings(suppressMessages(ctFit(ctsemtestdat, m, backend = "julia",
     intoverpop = "laplace", priors = TRUE, cores = 2,
     optimcontrol = list(newton = "krylov"))))
 })

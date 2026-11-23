@@ -84,7 +84,7 @@ if (isTRUE(ctJuliaStatus()$available)) {
 model <- ctModel(LAMBDA = diag(2),
   manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
   TDpredNames = 'TD1')
-fit <- ctFit(ctstantestdat, model, priors = TRUE)
+fit <- ctFit(ctsemtestdat, model, priors = TRUE)
 
 # Draws show how well each subject's values are known, with the draw in
 # the first dimension. The standard deviation of the draws of mm_Y1 for

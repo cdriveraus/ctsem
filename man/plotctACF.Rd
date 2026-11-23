@@ -49,7 +49,7 @@ as a line, and the band spans the outer quantiles.
 \examples{
 data.table::setDTthreads(1) #ignore this line
 # Example usage:
-head(ctstantestdat)
-ac=ctACF(ctstantestdat,varnames=c('Y1'),idcol='id',timecol='time',timestep=.5,nboot=5,plot=FALSE)
+head(ctsemtestdat)
+ac=ctACF(ctsemtestdat,varnames=c('Y1'),idcol='id',timecol='time',timestep=.5,nboot=5,plot=FALSE)
 plotctACF(ac, reducedXlim=0)
 }

@@ -3,7 +3,7 @@
 \name{ctFitCheckCov}
 \alias{ctFitCheckCov}
 \alias{ctFitCovCheck}
-\title{Visual lagged covariance or correlation diagnostics for ctsem fits.}
+\title{Visual lagged covariance or correlation diagnostics for ctsem fits}
 \usage{
 ctFitCheckCov(
   fit,
@@ -134,13 +134,13 @@ gg <- ctFitCheckCov(ctstantestfit, cor = TRUE, splitby = "TI1", lags = 0:3)
 print(gg[[1]])
 
 # Use an external subject-level variable for the split.
-splitdat <- unique(data.frame(ctstantestdat)[, "id", drop = FALSE])
+splitdat <- unique(data.frame(ctsemtestdat)[, "id", drop = FALSE])
 splitdat$group <- rep(c("a", "b"), length.out = nrow(splitdat))
 ctFitCheckCov(ctstantestfit, splitby = "group", splitdata = splitdat,
   lags = 0:2)
 
 # Split observations into early and late periods within each subject.
-dat <- data.table::as.data.table(data.frame(ctstantestdat))
+dat <- data.table::as.data.table(data.frame(ctsemtestdat))
 dat[, period := ifelse(time <= stats::median(time, na.rm = TRUE),
   "early", "late"), by = id]
 ctFitCheckCov(ctstantestfit, data = dat, splitby = "period",

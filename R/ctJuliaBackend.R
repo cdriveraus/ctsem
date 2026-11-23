@@ -5135,7 +5135,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 #'   model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
 #'     LAMBDA = matrix(1))
 #'   model$pars$indvarying <- FALSE
-#'   prepared <- ctFit(ctstantestdat, model, backend = 'julia', fit = FALSE)
+#'   prepared <- ctFit(ctsemtestdat, model, backend = 'julia', fit = FALSE)
 #'   start <- ctJuliaEvaluate(prepared, pars = rep(0, 6), cores = 1)
 #'   str(start)
 #'   # Julia keeps running between calls, holding what it has compiled;
@@ -8296,7 +8296,7 @@ print.ctJuliaFit <- function(x, ...) {
 #' # Needs a working julia backend, so the example is inert where Julia is
 #' # absent -- including on CRAN, whose check machines have none.
 #' if (isTRUE(ctJuliaStatus()$available)) {
-#'   data <- ctstantestdat
+#'   data <- ctsemtestdat
 #'   model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
 #'     LAMBDA = matrix(1))
 #'   model$pars$indvarying <- FALSE

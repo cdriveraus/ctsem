@@ -307,7 +307,7 @@ if (isTRUE(ctJuliaStatus()$available)) {
 model <- ctModel(LAMBDA = diag(2),
   manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
   TDpredNames = 'TD1')
-fit <- ctFit(ctstantestdat, model, priors = TRUE)
+fit <- ctFit(ctsemtestdat, model, priors = TRUE)
 improved <- ctModelImprove(fit)
 print(improved$history)  # each change tried, and whether it was kept
 print(summary(improved$fit))

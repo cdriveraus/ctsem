@@ -84,7 +84,7 @@ plot is drawn.
 }
 \description{
 Computes and plots combined effects and quantiles for effects of time independent predictors
-on subject level parameters of a ctStanFit object.
+on subject level parameters of a fit from \code{\link{ctFit}}.
 \code{ctStanTIpredeffects} is maintained as a backward-compatible alias.
 }
 \examples{

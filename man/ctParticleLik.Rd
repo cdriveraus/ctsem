@@ -82,7 +82,7 @@ if (isTRUE(ctJuliaStatus()$available)) {
   model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
     LAMBDA = matrix(1))
   model$pars$indvarying <- FALSE
-  fit <- ctFit(ctstantestdat, model, backend = 'julia', cores = 1)
+  fit <- ctFit(ctsemtestdat, model, backend = 'julia', cores = 1)
   # A linear Gaussian model, where the filter is exact: the difference
   # should be within a few standard errors of zero.
   check <- ctParticleLik(fit, particles = 1000, substeps = 5)

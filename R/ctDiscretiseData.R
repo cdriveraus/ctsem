@@ -1,4 +1,4 @@
-#' Discretise long format continuous time (ctsem) data to specific timestep.
+#' Discretise long format continuous time (ctsem) data to specific timestep
 #'
 #' Rounds timing information so equal intervals, according to specified
 #' timestep, are achieved. Each subject's times are moved to the nearest point of a
@@ -19,7 +19,7 @@
 #' @export
 #'
 #' @examples
-#' long <- ctDiscretiseData(dlong=ctstantestdat, timestep = .1,
+#' long <- ctDiscretiseData(dlong=ctsemtestdat, timestep = .1,
 #' TDpredNames=c('TD1'),TIpredNames=c('TI1','TI2','TI3'))
 
 ctDiscretiseData <- function(dlong, timestep, timecol = 'time', idcol = 'id', TDpredNames = NULL, TIpredNames = NULL) {

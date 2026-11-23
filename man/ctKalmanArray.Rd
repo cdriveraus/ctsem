@@ -3,7 +3,7 @@
 \name{ctKalmanArray}
 \alias{ctKalmanArray}
 \alias{ctStanKalman}
-\title{Get Kalman filter estimates from a ctStanFit object}
+\title{Get Kalman filter estimates from a fit}
 \usage{
 ctKalmanArray(
   fit,
@@ -80,7 +80,7 @@ not a probability and not a category. Turn one into a probability with
 likewise the covariance of the linear predictor.
 }
 \description{
-Get Kalman filter estimates from a ctStanFit object.
+Get Kalman filter estimates from a fit from \code{\link{ctFit}}.
 \code{ctStanKalman} is an alias for this function. \code{ctKalman}, despite
 the similar name, is an alias for \code{\link{ctPredict}}, which returns a
 long data frame.

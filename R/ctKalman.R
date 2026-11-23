@@ -125,9 +125,9 @@
 }
 
 
-#' Get Kalman filter estimates from a ctStanFit object
+#' Get Kalman filter estimates from a fit
 #'
-#' Get Kalman filter estimates from a ctStanFit object.
+#' Get Kalman filter estimates from a fit from \code{\link{ctFit}}.
 #' \code{ctStanKalman} is an alias for this function. \code{ctKalman}, despite
 #' the similar name, is an alias for \code{\link{ctPredict}}, which returns a
 #' long data frame.
@@ -205,7 +205,7 @@ ctKalmanArray <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=g
       standardisederrors=standardisederrors,subjectpars=subjectpars,
       indvarstates=indvarstates,...))
   }
-  if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
+  if(!'ctStanFit' %in% class(fit)) stop('Not a fit from ctFit().')
   if(identical(subjects,'all')) subjects <- 1:max(fit$standata$subject)
   if(fit$standata$intoverstates==0){
     warning('Kalman filter operation unreliable when states were sampled -- system noise represents prior while point estimates represent posterior / smoothed')

@@ -54,7 +54,7 @@ if (isTRUE(ctJuliaStatus()$available)) {
   model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
     LAMBDA = matrix(1))
   model$pars$indvarying <- FALSE
-  prepared <- ctFit(ctstantestdat, model, backend = 'julia', fit = FALSE)
+  prepared <- ctFit(ctsemtestdat, model, backend = 'julia', fit = FALSE)
   start <- ctJuliaEvaluate(prepared, pars = rep(0, 6), cores = 1)
   str(start)
   # Julia keeps running between calls, holding what it has compiled;

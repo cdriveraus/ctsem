@@ -407,7 +407,7 @@
 #'   manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
 #'   TDpredNames = 'TD1',
 #'   DIFFUSION = matrix(c('diff_eta1', 0, 0, 'diff_eta2'), 2, 2))
-#' fit <- ctFit(ctstantestdat, model, priors = TRUE)
+#' fit <- ctFit(ctsemtestdat, model, priors = TRUE)
 #'
 #' # Every family of relaxations, tested from this one fit. Under "Fixed
 #' # cells, freed", freeing DIFFUSION[eta2,eta1] has a small p-value, so the
@@ -423,7 +423,7 @@
 #' # in the data, predict any parameter. The joint test is over all
 #' # parameters.
 #' stc <- ctScoreTest(fit,
-#'   covariates = ctstantestdat[, c('id', 'TI1', 'TI2', 'TI3')])
+#'   covariates = ctsemtestdat[, c('id', 'TI1', 'TI2', 'TI3')])
 #' print(stc$covariates$TI1$joint)
 #' }
 #' }
@@ -2585,7 +2585,7 @@ ctScoreTest <- function(fit, covariates = NULL,
 #'   manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
 #'   TDpredNames = 'TD1',
 #'   DIFFUSION = matrix(c('diff_eta1', 0, 0, 'diff_eta2'), 2, 2))
-#' fit <- ctFit(ctstantestdat, model, priors = TRUE)
+#' fit <- ctFit(ctsemtestdat, model, priors = TRUE)
 #' st <- ctScoreTest(fit)
 #'
 #' # A panel per family, with a point per relaxation at its adjusted
