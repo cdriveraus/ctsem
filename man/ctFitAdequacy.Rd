@@ -246,8 +246,8 @@ model <- ctModel(LAMBDA = diag(2),
   TDpredNames = 'TD1')
 fit <- ctFit(ctstantestdat, model, priors = TRUE)
 adequacy <- ctFitAdequacy(fit)
-adequacy            # one row per family of tests
-plot(adequacy)
+print(adequacy)     # one row per family of tests
+print(plot(adequacy))
 }
 }
 }

@@ -2634,7 +2634,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # The latents whose intercepts a stationary initial mean reads.
   t0s <- model$t0stationary
   meanreads <- if (isTRUE(as.logical(model$stationary))) function(i) TRUE else
-    if (!is.null(t0s) && any(as.logical(t0s$means))) function(i) isTRUE(t0s$closure[i]) else
+    if (!is.null(t0s) && any(as.logical(t0s$means))) function(i)
+      isTRUE(t0s$closure[i]) || isTRUE(as.logical(t0s$drivers[i])) else
     function(i) FALSE
   param <- as.integer(setup$param)
   effect <- integer(); kind <- integer(); target <- integer(); slope <- numeric()
@@ -4328,7 +4329,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     .ctJuliaStationaryCheck(parameter_table, augmented$nlatent)
   } else if (!is.null(model$t0stationary)) {
     .ctJuliaStationaryCheck(parameter_table, augmented$nlatent,
-      which(model$t0stationary$closure))
+      union(which(model$t0stationary$closure), which(as.logical(model$t0stationary$drivers))))
   }
   # `laplace$npar` already counts every level's scales and correlations. Taking
   # the maximum over the *level-one* index vectors instead sized the raw vector
@@ -4705,6 +4706,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     arguments$stationary_mean <- V(as.integer(spec$t0stationary$means))
     arguments$stationary_block <- V(as.integer(spec$t0stationary$block))
     arguments$stationary_closure <- V(as.integer(spec$t0stationary$closure))
+    arguments$stationary_drivers <- V(as.integer(spec$t0stationary$drivers))
   }
   # Transforms compiled per model rather than evaluated as data
   # (`ctFit(forcerecompile = TRUE)`). Here, so a compiled and an interpreted

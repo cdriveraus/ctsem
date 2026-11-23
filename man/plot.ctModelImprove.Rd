@@ -20,3 +20,23 @@ log likelihood its round started at to the one the refit reached, both as
 the gain over the starting fit. Kept changes are filled and rejected ones
 open. Pruning decisions are in the subtitle.
 }
+\examples{
+\donttest{
+if (isTRUE(ctJuliaStatus()$available)) {
+# A model with no cross effects and uncorrelated innovations.
+model <- ctModel(LAMBDA = diag(2),
+  manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+  TDpredNames = 'TD1',
+  DRIFT = matrix(c('drift_eta1', 0, 0, 'drift_eta2'), 2, 2),
+  DIFFUSION = matrix(c('diff_eta1', 0, 0, 'diff_eta2'), 2, 2))
+fit <- ctFit(ctstantestdat, model, priors = TRUE)
+improved <- ctModelImprove(fit)
+
+# A row per refit, numbered by round, as a line from the log likelihood
+# its round started at to the one it reached, both as gains over the
+# starting fit. Here round 1 keeps the freed innovation covariance (filled
+# point), and round 2 tries further changes and keeps none (open points).
+print(plot(improved))
+}
+}
+}

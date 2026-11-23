@@ -67,7 +67,37 @@ column by column (\code{cov}). The draws with \code{uncertainty='total'}
 come from this posterior.
 }
 \examples{
+# Each subject's values of the parameters that vary over subjects, at the
+# fit's estimate. The array has one row for the estimate, a column for each
+# subject (named by its id) and a slice for each parameter.
 indpars <- ctSubjectPars(ctstantestfit)
-dimnames(indpars)
-plot(indpars[1,,'cint1'],indpars[1,,'cint2'])
+dimnames(indpars)$param
+indpars[1, 1:5, ]
+
+# The continuous time intercepts of the two processes, one point per
+# subject.
+plot(indpars[1, , 'cint1'], indpars[1, , 'cint2'],
+  xlab = 'cint1', ylab = 'cint2')
+
+\donttest{
+if (isTRUE(ctJuliaStatus()$available)) {
+model <- ctModel(LAMBDA = diag(2),
+  manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+  TDpredNames = 'TD1')
+fit <- ctFit(ctstantestdat, model, priors = TRUE)
+
+# Draws show how well each subject's values are known, with the draw in
+# the first dimension. The standard deviation of the draws of mm_Y1 for
+# the first five subjects:
+draws <- ctSubjectPars(fit, pointest = FALSE, nsamples = 100)
+print(apply(draws[, 1:5, 'mm_Y1'], 2, sd))
+
+# The default uncertainty = 'total' includes the uncertainty of the
+# population parameters. 'conditional' holds them at the estimate, so the
+# spread is smaller.
+conditional <- ctSubjectPars(fit, pointest = FALSE, nsamples = 100,
+  uncertainty = 'conditional')
+print(apply(conditional[, 1:5, 'mm_Y1'], 2, sd))
+}
+}
 }

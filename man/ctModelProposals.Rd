@@ -48,6 +48,34 @@ tell apart (the same \code{class}), of which a search round refits only
 the strongest. The structural changes are listed beside the relaxations,
 while a search round tries them only once the screen finds nothing.
 }
+\examples{
+\donttest{
+if (isTRUE(ctJuliaStatus()$available)) {
+# A model in which the innovations of the two processes are uncorrelated,
+# with the DIFFUSION cell between them fixed at zero.
+model <- ctModel(LAMBDA = diag(2),
+  manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+  TDpredNames = 'TD1',
+  DIFFUSION = matrix(c('diff_eta1', 0, 0, 'diff_eta2'), 2, 2))
+fit <- ctFit(ctstantestdat, model, priors = TRUE)
+
+# The changes the score tests point to, with the p-value each is ranked
+# by. Here the score tests propose freeing that covariance.
+score <- ctScoreTest(fit)
+proposals <- ctModelProposals(fit, score = score)
+print(proposals)
+
+# Refit with the first change, and keep it if the likelihood ratio test
+# favours it. The history says whether it was kept.
+step <- ctModelImprove(fit, changes = proposals[1, ], maxsteps = 1)
+print(step$history)
+
+# With an adequacy check as well, the structural changes its families
+# point to are listed too, such as a slow process or a cycle.
+print(ctModelProposals(fit, score = score, adequacy = ctFitAdequacy(fit)))
+}
+}
+}
 \seealso{
 \code{vignette('score-tests')}.
 }

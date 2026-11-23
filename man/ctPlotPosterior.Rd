@@ -62,6 +62,10 @@ from \code{\link{ctFitUncertainty}} for an optimized fit.
 }
 \examples{
 \donttest{
-ctPlotPosterior(ctstantestfit, rows=3:4)
+# The prior (blue) and posterior (red) of the third and fourth population
+# parameters, the auto effect of eta1 and the effect of eta2 on eta1. A
+# posterior much narrower than its prior shows that the data determine the
+# parameter.
+ctPlotPosterior(ctstantestfit, rows = 3:4)
 }
 }

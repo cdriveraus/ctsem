@@ -61,7 +61,7 @@ fits have no single log likelihood. Compare them with \code{\link{ctLOO}}.
       f2 <- ctFit(df,m2,cores=1)
 
       test <- anova(f1, f2)
-      test
+      print(test)
       test$Chisq[2]
     }
 }

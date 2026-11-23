@@ -4050,7 +4050,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #'   # Posterior draws by MCMC, with lower targets for a quick look
 #'   jfit <- ctFitUncertainty(jfit, method = 'sample', cores = 1,
 #'     control = list(chains = 2, minESS = 50, rhatTarget = 1.05))
-#'   jfit$sample
+#'   print(jfit$sample)
 #'   # Julia keeps running between calls, holding what it has compiled;
 #'   # this ends it.
 #'   ctJuliaKill("session")

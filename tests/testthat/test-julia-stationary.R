@@ -130,15 +130,15 @@ test_that("stationary = TRUE is refused where there is no one distribution to st
     DRIFT = matrix(c("d11", "d21", "PARS[2,1]", "d22"), 2, 2))
   expect_error(prep(statedep), "DRIFT\\[1,2\\] depend on the latent states")
 
-  # A latent that never settles.
+  # A latent that never settles while noise moves it: a random walk.
   static <- .stat_model()
   rows <- static$pars$matrix %in% "DRIFT" & static$pars$row == 2
   static$pars$param[rows] <- NA
   static$pars$value[rows] <- 0
-  expect_error(prep(static), "leaves b without a stationary state")
-  # Nor does a clock, a fixed oscillation, which used to evaluate to NaN.
+  expect_error(prep(static), "keeps b from settling while DIFFUSION moves it")
+  # Nor does a clock with noise, which used to evaluate to NaN.
   expect_error(prep(.stat_model(DRIFT = matrix(c(0, 1, -1, 0), 2, 2))),
-    "leaves a, b without a stationary state")
+    "keeps a, b from settling while DIFFUSION moves it")
 
   # A single stationary element in a latent that depends on one that never
   # settles: a is driven by b, a random walk.
@@ -148,7 +148,7 @@ test_that("stationary = TRUE is refused where there is no one distribution to st
   walk$pars$value[rows] <- 0
   walk$pars$param[walk$pars$matrix %in% "T0MEANS" & walk$pars$row == 1] <- "stationary"
   expect_error(suppressMessages(ctFit(dat, walk, backend = "julia", fit = FALSE)),
-    "leaves b without a stationary state")
+    "depend on b, which DRIFT, as fixed, keeps from settling while DIFFUSION moves it")
 })
 
 # Single elements: T0MEANS and T0VAR cells named 'stationary', on the model
@@ -274,39 +274,82 @@ test_that("a 'stationary' element needs only its own latents to settle", {
   expect_equal(k$eta[1, 1, 1], -cint[1] / A[1, 1], tolerance = 1e-8)
   expect_equal(k$etacov[1, 1, 1, 1], Q[1, 1] / (-2 * A[1, 1]), tolerance = 1e-8)
   expect_error(suppressMessages(ctFit(dat, .stat_model(DRIFT = matrix(c("d11", 0, 0, 0),
-    2, 2)), backend = "julia", fit = FALSE, stationary = TRUE)), "without a stationary state")
+    2, 2)), backend = "julia", fit = FALSE, stationary = TRUE)),
+    "settling while DIFFUSION moves it")
 })
 
-test_that("a 'stationary' covariance leaves out a driver that no noise reaches", {
-  # A clock pair drives a. It never settles, but it carries no noise, so it
-  # moves a's mean and adds nothing to the covariance: the block of a and b is
-  # the stationary covariance of their own system, and the clock's start,
-  # which varies by subject, stays as written.
+test_that("a stationary start beside a clock settles onto the clock's path", {
+  # A clock pair drives a. It never settles and carries no noise, so a and b
+  # start where they would have settled given the clock's start, which varies
+  # by subject: their covariance is their own noise's stationary covariance
+  # plus D Sigma D', and their covariance with the clock D Sigma, with
+  # A D - D Omega = -B (A their drift, Omega the clock's, B its effect on them)
+  # and Sigma the clock's starting covariance; a's mean is the point on the
+  # clock's path at its start, D z + k with A k = -c. Worked out here by
+  # Kronecker solves, not by the engine's own.
   dat <- ctPeriodicPhases(.stat_data(), period = 24)
-  m <- ctModelPeriodicComponent(.stat_marked(T0MEANS = c("t0a", "t0b"),
+  m <- ctModelPeriodicComponent(.stat_marked(T0MEANS = c("stationary", "t0b"),
     T0VAR = matrix(c("stationary", "stationary", 0, "stationary"), 2, 2)), 24, indices = 1)
   spec <- suppressMessages(ctFit(dat, m, backend = "julia", fit = FALSE))
   expect_equal(as.logical(spec$t0stationary$closure), c(TRUE, TRUE, FALSE, FALSE))
+  expect_equal(as.logical(spec$t0stationary$drivers), c(FALSE, FALSE, TRUE, TRUE))
   set.seed(11)
   raw <- stats::rnorm(ctsem:::.ctBackendNpar(spec), 0, .3)
-  k <- ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_kalman",
-    ctsem:::.ctJuliaObjective(spec), ctsem:::.ctJuliaNumericVector(raw))
-  get <- .stat_matrices(spec, raw)
-  expected <- .stat_moments(get("DRIFT")[1:2, 1:2], c(0, 0), get("DIFFUSIONcov")[1:2, 1:2])$cov
-  for (f in match(unique(k$subject), k$subject)) {
-    expect_equal(k$etacov[1, f, 1:2, 1:2], expected, tolerance = 1e-8)
-    expect_equal(k$etacov[1, f, 1:2, 3:4], matrix(0, 2, 2), tolerance = 1e-12)
-    expect_gt(k$etacov[1, f, 3, 3], 1e-6)
+  objective <- ctsem:::.ctJuliaObjective(spec)
+  k <- ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_kalman", objective,
+    ctsem:::.ctJuliaNumericVector(raw))
+  first <- match(unique(k$subject), k$subject)
+  for (i in seq_along(first)) {
+    f <- first[i]
+    get <- .stat_matrices(spec, raw, tipreds = spec$tipred_data[i, ])
+    drift <- get("DRIFT")
+    A <- drift[1:2, 1:2]
+    Om <- drift[3:4, 3:4]
+    B <- drift[1:2, 3:4]
+    D <- matrix(solve(kronecker(diag(2), A) - kronecker(t(Om), diag(2)), -as.numeric(B)), 2, 2)
+    Sigma <- k$etacov[1, f, 3:4, 3:4]
+    noise <- .stat_moments(A, c(0, 0), get("DIFFUSIONcov")[1:2, 1:2])$cov
+    expect_equal(k$etacov[1, f, 1:2, 1:2], noise + D %*% Sigma %*% t(D), tolerance = 1e-8)
+    expect_equal(k$etacov[1, f, 1:2, 3:4], D %*% Sigma, tolerance = 1e-8)
+    expect_equal(k$eta[1, f, 1], -solve(A, as.numeric(get("CINT"))[1:2])[1] +
+      sum(D[1, ] * k$eta[1, f, 3:4]), tolerance = 1e-8)
   }
+  # The clock's spread reaches a's start, and its phase a's mean.
+  expect_gt(max(abs(k$etacov[1, first, 1, 3:4])), 1e-4)
+  expect_gt(stats::sd(k$eta[1, first, 1]), 1e-4)
+
   adjoint <- as.numeric(ctJuliaEvaluate(spec, raw, gradient = TRUE,
     gradient_method = "adjoint")$gradient)
   forward <- as.numeric(ctJuliaEvaluate(spec, raw, gradient = TRUE,
     gradient_method = "forward")$gradient)
   expect_equal(adjoint, forward, tolerance = 1e-9)
-  # A stationary mean of a needs the clock to settle, which it never does.
-  m$pars$param[m$pars$matrix %in% "T0MEANS" & m$pars$row == 1] <- "stationary"
-  expect_error(suppressMessages(ctFit(dat, m, backend = "julia", fit = FALSE)),
-    "leaves cycle_cos, cycle_sin without a stationary state")
+  over_reverse <- ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_hessian",
+    objective, ctsem:::.ctJuliaNumericVector(raw))
+  over_forward <- ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_hessian_forward",
+    objective, ctsem:::.ctJuliaNumericVector(raw))
+  expect_equal(as.numeric(over_reverse), as.numeric(over_forward), tolerance = 1e-8)
+
+  # stationary = TRUE takes the same start: the clock's as written, the rest
+  # stationary.
+  whole <- suppressMessages(ctFit(dat, ctModelPeriodicComponent(.stat_model(), 24,
+    indices = 1), backend = "julia", fit = FALSE, stationary = TRUE))
+  marked <- suppressMessages(ctFit(dat, ctModelPeriodicComponent(.stat_marked(
+    T0MEANS = c("stationary", "stationary"),
+    T0VAR = matrix(c("stationary", "stationary", 0, "stationary"), 2, 2)), 24, indices = 1),
+    backend = "julia", fit = FALSE))
+  nw <- .stat_names(whole)
+  expect_setequal(nw, .stat_names(marked))
+  rw <- setNames(stats::rnorm(length(nw), 0, .3), nw)
+  expect_equal(ctJuliaEvaluate(whole, unname(rw), gradient = FALSE)$value,
+    ctJuliaEvaluate(marked, unname(rw[.stat_names(marked)]), gradient = FALSE)$value,
+    tolerance = 1e-9)
+
+  # The clock itself has no stationary state.
+  own <- m
+  own$pars$param[own$pars$matrix %in% "T0VAR" & own$pars$row == 3 & own$pars$col == 3] <-
+    "stationary"
+  expect_error(suppressMessages(ctFit(dat, own, backend = "julia", fit = FALSE)),
+    "has no stationary state of its own")
 })
 
 test_that("'stationary' elements are refused where they name no stationary value", {

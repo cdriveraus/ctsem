@@ -679,18 +679,6 @@ T0VARredundancies <- function(ctm) {
   return(ctm)
 }
 
-# A latent whose DRIFT is fixed so that it never settles anywhere -- a trait
-# held constant, a random walk, a clock (`.ctNeverSettles`) -- leaves
-# stationary = TRUE nothing to start it from. Refused by name here, because the
-# engine would otherwise meet a singular solve at every trial point and the fit
-# would fail at its starting values with nothing said about why.
-.ctStationaryCheckDrift <- function(ctm) {
-  static <- .ctNeverSettles(ctm)
-  if(length(static)) stop('stationary = TRUE needs every latent process to ',
-    'settle somewhere, and DRIFT, as fixed, leaves ', paste(static, collapse = ', '),
-    ' without a stationary state. Estimate T0MEANS and T0VAR instead.', call. = FALSE)
-  invisible(TRUE)
-}
 
 
 
@@ -987,9 +975,11 @@ T0VARredundancies <- function(ctm) {
 #' dependent predictors. Individual differences in those matrices are allowed
 #' with \code{intoverpop='laplace'}, which \code{intoverpop='auto'} then
 #' chooses, and each subject then starts from its own stationary
-#' distribution. A latent process whose DRIFT is fixed so that it never
-#' settles, such as a row fixed at zero or the clock of
-#' \code{\link{ctModelPeriodicComponent}}, is refused.
+#' distribution. A latent process that DRIFT, as fixed, keeps from settling
+#' and that has no noise, such as the clock of
+#' \code{\link{ctModelPeriodicComponent}} or a trait, keeps its T0MEANS and
+#' T0VAR as written, and the processes it drives start where they would have
+#' settled given its start. One with noise, such as a random walk, is refused.
 #'
 #' To start only some initial conditions at stationarity, name those cells
 #' \code{'stationary'} in the model (\code{backend='julia'}). Other initial
@@ -1001,10 +991,11 @@ T0VARredundancies <- function(ctm) {
 #' covariance among the latents it joins, named too. The stationary
 #' distribution is computed for the marked latents and the latents that drive
 #' them, so DRIFT, CINT and DIFFUSION need to be fixed within each subject
-#' only for those latents. For T0VAR cells, a driving latent with no noise,
-#' such as the clock of \code{\link{ctModelPeriodicComponent}}, is left out:
-#' it shifts the mean of what it drives and not its covariance, and need not
-#' settle.
+#' only for those latents. A driving latent that never settles and has no
+#' noise, such as the clock of \code{\link{ctModelPeriodicComponent}}, keeps
+#' its own initial conditions, and the marked latents start where they would
+#' have settled given them: subjects whose clock starts differently also start
+#' differently on the cycle it drives.
 #' @param forcerecompile logical. For \code{backend='stan'}, recompiles the
 #' stan model regardless of apparent need (for development). For
 #' \code{backend='julia'}, compiles the model's state-dependent matrix cells
@@ -1056,7 +1047,7 @@ T0VARredundancies <- function(ctm) {
 #'
 #' # Long format data: one row per subject and occasion, with an id, a time,
 #' # the measured variables Y1 and Y2, and a time dependent predictor TD1.
-#' head(ctstantestdat)
+#' print(head(ctstantestdat))
 #'
 #' # Two processes, each measured by one variable, affected by TD1. Every
 #' # other part of the model takes the defaults of ctModel().
@@ -1066,11 +1057,11 @@ T0VARredundancies <- function(ctm) {
 #'
 #' # priors = TRUE helps with a data set this small (30 subjects).
 #' fit <- ctFit(ctstantestdat, model, priors = TRUE)
-#' summary(fit)
+#' print(summary(fit))
 #'
 #' # The effects over time intervals, and predictions for two subjects.
-#' ctDiscretePars(fit, times = seq(0, 5, by = 0.1), plot = TRUE)
-#' ctPredict(fit, subjects = 1:2, plot = TRUE)
+#' print(ctDiscretePars(fit, times = seq(0, 5, by = 0.1), plot = TRUE))
+#' print(ctPredict(fit, subjects = 1:2, plot = TRUE))
 #'
 #' # A linear growth curve for Y1: no dynamics and no process noise, with a
 #' # slope (CINT) and an initial level (T0MEANS) that vary between subjects.
@@ -1079,7 +1070,7 @@ T0VARredundancies <- function(ctm) {
 #'   DRIFT = 0, DIFFUSION = 0, T0VAR = 0, MANIFESTMEANS = 0,
 #'   CINT = 'slope', T0MEANS = 'initial')
 #' fitgrowth <- ctFit(ctstantestdat, growth, priors = TRUE)
-#' summary(fitgrowth)$popmeans
+#' print(summary(fitgrowth)$popmeans)
 #' summary(fitgrowth)$popsd
 #'
 #' # Sampling the posterior instead of optimising:

@@ -398,7 +398,9 @@ column vectors, one entry per model-matrix cell.
     (`CTSEMStationaryElements`), each one entry per latent: whether its
     T0MEANS cell is marked; the block its marked T0VAR cells belong to, or 0;
     and whether its moments are needed, the marked latents and every latent
-    that drives them.
+    that drives them. `stationary_drivers`, also one entry a latent: the
+    drivers that never settle and carry no noise, left out of the closure
+    (`CTSEMStationaryElements`).
   * `compile_transforms` — `true` to compile every state-dependent cell and
     every parameter transform outside the default templates into its own
     closure, as the engine did before transforms were data. The model then
@@ -424,7 +426,8 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     population_scale=Float64[], affine_dim::Int=0, stationary::Bool=false,
     ti_fixed_value=Float64[], ti_tail_offset::Integer=0, n_tipreds::Integer=0,
     compile_transforms::Bool=false, stationary_mean=Int[], stationary_block=Int[],
-    stationary_closure=Int[], nfree::Integer=0, anchor_values=Float64[])
+    stationary_closure=Int[], stationary_drivers=Int[], nfree::Integer=0,
+    anchor_values=Float64[])
 
     n = length(matrix)
     length(row) == n && length(col) == n ||
@@ -548,7 +551,7 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
         Float64.(population_scale), affine_dim, stationary,
         Float64.(ti_fixed_value), ti_tail)
     _ctsem_set_stationary_elements!(sp.stationary_elements, stationary_mean,
-        stationary_block, stationary_closure)
+        stationary_block, stationary_closure, stationary_drivers)
     # Under 'z' a covariance cell fixed at zero is a zero covariance, which
     # between connected variables the construction has to solve for.
     covmatcode == 2 && _ctsem_set_cov_zeros!(sp.covzeros, matrix, row, col, parnumber,
@@ -608,23 +611,27 @@ function _ctsem_set_cov_zeros!(cz::CTSEMCovZeros, matrix, row, col, parnumber, v
 end
 
 """
-    _ctsem_set_stationary_elements!(se, mean, block, closure)
+    _ctsem_set_stationary_elements!(se, mean, block, closure, drivers=Int[])
 
 Fill `CTSEMStationaryElements` from R's per-latent vectors: nonzero `mean`
 entries mark T0MEANS cells, equal nonzero `block` entries put latents in one
 T0VAR block, nonzero `closure` entries are the latents whose moments are
-needed. Nothing when `closure` is empty.
+needed, nonzero `drivers` entries the latents that drive them, never settle
+and carry no noise. Nothing when `closure` is empty.
 """
 function _ctsem_set_stationary_elements!(se::CTSEMStationaryElements, mean, block,
-        closure)
+        closure, drivers=Int[])
     isempty(closure) && return se
     se.inclosure = Vector{Bool}(closure .!= 0)
     se.means = findall(!=(0), mean)
     ids = sort(unique(filter(!=(0), Int.(block))))
     se.blocks = [findall(==(id), Int.(block)) for id in ids]
+    se.drivers = findall(!=(0), drivers)
     all(i -> se.inclosure[i], se.means) && all(B -> all(i -> se.inclosure[i], B),
         se.blocks) || throw(ArgumentError(
         "every latent with a stationary element must be in the closure"))
+    any(i -> i <= length(se.inclosure) && se.inclosure[i], se.drivers) &&
+        throw(ArgumentError("a stationary driver cannot be in the closure"))
     return se
 end
 

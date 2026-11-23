@@ -64,6 +64,19 @@
 #' @details The full specification is in \code{x$pars}, which can be printed
 #'   directly. \code{\link{ctModelMatrices}} gives it as matrices.
 #'
+#' @examples
+#' model <- ctModel(LAMBDA = diag(2), manifestNames = c('Y1', 'Y2'),
+#'   latentNames = c('eta1', 'eta2'))
+#'
+#' # The number of free parameters, which of them vary over subjects, and each
+#' # matrix with its parameter labels and fixed values.
+#' model
+#'
+#' # The same without the matrices.
+#' print(model, matrices = FALSE)
+#'
+#' # Every cell with its transform and other settings.
+#' head(model$pars)
 #' @export
 print.ctStanModel <- function(x, matrices = NULL, ...) {
   pars <- x$pars

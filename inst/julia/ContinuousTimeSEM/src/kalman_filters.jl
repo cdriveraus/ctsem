@@ -1704,12 +1704,70 @@ end
 end
 
 """
+    _ctsem_stationary_drive!(ws, pars, se)
+
+How the closure settles onto the path of the drivers that never settle and
+carry no noise (`se.drivers`, a clock pair, a trait, a trend): `D` with
+`A D - D Ω = -B`, `A` the closure's drift (`_ctsem_closure_drift`), `Ω` the
+drivers' own and `B` their DRIFT columns in the closure's rows. Settled given
+the drivers' state `z`, the closure sits at `D z` plus a constant part
+(`_ctsem_stationary_elements_mean!`), so a subject whose drivers start apart
+starts apart on what they drive (`_ctsem_stationary_drive_cov!`). Unique while
+the closure settles, its eigenvalues left of the axis and the drivers' not:
+one square solve of the vectorised system, `(I ⊗ A - Ω' ⊗ I) vec(D) =
+-vec(B)`, a few dozen unknowns for a clock pair. Into
+`ws.stationary_drive.D`; `false` when it is not finite.
+"""
+function _ctsem_stationary_drive!(ws, pars, se::CTSEMStationaryElements)
+    sd = ws.stationary_drive
+    Z = se.drivers
+    nz = length(Z)
+    naff = ws.affine_buffer.dim
+    N = naff * nz
+    DRIFT = pars.DRIFT
+    inclosure = se.inclosure
+    K = sd.K
+    r = sd.r
+    T = eltype(K)
+    @inbounds for c in 1:N, q in 1:N
+        K[q, c] = zero(T)
+    end
+    @inbounds for j in 1:nz
+        o = (j - 1) * naff
+        for m in 1:naff, i in 1:naff
+            K[o + i, o + m] = _ctsem_closure_drift(DRIFT, inclosure, i, m)
+        end
+        for l in 1:nz
+            ol = (l - 1) * naff
+            w = DRIFT[Z[l], Z[j]]
+            for i in 1:naff
+                K[o + i, ol + i] -= w
+            end
+        end
+        for i in 1:naff
+            r[o + i] = _ctsem_in_closure(inclosure, i) ? -DRIFT[i, Z[j]] : zero(T)
+        end
+    end
+    _solve_square_system_generic!(K, r, sd.piv, N)
+    @inbounds for j in 1:nz, i in 1:naff
+        v = r[(j - 1) * naff + i]
+        isfinite(v) || return false
+        sd.D[i, j] = v
+    end
+    return true
+end
+
+"""
     _ctsem_stationary_elements_mean!(x, ws, pars, se)
 
 The marked T0MEANS cells at their stationary values, asymCINT: `-DRIFT \\ CINT`
 over the closure system (`_ctsem_closure_drift`), written over `x` at the
-marked latents only. The whole solution stays in `ws.affine_buffer.s`, where
-the record reads it. `false` when the closure's drift is singular.
+marked latents only. Beside drivers that never settle (`se.drivers`) it is
+the point on their path at their start: `D z̄ + k`, `z̄` their T0MEANS as they
+stand in `x`, `D` from `_ctsem_stationary_drive!` and `A k = D c_z - c` over
+the closure, `c_z` their CINT (a trend's slope). `k` stays in
+`ws.affine_buffer.s`, where the record reads it. `false` when the closure's
+drift is singular.
 """
 function _ctsem_stationary_elements_mean!(x, ws, pars, se::CTSEMStationaryElements)
     isempty(se.means) && return true
@@ -1718,18 +1776,34 @@ function _ctsem_stationary_elements_mean!(x, ws, pars, se::CTSEMStationaryElemen
     inclosure = se.inclosure
     DRIFT = pars.DRIFT
     CINT = pars.CINT
+    Z = se.drivers
+    nz = length(Z)
+    nz > 0 && (_ctsem_stationary_drive!(ws, pars, se) || return false)
+    D = ws.stationary_drive.D
     @inbounds for j in 1:naff, i in 1:naff
         ab.intermediate[i, j] = _ctsem_closure_drift(DRIFT, inclosure, i, j)
     end
     @inbounds for i in 1:naff
-        ab.s[i] = _ctsem_in_closure(inclosure, i) ? -CINT[i] : zero(eltype(ab.s))
+        if _ctsem_in_closure(inclosure, i)
+            v = -CINT[i]
+            for j in 1:nz
+                v += D[i, j] * CINT[Z[j]]
+            end
+            ab.s[i] = v
+        else
+            ab.s[i] = zero(eltype(ab.s))
+        end
     end
     _solve_square_system!(ab.intermediate, ab.s, ab.piv, ab.dim)
     @inbounds for i in se.means
         isfinite(ab.s[i]) || return false
     end
     @inbounds for i in se.means
-        x[i] = ab.s[i]
+        v = ab.s[i]
+        for j in 1:nz
+            v += D[i, j] * x[Z[j]]
+        end
+        x[i] = v
     end
     return true
 end
@@ -1744,7 +1818,9 @@ the closure system as the mean is, through the congruence `P <- M P M'` with
 stationary block and of `P`'s. The block becomes the stationary one exactly,
 its covariances with every other state are carried along, and `P` stays a
 covariance whatever T0VAR's free cells hold. For a block of one latent this
-scales its row and column, keeping T0VAR's correlations.
+scales its row and column, keeping T0VAR's correlations. Beside drivers that
+never settle (`se.drivers`) the blocks then take the part the drivers' own
+start sets (`_ctsem_stationary_drive_cov!`).
 
 Scratch: the diffusion and Lyapunov buffers as `_ctsem_stationary!` uses them,
 and `ws.discretization_buffer`, twice the state dimension square: `input`'s
@@ -1827,7 +1903,57 @@ function _ctsem_stationary_elements_cov!(P, ws, pars, se::CTSEMStationaryElement
         end
         o += b
     end
+    isempty(se.drivers) && return true
+    _ctsem_stationary_drive!(ws, pars, se) || return false
+    _ctsem_stationary_drive_cov!(P, ws, se)
     return true
+end
+
+"""
+    _ctsem_stationary_drive_cov!(P, ws, se)
+
+The marked blocks' part from the drivers that never settle: each marked
+latent `s` at `x_s + Σ_j D[s, j] z_j` (`_ctsem_stationary_drive!`), so
+`P <- G P G'` with `G = I + E`, `E[s, Z[j]] = D[s, j]`. The blocks' covariances
+with the drivers are placeholders at zero (R's `.ctStationaryElements`), so
+a block becomes its stationary covariance plus `D_s Σ D_s'`, and its
+covariance with the drivers `D_s Σ`, `Σ` their initial covariance as written:
+subjects whose clock starts apart start apart on the cycle it drives. `P`
+before it goes to `ws.stationary_drive.P1`, which the record reads.
+"""
+function _ctsem_stationary_drive_cov!(P, ws, se::CTSEMStationaryElements)
+    sd = ws.stationary_drive
+    D = sd.D
+    Y = sd.Y
+    P1 = sd.P1
+    Z = se.drivers
+    nz = length(Z)
+    n = ws.state_dim
+    T = eltype(P)
+    @inbounds for j in 1:n, i in 1:n
+        P1[i, j] = P[i, j]
+    end
+    @inbounds for B in se.blocks, s in B, c in 1:n
+        v = zero(T)
+        for j in 1:nz
+            v += D[s, j] * P1[Z[j], c]
+        end
+        Y[s, c] = v
+    end
+    @inbounds for B in se.blocks, s in B, c in 1:n
+        P[s, c] += Y[s, c]
+    end
+    @inbounds for B in se.blocks, s in B, c in 1:n
+        P[c, s] += Y[s, c]
+    end
+    @inbounds for B in se.blocks, s in B, B2 in se.blocks, s2 in B2
+        v = zero(T)
+        for j in 1:nz
+            v += Y[s, Z[j]] * D[s2, j]
+        end
+        P[s, s2] += v
+    end
+    return nothing
 end
 
 """
