@@ -1359,7 +1359,10 @@ test_that("near-singular random-effect curvature is reported, and changes nothin
   spec <- suppressWarnings(suppressMessages(ctFit(.laplace_weak_data(), model,
     backend = "julia", intoverpop = "laplace", fit = FALSE)))
   module <- .ctJuliaModule(spec$project)
-  objective <- .ctJuliaObjective(spec)
+  # The layer, where the intercept and initial mean are coordinates beside the
+  # drift: on the hybrid the filter integrates them and the unit's curvature is
+  # the drift's alone.
+  objective <- .ctJuliaObjective(spec, layer = TRUE)
   # Where a total-floor fit of these data converged: one unit parked at
   # eigenvalues (8.5e-4, 14.9, 79.0), logdet = 0 to ten digits, which is where
   # the total prior floor lets the optimiser rest while the unit's Laplace term

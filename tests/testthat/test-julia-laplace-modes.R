@@ -538,10 +538,11 @@ test_that("the probes search only where a unit can have a second maximum", {
 # Persons nested in studies, as in a meta-analysis of panels: person-level
 # random intercepts and initial means, a study-level random drift. On the layer
 # a study's unit holds every person's effects, and its mode search -- Newton's
-# kept curvature, the probes' span, solves and screen, the partner modes' fold
-# test -- works from the unit's blocks (`_laplace_block_lowest`); made dense,
-# it was the unit's width cubed, hours for a study of thousands. The dense
-# decompositions are the oracle (`ctsem_set_block_eigen!(false)`).
+# kept curvature, the probes a block at a time (`_laplace_probe_nested`), the
+# partner modes' fold test -- works from the unit's blocks
+# (`_laplace_block_lowest`); made dense, it was the unit's width cubed, hours
+# for a study of thousands. The dense decompositions are the oracle
+# (`ctsem_set_block_eigen!(false)`).
 # (`.nested_panel_data()`, `.nested_panel_model()`: helper-nested.R)
 
 test_that("a nested unit's mode search reads its blocks, as its dense oracle does", {
@@ -574,6 +575,86 @@ test_that("a nested unit's mode search reads its blocks, as its dense oracle doe
   subset <- ctsem:::.ctJuliaEval(paste0("o -> ContinuousTimeSEM._ctsem_subset_objective(",
     "o, [1]) isa ContinuousTimeSEM.CTSEMLaplaceObjective"))
   expect_true(isTRUE(subset(obj)))
+})
+
+# The reflect fixture's people nested in two studies, each study with its own
+# random intercept: a study is one unit, searched a block at a time, each
+# person's starts given the study's effect (`_laplace_probe_nested`), and a
+# better maximum one person's search finds is where the next person's starts
+# leave from. Each person is checked against their own maxima given the rest of
+# the unit's mode, by a grid refined by Newton and scored by the unit's term.
+# The case under test: a person whose better maximum lies past the origin's,
+# and one whose better maximum becomes the better one only once an earlier
+# person's has moved the study's intercept (person 2 of study 1, by 0.07).
+test_that("a nested unit's persons each reach their best maximum given the rest", {
+  skip_without_julia()
+  set.seed(3)
+  n <- 12; nt <- 10
+  d <- data.frame(id = rep(1:n, each = nt), time = rep(0:(nt - 1), n))
+  d$study <- ifelse(d$id <= n / 2, 1, 2)
+  eta <- unlist(lapply(1:n, function(i) {
+    e <- numeric(nt); e[1] <- 1 + rnorm(1)
+    for (t in 2:nt) e[t] <- 0.6 * e[t - 1] + rnorm(1, 0, 0.8)
+    e
+  }))
+  d$Y1 <- -1.2 * eta + rnorm(n * nt, 0, 0.3)
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", id = c("id", "study"),
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix("lambda"),
+    DRIFT = matrix(-0.5), DIFFUSION = matrix(0.8), MANIFESTVAR = matrix(0.3),
+    MANIFESTMEANS = matrix("mm"), T0MEANS = matrix(1), T0VAR = matrix(1),
+    CINT = matrix(0), tipredDefault = FALSE)))
+  m$pars$indvarying <- ifelse(m$pars$param %in% "lambda", "id",
+    ifelse(m$pars$param %in% "mm", "study", FALSE))
+  m$pars$transform[m$pars$param %in% "lambda"] <- "param"
+  spec <- suppressMessages(ctFit(d, m, backend = "julia", intoverpop = "laplace",
+    fit = FALSE, cores = 1))
+  obj <- ctsem:::.ctJuliaObjective(spec)
+  dims <- ctsem:::.ctJuliaEval("o -> collect(Int, o.units.dims)")
+  expect_equal(as.integer(dims(obj)), c(7L, 7L))
+  x <- numeric(ctsem:::.ctBackendNpar(spec))
+  # Scored alone, which maximum the search reached.
+  invisible(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_mode_sum!", FALSE))
+  on.exit(invisible(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_mode_sum!",
+    TRUE)), add = TRUE)
+  ctsem:::.ctJuliaEvaluate(spec, x, gradient = FALSE, cores = 1L)
+  ctsem:::.ctJuliaEval(paste(
+    "function _ctsem_test_nested_best(o, theta)",
+    "  C = ContinuousTimeSEM",
+    "  Ls = C._laplace_popchols(theta, o.spec)",
+    "  aws = C._laplace_workspace!(o, Float64, length(theta))",
+    "  grid = collect(-6.0:0.01:6.0)",
+    "  out = zeros(0, 4)",
+    "  for U in eachindex(o.units.members)",
+    "    u0 = copy(o.modes[U])",
+    "    origin = C._laplace_newton_unit_mode(o, U, theta, Ls, aws, zeros(length(u0))).u",
+    "    for blk in o.units.blocks[U]",
+    "      isempty(blk.ancestors) && continue",
+    "      j = blk.offset + 1",
+    "      g = map(grid) do v",
+    "        u = copy(u0); u[j] = v",
+    "        C._laplace_unit_objective_gradient(o, U, theta, Ls, u, aws).value",
+    "      end",
+    "      best = -Inf; at = NaN",
+    "      for i in 2:length(grid)-1",
+    "        (g[i] > g[i-1] && g[i] >= g[i+1]) || continue",
+    "        u = copy(u0); u[j] = grid[i]",
+    "        r = C._laplace_newton_unit_mode(o, U, theta, Ls, aws, u)",
+    "        t = C._laplace_unit_primal(o, U, theta, Ls, copy(r.u), aws).term",
+    "        t > best && (best = t; at = r.u[j])",
+    "      end",
+    "      out = vcat(out, [U u0[j] at origin[j]])",
+    "    end",
+    "  end",
+    "  out",
+    "end", sep = "\n"))
+  scan <- matrix(as.numeric(ctsem:::.ctJuliaCall("Main._ctsem_test_nested_best", obj,
+    ctsem:::.ctJuliaNumericVector(x))), ncol = 4,
+    dimnames = list(NULL, c("unit", "found", "best", "origin")))
+  expect_equal(nrow(scan), n)
+  expect_equal(scan[, "found"], scan[, "best"], tolerance = 1e-3)
+  # Exercised: some person's best maximum is not on the side Newton from the
+  # origin reaches.
+  expect_true(any(sign(scan[, "found"]) != sign(scan[, "origin"])))
 })
 
 # Persons with their own random drift under a random study drift, on the layer:
