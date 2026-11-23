@@ -2,8 +2,7 @@
 % Please edit documentation in R/ctsemUtils.R
 \name{ctWideNames}
 \alias{ctWideNames}
-\title{ctWideNames
-sets default column names for wide ctsem datasets. Primarily intended for internal ctsem usage.}
+\title{Column names for wide ctsem data}
 \usage{
 ctWideNames(
   n.manifest,
@@ -38,6 +37,16 @@ A character vector of column names for a wide format dataset, with
   independent predictors.
 }
 \description{
-ctWideNames
-sets default column names for wide ctsem datasets. Primarily intended for internal ctsem usage.
+Gives the default column names for wide ctsem data. Mostly used inside
+ctsem.
+}
+\examples{
+# Column names, in order, for wide data with two variables measured at
+# three occasions, one time dependent and one time independent predictor.
+# dT1 and dT2 are the time intervals before the second and third occasion.
+ctWideNames(n.manifest = 2, Tpoints = 3, n.TDpred = 1, n.TIpred = 1)
+
+# With the variables' own names.
+ctWideNames(n.manifest = 2, Tpoints = 3,
+  manifestNames = c('LeisureTime', 'Happiness'))
 }

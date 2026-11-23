@@ -7,6 +7,22 @@
 #' @param startoffset Number of units of time to offset by when converting.
 #' @return \code{datalong}, with the interval column \code{dT} replaced by
 #'   absolute times and renamed \code{time}.
+#' @examples
+#' # Wide data, one row per subject, with the time intervals between
+#' # occasions in the columns dT1 to dT5.
+#' data(ctExample1)
+#' long <- ctWideToLong(ctExample1, Tpoints = 6, n.manifest = 2,
+#'   manifestNames = c('LeisureTime', 'Happiness'))
+#'
+#' # In long format the dT column holds the interval before each row.
+#' head(long)
+#'
+#' # The intervals summed within each subject into a time column, starting
+#' # at 0.
+#' head(ctDeintervalise(long))
+#'
+#' # Starting each subject at time 10 instead.
+#' head(ctDeintervalise(long, startoffset = 10))
 #' @export
 ctDeintervalise<-function(datalong,id='id', dT='dT',startoffset=0){
 

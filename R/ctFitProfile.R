@@ -590,6 +590,20 @@ ctFitProfile <- function(fit, parameters = NULL, points = 8L, step = NULL,
 #' @param digits significant digits for the reported values.
 #' @param ... ignored.
 #' @return \code{x}, invisibly.
+#' @examples
+#' \donttest{
+#' if (isTRUE(ctJuliaStatus()$available)) {
+#' model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
+#'   LAMBDA = matrix(1))
+#' model$pars$indvarying <- FALSE
+#' fit <- ctFit(ctstantestdat, model)
+#' result <- ctFitProfile(fit, parameters = c('drift_eta1', 'mm_Y1'))
+#'
+#' # Each parameter's estimate and the limits of its 95 per cent profile
+#' # likelihood interval, on the raw scale, and whether the data identify it.
+#' print(result)
+#' }
+#' }
 #' @export
 print.ctFitProfile <- function(x, digits = 3, ...) {
   # The better optimum first, and before anything else, because every other
@@ -644,6 +658,24 @@ print.ctFitProfile <- function(x, digits = 3, ...) {
 #' @param parameters which to draw; defaults to all that were profiled.
 #' @param ... passed to \code{plot}.
 #' @return \code{x}, invisibly.
+#' @examples
+#' \donttest{
+#' if (isTRUE(ctJuliaStatus()$available)) {
+#' model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
+#'   LAMBDA = matrix(1))
+#' model$pars$indvarying <- FALSE
+#' fit <- ctFit(ctstantestdat, model)
+#' result <- ctFitProfile(fit, parameters = c('drift_eta1', 'mm_Y1'))
+#'
+#' # A panel per parameter, with the drop in log likelihood against the raw
+#' # value the parameter was held at. The curve crosses the dashed bar at the
+#' # limits of the 95 per cent interval, marked by the vertical lines.
+#' plot(result)
+#'
+#' # One parameter only.
+#' plot(result, parameters = 'drift_eta1')
+#' }
+#' }
 #' @export
 plot.ctFitProfile <- function(x, parameters = NULL, ...) {
   profile <- x$profile
