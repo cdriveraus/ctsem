@@ -163,9 +163,11 @@ and DIFFUSION matrices that do not depend on the latent states or on time
 dependent predictors. Individual differences in those matrices are allowed
 with \code{intoverpop='laplace'}, which \code{intoverpop='auto'} then
 chooses, and each subject then starts from its own stationary
-distribution. A latent process whose DRIFT is fixed so that it never
-settles, such as a row fixed at zero or the clock of
-\code{\link{ctModelPeriodicComponent}}, is refused.
+distribution. A latent process that DRIFT, as fixed, keeps from settling
+and that has no noise, such as the clock of
+\code{\link{ctModelPeriodicComponent}} or a trait, keeps its T0MEANS and
+T0VAR as written, and the processes it drives start where they would have
+settled given its start. One with noise, such as a random walk, is refused.
 
 To start only some initial conditions at stationarity, name those cells
 \code{'stationary'} in the model (\code{backend='julia'}). Other initial
@@ -177,10 +179,11 @@ pair the stationary covariance, and needs both their variances, and every
 covariance among the latents it joins, named too. The stationary
 distribution is computed for the marked latents and the latents that drive
 them, so DRIFT, CINT and DIFFUSION need to be fixed within each subject
-only for those latents. For T0VAR cells, a driving latent with no noise,
-such as the clock of \code{\link{ctModelPeriodicComponent}}, is left out:
-it shifts the mean of what it drives and not its covariance, and need not
-settle.}
+only for those latents. A driving latent that never settles and has no
+noise, such as the clock of \code{\link{ctModelPeriodicComponent}}, keeps
+its own initial conditions, and the marked latents start where they would
+have settled given them: subjects whose clock starts differently also start
+differently on the cycle it drives.}
 
 \item{plot}{if TRUE, for sampling, a Shiny program is launched upon fitting to interactively plot samples.
 May struggle with many (e.g., > 5000) parameters. For optimizing, the optimisation trace is plotted,
