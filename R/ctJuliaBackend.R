@@ -699,6 +699,11 @@ ctJuliaSetup <- function(project = NULL, julia_bin = NULL,
   # when asked for, and otherwise what `cores` defaults to.
   cap <- if (!is.null(threads)) threads else .ctJuliaDefaultCores()
   cap <- suppressWarnings(as.integer(cap)[1L])
+  .ct_julia_cache$default_chunks <- cap
+  # A region that began before there was a session (.ctBackendWithMaxChunks())
+  # holds its ceiling until the session it starts is up.
+  pending <- suppressWarnings(as.integer(.ct_julia_cache$pending_chunks)[1L])
+  if (length(pending) && !is.na(pending) && pending >= 1L) cap <- pending
   if (!is.na(cap) && cap >= 1L) {
     try(.ctJuliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!", cap), silent = TRUE)
   }
@@ -5242,12 +5247,25 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # is performance-only, but it makes a timing depend on history, which is exactly
 # what makes one impossible to reproduce.
 .ctBackendWithMaxChunks <- function(chunks, expr) {
-  # With no Julia here at all there is no engine work to bound, and setting the
-  # ceiling would start the setup only to fail it: a stored julia fit's
-  # extract, summaries and LaTeX are R work on the draws it carries. Anything in
-  # `expr` that does need the engine says Julia is missing itself.
-  if (!isTRUE(.ctJuliaSessionRunning()) &&
-      !isTRUE(tryCatch(.ctJuliaStartable(), error = function(e) FALSE))) return(expr)
+  # With no session running, the work may need no engine at all: a stored
+  # julia fit's extract, summaries and LaTeX are R work on the draws it
+  # carries, and starting Julia only to set a ceiling costs seconds, or the
+  # engine's whole precompile after an update. So the ceiling waits: a session
+  # that `expr` starts takes it in place of its default (ctJuliaSetup()), and
+  # gets back the ceiling it would have had once the region ends. Where Julia
+  # is missing, anything in `expr` that needs the engine says so itself.
+  if (!isTRUE(.ctJuliaSessionRunning())) {
+    chunks <- suppressWarnings(as.integer(chunks)[1L])
+    if (is.na(chunks) || chunks < 1L) return(expr)
+    outer <- .ct_julia_cache$pending_chunks
+    .ct_julia_cache$pending_chunks <- chunks
+    on.exit({
+      .ct_julia_cache$pending_chunks <- outer
+      if (isTRUE(.ctJuliaSessionRunning())) .ctBackendRestoreMaxChunks(
+        if (is.null(outer)) .ct_julia_cache$default_chunks else outer)
+    }, add = TRUE)
+    return(expr)
+  }
   previous <- .ctBackendSetMaxChunks(chunks)
   on.exit(.ctBackendRestoreMaxChunks(previous), add = TRUE)
   expr
@@ -8087,9 +8105,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 
   # The draws pushed through the model's transforms, once, exactly as the Stan
   # path stores `stanfit$transformedpars` at fit time. Every summary, extract
-  # and system-matrix collapse reads this rather than asking the engine again.
+  # and system-matrix collapse reads this rather than asking the engine again,
+  # the estimate's matrices with it, so a stored fit reports without Julia.
   #
-  # `.ctBackendConstrained`, not `.ctBackendConstrain`: `ctOptimUncertainty()`
+  # Reused where it describes these draws: `ctOptimUncertainty()`
   # has already done exactly this work for exactly these draws a few lines
   # above, and calling the uncached form here repeated it in full. That was
   # 4.5 s of a 16.7 s fit -- 27% of it -- computed twice and thrown away once,
@@ -8097,7 +8116,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # the Stan path whose numerics it beats. The cached form recomputes only when
   # the draws differ, which is what happens when uncertainty was skipped and
   # `out$transformedpars` is still NULL.
-  out$transformedpars <- .ctBackendConstrained(out)
+  out$transformedpars <- .ctBackendConstrainCache(out)
 
   # The filter output at the estimate, cached as the Stan path caches
   # `stanfit$kalman`: summary()'s standardised residual covariance reads it, and

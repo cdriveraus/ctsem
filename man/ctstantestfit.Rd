@@ -2,11 +2,15 @@
 % Please edit documentation in R/ctDataHelp.R
 \name{ctstantestfit}
 \alias{ctstantestfit}
-\title{Example fit for ctsem}
+\title{Example fit for ctsem with the stan backend}
 \format{
 ctStanFit object
 }
 \description{
 A fit of \code{\link{ctsemtestdat}} with \code{backend = 'stan'}, used in
 the examples and tests.
+}
+\seealso{
+\code{\link{ctsemtestfit}}, a fit of the same data with the
+  default backend.
 }

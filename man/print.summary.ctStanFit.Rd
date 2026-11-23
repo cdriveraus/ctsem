@@ -30,7 +30,7 @@ Invisibly returns \code{x}.
 Print ctStanFit summaries
 }
 \examples{
-s <- summary(ctstantestfit)
+s <- summary(ctsemtestfit)
 
 # The section names are the names of the summary list.
 names(s)

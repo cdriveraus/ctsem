@@ -82,7 +82,7 @@ with \code{ctDiscretePars(state = , method = )}.
 }
 \examples{
 data.table::setDTthreads(1) #ignore this line
-x <- ctDiscretePars(ctstantestfit)
+x <- ctDiscretePars(ctsemtestfit)
 ctDiscreteParsPlot(x, indices='CR')
 
 #to modify plot:

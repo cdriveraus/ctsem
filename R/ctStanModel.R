@@ -990,20 +990,27 @@ ctStanModel <- ctModelConvertOMX
 # evaluated as the marginal route evaluates the augmented one
 # (`_laplace_filter_evaluate`), at no more cost
 # (review/FITTING-laplace-collapse-2026-10-24.md). Every other effect is a
-# Laplace coordinate, where the augmented route is measurably the wrong
-# estimator and no optimiser recovers what its objective has lost:
+# Laplace coordinate. For an effect on the dynamics or a variance the
+# augmented route is measurably the wrong estimator:
 #
 #   * an effect on DRIFT (a nonlinear cell, 200 subjects x 12 occasions)
 #     recovered 0.66 of the population sd where laplace recovered 1.00, with
 #     the linear effects in the same model unmoved (memory note
 #     augmented-shrinks-nonlinear-random-effects, review/POPCOV-separation);
-#   * with ordinal indicators the augmented objective separates a population
-#     sd of 0.7 from one of 1900 by 0.07 log units where laplace has 40, on a
-#     linear MANIFESTMEANS effect (augmented-objective-flat-in-popsd-
-#     categorical);
 #   * an effect on a variance cell is identified only through its
 #     correlations with the others (review/RANDOMEFFECTS-partial-
 #     identification-2026-09-07.md).
+#
+# An effect on a mean beside a categorical indicator is a coordinate too, and
+# there the two routes trade errors rather than one being wrong
+# (review/BINARY-cross-effect-bias-2026-11-23.md). The augmented filter
+# replaces the effect's posterior by a normal after each answer; in a
+# random-intercept logistic model its error in the population sd grows with
+# the sd (-0.007 at 1, -0.09 at 2, -0.6 at 4) and does not fall with more
+# answers a person. Laplace's falls with the answers (-0.06, -0.11, -0.50 at
+# five answers, -0.002, -0.01, -0.12 at fifty), and the random-effects check
+# measures it. Up to an sd of about 2 the two fits agree; augmented fitted
+# such models about ten times faster, checks included (2026-11-23, dev1).
 #
 # An affine effect the filter does not take -- one parameter in several cells,
 # or a continuous intercept a stationary initial mean reads -- is a coordinate
