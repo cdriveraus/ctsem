@@ -2659,7 +2659,10 @@ function ctsem_laplace_check(laplace::CTSEMLaplaceObjective, values::AbstractVec
     end
     unit_scores && scored > 0 && (unit_gradient ./= scored)
     _ctsem_call_hook(progress, ns + 1, ns + 1)
-    ex = expansion ? ctsem_laplace_expansion(laplace, x; gate=expansion_gate) :
+    # The expansion only where its curvatures cost less than the draws just
+    # taken for the unit (`budget`), which answer for it otherwise.
+    ex = expansion ? ctsem_laplace_expansion(laplace, x; gate=expansion_gate,
+        budget=draws * ns) :
         (term=Float64[], correction=Float64[], bound=Float64[], mineig=Float64[])
     return (laplace_unit=collect(Float64, lap.unit_loglik), laplace_value=Float64(lap.value),
         check_unit=check_unit, check_se=check_se, gradient=gradient,
