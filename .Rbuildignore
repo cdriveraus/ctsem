@@ -43,3 +43,5 @@
 ^lib$
 ^_pkgdown\.yml$
 ^pkgdown$
+^vignettes/articles$
+^vignettes/latex-figure\.R$

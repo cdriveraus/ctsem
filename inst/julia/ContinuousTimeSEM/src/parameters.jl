@@ -232,6 +232,10 @@ is the whole of both, and the two are not combined.
   * `means` -- the latents whose T0MEANS cell is marked.
   * `blocks` -- the latents whose T0VAR cells are marked, grouped: one latent
     whose diagonal alone is, or several whose cells among themselves all are.
+  * `drivers` -- latents that drive the closure, never settle and carry no
+    noise (a clock pair, a trait, a trend: R's `.ctStationaryElements`). They
+    keep their own initial conditions, and the marked latents start where they
+    would have settled given them (`_ctsem_stationary_drive!`).
 
 Empty, and off, unless R sent the marks (`ekf_from_columns`).
 """
@@ -239,8 +243,9 @@ mutable struct CTSEMStationaryElements
     inclosure::Vector{Bool}
     means::Vector{Int}
     blocks::Vector{Vector{Int}}
+    drivers::Vector{Int}
 end
-CTSEMStationaryElements() = CTSEMStationaryElements(Bool[], Int[], Vector{Int}[])
+CTSEMStationaryElements() = CTSEMStationaryElements(Bool[], Int[], Vector{Int}[], Int[])
 _stationary_elements_on(s::CTSEMStationaryElements) = !isempty(s.inclosure)
 # None, for callers that have no model's to pass. Never filled.
 const _CTSEM_NO_STATIONARY_ELEMENTS = CTSEMStationaryElements()

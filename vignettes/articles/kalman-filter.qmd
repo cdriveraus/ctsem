@@ -1,0 +1,135 @@
+---
+title: "Kalman filter and smoother: predictions and missing values"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+    self-contained-math: true
+execute:
+  message: false
+  warning: false
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7,
+  fig.height = 4, message = FALSE, warning = FALSE)
+source('latex-figure.R')
+```
+
+ctsem estimates the latent processes with the Kalman filter and smoother.
+This article shows the difference between the two on a short series with a
+few observations held out, and how to get estimates of the missing values,
+with their uncertainty.
+
+```{r libs}
+library(ctsem)
+library(ggplot2)
+```
+
+# Data
+
+One subject, observed 40 times. The process follows a first order
+autoregression with an equilibrium of 1, starting at 6, and each observation
+has measurement error with a standard deviation of 0.2:
+
+```{r data}
+set.seed(3)
+n <- 40
+eta <- 6
+for (i in 2:n) eta[i] <- 0.9 * eta[i - 1] + 0.1 + rnorm(1, 0, 0.5)
+dat <- data.frame(id = 1, time = 1:n, y = eta + rnorm(n, 0, 0.2))
+```
+
+Six observations are kept aside, and removed from the data used for
+fitting:
+
+```{r missing}
+missing <- c(5, 17:19, 26, 35)
+heldout <- dat[missing, ]
+dat$y[missing] <- NA
+head(dat)
+```
+
+# Model
+
+The model is ctsem's default continuous time model for one process
+measured by one variable. With so little data, the measurement error is fixed
+at its known standard deviation of 0.2, which separates it from the random
+changes in the process. With one subject, nothing varies over subjects.
+
+```{r model}
+model <- ctModel(type = 'ct',
+  manifestNames = 'y', latentNames = 'eta',
+  LAMBDA = 1, MANIFESTVAR = 0.2)
+model$pars$indvarying <- FALSE
+```
+
+```{r latex-model, echo = FALSE, out.width = '100%'}
+latexFigure(model)
+```
+
+```{r fit}
+fit <- ctFit(dat, model, cores = 2)
+summary(fit)$popmeans
+```
+
+# Filter and smoother
+
+The filter works through the data in time order. At each time it first
+predicts the process from the observations so far (the prior, `yprior` for
+the observed variable and `etaprior` for the latent process), then updates
+that prediction with the observation at that time, if there is one. The
+smoother then runs back from the end of the data, so its estimates
+(`ysmooth`, `etasmooth`) use all the observations, before and after.
+
+`ctPredict()` computes both, here every 0.1 time units. The held out
+observations are added to the plot as crosses:
+
+```{r filter}
+ctPredict(fit, timestep = 0.1, plot = TRUE, kalmanvec = c('y', 'yprior')) +
+  geom_point(data = heldout, aes(x = time, y = y), inherit.aes = FALSE,
+    shape = 4, size = 3)
+```
+
+Between observations the filter's prediction moves towards the equilibrium,
+at the rate the drift sets, and its uncertainty grows. When an observation
+arrives the prediction jumps most of the way to it, how far depending on the
+measurement error. Over a gap in the observations, the
+prediction carries on towards the equilibrium with growing uncertainty until
+the next observation.
+
+```{r smoother}
+ctPredict(fit, timestep = 0.1, plot = TRUE, kalmanvec = c('y', 'ysmooth')) +
+  geom_point(data = heldout, aes(x = time, y = y), inherit.aes = FALSE,
+    shape = 4, size = 3)
+```
+
+The smoother uses the observations after each time as well, so it bridges the
+gaps from both sides and is more certain. At an observed time its estimate is
+not the observation itself, because the observation includes measurement
+error.
+
+# Estimates of the missing values
+
+With `timestep = 'asdata'`, `ctPredict()` gives values at the times in the
+data only, as a long data frame with one row per time, variable and kind of
+estimate. The `sd` column holds each estimate's standard deviation:
+
+```{r imputed}
+k <- ctPredict(fit, timestep = 'asdata')
+imputed <- k[k$Element %in% 'ysmooth' & k$Time %in% heldout$time,
+  c('Time', 'value', 'sd')]
+imputed$heldout <- heldout$y
+imputed
+```
+
+Each held out value lies within two standard deviations of its estimate.
+The standard deviations are larger in the middle of the gap from 17 to 19,
+furthest from any observation. They take the parameters at their estimates,
+so they leave out the uncertainty about the parameters.
+
+To get estimates at times that are not in the data, add rows for them with
+the observed variables set to `NA`, either before fitting or afterwards with
+`ctPredict(fit, newdata = ...)`, which uses the fitted parameters without
+fitting again.

@@ -1,0 +1,122 @@
+---
+title: "Individual differences that come from the model"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+    self-contained-math: true
+execute:
+  message: false
+  warning: false
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7,
+  fig.height = 4, message = FALSE, warning = FALSE)
+```
+
+Individual differences estimated by a model, such as the variance of a
+random slope, are often read as differences between the people. They can
+also come from the model or from how the data are arranged. This article
+shows a case where people who are all the same appear to differ in how fast
+they change.
+
+```{r libs}
+library(ctsem)
+library(ggplot2)
+```
+
+# Data
+
+Two hundred people are each observed twice, one year apart, starting at
+ages between 0 and 3. Everyone follows the same course, rising from 0 at age
+0 towards 5, quickly at first and then more slowly. The measurements have a
+little error:
+
+```{r data}
+set.seed(1)
+n <- 200
+startage <- runif(n, 0, 3)
+dat <- data.frame(id = rep(1:n, each = 2), occasion = rep(0:1, n))
+dat$age <- startage[dat$id] + dat$occasion
+dat$y <- 5 * (1 - exp(-dat$age)) + rnorm(nrow(dat), 0, 0.1)
+```
+
+Plotted by occasion, as a two-wave study often is, people seem to differ:
+some change a lot between the two occasions and some hardly at all, and those
+who start lower change more.
+
+```{r byoccasion}
+ggplot(dat[dat$id <= 30, ], aes(occasion, y, group = id)) +
+  geom_point() + geom_line() + theme_bw()
+```
+
+Plotted by age, they all lie on one curve:
+
+```{r byage}
+ggplot(dat[dat$id <= 30, ], aes(age, y, group = id)) +
+  geom_point() + geom_line() + theme_bw()
+```
+
+# Two models
+
+A linear growth model on the occasions has a starting level and a slope for
+each person. The measurement error is fixed to its true standard deviation,
+which two occasions per person cannot separate from the rest:
+
+```{r linear}
+datocc <- data.frame(id = dat$id, time = dat$occasion, y = dat$y)
+mlinear <- ctModel(type = 'ct',
+  manifestNames = 'y', latentNames = 'eta',
+  LAMBDA = 1, DRIFT = 0, DIFFUSION = 0, CINT = 'slope',
+  MANIFESTMEANS = 0, MANIFESTVAR = 0.1)
+flinear <- ctFit(datocc, mlinear, cores = 2)
+summary(flinear)$popsd
+summary(flinear)$rawpopcorr
+```
+
+The slopes differ a lot between people, and they are almost perfectly
+negatively correlated with the starting levels: where a person starts
+predicts how fast they change.
+
+A model on age, with time running from age 0 for everyone, describes the
+shape of the course instead. Its process has an auto effect, which slows the
+growth as the level rises. Each person gets a row at age 0 with nothing
+observed, so that the starting value refers to age 0 for everyone. The
+starting value and the intercept still vary over people:
+
+```{r dynamic}
+datage <- data.frame(id = dat$id, time = dat$age, y = dat$y)
+start <- data.frame(id = 1:n, time = 0, y = NA)
+datage <- rbind(start, datage)
+datage <- datage[order(datage$id, datage$time), ]
+mdynamic <- ctModel(type = 'ct',
+  manifestNames = 'y', latentNames = 'eta',
+  LAMBDA = 1, CINT = 'cint', MANIFESTMEANS = 0, MANIFESTVAR = 0.1)
+fdynamic <- ctFit(datage, mdynamic, cores = 2)
+summary(fdynamic)$popmeans
+summary(fdynamic)$popsd
+```
+
+The auto effect and intercept are close to the -1 and 5 of the process, and
+almost no differences between people remain. Both models fit the same
+observations, so their log likelihoods can be compared:
+
+```{r loglik}
+c(linear = logLik(flinear), dynamic = logLik(fdynamic))
+```
+
+The differences between people in the first model came from fitting a
+straight line to a curve, with each person observed on a different part of
+it.
+
+# What follows
+
+An estimated random effect means the model needs it, which can be because the
+people differ, or because the model leaves something out that varies
+between them. Here that was age. The same happens when cohorts of
+different ages are pooled, or when the time scale of a study (occasions,
+weeks since enrolment) is not the one the process follows. A model with a
+time scale and a form of change closer to the process leaves less to explain
+by differences between people.

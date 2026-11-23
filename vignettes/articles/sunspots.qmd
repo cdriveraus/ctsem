@@ -1,0 +1,265 @@
+---
+title: "One long time series: sunspots"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+    self-contained-math: true
+execute:
+  message: false
+  warning: false
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7,
+  fig.height = 4, message = FALSE, warning = FALSE)
+source('latex-figure.R')
+```
+
+The number of sunspots rises and falls in a cycle of about 11 years. This
+article fits that cycle as a damped oscillator, a second order model, to the
+yearly counts from 1700 to 1988. It shows how to model a single subject,
+what a pair of complex eigenvalues of the drift matrix means, and how to fit
+the same model by Bayesian sampling with priors chosen for the data.
+
+```{r libs}
+library(ctsem)
+library(ggplot2)
+```
+
+# Data
+
+ctsem takes long format data with an id column, a time column and the
+observed variables. Here there is one subject, the sun.
+
+```{r data}
+ssdat <- data.frame(id = 1, time = as.numeric(time(sunspot.year)),
+  sunspots = as.numeric(sunspot.year))
+head(ssdat)
+```
+
+```{r plotdata, fig.height = 3}
+ggplot(ssdat, aes(time, sunspots)) + geom_line() + theme_bw()
+```
+
+# A damped oscillator
+
+A first order model lets a process return towards its equilibrium after a
+shock, but it cannot overshoot and swing back. To get a cycle, the model
+needs a second latent process, the rate of change of the first. Call them
+`level` and `velocity`:
+
+- the level changes at the rate given by the velocity, so `DRIFT[1, 2]` is
+  fixed to 1 and the level's own auto effect to 0;
+- the velocity changes according to the level (`a21`) and to itself
+  (`a22`). A negative `a21` pulls a high level back down, and a negative
+  `a22` damps the swings;
+- random shocks act on the velocity only, so `DIFFUSION` has one free cell;
+- only the level is measured (`LAMBDA = c(1, 0)`), with an intercept `m1`
+  and measurement error.
+
+With the intercept on the measurement, the continuous time intercept `CINT`
+is fixed to 0. By default the intercepts and starting values vary over
+subjects, which one subject cannot show, so the last line turns that off.
+
+```{r model}
+ssmodel <- ctModel(type = 'ct',
+  manifestNames = 'sunspots',
+  latentNames = c('level', 'velocity'),
+  LAMBDA = c(1, 0),
+  DRIFT = c(0, 1,
+    'a21', 'a22'),
+  MANIFESTMEANS = 'm1',
+  CINT = 0,
+  DIFFUSION = c(0, 0,
+    0, 'diffusion'))
+ssmodel$pars$indvarying <- FALSE
+```
+
+`ctModelLatex(ssmodel)` writes the model out as equations and opens them as a
+pdf:
+
+```{r latex-model, echo = FALSE, out.width = '100%'}
+latexFigure(ssmodel)
+```
+
+`ctModelHigherOrder()` adds second order dynamics to an existing model, which
+is quicker for a model with many processes.
+
+# Fitting
+
+```{r fit}
+fit <- ctFit(ssdat, ssmodel, cores = 2)
+```
+
+With one subject the variance of the starting values (`T0VAR`) cannot be
+estimated either, so `ctFit()` fixes it to a small value and says so in a
+message. It would also have removed the random effects if the model had
+kept them.
+
+```{r summary}
+summary(fit)$popmeans
+```
+
+Both drift parameters are negative. The level is pulled back towards its
+mean of about `r round(summary(fit)$popmeans['m1', 'mean'])` sunspots, and
+the swings are damped.
+
+The drift matrix's eigenvalues say more. A pair of complex eigenvalues means
+the process oscillates. The imaginary part gives the period of the cycle, and
+the real part how quickly the amplitude of a cycle decays when no new shocks
+arrive:
+
+```{r eigen}
+drift <- ctSummaryMatrices(fit)$estimate$DRIFT
+drift
+ev <- eigen(drift)$values
+ev
+2 * pi / abs(Im(ev[1]))   # period, in years
+log(2) / abs(Re(ev[1]))   # half-life of the amplitude, in years
+```
+
+The estimated period is `r round(2 * pi / abs(Im(ev[1])), 1)` years, close
+to the known sunspot cycle. Without new shocks, the amplitude of a cycle
+would halve in about `r round(log(2) / abs(Re(ev[1])), 1)` years. The random
+shocks to the velocity keep the cycle going, and make each cycle's height
+different.
+
+`ctDiscretePars()` shows the same thing as the effect over time of a one unit
+shock to each process. A shock to the level swings it below zero after about
+five years and back up after ten:
+
+```{r discrete}
+ctDiscretePars(fit, times = seq(0, 30, by = 0.5), plot = TRUE)
+```
+
+# Predicted and smoothed states
+
+`ctPredict()` gives the model's predictions for each time, here every 0.1
+years. The predicted values (`yprior`) use only the earlier observations,
+so they show what the model would have forecast. The plot is a ggplot, so
+`coord_cartesian()` can zoom in on a few cycles:
+
+```{r predict}
+ctPredict(fit, timestep = 0.1, plot = TRUE, kalmanvec = c('y', 'yprior')) +
+  coord_cartesian(xlim = c(1900, 1960))
+```
+
+Between observations the forecast follows the cycle, and its uncertainty
+grows until the next observation arrives. The smoothed states
+(`etasmooth`) use all observations, before and after each time. They give
+the best estimate of the level and of its velocity, which is not observed:
+
+```{r smooth}
+ctPredict(fit, timestep = 0.1, plot = TRUE, kalmanvec = 'etasmooth') +
+  coord_cartesian(xlim = c(1900, 1960))
+```
+
+The velocity is highest while the level rises fastest, and crosses zero at
+each peak and trough of the level.
+
+# Bayesian estimation
+
+`priors = TRUE` adds a prior to every parameter, and `optimize = FALSE`
+samples the posterior. Each parameter is a transform of a standard normal
+raw parameter, so the transform sets the prior:
+
+```{r transforms}
+ssmodel$pars[!is.na(ssmodel$pars$param), c('matrix', 'param', 'transform')]
+```
+
+The defaults suit data centred near zero. `m1`, the
+mean number of sunspots, gets a normal prior with mean 0 and standard
+deviation 10, while the data have a mean of about 50. A prior predictive
+check shows what such priors imply. `ctGenerate(fromPriors = TRUE)` draws
+parameters from the priors and generates data with the design of `ssdat`:
+
+```{r priorpred-default}
+prior <- ctGenerate(ssmodel, fromPriors = TRUE, datastruct = ssdat,
+  nsamples = 50)
+dim(prior$Y)   # draws by rows of data by variables
+```
+
+The second field of a parameter's string sets its transform.
+`'m1|param*20+50'` gives `m1` a normal prior with mean 50 and standard
+deviation 20, and `'t0_level|param*50'` lets the level start up to about 100
+from that mean:
+
+```{r adjust}
+ssmodel2 <- ctModel(type = 'ct',
+  manifestNames = 'sunspots',
+  latentNames = c('level', 'velocity'),
+  LAMBDA = c(1, 0),
+  DRIFT = c(0, 1,
+    'a21', 'a22'),
+  T0MEANS = c('t0_level|param*50', 't0_velocity'),
+  MANIFESTMEANS = 'm1|param*20+50',
+  CINT = 0,
+  DIFFUSION = c(0, 0,
+    0, 'diffusion'))
+ssmodel2$pars$indvarying <- FALSE
+prior2 <- ctGenerate(ssmodel2, fromPriors = TRUE, datastruct = ssdat,
+  nsamples = 50)
+```
+
+```{r priorpred-plot, fig.height = 4.5}
+priorlines <- function(gen, label) {
+  data.frame(priors = label,
+    time = rep(ssdat$time, each = dim(gen$Y)[1]),
+    draw = rep(seq_len(dim(gen$Y)[1]), times = nrow(ssdat)),
+    sunspots = c(gen$Y[, , 1]))
+}
+pp <- rbind(priorlines(prior, 'default priors'),
+  priorlines(prior2, 'adjusted priors'))
+pp$priors <- factor(pp$priors, levels = c('default priors', 'adjusted priors'))
+ggplot(pp, aes(time, sunspots)) +
+  geom_line(aes(group = draw), colour = 'red', alpha = .2) +
+  geom_line(data = ssdat, linewidth = .7) +
+  facet_wrap(~priors) +
+  coord_cartesian(ylim = c(-150, 250)) +
+  theme_bw()
+```
+
+Under the default priors the series is centred near zero. The adjusted priors
+cover the data and still allow a wide range of other series. Some draws grow
+without bound, because the prior on `a21` allows positive values, which push
+the level away from its mean. The data rule those out. With 289 years
+of data the priors matter little for the dynamics, but a prior far from the
+data can slow the sampler and, with less data, move the estimates.
+
+```{r sample}
+sfit <- ctFit(ssdat, ssmodel2, priors = TRUE, optimize = FALSE, cores = 2)
+summary(sfit)$popmeans
+```
+
+The posterior means are close to the maximum likelihood estimates above.
+`n_eff` is the effective number of independent draws, and `Rhat` near 1 says
+the chains agree. `ctPlotPosterior()` compares each parameter's posterior with
+its prior:
+
+```{r postplot, fig.height = 6}
+ctPlotPosterior(sfit)
+```
+
+`ctGenerateFromFit()` generates new data from the fitted model, with the
+times of the original data. With `fullposterior = TRUE` each data set uses a
+different draw from the posterior. Here are three, against the data in black:
+
+```{r postpred}
+gen <- ctGenerateFromFit(sfit, nsamples = 3, fullposterior = TRUE)
+post <- data.frame(time = rep(ssdat$time, each = 3),
+  draw = factor(rep(1:3, times = nrow(ssdat))),
+  sunspots = c(gen$generated$Y[, , 1]))
+ggplot(post, aes(time, sunspots)) +
+  geom_line(aes(colour = draw), alpha = .7) +
+  geom_line(data = ssdat, linewidth = .7) +
+  theme_bw()
+```
+
+The generated series cycle at about the same rate as the data, but less
+regularly, and they often go below zero, which sunspot counts cannot. The
+data also rise faster than they fall, which a linear model cannot produce. A
+model of the square root of the counts, or a count measurement model
+(`manifesttype = 3`, see `vignette('measurement-models')`), would be a next
+step.

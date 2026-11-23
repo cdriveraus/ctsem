@@ -301,6 +301,9 @@
     dat <- dat[dat[[idname]] %in% wanted, , drop = FALSE]
   }
 
+  # A discrete time model has values only at its occasions, so 'auto', the
+  # default of ctPredict(), means the times in the data.
+  if (!isTRUE(model$continuoustime) && identical(timestep, "auto")) timestep <- "asdata"
   if (!identical(timestep, "asdata")) {
     if (!isTRUE(model$continuoustime)) {
       stop("Discrete time model fits must use timestep = 'asdata'.", call. = FALSE)

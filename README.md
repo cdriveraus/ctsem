@@ -276,18 +276,22 @@ Predicted growth for one chick on each diet, from the diet alone.
   continuous](https://cdriveraus.github.io/ctsem/articles/ordinal-or-continuous.html),
   [sampling
   weights](https://cdriveraus.github.io/ctsem/articles/sampling-weights.html).
-- Blog posts: [quick
-  start](https://cdriver.netlify.app/post/ctsem-quick-start/), [dynamic
-  systems](https://cdriver.netlify.app/post/introtodynamics/), [discrete
-  time models](https://cdriver.netlify.app/post/dtbivariate/),
-  [representations of dynamic
-  systems](https://cdriver.netlify.app/post/discretetime/), [accelerated
-  and multiple group
-  designs](https://cdriver.netlify.app/post/accelerated/), [Kalman
-  filter and smoother](https://cdriver.netlify.app/post/missingdata/),
-  [heterogeneity](https://cdriver.netlify.app/post/heterogeneity/),
-  [growth curves](https://cdriver.netlify.app/post/lgc/), [binary
-  data](https://cdriver.netlify.app/post/binarydata/).
+- Examples on the website: [why continuous
+  time](https://cdriveraus.github.io/ctsem/articles/continuous-time.html),
+  [a single time
+  series](https://cdriveraus.github.io/ctsem/articles/sunspots.html),
+  [Kalman filter and
+  smoother](https://cdriveraus.github.io/ctsem/articles/kalman-filter.html),
+  [latent growth
+  curves](https://cdriveraus.github.io/ctsem/articles/growth-curves.html),
+  [discrete time
+  models](https://cdriveraus.github.io/ctsem/articles/discrete-time.html),
+  [accelerated and multiple group
+  designs](https://cdriveraus.github.io/ctsem/articles/accelerated-designs.html),
+  [binary and continuous
+  indicators](https://cdriveraus.github.io/ctsem/articles/binary-data.html),
+  [individual differences that come from the
+  model](https://cdriveraus.github.io/ctsem/articles/heterogeneity.html).
 - Papers on [hierarchical continuous time
   models](https://www.researchgate.net/publication/324093594_Hierarchical_Bayesian_Continuous_Time_Dynamic_Modeling)
   and on [modelling
