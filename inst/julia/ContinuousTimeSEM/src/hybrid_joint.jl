@@ -418,16 +418,123 @@ end
 Unit `U`'s members' filter-integrated deviations at their conditional modes
 given `u` and the members' whole records, in `N(0, 1)` units, with the hybrid
 items each covers: the `_HybridModeHook` of one profile pass at `u`, or
-`nothing` if a member cannot be evaluated.
+`nothing` if a member cannot be evaluated. Initial means folded into the
+first state have no profile (`_hybrid_fold_member_modes`).
 """
 function _hybrid_member_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64}, aws)
+    _hybrid_folds(laplace) && return _hybrid_fold_member_modes(laplace, U, theta, Ls, u, aws)
     members = laplace.units.members[U]
     hook = _HybridModeHook{Float64}(length(members))
     r = _laplace_unit_loglik_gradient(laplace, U, theta, Ls, u, aws,
         eachindex(members), nothing, _HYBRID_PROFILE, hook)
     isfinite(r.value) || return nothing
     return hook
+end
+
+"""Whether the filter folds its deviations into the first state: initial means
+beside a categorical indicator (`_hybrid_fold!`)."""
+_hybrid_folds(laplace::CTSEMLaplaceObjective) = _hybrid_on(laplace.objective.params.hybrid) &&
+    any(!=(0), laplace.objective.params.manifesttype)
+
+"""
+`_hybrid_member_modes` where the filter folds initial means into the first
+state (`_hybrid_fold!`), which keeps no posterior of them: each member's mode
+of its log likelihood at fixed deviations (`_HYBRID_FIXED`, the first mean
+moved by `C d`) plus their `N(0, I)` log prior, by Newton with a halving line
+search, and `A` the curvature there, their posterior precision -- Laplace
+given the coordinates, where the columns' would be exact. The gradient in `d`
+is the pass's raw gradient at the initial means' positions through the
+deviation map (`_hybrid_dev_map`), since each such cell is affine in its own
+raw value alone (`.ctJuliaLaplaceHybrid()`); the curvature is by differences
+of it, one pass a deviation.
+"""
+function _hybrid_fold_member_modes(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64}, aws)
+    members = laplace.units.members[U]
+    spec = laplace.spec
+    h = laplace.objective.params.hybrid
+    lv = spec.levels[1]
+    B = _hybrid_dev_map(h, lv, theta)
+    all(isfinite, B) || return nothing
+    rd = _hybrid_items(h)
+    pos = [lv.re_index[e] for e in axes(B, 1)]
+    hook = _HybridModeHook{Float64}(length(members))
+    grad = zeros(length(theta))
+    shift = zeros(length(theta))
+    hb = aws.ekf_ws.hyb
+    step_fd = 1e-5
+    for (m, i) in enumerate(members)
+        x = _laplace_member_values!(shift, theta, spec, Ls, u, laplace.units.offsets[U][m])
+        so = laplace.objective.subject_objectives[i]
+        d = zeros(rd)
+        v, g = _hybrid_fold_score!(grad, hb, so, aws, x, d, B, pos)
+        isfinite(v) || return nothing
+        H = zeros(rd, rd)
+        for _ in 1:50
+            for a in 1:rd
+                da = copy(d)
+                da[a] += step_fd
+                va, ga = _hybrid_fold_score!(grad, hb, so, aws, x, da, B, pos)
+                isfinite(va) || return nothing
+                for b in 1:rd
+                    H[b, a] = -(ga[b] - g[b]) / step_fd
+                end
+            end
+            Hs = Symmetric((H .+ H') ./ 2)
+            F = cholesky(Hs; check = false)
+            dir = issuccess(F) ? F \ g : g
+            t = 1.0
+            accepted = false
+            for _ in 1:30
+                dn = d .+ t .* dir
+                vn, gn = _hybrid_fold_score!(grad, hb, so, aws, x, dn, B, pos)
+                if isfinite(vn) && vn >= v - 1e-12 * max(1.0, abs(v))
+                    d, v, g = dn, vn, gn
+                    accepted = true
+                    break
+                end
+                t /= 2
+            end
+            accepted || break
+            maximum(abs, t .* dir) < 1e-8 && break
+        end
+        # The curvature at the mode the solve ended at.
+        for a in 1:rd
+            da = copy(d)
+            da[a] += step_fd
+            va, ga = _hybrid_fold_score!(grad, hb, so, aws, x, da, B, pos)
+            isfinite(va) || return nothing
+            for b in 1:rd
+                H[b, a] = -(ga[b] - g[b]) / step_fd
+            end
+        end
+        hook.q[m] = rd
+        hook.dhat[m] = d
+        hook.items[m] = collect(1:rd)
+        hook.A[m] = (H .+ H') ./ 2
+    end
+    return hook
+end
+
+"""One member's log likelihood at fixed folded deviations `d` plus their
+`N(0, I)` log prior, and its gradient in `d` (`_hybrid_fold_member_modes`)."""
+function _hybrid_fold_score!(grad::Vector{Float64}, hb, so, aws, x::AbstractVector,
+    d::Vector{Float64}, B::AbstractMatrix, pos::Vector{Int})
+    rd = length(d)
+    length(hb.dfix) >= rd || (hb.dfix = zeros(Float64, rd))
+    copyto!(hb.dfix, 1, d, 1, rd)
+    v = _laplace_subject_value_gradient!(grad, so, aws, x, nothing, _HYBRID_FIXED)
+    g = zeros(rd)
+    isfinite(v) || return v, g
+    @inbounds for f in 1:rd
+        acc = -d[f]
+        for e in axes(B, 1)
+            acc += B[e, f] * grad[pos[e]]
+        end
+        g[f] = acc
+    end
+    return v - sum(abs2, d) / 2, g
 end
 
 """Item `k`'s own sd on the raw scale at `theta`, as the filter takes it."""

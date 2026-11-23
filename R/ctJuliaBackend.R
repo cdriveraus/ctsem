@@ -2620,6 +2620,18 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # (`ctModelLatentLevel`) read 39 nats under the layer at the same point. Off
 # with `options(ctsem.laplace.hybrid = FALSE)`,
 # which keeps every own variance in the Laplace layer as before.
+#
+# Beside a categorical indicator (`fold`) the filter integrates initial means
+# only, by widening the first state's covariance (the engine's
+# `_hybrid_fold!`): a categorical update's gain depends on the predicted
+# spread, so no deviation can ride along as a column, but an initial mean's is
+# a shift of the first state, and the filter treats it as it treats the state.
+# Its error then fades as the process forgets the first answers, where as a
+# Laplace coordinate it is informed by those answers alone, Laplace's weak
+# case. Intercepts and predictor effects act for the whole record and stay
+# coordinates. On the binary indicators article's model, a proxy for this
+# gave lower RMSE than either all-Laplace or all-augmented and fewer
+# random-effects check warnings (review/BINARY-cross-effect-bias-2026-11-23.md).
 .ctJuliaLaplaceHybrid <- function(model, setup, levels) {
   if (!isTRUE(getOption("ctsem.laplace.hybrid", TRUE))) return(NULL)
   if (is.null(setup) || !nrow(setup) || !length(levels)) return(NULL)
@@ -2628,7 +2640,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   block <- rank == as.integer(lv$nrandom) && is.null(lv$load_row)
   own <- if (block) seq_along(lv$re_index) else which(as.integer(lv$unique_index) > 0L)
   if (!length(own)) return(NULL)
-  if (length(model$manifesttype) && any(as.integer(model$manifesttype) != 0L)) return(NULL)
+  fold <- length(model$manifesttype) > 0L && any(as.integer(model$manifesttype) != 0L)
   if (!.ctJuliaHybridCalcsOk(model)) return(NULL)
   if ("stateref" %in% names(setup) && any(as.integer(setup$stateref) > 0L)) return(NULL)
   values <- as.data.frame(model$modelmats$matvalues)
@@ -2651,6 +2663,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     mats <- unique(as.integer(setup$matrix[rows]))
     if (length(mats) != 1L || !mats %in% codes) next
     k <- kinds[[match(mats, codes)]]
+    if (fold && k != 2L) next
     if (k == 2L && stationary) next
     if (k == 3L && meanreads(as.integer(setup$row[rows[1]]))) next
     if (!all(as.integer(setup$transform[rows]) == 0L) ||
@@ -2673,8 +2686,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # more in the filter (review/FITTING-filter-effects-2026-10-24.md, on the
   # one-step term), which once kept it a coordinate; what a model's objective
   # is does not follow from what is cheaper.
-  list(effect = effect, kind = kind, target = target, slope = slope, pred = pred,
+  out <- list(effect = effect, kind = kind, target = target, slope = slope, pred = pred,
     block = block)
+  # R's own record that the filter folds them: the engine reads it off the
+  # model, and a one-step term (`.ctLaplaceOneStep()`) puts them back in the
+  # layer, since a fold has no profile.
+  if (fold) out$fold <- TRUE
+  out
 }
 
 # Which integral a Laplace fit's objective approximates how, for comparing two
@@ -2725,10 +2743,15 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   ha != hb && !isTRUE((if (ha) sa else sb)$laplace$quadratic)
 }
 
-# A fit or specification whose objective takes the one-step term.
+# A fit or specification whose objective takes the one-step term. Initial
+# means folded into the first state beside a categorical indicator have no
+# profile to take it on (`.ctJuliaLaplaceHybrid()`'s `fold`), so there the
+# one-step term is the layer's, every effect a coordinate.
 .ctLaplaceOneStep <- function(x) {
-  if (.ctFitIsJulia(x)) x$model_spec$laplace$onestep <- TRUE else
-    x$laplace$onestep <- TRUE
+  spec <- if (.ctFitIsJulia(x)) x$model_spec else x
+  if (isTRUE(spec$laplace$hybrid$fold)) spec$laplace$hybrid <- NULL else
+    spec$laplace$onestep <- TRUE
+  if (.ctFitIsJulia(x)) x$model_spec <- spec else x <- spec
   x
 }
 
@@ -4303,8 +4326,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     # so a fit that runs it keeps a block's effects in the layer.
     if (isTRUE(laplace$hybrid$block) && isTRUE(laplacecontrol$saem)) laplace$hybrid <- NULL
     # The one-step term, where asked for (`optimcontrol$laplace_onestep`) and
-    # the filter integrates something it could change.
-    if (isTRUE(laplacecontrol$onestep) && !is.null(laplace$hybrid)) laplace$onestep <- TRUE
+    # the filter integrates something it could change; for initial means
+    # folded beside a categorical indicator, the layer's (`.ctLaplaceOneStep()`).
+    if (isTRUE(laplacecontrol$onestep) && !is.null(laplace$hybrid)) {
+      if (isTRUE(laplace$hybrid$fold)) laplace$hybrid <- NULL else laplace$onestep <- TRUE
+    }
     # On the specification rather than passed at optimise time, because the
     # inner tolerance changes the *value* the objective returns: two fits
     # differing only in it are not the same function, and `.ctJuliaObjectiveKey`
