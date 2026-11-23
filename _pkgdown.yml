@@ -56,7 +56,6 @@ articles:
   contents:
   - uncertainty
   - sampling-weights
-  - empirical-bayes-fitting
 - title: Checking a model
   navbar: Checking a model
   contents:
@@ -96,8 +95,6 @@ reference:
   - ctOptimControl
   - ctFitUpdate
   - ctFitUncertainty
-  - ctEmpiricalBayesFit
-  - summary.ctEmpiricalBayesFit
   - ctsem-options
 - title: Inspect a fit
   contents:

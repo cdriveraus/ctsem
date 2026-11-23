@@ -275,9 +275,7 @@ Predicted growth for one chick on each diet, from the diet alone.
   [ordinal or
   continuous](https://cdriveraus.github.io/ctsem/articles/ordinal-or-continuous.html),
   [sampling
-  weights](https://cdriveraus.github.io/ctsem/articles/sampling-weights.html),
-  [empirical
-  Bayes](https://cdriveraus.github.io/ctsem/articles/empirical-bayes-fitting.html).
+  weights](https://cdriveraus.github.io/ctsem/articles/sampling-weights.html).
 - Blog posts: [quick
   start](https://cdriver.netlify.app/post/ctsem-quick-start/), [dynamic
   systems](https://cdriver.netlify.app/post/introtodynamics/), [discrete

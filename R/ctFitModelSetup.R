@@ -798,9 +798,8 @@
   # column turned Stan's `pop_CINT` into NaN.
   if(is.null(ctm$transformtext) && is.character(ctm$pars$transform)){
     # A cell whose transform column already parses as a bare number (the
-    # output of an earlier ctModelTransformsToNum() call, which
-    # ctEBadjustModel() makes before handing its adjusted model to ctFit --
-    # see R/ctEmpiricalBayesFit.R) is not descriptive source text: it is a
+    # output of an earlier ctModelTransformsToNum() call on a model handed
+    # to ctFit) is not descriptive source text: it is a
     # transform *code*, with the real expression already discarded, and this
     # column is character-typed regardless because it mixes such codes with
     # genuine expression strings. Recording a bare code as `text` fed

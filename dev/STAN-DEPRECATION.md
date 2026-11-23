@@ -63,8 +63,8 @@ fit no julia model.
 | `tests/testthat/test-dtVct.R` (154 lines, 55 s) and `tests/testthat/test-ukfpoptest.R` (136 lines, 54 s) | ct-versus-dt agreement, and random CINT and random DRIFT against a hand-written augmented model, on stan. The ct/dt claim has a julia twin in `test-backend-discretetime.R` and random DRIFT one in `test-tdeffectvariation_covtest.R::randomEffectsDRIFT_julia`; the random-CINT half has none -- see the blocker below | the two files, once the merge design in J15 R3 exists | nothing | J15 §8, R3 |
 
 `tests/testthat/test-tdeffectvariation_covtest.R`, `test-binary-path.R`,
-`test-binary-binary-mix.R`, `test-ctChisqTest.R`, `test-ctCoverageCheck.R` and
-`test-ctEmpiricalBayesFit.R` were checked and are **not** stan-only: each fits
+`test-binary-binary-mix.R`, `test-ctChisqTest.R` and `test-ctCoverageCheck.R`
+were checked and are **not** stan-only: each fits
 or refuses a julia model in at least one block, so each loses only part of
 itself when stan goes.
 
@@ -78,7 +78,6 @@ resolved or explicitly dropped before deprecation starts.
 | plotting a sampled fit's draws | `R/ctStanPlotPost.R`, `R/plot.ctStanFit.R` | no function reads a sampled julia fit's `estimate$rawposterior`; `ctTracePlot` covers the optimiser trace only. Also undocumented: stan takes the median of draws as the point estimate and julia the mean | J1.4 F6, F9 |
 | `fullbootstrap` uncertainty | `R/ctOptimUncertainty.R` | not supported on julia, because each resample needs the model rebuilt rather than re-evaluated | survey |
 | `summary(priorcheck=)` | `R/summary.ctStanFit.R` | accepted and ignored on julia; it compares posteriors against the *Stan* model's prior block | survey |
-| `ctEmpiricalBayesFit()` | `R/ctEmpiricalBayesFit.R:82,90-99` reads `fit$stanfit$rawest` and `fit$standata` | stan-only, and until this review said so nowhere. Needs a julia port or an explicit decision to retire it | J1.3 F5 |
 | `ctTIpredEffects()` | `R/ctStanTIpredeffects.R:67-71` reads `fit$ctstanmodel` | fails on julia fits. `ctPredictTIP()` and `summary()` already report TI effects there, so this may want a pointer rather than a port | J1.2 F1 |
 | analytic Jacobian of the drift for nonlinear models | `R/ctJacobian.R`, consumed by `R/ctJuliaBackend.R:615-618` to build the engine spec, and read back by every nonlinear helper through `ctBackendParMatrices()` | not a removal point at all: shared by both backends today. The engine has no Jacobian source of its own, so this R file stays until it does | J1.6b F4 |
 | an end-to-end fit pinned to a reference value | `tests/testthat/test-knownFits.R` (AnomAuth and Oscillating -2LL) | **resolved.** The julia counterpart at `tests/testthat/test-julia-backend.R:341` was gated on `CTSEM_RUN_JULIA_E2E`, set nowhere, so it had never run. Ungated, and it passes: -2LL 23415.929048 against the OpenMx reference 23415.929, a relative difference of 2e-9. It now asserts that value rather than finiteness, so a julia fit is pinned end to end and this no longer blocks the stan file | J15 §4, §10; W43 |
@@ -93,6 +92,7 @@ resolved or explicitly dropped before deprecation starts.
 |---|---|---|
 | HMC diagnostics parity | Reframed. The stan path never surfaced divergences, tree depth or step size at all: `get_sampler_params` is imported and never called. The julia path returns them. Julia is ahead here, and what remains is the plotting row above | J1.4 F5 |
 | variational Bayes | Dropped as a blocker. The stan implementation is broken, so there is no parity to reach | J1.4 F1 |
+| `ctEmpiricalBayesFit()` | Removed, 2026-11-23. Ported to julia in dfbbc26d, then dropped: on its own vignette's design the default hierarchical fit recovered drift with a third of its error, in the same time (`review/EB-vs-laplace-2026-11-23.md` in the project folder) | J1.3 F5 |
 
 ## What to protect rather than delete
 

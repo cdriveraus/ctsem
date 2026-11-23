@@ -156,6 +156,7 @@ A fit saved with ctsem 3 and passed to `ctFitUpdate()` is refitted with Stan.
 | `ctFit(iter = , chains = , control = )` | `sampleControl` |
 | `uncertainty = 'surrogate'` | `'checked'` |
 | `ctFit(vb = TRUE)` | removed |
+| `ctEmpiricalBayesFit()` | `ctFit()` with random effects, and `ctSubjectPars()` for each subject's estimates |
 
 ## Later 4.x releases
 
