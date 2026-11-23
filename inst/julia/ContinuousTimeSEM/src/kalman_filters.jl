@@ -1679,11 +1679,13 @@ end
 
 Entry `(i, j)` of the drift the stationary elements are solved with: DRIFT
 within the closure (`CTSEMStationaryElements`), and every state outside it
-decoupled, with a rate of one and no input. The closure is shut under driving,
-so the system this makes is block diagonal and its closure block is the
-closure's own autonomous system: the moments solved over the whole of it are
-the closure's, whatever the states outside it do -- a random walk, a trait, a
-process that never settles -- where the undecoupled system has none.
+decoupled, with a rate of one and no input. The system this makes is block
+diagonal and its closure block is the closure's own system: the moments solved
+over the whole of it are the closure's, whatever the states outside it do -- a
+random walk, a trait, a process that never settles -- where the undecoupled
+system has none. The closure is shut under driving, except that a T0VAR
+block's leaves out drivers no noise reaches: those move the block's mean and
+add nothing to its covariance, which is then the noisy part's own.
 """
 @inline function _ctsem_closure_drift(DRIFT, inclosure::Vector{Bool}, i::Int, j::Int)
     (_ctsem_in_closure(inclosure, i) && _ctsem_in_closure(inclosure, j)) &&

@@ -224,9 +224,11 @@ other initial condition is T0MEANS and T0VAR as written. `stationary = TRUE`
 is the whole of both, and the two are not combined.
 
   * `inclosure` -- per latent, whether its stationary moments are needed: the
-    marked latents and every latent that drives them through DRIFT. The set is
-    shut under driving, so its dynamics are autonomous and its moments exist
-    whatever the latents outside it do.
+    marked latents and every latent that drives them through DRIFT, except
+    that a T0VAR block leaves out a driver no noise reaches (R's
+    `.ctStationaryElements`), which moves the block's mean and nothing of its
+    covariance. Solved with every latent outside the set decoupled
+    (`_ctsem_closure_drift`), so its moments exist whatever those latents do.
   * `means` -- the latents whose T0MEANS cell is marked.
   * `blocks` -- the latents whose T0VAR cells are marked, grouped: one latent
     whose diagonal alone is, or several whose cells among themselves all are.
