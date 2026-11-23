@@ -20,6 +20,9 @@ while the engine compiles.
   (`cores`).
 - New models need no compilation, so a nonlinear model starts fitting at once.
   With Stan, each new nonlinear model took minutes to compile.
+- A saved fit can be summarised without Julia: `summary()`,
+  `ctSummaryMatrices()`, `ctDiscretePars()`, `ctExtract()`, `ctModelLatex()`
+  and `ctNetwork()` work on it. `ctsemtestfit` is an example fit.
 - `backend = 'stan'` fits as ctsem 3 did.
 
 ## Random effects

@@ -147,17 +147,17 @@ ctStanParnames <- ctRawParnames
 #' # The auto and cross effects of the bundled example fit as regression
 #' # coefficients, for time intervals from 0 to 4 units. Choose the range to
 #' # cover the time scale of the processes.
-#' ctDiscretePars(ctstantestfit, times = seq(0, 4, .1), plot = TRUE)
+#' ctDiscretePars(ctsemtestfit, times = seq(0, 4, .1), plot = TRUE)
 #'
 #' # Without plot, an array of coefficients. summary() gives each curve's
 #' # peak, the interval at which it peaks, and the interval at which it has
 #' # fallen to half the peak.
-#' dp <- ctDiscretePars(ctstantestfit, times = seq(0, 4, .1))
+#' dp <- ctDiscretePars(ctsemtestfit, times = seq(0, 4, .1))
 #' summary(dp)
 #'
 #' # Cross effects only, standardised by the stationary standard deviations.
 #' # The plot is a ggplot and can be modified.
-#' g <- ctDiscretePars(ctstantestfit, times = seq(0, 4, .1),
+#' g <- ctDiscretePars(ctsemtestfit, times = seq(0, 4, .1),
 #'   plot = TRUE, indices = 'CR', standardise = TRUE)
 #' g + ggplot2::labs(title = 'Cross effects')
 #'@details
@@ -440,7 +440,7 @@ ctStanDiscretePars <- ctDiscretePars
 #'   \code{halftime}, and their range limits what \code{halftime} and
 #'   \code{area} can capture.
 #' @examples
-#' dp <- ctDiscretePars(ctstantestfit, times = seq(0, 5, .1), nsamples = 20)
+#' dp <- ctDiscretePars(ctsemtestfit, times = seq(0, 5, .1), nsamples = 20)
 #' summary(dp)
 #' @export
 summary.ctDiscretePars <- function(object, probs = c(.025, .5, .975), ...) {
@@ -732,7 +732,7 @@ ctDiscreteParsDrift<-function(ctpars,times, impulseType,  standardise,cov=FALSE,
 #'@return A ggplot2 object. This can be modified by the various ggplot2 functions, or displayed using print(x).
 #'@examples
 #' data.table::setDTthreads(1) #ignore this line
-#'x <- ctDiscretePars(ctstantestfit)
+#'x <- ctDiscretePars(ctsemtestfit)
 #'ctDiscreteParsPlot(x, indices='CR')
 #'
 #'#to modify plot:

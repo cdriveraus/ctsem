@@ -117,9 +117,30 @@ NULL
 
 #' Example fit for ctsem
 #'
+#' A fit of \code{\link{ctsemtestdat}} with the default backend, julia, used
+#' in the examples. \code{summary()}, \code{\link{ctSummaryMatrices}},
+#' \code{\link{ctDiscretePars}}, \code{\link{ctExtract}},
+#' \code{\link{ctModelLatex}} and \code{\link{ctNetwork}} work on it without
+#' Julia. Functions that run the Kalman filter, generate data or fit again
+#' need Julia.
+#' @format A fit from \code{\link{ctFit}}, made by
+#' \preformatted{model <- ctModel(LAMBDA = diag(2), manifestNames = c('Y1', 'Y2'),
+#'   latentNames = c('eta1', 'eta2'), TDpredNames = 'TD1')
+#' ctsemtestfit <- ctFit(ctsemtestdat, model, priors = TRUE)}
+#' @examples
+#' summary(ctsemtestfit)
+#' @seealso \code{\link{ctstantestfit}}, a fit of the same data with
+#'   \code{backend = 'stan'}.
+#' @name ctsemtestfit
+NULL
+
+#' Example fit for ctsem with the stan backend
+#'
 #' A fit of \code{\link{ctsemtestdat}} with \code{backend = 'stan'}, used in
 #' the examples and tests.
 #' @format ctStanFit object
+#' @seealso \code{\link{ctsemtestfit}}, a fit of the same data with the
+#'   default backend.
 #' @name ctstantestfit
 NULL
 

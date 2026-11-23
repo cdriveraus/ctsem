@@ -42,10 +42,14 @@
 #' correlations, which is exact where a parameter's transform is affine.
 #' @aliases extract
 #' @examples
-#' \donttest{
-#' e = ctExtract(ctstantestfit)
+#' # The draws of every population matrix, an array per matrix with the draw
+#' # first.
+#' e <- ctExtract(ctsemtestfit)
+#' dim(e$pop_DRIFT)
+#'
+#' # Where the matrices were evaluated, which matters only for a model whose
+#' # matrices depend on the state (see ?ctContextDependence).
 #' attr(e, 'evaluatedAt')
-#' }
 #' @export
 ctExtract <- function(object, subjectMatrices=FALSE, cores=getOption("mc.cores", 2L), nsamples='all', subjects='all',
   state=NULL, realid=TRUE, ...) UseMethod("ctExtract")

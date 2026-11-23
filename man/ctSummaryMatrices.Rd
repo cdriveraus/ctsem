@@ -90,11 +90,9 @@ Summarise model-implied parameter matrices from a ctsem fit object.
 \code{ctStanContinuousPars} is maintained as a backward-compatible alias.
 }
 \examples{
-\donttest{
-m <- ctSummaryMatrices(ctstantestfit)
+m <- ctSummaryMatrices(ctsemtestfit)
 names(m)
-m$DRIFT                          # posterior median of the drift matrix
+m$DRIFT                          # median of the draws of the drift matrix
 eigen(m$estimate$DRIFT)$values   # stable when every real part is negative
 m$asymDIFFUSIONcor               # stationary correlation within a subject
-}
 }

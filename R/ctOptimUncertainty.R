@@ -3578,7 +3578,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     fit$estimate$rawposterior <- samples
     fit <- .ctFitNameRawUncertainty(fit)
     fit$uncertainty <- uncertaintyfit
-    fit$transformedpars <- .ctBackendConstrain(fit)
+    fit$transformedpars <- .ctBackendConstrainCache(fit, fresh = TRUE)
     return(fit)
   }
   fit$stanfit$rawposterior <- samples

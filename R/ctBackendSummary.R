@@ -2135,15 +2135,77 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 }
 
 # The cached constrain step if it describes these draws, otherwise a fresh one.
+# The cache holds the fit's draws and, beside them, its estimate
+# (`atestimate`, `.ctBackendConstrainCache()`); draws that are some of the
+# cached ones are read from it too, as ctExtract(nsamples = ) takes them. So a
+# stored fit summarises, extracts and reports its matrices with no engine.
 .ctBackendConstrained <- function(fit, samples = NULL) {
   if (is.null(samples)) samples <- .ctBackendRawSamples(fit)
-  cached <- fit$transformedpars
-  if (!is.null(cached) && "populations" %in% names(cached) &&
-      identical(dim(cached$samples), dim(samples)) &&
-      isTRUE(all.equal(cached$samples, samples, check.attributes = FALSE))) {
-    return(cached)
+  out <- .ctBackendCachedConstrain(fit$transformedpars, samples)
+  if (is.null(out)) out <- .ctBackendConstrain(fit, samples)
+  out
+}
+
+# The constrain step for `samples` from a fit's cache, or NULL where the cache
+# does not hold them: its draws, its estimate, or some of its draws.
+.ctBackendCachedConstrain <- function(cached, samples) {
+  if (is.null(cached) || !"populations" %in% names(cached)) return(NULL)
+  for (stored in list(cached, cached$atestimate)) {
+    if (!is.null(stored) && identical(dim(stored$samples), dim(samples)) &&
+        isTRUE(all.equal(stored$samples, samples, check.attributes = FALSE))) {
+      stored$atestimate <- NULL
+      return(stored)
+    }
   }
-  .ctBackendConstrain(fit, samples)
+  rows <- .ctBackendCachedRows(cached, samples)
+  if (is.null(rows)) NULL else .ctBackendConstrainRows(cached, rows)
+}
+
+# The constrain step a fit keeps: its draws, and its estimate where the draws
+# are not the estimate, which summary()'s `mode` column and
+# ctSummaryMatrices()'s `estimate` read. `fresh` recomputes where the draws are
+# unchanged but what they are pushed through may not be.
+.ctBackendConstrainCache <- function(fit, fresh = FALSE) {
+  if (isTRUE(fresh)) fit$transformedpars <- NULL
+  out <- .ctBackendConstrained(fit)
+  raw <- .ctFitEstimateRaw(fit)
+  out["atestimate"] <- list(if (!is.null(raw) && nrow(out$samples) > 1L &&
+      ncol(raw) == ncol(out$samples)) .ctBackendConstrained(fit, raw))
+  out
+}
+
+# The rows of the cached draws that `samples` are, or NULL where any is not
+# among them. Exact, because a caller's draws are the fit's own rows, copied.
+.ctBackendCachedRows <- function(cached, samples) {
+  if (!is.matrix(cached$samples) || nrow(cached$samples) < 2L ||
+      ncol(cached$samples) != ncol(samples)) return(NULL)
+  key <- function(m) apply(m, 1L, function(r) paste(sprintf("%a", r), collapse = " "))
+  rows <- match(key(samples), key(cached$samples))
+  if (anyNA(rows)) NULL else rows
+}
+
+# The cached constrain step at some of its draws. `flat` holds a draw per
+# column, and every other per-draw array, at the top level and in each level's
+# lists, holds one per row or first index. The layout and cells hold none.
+.ctBackendConstrainRows <- function(cached, rows) {
+  ndraws <- nrow(cached$samples)
+  cut <- function(x) {
+    if (is.data.frame(x)) return(x)
+    if (is.list(x)) {
+      for (i in seq_along(x)) if (!is.null(x[[i]])) x[[i]] <- cut(x[[i]])
+      return(x)
+    }
+    d <- dim(x)
+    if (length(d) < 2L || d[1L] != ndraws) return(x)
+    do.call(`[`, c(list(x, rows), rep(list(TRUE), length(d) - 1L), list(drop = FALSE)))
+  }
+  out <- cached
+  out$atestimate <- NULL
+  for (name in setdiff(names(out), c("layout", "cells", "flat"))) {
+    if (!is.null(out[[name]])) out[[name]] <- cut(out[[name]])
+  }
+  out$flat <- cached$flat[, rows, drop = FALSE]
+  out
 }
 
 # How many chains a summary's draws came from, or NULL if they are not a sample.
@@ -2295,7 +2357,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # its posterior mean, and without draws the table is the estimate already.
   atmode <- if (nrow(samples) > 1L && is.null(object$sample) &&
       length(object$estimate$raw) == ncol(samples))
-    .ctBackendConstrain(object, matrix(as.numeric(object$estimate$raw), nrow = 1L)) else NULL
+    .ctBackendConstrained(object, matrix(as.numeric(object$estimate$raw), nrow = 1L)) else NULL
   modelevel <- function(level, field) {
     for (m in atmode$randomeffectlevels) if (identical(m$level, level)) return(m[[field]])
     NULL

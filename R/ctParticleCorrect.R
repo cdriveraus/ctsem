@@ -154,7 +154,7 @@
   fit <- .ctFitNameRawUncertainty(fit)
   # The constrained draws describe whatever raw draws they were built from, so
   # they are refreshed here rather than left to disagree with the ones above.
-  fit$transformedpars <- .ctBackendConstrain(fit)
+  fit$transformedpars <- .ctBackendConstrainCache(fit, fresh = TRUE)
 
   fit$particle_correction <- structure(list(
     check = check, draws = "imis", proposal = "adaptive mixture (imis)",

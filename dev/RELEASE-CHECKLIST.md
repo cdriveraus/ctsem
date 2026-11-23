@@ -51,6 +51,12 @@ carried a nine-column parameter setup array against code declaring ten, and
 generation behaviour changes, so regenerating it moves values that many tests
 compare against. Refresh the fit alone unless the data change is the point.
 
+**Regenerate `ctsemtestfit` when `test-ctsemtestfit.R` says it no longer
+matches the engine**, with `ctsem:::ctdataupdate("juliafit")` (needs Julia).
+The examples CRAN runs summarise it without Julia from the values it stores,
+so a fit whose stored values the engine would no longer give reports numbers
+the current ctsem does not compute.
+
 ## Tests
 
 **`NOT_CRAN=true` or the julia tests silently skip** and a file reporting zero

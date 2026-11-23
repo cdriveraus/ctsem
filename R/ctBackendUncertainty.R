@@ -481,7 +481,7 @@
   fit <- .ctBackendCertifiedVerdict(fit)
   # New draws mean the fit's constrained draws describe the previous ones, so
   # they are refreshed here rather than left to be noticed downstream.
-  fit$transformedpars <- .ctBackendConstrain(fit)
+  fit$transformedpars <- .ctBackendConstrainCache(fit, fresh = TRUE)
   # Deliberately no transformed-parameter summary: `ctOptimUpdateTransformed()`
   # goes through `rstan::constrain_pars` and the Stan model object, and neither
   # backend has a parameter-matrix reconstruction API yet (the same gap that
