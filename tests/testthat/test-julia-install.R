@@ -244,7 +244,7 @@ test_that("a stored julia fit reports without Julia, and says so where it cannot
   skip_if(interactive())
   model <- suppressWarnings(ctModel(type = "ct", manifestNames = "Y1",
     latentNames = "eta1", LAMBDA = matrix(1)))
-  fit <- suppressWarnings(suppressMessages(ctFit(ctstantestdat, model,
+  fit <- suppressWarnings(suppressMessages(ctFit(ctsemtestdat, model,
     backend = "julia", cores = 1, verbose = 0)))
   suppressMessages(ctJuliaKill("session"))
   withr::local_envvar(CTSEM_JULIA_AGREE = "no")

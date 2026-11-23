@@ -3,26 +3,35 @@
 # read as a number is refused rather than turned into NA, which dropped those
 # observations silently.
 
+# The example data's name before version 4 is a data/ctstantestdat.R that
+# reads ctsemtestdat.rda, so scripts written with it still run.
+test_that("the example data are there under their old name", {
+  expect_identical(ctstantestdat, ctsemtestdat)
+  e <- new.env()
+  utils::data("ctstantestdat", package = "ctsem", envir = e)
+  expect_identical(e$ctstantestdat, ctsemtestdat)
+})
+
 .guard_model <- function() {
   suppressMessages(ctModel(type = "ct", manifestNames = c("Y1", "Y2"),
     latentNames = c("eta1", "eta2"), LAMBDA = diag(2), TIpredNames = "TI1"))
 }
 
 test_that("missing columns are listed together, with their roles", {
-  dat <- ctstantestdat[, setdiff(colnames(ctstantestdat), c("Y2", "TI1"))]
+  dat <- ctsemtestdat[, setdiff(colnames(ctsemtestdat), c("Y2", "TI1"))]
   expect_error(ctFit(dat, .guard_model(), fit = FALSE, backend = 'stan'),
     "Columns not found in the data: Y2 (manifest); TI1 (time independent predictor).", fixed = TRUE)
 })
 
 test_that("values that are not numbers are refused, not turned into NA", {
-  dat <- as.data.frame(ctstantestdat)
+  dat <- as.data.frame(ctsemtestdat)
   dat$Y1 <- as.character(dat$Y1)
   dat$Y1[c(3, 8)] <- c("n/a", "missing")
   expect_error(ctFit(dat, .guard_model(), fit = FALSE, backend = 'stan'),
     "Column Y1 holds values that are not numbers: 'n/a', 'missing'.", fixed = TRUE)
 
   # Numbers held as text, and logical columns, still read.
-  dat <- as.data.frame(ctstantestdat)
+  dat <- as.data.frame(ctsemtestdat)
   dat$Y1 <- as.character(dat$Y1)
   dat$TI1 <- dat$TI1 > 0
   expect_no_error(suppressWarnings(suppressMessages(ctFit(dat, .guard_model(), fit = FALSE, backend = 'stan'))))
@@ -32,7 +41,7 @@ test_that("values that are not numbers are refused, not turned into NA", {
 # backends read them. Added to stan's prepared data alone, they stopped every
 # julia fit ("Prepared TD predictor rows do not match the fitted data").
 test_that("sameInitialTimes adds an empty first row where a subject has none", {
-  dat <- as.data.frame(ctstantestdat)
+  dat <- as.data.frame(ctsemtestdat)
   dat$TD1[is.na(dat$TD1)] <- 0
   dat <- dat[!(dat$id %in% c(2, 5) & dat$time == 0), ]
   m <- suppressMessages(ctModel(type = "ct", manifestNames = c("Y1", "Y2"),

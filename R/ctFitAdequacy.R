@@ -263,7 +263,7 @@
 #' model <- ctModel(LAMBDA = diag(2),
 #'   manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
 #'   TDpredNames = 'TD1')
-#' fit <- ctFit(ctstantestdat, model, priors = TRUE)
+#' fit <- ctFit(ctsemtestdat, model, priors = TRUE)
 #' adequacy <- ctFitAdequacy(fit)
 #' print(adequacy)     # one row per family of tests
 #' print(plot(adequacy))
@@ -1666,7 +1666,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 #' model <- ctModel(LAMBDA = diag(2),
 #'   manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
 #'   TDpredNames = 'TD1')
-#' fit <- ctFit(ctstantestdat, model, priors = TRUE)
+#' fit <- ctFit(ctsemtestdat, model, priors = TRUE)
 #' adequacy <- ctFitAdequacy(fit)
 #'
 #' # One point per family of checks at its adjusted p-value. A family left of

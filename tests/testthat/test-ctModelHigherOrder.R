@@ -182,7 +182,7 @@ test_that("a ct model raised with a short inertia time is the first order model"
   m <- suppressMessages(ctModel(type = 'ct', silent = TRUE, manifestNames = 'Y1',
     latentNames = 'eta1', LAMBDA = matrix(1)))
   m$pars$indvarying <- FALSE
-  data <- as.data.frame(ctstantestdat)
+  data <- as.data.frame(ctsemtestdat)
   data <- data[data$id %in% 1:4, c('id', 'time', 'Y1')]
   first <- suppressMessages(ctFit(data, m, backend = 'julia', fit = FALSE))
   second <- suppressMessages(ctFit(data, ctModelHigherOrder(m, 1), backend = 'julia',

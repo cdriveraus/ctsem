@@ -227,7 +227,7 @@ ctLOO <- function(fit, folds = 10, cores = getOption("mc.cores", 2L), parallelFo
     casewiseApproximation=casewiseApproximation, parallelFolds=parallelFolds))
 
   if (!'ctStanFit' %in% class(fit) || !length(fit$stanfit$stanfit@sim) == 0) 
-    stop('Not an optimized ctStanFit object')
+    stop('ctLOO() needs an optimised fit from ctFit().')
   if (is.null(tol)) tol <- 1e-5
   
   message('Using ', cores, '/', parallel::detectCores(), ' available CPU cores')

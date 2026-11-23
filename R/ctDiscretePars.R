@@ -54,7 +54,7 @@ ctStanParnames <- ctRawParnames
 #'ctDiscretePars
 #'
 #'Calculate model implied regressions for a sequence of time intervals (if ct) or steps (if dt) based on
-#'a ctStanFit object, for specified subjects. Wrap with print() when used inside for loops!
+#'a fit from \code{\link{ctFit}}, for specified subjects. Wrap with print() when used inside for loops!
 #'\code{ctStanDiscretePars} is maintained as a backward-compatible alias.
 #'
 #'@param fit model fit from \code{\link{ctFit}}
@@ -691,7 +691,7 @@ ctDiscreteParsDrift<-function(ctpars,times, impulseType,  standardise,cov=FALSE,
 
 #'ctDiscreteParsPlot
 #'
-#'Plots the output from \code{\link{ctDiscretePars}}, for model implied regression strengths at specified times for continuous time models fit with ctStanFit.
+#'Plots the output from \code{\link{ctDiscretePars}}, for model implied regression strengths at specified times for continuous time models fit with \code{\link{ctFit}}.
 #'\code{ctStanDiscreteParsPlot} is maintained as a backward-compatible alias.
 #'
 #'For a model whose dynamics depend on the state, the curves are computed at

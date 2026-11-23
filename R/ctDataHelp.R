@@ -99,16 +99,26 @@ NULL
 
 
 
-#' ctstantestdat
-#' 
-#' Generated dataset for testing \code{\link{ctFit}} from ctsem package.
-#' @format matrix
-#' @name ctstantestdat
+#' Example data for ctsem
+#'
+#' Simulated data from 30 subjects, each measured on 10 occasions, used in the
+#' examples and tests. \code{ctstantestdat} is the same data under its name
+#' before version 4.
+#' @format A matrix with 300 rows and 8 columns: the subject \code{id}, the
+#'   measurement \code{time}, the measured variables \code{Y1} and \code{Y2},
+#'   a time dependent predictor \code{TD1}, and three time independent
+#'   predictors \code{TI1}, \code{TI2} and \code{TI3}.
+#' @examples
+#' # One row per subject and occasion.
+#' head(ctsemtestdat)
+#' @name ctsemtestdat
+#' @aliases ctstantestdat
 NULL
 
-#' ctstantestfit
-#' 
-#' Dummy fit for testing functions from ctsem package.
+#' Example fit for ctsem
+#'
+#' A fit of \code{\link{ctsemtestdat}} with \code{backend = 'stan'}, used in
+#' the examples and tests.
 #' @format ctStanFit object
 #' @name ctstantestfit
 NULL

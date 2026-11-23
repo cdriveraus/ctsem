@@ -7,7 +7,7 @@ test_that("ctPlotPosterior draws a julia fit's posterior from the draws summary(
   skip_without_julia()
   model <- suppressMessages(ctModel(type = 'ct', manifestNames = c('Y1', 'Y2'),
     latentNames = c('eta1', 'eta2'), LAMBDA = diag(2)))
-  fit <- suppressWarnings(suppressMessages(ctFit(ctstantestdat, model,
+  fit <- suppressWarnings(suppressMessages(ctFit(ctsemtestdat, model,
     backend = 'julia', cores = 1)))
   set.seed(1)
   pars <- ctsem:::.ctPlotPosteriorDrawsJulia(fit, 4000)
@@ -52,7 +52,7 @@ test_that("ctPlotPosterior says what it needs rather than failing inside", {
 
   skip_without_julia()
   model$pars$indvarying <- FALSE
-  bare <- suppressWarnings(suppressMessages(ctFit(ctstantestdat, model,
+  bare <- suppressWarnings(suppressMessages(ctFit(ctsemtestdat, model,
     backend = 'julia', cores = 1, optimcontrol = list(estonly = TRUE))))
   expect_error(ctPlotPosterior(bare), 'ctFitUncertainty')
 })

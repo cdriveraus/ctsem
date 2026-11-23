@@ -90,7 +90,7 @@ groups.
 }
 \examples{
 \dontrun{
-data <- ctstantestdat
+data <- ctsemtestdat
 model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
   LAMBDA = matrix(1))
 model$pars$indvarying <- model$pars$matrix \%in\% 'MANIFESTMEANS'

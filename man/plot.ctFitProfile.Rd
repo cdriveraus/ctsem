@@ -29,7 +29,7 @@ if (isTRUE(ctJuliaStatus()$available)) {
 model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
   LAMBDA = matrix(1))
 model$pars$indvarying <- FALSE
-fit <- ctFit(ctstantestdat, model)
+fit <- ctFit(ctsemtestdat, model)
 result <- ctFitProfile(fit, parameters = c('drift_eta1', 'mm_Y1'))
 
 # A panel per parameter, with the drop in log likelihood against the raw

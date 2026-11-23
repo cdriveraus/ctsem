@@ -40,7 +40,7 @@
 #'   no time has its observations set to \code{NA} unless
 #'   \code{imputedefs = TRUE}.
 #' @examples
-#' wideexample <- ctLongToWide(datalong = ctstantestdat, id = "id", 
+#' wideexample <- ctLongToWide(datalong = ctsemtestdat, id = "id", 
 #' time = "time", manifestNames = c("Y1", "Y2"), 
 #' TDpredNames = "TD1", TIpredNames = c("TI1", "TI2","TI3"))
 #' 

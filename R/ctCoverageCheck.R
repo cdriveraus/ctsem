@@ -26,10 +26,10 @@
 #' @examples
 #' \dontrun{
 #' # Does the Hessian interval cover as often as it says? 100 datasets
-#' # generated from the fit to ctstantestdat, each fitted twice.
+#' # generated from the fit to ctsemtestdat, each fitted twice.
 #' model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
 #'   LAMBDA = matrix(1))
-#' check <- ctCoverageCheck(ctstantestdat, model, niter = 100,
+#' check <- ctCoverageCheck(ctsemtestdat, model, niter = 100,
 #'   fitArgs = list(
 #'     hessian = list(optimcontrol = list(uncertainty = 'hessian')),
 #'     bootstrap = list(optimcontrol = list(uncertainty = 'bootstrap'))),

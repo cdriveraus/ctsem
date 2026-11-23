@@ -1047,7 +1047,7 @@ T0VARredundancies <- function(ctm) {
 #'
 #' # Long format data: one row per subject and occasion, with an id, a time,
 #' # the measured variables Y1 and Y2, and a time dependent predictor TD1.
-#' print(head(ctstantestdat))
+#' print(head(ctsemtestdat))
 #'
 #' # Two processes, each measured by one variable, affected by TD1. Every
 #' # other part of the model takes the defaults of ctModel().
@@ -1056,7 +1056,7 @@ T0VARredundancies <- function(ctm) {
 #'   TDpredNames = 'TD1')
 #'
 #' # priors = TRUE helps with a data set this small (30 subjects).
-#' fit <- ctFit(ctstantestdat, model, priors = TRUE)
+#' fit <- ctFit(ctsemtestdat, model, priors = TRUE)
 #' print(summary(fit))
 #'
 #' # The effects over time intervals, and predictions for two subjects.
@@ -1069,12 +1069,12 @@ T0VARredundancies <- function(ctm) {
 #'   manifestNames = 'Y1', latentNames = 'level',
 #'   DRIFT = 0, DIFFUSION = 0, T0VAR = 0, MANIFESTMEANS = 0,
 #'   CINT = 'slope', T0MEANS = 'initial')
-#' fitgrowth <- ctFit(ctstantestdat, growth, priors = TRUE)
+#' fitgrowth <- ctFit(ctsemtestdat, growth, priors = TRUE)
 #' print(summary(fitgrowth)$popmeans)
 #' summary(fitgrowth)$popsd
 #'
 #' # Sampling the posterior instead of optimising:
-#' # ctFit(ctstantestdat, model, optimize = FALSE)
+#' # ctFit(ctsemtestdat, model, optimize = FALSE)
 #' # or, after a fit, ctFitUncertainty(fit, 'sample').
 #' }
 #' }
