@@ -79,7 +79,7 @@ time independent predictor effects, the parameter matrices, and the log
 likelihood and AIC.
 }
 \examples{
-s <- summary(ctstantestfit)
+s <- summary(ctsemtestfit)
 
 # Printing shows every section, some with a note on how to read them.
 s

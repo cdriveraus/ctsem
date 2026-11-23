@@ -1,13 +1,14 @@
-#' Regenerate ctsem's shipped test data and/or test fit
+#' Regenerate ctsem's shipped test data and/or test fits
 #'
-#' Regenerates \code{data/ctsemtestdat.rda} and/or \code{data/ctstantestfit.rda},
-#' the fixtures a number of tests compare against.
+#' Regenerates \code{data/ctsemtestdat.rda}, \code{data/ctstantestfit.rda}
+#' and/or \code{data/ctsemtestfit.rda}, the fixtures the examples and a number
+#' of tests use. The julia fit needs Julia.
 #'
 #' Deliberately not exported: it overwrites data shipped with the package,
 #' so it stays reachable only as \code{ctsem:::ctdataupdate()}.
 #'
 #' Called bare (no arguments) this behaves exactly as it always has: it asks
-#' for interactive \code{T}/\code{F} confirmation and regenerates both
+#' for interactive \code{T}/\code{F} confirmation and regenerates all three
 #' objects. \code{confirm} and \code{what} exist so automated tooling can call
 #' it without hanging on \code{readline()} and without moving
 #' \code{ctsemtestdat} (which many tests pin numbers against) when only
@@ -15,18 +16,20 @@
 #' more than once this cycle, and refreshing the fit alone is normally what
 #' that calls for.
 #'
-#' @param what Character vector, some of \code{c("data", "fit")}. Which
-#'   object(s) to regenerate. Defaults to both, matching prior behaviour.
-#'   \code{"fit"} alone loads the currently-shipped \code{ctsemtestdat}
-#'   (rather than regenerating it) and fits against that.
+#' @param what Character vector, some of \code{c("data", "fit", "juliafit")}.
+#'   Which object(s) to regenerate: the data, the stan fit
+#'   \code{ctstantestfit}, the julia fit \code{ctsemtestfit}. Defaults to all
+#'   three. Without \code{"data"}, the fits use the currently-shipped
+#'   \code{ctsemtestdat} rather than regenerating it.
 #' @param confirm Ask for interactive \code{T}/\code{F} confirmation before
 #'   doing anything, exactly as this always has. Defaults to \code{TRUE};
 #'   pass \code{FALSE} for a non-interactive/scripted call.
 #' @param forcerecompile logical. For development purposes.
 #' @keywords internal
 #' @noRd
-ctdataupdate <- function(what = c("data", "fit"), confirm = TRUE, forcerecompile = FALSE) {
-  what <- match.arg(what, c("data", "fit"), several.ok = TRUE)
+ctdataupdate <- function(what = c("data", "fit", "juliafit"), confirm = TRUE,
+  forcerecompile = FALSE) {
+  what <- match.arg(what, c("data", "fit", "juliafit"), several.ok = TRUE)
 
   run <- function() {
     set.seed(1)
@@ -72,7 +75,7 @@ ctdataupdate <- function(what = c("data", "fit"), confirm = TRUE, forcerecompile
 
       save(ctsemtestdat,file=file.path('data','ctsemtestdat.rda'))
     } else {
-      # "fit" requested alone: fit against the currently-shipped data rather
+      # Fits requested without the data: fit the currently-shipped data rather
       # than regenerating it, so a fit-only refresh cannot move ctsemtestdat
       # out from under tests that pin numbers against it.
       e <- new.env(parent = emptyenv())
@@ -99,8 +102,21 @@ ctdataupdate <- function(what = c("data", "fit"), confirm = TRUE, forcerecompile
       save(ctstantestfit,file=file.path('data','ctstantestfit.rda'))
     }
 
+    if ("juliafit" %in% what) {
+      # The default model, fitted as ctFit()'s help does. It keeps its draws
+      # pushed through the model's transforms, at the estimate too, so the
+      # examples that summarise it run where Julia is missing (CRAN).
+      # test-ctsemtestfit.R says when the engine no longer agrees with it.
+      set.seed(1)
+      model <- ctModel(LAMBDA = diag(2), manifestNames = c('Y1', 'Y2'),
+        latentNames = c('eta1', 'eta2'), TDpredNames = 'TD1')
+      ctsemtestfit <- ctFit(ctsemtestdat, model, priors = TRUE, cores = 1)
+      save(ctsemtestfit, file = file.path('data', 'ctsemtestfit.rda'))
+    }
+
     written <- file.path('data', paste0(
-      c(data = 'ctsemtestdat', fit = 'ctstantestfit')[what], '.rda'))
+      c(data = 'ctsemtestdat', fit = 'ctstantestfit', juliafit = 'ctsemtestfit')[what],
+      '.rda'))
     paths <- sort(Sys.glob(written))
     tools::resaveRdaFiles(paths)
     invisible(NULL)

@@ -100,13 +100,11 @@ ctStanRawSamples<-function(fit){
 #'linear model.
 #'@param ... arguments passed to the method for the fit's backend.
 #'@examples
-#'\donttest{
-#'m <- ctSummaryMatrices(ctstantestfit)
+#'m <- ctSummaryMatrices(ctsemtestfit)
 #'names(m)
-#'m$DRIFT                          # posterior median of the drift matrix
+#'m$DRIFT                          # median of the draws of the drift matrix
 #'eigen(m$estimate$DRIFT)$values   # stable when every real part is negative
 #'m$asymDIFFUSIONcor               # stationary correlation within a subject
-#'}
 #'@return A named list of matrices, each summarised over the posterior (or
 #'approximate posterior) draws by \code{calcfunc}. These are the model's own
 #'matrices (\code{DRIFT}, \code{DIFFUSION}, \code{LAMBDA}, ...), the
@@ -459,7 +457,7 @@ getparnames <- function(fit,reonly=FALSE, subjvariationonly=FALSE, popstatesonly
 #'   \code{T0cov}, \code{DIFFUSIONcov}, \code{MANIFESTcov},
 #'   \code{asymDIFFUSIONcov} and the correlation matrices.
 #' @examples
-#' s <- summary(ctstantestfit)
+#' s <- summary(ctsemtestfit)
 #'
 #' # Printing shows every section, some with a note on how to read them.
 #' s
@@ -796,7 +794,7 @@ summaryCtStanFitLoglikDuplicatesPosterior <- function(x){
 #' @param ... Additional arguments passed to \code{\link{print}} for individual sections.
 #' @return Invisibly returns \code{x}.
 #' @examples
-#' s <- summary(ctstantestfit)
+#' s <- summary(ctsemtestfit)
 #'
 #' # The section names are the names of the summary list.
 #' names(s)

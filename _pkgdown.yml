@@ -186,6 +186,7 @@ reference:
   - AnomAuth
   - datastructure
   - ctsemtestdat
+  - ctsemtestfit
   - ctstantestfit
 - title: Utilities
   contents:

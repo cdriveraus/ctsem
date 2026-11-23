@@ -69,8 +69,12 @@ Returns the posterior (or approximate posterior) draws of a fit's
 parameters, as arrays named for the model matrices.
 }
 \examples{
-\donttest{
-e = ctExtract(ctstantestfit)
+# The draws of every population matrix, an array per matrix with the draw
+# first.
+e <- ctExtract(ctsemtestfit)
+dim(e$pop_DRIFT)
+
+# Where the matrices were evaluated, which matters only for a model whose
+# matrices depend on the state (see ?ctContextDependence).
 attr(e, 'evaluatedAt')
-}
 }

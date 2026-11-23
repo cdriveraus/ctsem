@@ -1830,8 +1830,7 @@
   class(out$sample) <- "ctSampleDiagnostics"
 
   # Constrained draws describe the *new* draws, so the cached ones are stale.
-  out$transformedpars <- NULL
-  out$transformedpars <- .ctBackendConstrained(out)
+  out$transformedpars <- .ctBackendConstrainCache(out, fresh = TRUE)
   out$priorerrors <- .ctBackendPriorErrors(out)
   # Each group's posterior of its effects: from the draws when the effects were
   # sampled, and otherwise -- a marginal sample -- from the Laplace or

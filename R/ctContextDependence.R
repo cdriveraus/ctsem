@@ -469,7 +469,7 @@
 #' @examples
 #' # FALSE: no cell of the bundled fit's model reads a latent state or a time
 #' # dependent predictor.
-#' ctModelIsNonlinear(ctstantestfit)
+#' ctModelIsNonlinear(ctsemtestfit)
 #'
 #' # TRUE for a model in which the auto effect of eta1 changes with eta2.
 #' model <- ctModel(LAMBDA = diag(2), manifestNames = c('Y1', 'Y2'),

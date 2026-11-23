@@ -46,6 +46,6 @@ pair of processes, computes summary quantities for each draw and their
 distribution over draws.
 }
 \examples{
-dp <- ctDiscretePars(ctstantestfit, times = seq(0, 5, .1), nsamples = 20)
+dp <- ctDiscretePars(ctsemtestfit, times = seq(0, 5, .1), nsamples = 20)
 summary(dp)
 }
