@@ -2082,9 +2082,6 @@ function _laplace_parallel(f, items)
             task_local_storage(:ctsem_slot, mine)
             try
                 _laplace_pull!(f, items, n, next, failed)
-            catch census_e
-                _census_log_error(census_e, catch_backtrace())
-                rethrow()
             finally
                 # As soon as the queue is empty, not at the end of the region.
                 # That timing is what lets a finished worker's slot reach the
@@ -2551,7 +2548,6 @@ _laplace_block_dense(M::CTSEMBlockMatrix{T}, blocks::Vector{CTSEMLaplaceBlock},
 """`_laplace_block_dense` into `out`, which is overwritten."""
 function _laplace_block_dense!(out::AbstractMatrix, M::CTSEMBlockMatrix,
     blocks::Vector{CTSEMLaplaceBlock})
-    _dense_census("block_dense", size(out, 1))
     fill!(out, zero(eltype(out)))
     for (b, block) in enumerate(blocks)
         rows = (block.offset + 1):(block.offset + block.size)

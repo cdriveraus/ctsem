@@ -261,6 +261,16 @@ test_that("the check integrates the units its gate passes by Laplace's expansion
   # Below the gate the term comes back without the correction, which the
   # check would throw away.
   expect_true(all(is.na(ex$correction[!gated])))
+  # A unit whose curvatures cost more than the check's draws for it is left to
+  # the draws; one within the budget is expanded as before.
+  dims <- as.integer(ctsem:::.ctJuliaEval("o -> collect(Int, o.units.dims)")(lap))
+  q <- max(dims)
+  capped <- ctsem:::.ctJuliaGet(module$ctsem_laplace_expansion(lap, x, budget = 2 * q))
+  expect_true(all(is.na(capped$term[dims == q])))
+  expect_equal(capped$term[dims < q], ex$term[dims < q])
+  within <- ctsem:::.ctJuliaGet(module$ctsem_laplace_expansion(lap, x, budget = 2 * q + 1))
+  expect_equal(within$term, ex$term)
+  expect_equal(within$correction, ex$correction)
   # The default fit's check takes from it the gap of the gated units whose
   # bound is the tighter error, and says how far its log likelihood can be
   # off.

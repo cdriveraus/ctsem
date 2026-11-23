@@ -536,6 +536,75 @@ test_that("the probes search only where a unit can have a second maximum", {
   }
 })
 
+# Persons nested in studies, as in a meta-analysis of panels: person-level
+# random intercepts and initial means, a study-level random drift. On the layer
+# a study's unit holds every person's effects, and its mode search -- Newton's
+# kept curvature, the probes' span, solves and screen, the partner modes' fold
+# test -- works from the unit's blocks (`_laplace_block_lowest`); made dense,
+# it was the unit's width cubed, hours for a study of thousands. The dense
+# decompositions are the oracle (`ctsem_set_block_eigen!(false)`).
+.modes_nested_data <- function(nstudy = 2, nperson = 12, ntime = 6) {
+  set.seed(5)
+  A0 <- matrix(c(-0.6, 0.15, 0.1, -0.5), 2, 2)
+  G <- t(chol(matrix(c(0.6, 0.1, 0.1, 0.5), 2, 2)))
+  out <- list()
+  for (s in seq_len(nstudy)) {
+    A <- A0 + matrix(rnorm(4, 0, 0.08), 2, 2)
+    for (p in seq_len(nperson)) {
+      mm <- rnorm(2); x <- rnorm(2)
+      times <- cumsum(c(0, runif(ntime - 1, 0.5, 1.5)))
+      X <- matrix(NA, ntime, 2); X[1, ] <- x
+      for (t in 2:ntime) {
+        dt <- times[t] - times[t - 1]; n <- ceiling(dt / 0.05); h <- dt / n
+        for (j in seq_len(n)) x <- x + A %*% x * h + G %*% rnorm(2, 0, sqrt(h))
+        X[t, ] <- x
+      }
+      Y <- X + matrix(mm, ntime, 2, byrow = TRUE) + matrix(rnorm(2 * ntime, 0, 0.4), ntime, 2)
+      out[[length(out) + 1]] <- data.frame(id = (s - 1) * nperson + p, study = s,
+        time = times, Y1 = Y[, 1], Y2 = Y[, 2])
+    }
+  }
+  do.call(rbind, out)
+}
+
+test_that("a nested unit's mode search reads its blocks, as its dense oracle does", {
+  skip_without_julia()
+  withr::local_options(ctsem.laplace.hybrid = FALSE)
+  m <- suppressMessages(ctModel(type = "ct", manifestNames = c("Y1", "Y2"),
+    latentNames = c("eta1", "eta2"), LAMBDA = diag(2),
+    MANIFESTMEANS = matrix(c("mm1", "mm2"), 2, 1), CINT = matrix(0, 2, 1),
+    id = c("id", "study"), time = "time", tipredDefault = FALSE))
+  free <- is.na(m$pars$value)
+  m$pars$indvarying <- ifelse(m$pars$matrix %in% c("MANIFESTMEANS", "T0MEANS") & free,
+    "id", ifelse(m$pars$matrix == "DRIFT" & free, "study", FALSE))
+  spec <- suppressMessages(ctFit(.modes_nested_data(), m, backend = "julia",
+    intoverpop = "laplace", fit = FALSE, cores = 2))
+  expect_null(spec$laplace$hybrid)
+  obj <- ctsem:::.ctJuliaObjective(spec, hybrid = FALSE)
+  dims <- ctsem:::.ctJuliaEval("o -> collect(Int, o.units.dims)")
+  expect_equal(as.integer(dims(obj)), c(52L, 52L))
+  block <- function(on) invisible(ctsem:::.ctJuliaCall(
+    "ContinuousTimeSEM.ctsem_set_block_eigen!", on))
+  on.exit(block(TRUE), add = TRUE)
+  # At two threads, so the unit's leaf blocks are formed at once, which the
+  # kept columns once raced on (`_tan_keep_begin!`).
+  set.seed(6)
+  for (sdx in c(0, 0.3)) {
+    x <- rnorm(ctsem:::.ctBackendNpar(spec), 0, sdx)
+    block(TRUE)
+    a <- ctsem:::.ctJuliaEvaluate(spec, x, hybrid = FALSE, cores = 2)
+    block(FALSE)
+    b <- ctsem:::.ctJuliaEvaluate(spec, x, hybrid = FALSE, cores = 2)
+    expect_equal(a$value, b$value, tolerance = 1e-8)
+    expect_equal(a$gradient, b$gradient, tolerance = 1e-6)
+  }
+  # A subset of its units, as the random-effects check takes, for a model with
+  # as many units as levels (`affine` and `inert` are per level).
+  subset <- ctsem:::.ctJuliaEval(paste0("o -> ContinuousTimeSEM._ctsem_subset_objective(",
+    "o, [1]) isa ContinuousTimeSEM.CTSEMLaplaceObjective"))
+  expect_true(isTRUE(subset(obj)))
+})
+
 # Known modes (`spec$laplace$known`, `_laplace_known_modes`): starts a unit's
 # solve takes besides the origin and the probes, kept where a fit saw the
 # unit's term jump (`.ctJuliaOptimise()`). The sign fixture at a population
