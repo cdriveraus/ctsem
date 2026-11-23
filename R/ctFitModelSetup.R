@@ -104,7 +104,16 @@
     if(!isTRUE(as.logical(ctm$continuoustime))) stop(
       'stationary = TRUE is implemented for continuous time models only.',
       call. = FALSE)
-    .ctStationaryCheckDrift(ctm)
+    # A clock, trait or trend that never settles and carries no noise has no
+    # stationary state, but what it drives settles onto its path: those
+    # latents start stationary as single elements, the drivers as written.
+    elements <- .ctStationaryAsElements(ctm)
+    if(!is.null(elements)) {
+      ctm <- elements
+      stationary <- FALSE
+    }
+  }
+  if(stationary) {
     t0 <- ctm$pars$matrix %in% c('T0MEANS', 'T0VAR')
     ctm$pars$param[t0] <- NA
     ctm$pars$value[t0] <- ifelse(ctm$pars$matrix[t0] %in% 'T0VAR' &

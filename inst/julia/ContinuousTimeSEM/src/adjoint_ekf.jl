@@ -349,6 +349,13 @@ mutable struct CTSEMStationaryRecord{T}
     LX::Matrix{T}
     LP::Matrix{T}
     M::Matrix{T}
+    # Beside drivers that never settle (`_ctsem_stationary_drive!`): how the
+    # closure settles onto their path, the initial covariance before their
+    # part, and their initial means and CINT. Empty without them.
+    D::Matrix{T}
+    P1::Matrix{T}
+    zbar::Vector{T}
+    cz::Vector{T}
 end
 
 """
@@ -798,7 +805,8 @@ function _record_stationary!(tape::CTSEMAdjointTape{T}, ws, pars) where {T}
     else
         push!(tape.stationaries, CTSEMStationaryRecord{T}(Matrix{T}(drift),
             Vector{T}(mean), Matrix{T}(X), Matrix{T}(diffusion), zeros(T, 0, 0),
-            zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0)))
+            zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0),
+            zeros(T, 0, 0), T[], T[]))
     end
     _tape_push!(tape, :stationary, index)
     return nothing
@@ -827,6 +835,7 @@ function _record_stationary_elements!(tape::CTSEMAdjointTape{T}, ws, pars) where
     lx = view(buf.output, 1:n, 1:n)
     lp = view(buf.output, 1:n, (n + 1):(2n))
     m = view(buf.scratch, 1:n, 1:n)
+    sd = ws.stationary_drive
     if index <= length(tape.stationaries)
         record = tape.stationaries[index]
         record.DRIFT = _tape_fill!(record.DRIFT, drift)
@@ -837,10 +846,23 @@ function _record_stationary_elements!(tape::CTSEMAdjointTape{T}, ws, pars) where
         record.LX = _tape_fill!(record.LX, lx)
         record.LP = _tape_fill!(record.LP, lp)
         record.M = _tape_fill!(record.M, m)
+        record.D = _tape_fill!(record.D, sd.D)
+        record.P1 = _tape_fill!(record.P1, sd.P1)
     else
         push!(tape.stationaries, CTSEMStationaryRecord{T}(Matrix{T}(drift),
             Vector{T}(mean), Matrix{T}(X), Matrix{T}(diffusion), Matrix{T}(pold),
-            Matrix{T}(lx), Matrix{T}(lp), Matrix{T}(m)))
+            Matrix{T}(lx), Matrix{T}(lp), Matrix{T}(m), Matrix{T}(sd.D),
+            Matrix{T}(sd.P1), T[], T[]))
+        record = tape.stationaries[index]
+    end
+    # The drivers' initial means and CINT, gathered by hand: a view by an index
+    # vector is not strided and would allocate.
+    Z = ws.sp.stationary_elements.drivers
+    resize!(record.zbar, length(Z))
+    resize!(record.cz, length(Z))
+    @inbounds for j in eachindex(Z)
+        record.zbar[j] = ws.state[Z[j]]
+        record.cz[j] = pars.CINT[Z[j]]
     end
     _tape_push!(tape, :stationary_elements, index)
     return nothing
@@ -1567,12 +1589,26 @@ function _reverse_stationary_elements!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     θ̄CINT = θ̄ca.CINT
     θ̄DRIFT = θ̄ca.DRIFT
 
+    Z = se.drivers
+    nz = length(Z)
+    sd = aws.ekf_ws.stationary_drive
+    D = record.D
+    Dbar = sd.Y
+    @inbounds for j in 1:nz, i in 1:naff
+        Dbar[i, j] = zero(T)
+    end
     if !isempty(se.means)
         w = _rs(sc.av1, naff)
         At = _rs(sc.aa1, naff, naff)
         fill!(w, zero(T))
         @inbounds for i in se.means
             w[i] = x̄[i]
+            # x_i = k_i + D[i, :] z̄: the drivers' initial means take their
+            # share, and D its cotangent.
+            for j in 1:nz
+                Dbar[i, j] += x̄[i] * record.zbar[j]
+                x̄[Z[j]] += D[i, j] * x̄[i]
+            end
             x̄[i] = zero(T)
         end
         @inbounds for j in 1:naff, i in 1:naff
@@ -1586,9 +1622,54 @@ function _reverse_stationary_elements!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
                 _ctsem_in_closure(inclosure, j) || continue
                 θ̄DRIFT[i, j] -= w[i] * record.mean[j]
             end
+            # A k = D c_z - c: D and the drivers' CINT take their shares.
+            for j in 1:nz
+                Dbar[i, j] += w[i] * record.cz[j]
+                θ̄CINT[Z[j]] += D[i, j] * w[i]
+            end
         end
     end
-    isempty(se.blocks) && return nothing
+    isempty(se.blocks) && return _reverse_stationary_drive!(θ̄DRIFT, record, aws, se)
+    # The drivers' part, P = G P1 G' with G = I + E, E[s, Z[j]] = D[s, j]:
+    # Ē = (P̄ + P̄') G P1 on the blocks' rows and the drivers' columns, and
+    # P̄1 = G' P̄ G, the drivers' rows and then columns.
+    if nz > 0
+        P1 = record.P1
+        H = _rs(sc.nn1, n, n)
+        GP = _rs(sc.nn2, n, n)
+        @inbounds for j in 1:n, i in 1:n
+            H[i, j] = P̄[i, j] + P̄[j, i]
+            GP[i, j] = P1[i, j]
+        end
+        @inbounds for B in se.blocks, s in B, c in 1:n
+            v = zero(T)
+            for k in 1:nz
+                v += D[s, k] * P1[Z[k], c]
+            end
+            GP[s, c] += v
+        end
+        @inbounds for B in se.blocks, s in B, j in 1:nz
+            v = zero(T)
+            for l in 1:n
+                v += H[s, l] * GP[l, Z[j]]
+            end
+            Dbar[s, j] += v
+        end
+        @inbounds for j in 1:nz, c in 1:n
+            v = zero(T)
+            for B in se.blocks, s in B
+                v += D[s, j] * P̄[s, c]
+            end
+            P̄[Z[j], c] += v
+        end
+        @inbounds for j in 1:nz, q in 1:n
+            v = zero(T)
+            for B in se.blocks, s in B
+                v += P̄[q, s] * D[s, j]
+            end
+            P̄[q, Z[j]] += v
+        end
+    end
 
     Pold = record.Pold
     M = record.M
@@ -1726,6 +1807,73 @@ function _reverse_stationary_elements!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         Qc_bar[dyn[i], dyn[j]] = Q̄d[i, j]
     end
     _defer_diffusion!(aws, record.DIFFUSION, Qc_bar, θ̄ca, n)
+    return _reverse_stationary_drive!(θ̄DRIFT, record, aws, se)
+end
+
+"""
+    _reverse_stationary_drive!(θ̄DRIFT, record, aws, se)
+
+Undo `_ctsem_stationary_drive!`, `A D - D Ω = -B`, from `D̄` as the mean and
+the covariance left it in `aws.ekf_ws.stationary_drive.Y`: `Λ` from the
+adjoint system `A' Λ - Λ Ω' = D̄`, then `Ā = -Λ D'` within the closure (its
+decoupled entries are constants), `B̄ = -Λ` and `Ω̄ = D' Λ`. Nothing without
+drivers.
+"""
+function _reverse_stationary_drive!(θ̄DRIFT, record::CTSEMStationaryRecord{T}, aws,
+        se::CTSEMStationaryElements) where {T}
+    Z = se.drivers
+    nz = length(Z)
+    nz == 0 && return nothing
+    sd = aws.ekf_ws.stationary_drive
+    Dbar = sd.Y
+    D = record.D
+    A = record.DRIFT
+    inclosure = se.inclosure
+    naff = size(D, 1)
+    N = naff * nz
+    K = sd.K
+    r = sd.r
+    @inbounds for c in 1:N, q in 1:N
+        K[q, c] = zero(T)
+    end
+    @inbounds for j in 1:nz
+        o = (j - 1) * naff
+        for m in 1:naff, i in 1:naff
+            K[o + i, o + m] = _ctsem_closure_drift(A, inclosure, m, i)
+        end
+        for l in 1:nz
+            ol = (l - 1) * naff
+            w = A[Z[j], Z[l]]
+            for i in 1:naff
+                K[o + i, ol + i] -= w
+            end
+        end
+        for i in 1:naff
+            r[o + i] = Dbar[i, j]
+        end
+    end
+    _solve_square_system_generic!(K, r, sd.piv, N)
+    @inbounds for i in 1:naff
+        _ctsem_in_closure(inclosure, i) || continue
+        for m in 1:naff
+            _ctsem_in_closure(inclosure, m) || continue
+            v = zero(T)
+            for j in 1:nz
+                v += r[(j - 1) * naff + i] * D[m, j]
+            end
+            θ̄DRIFT[i, m] -= v
+        end
+        for j in 1:nz
+            θ̄DRIFT[i, Z[j]] -= r[(j - 1) * naff + i]
+        end
+    end
+    @inbounds for j in 1:nz, l in 1:nz
+        v = zero(T)
+        for i in 1:naff
+            v += D[i, l] * r[(j - 1) * naff + i]
+        end
+        θ̄DRIFT[Z[l], Z[j]] += v
+    end
     return nothing
 end
 
