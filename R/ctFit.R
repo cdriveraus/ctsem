@@ -923,10 +923,9 @@ T0VARredundancies <- function(ctm) {
 #' For \code{backend='julia'} the list also takes \code{sampler}:
 #' \code{'map'} (NUTS through a learnt map, the default for the joint
 #' posterior), \code{'saem'} or \code{'nuts'}. \code{placement} sets where the
-#' chains start. The map sampler starts from an optimised fit. For
-#' \code{'saem'} and \code{'nuts'} on the joint posterior, the default
-#' \code{'saem'} starts them from an SAEM run, with no optimisation needed,
-#' and \code{'fit'} starts them around an optimised fit. Sampling stops when
+#' chains start: \code{'fit'} around an optimised fit, the default for
+#' \code{'map'} and \code{'nuts'}, or \code{'saem'} from an SAEM run, with no
+#' optimisation needed, the default for \code{'saem'}. Sampling stops when
 #' the effective sample size of the worst parameter reaches \code{minESS}
 #' (200) and R-hat is below \code{rhatTarget} (1.01), and may run to four
 #' times the requested number of draws to get there. \code{meanESS},

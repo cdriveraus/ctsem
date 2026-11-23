@@ -75,7 +75,7 @@
 .ctMaximumHeldValue <- function(fit, cores) {
   .ctJuliaHoldModes(fit$model_spec, .ctJuliaFitModes(fit))
   value <- tryCatch(as.numeric(.ctJuliaEvaluate(fit, gradient = FALSE,
-    cores = cores, hybrid = TRUE)[["value"]])[1L], error = function(e) NA_real_)
+    cores = cores)[["value"]])[1L], error = function(e) NA_real_)
   if (isTRUE(is.finite(value))) value else -Inf
 }
 
@@ -121,7 +121,7 @@
     " where under ", format(round(record$bar)),
     " is expected). Looking for a higher maximum from there.")
 
-  objective <- .ctJuliaObjective(fit, hybrid = TRUE)
+  objective <- .ctJuliaObjective(fit)
   module <- .ctJuliaModule(fit$model_spec$project)
   # The climb's curvature is its own, and what it leaves is no later run's.
   forget <- function() try(.ctJuliaCall("ContinuousTimeSEM.ctsem_lbfgs_forget!",

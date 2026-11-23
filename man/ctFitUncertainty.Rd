@@ -349,14 +349,14 @@ sampled too, unless \code{tipredMissing} is \code{'impute'} in the fit's
 
 \emph{The sampler.} \code{control$sampler} chooses it. For the joint
 posterior the default is \code{'map'}, NUTS through a transport map learnt
-during warmup. It integrates out exactly the random effects the Kalman
-filter can (on intercepts, initial means, manifest means and time
-dependent predictor effects, in a linear Gaussian model), and reports them
-drawn from their exact conditional distribution. \code{'saem'} draws the
-random effects by Metropolis-within-Gibbs and the parameters given them by
-NUTS, and \code{'nuts'} runs NUTS on the parameters and random effects
-together, which usually mixes poorly. All three sample the same posterior,
-and \code{'map'} is usually the fastest to reach the effective sample size
+during warmup, and \code{'nuts'} runs NUTS on the parameters and random
+effects together, which usually mixes poorly. Both integrate out exactly
+the random effects the Kalman filter can (on intercepts, initial means,
+manifest means and time dependent predictor effects, in a linear Gaussian
+model), and report them drawn from their exact conditional distribution.
+\code{'saem'} draws every random effect by Metropolis-within-Gibbs and the
+parameters given them by NUTS. All three sample the same posterior, and
+\code{'map'} is usually the fastest to reach the effective sample size
 target.
 
 A marginal posterior is sampled by tempered sequential Monte Carlo
@@ -379,12 +379,10 @@ draws are exact. \code{coreset = FALSE} evaluates every subject throughout.
 \code{adapt_metric}, \code{adapt_effects} and \code{settleTol} apply to
 NUTS's warmup. All three are refused with \code{'saem'} and \code{'smc'},
 and the last two with \code{'map'}. \code{control$placement} sets where
-the chains start for \code{'saem'} and \code{'nuts'}. \code{'saem'}, the
-default for the joint posterior, runs SAEM from the fit's estimate and
-starts each chain from its estimate and its draws of the random effects.
-\code{'fit'} starts the chains around the fit's estimate, and is the only
-option for a marginal posterior. The map sampler starts from the fit's
-estimate.
+the chains start. \code{'fit'} starts them around the fit's estimate, and
+is the default. \code{'saem'} is for \code{sampler = 'saem'}, and its
+default there: it runs SAEM from the fit's estimate and starts each chain
+from its estimate and its draws of the random effects.
 
 \emph{When it stops.} A run stops once every parameter's effective sample
 size reaches \code{minESS} (200) and R-hat is below \code{rhatTarget}

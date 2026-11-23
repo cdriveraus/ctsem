@@ -202,7 +202,7 @@
   if (!is.finite(size) || size <= 0) return(NULL)
   module <- .ctJuliaModule(.ctBackendSpec(x)$project)
   out <- try(.ctJuliaGet(module$ctsem_flat_probe(
-    .ctJuliaObjective(x, hybrid = TRUE), .ctJuliaNumericVector(as.numeric(at)),
+    .ctJuliaObjective(x), .ctJuliaNumericVector(as.numeric(at)),
     .ctJuliaNumericVector(direction))), silent = TRUE)
   if (inherits(out, "try-error")) return(NULL)
   .ctBackendProbeFields(out, length(direction))
@@ -845,7 +845,7 @@
   if (isTRUE(gap$nnegative > 0L)) {
     spec <- .ctBackendSpec(fit)
     saddle <- .ctBackendSaddleProbe(.ctJuliaModule(spec$project),
-      .ctJuliaObjective(fit, hybrid = TRUE), fit$estimate$raw, hessian,
+      .ctJuliaObjective(fit), fit$estimate$raw, hessian,
       ascent = gradient)
   }
   .ctBackendCertificationRecord(gap, probe, tolerance = tolerance,
@@ -1109,7 +1109,7 @@
   spec <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
   module <- .ctJuliaModule(spec$project)
   out <- .ctBackendJuliaValue(module$ctsem_hessian_columns(
-    .ctJuliaObjective(spec, hybrid = TRUE), .ctJuliaVector(as.numeric(est)),
+    .ctJuliaObjective(spec), .ctJuliaVector(as.numeric(est)),
     .ctJuliaVector(as.integer(columns))))
   matrix(as.numeric(out), nrow = length(est), ncol = length(columns))
 }
@@ -1132,7 +1132,7 @@
     error = function(e) FALSE))
   if (!available) return(NULL)
   est <- as.numeric(est)
-  out <- try(.ctBackendJuliaValue(module[[name]](.ctJuliaObjective(spec, hybrid = TRUE),
+  out <- try(.ctBackendJuliaValue(module[[name]](.ctJuliaObjective(spec),
     .ctJuliaVector(est))), silent = TRUE)
   if (inherits(out, "try-error")) return(NULL)
   matrix(as.numeric(out), nrow = length(est), ncol = length(est))
@@ -1294,7 +1294,7 @@
   # reach: this path bypasses the finish entirely.
   reporting <- .ctBackendReporting(verbose)
   out <- try(.ctBackendWithMaxChunks(cores, .ctJuliaGet(
-    module$ctsem_endgame(.ctJuliaObjective(spec, hybrid = TRUE), .ctJuliaNumericVector(est),
+    module$ctsem_endgame(.ctJuliaObjective(spec), .ctJuliaNumericVector(est),
       gradient_method = gradient, flat_rtol = .ctFlatDirectionRtol(),
       progress = reporting, progress_overwrite = .ctProgressOverwrite(verbose),
       progress_sink = .ctBackendProgressSink(verbose), progress_label = "certify"))),

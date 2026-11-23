@@ -54,7 +54,7 @@ test_that("the engine's natural-scale prior is the terms R writes, on both route
       info = route)
     module <- ctsem:::.ctJuliaModule(spec$project)
     h <- function(s) as.matrix(ctsem:::.ctBackendJuliaValue(module$ctsem_hessian(
-      ctsem:::.ctJuliaObjective(handle(s), hybrid = TRUE), ctsem:::.ctJuliaNumericVector(x))))
+      ctsem:::.ctJuliaObjective(handle(s)), ctsem:::.ctJuliaNumericVector(x))))
     C <- matrix(0, length(x), length(x))
     C[cbind(nat$index, nat$index)] <- ctsem:::.ctNaturalCurvature(nat, x)
     expect_equal(h(spec2) - h(spec), C, tolerance = 1e-10, info = route)

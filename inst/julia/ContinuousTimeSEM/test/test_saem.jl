@@ -583,10 +583,10 @@ end
     @test all(isfinite, marginal.draws)
 end
 
-# `saem = true`: both joint samplers place themselves from SAEM's own run --
-# its estimate, its chains' effects -- rather than from the point handed in,
-# which need only be a start.
-@testset "both joint samplers place from SAEM's state when asked" begin
+# `saem = true`: SAEM's kernel places itself from SAEM's own run -- its
+# estimate, its chains' effects -- rather than from the point handed in, which
+# need only be a start. The NUTS samplers start from the fit's estimate.
+@testset "SAEM's kernel places from SAEM's state when asked" begin
     laplace, values = _saem_reduced()
     s = ctsem_saem_sample(laplace, values; nchains=2, nwarmup=40, ndraws=30, seed=4,
         saem=true)
@@ -595,10 +595,6 @@ end
     @test p.saem_iterations > 0
     @test length(p.theta) == length(values) && all(isfinite, p.theta)
     @test all(isfinite, s.draws)
-    n = ctsem_sample(_saem_reduced()[1], values; nchains=2, nwarmup=40, ndraws=30,
-        seed=4, saem=true)
-    @test n.placement !== nothing && n.placement.saem_iterations > 0
-    @test all(isfinite, n.draws)
     # Without it, nothing is placed and nothing is reported.
     @test ctsem_saem_sample(_saem_reduced()[1], values; nchains=2, nwarmup=5,
         ndraws=5, seed=4).placement === nothing

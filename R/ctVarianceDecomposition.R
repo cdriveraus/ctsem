@@ -601,7 +601,7 @@
   npersons, subjects, levels) {
   spec <- .ctBackendSpec(fit)
   module <- .ctJuliaModule(spec$project)
-  objective <- .ctJuliaObjective(fit)
+  objective <- .ctJuliaObjective(fit, layer = TRUE)
   raw <- .ctJuliaNumericVector(as.numeric(fit$estimate$raw))
   nlevels <- length(levels)
   structure <- .ctFitRandomEffectLevels(fit)
@@ -689,7 +689,7 @@
 .ctVarDecompLevelMatrices <- function(fit, subjectvalues) {
   spec <- .ctBackendSpec(fit)
   module <- .ctJuliaModule(spec$project)
-  scores <- .ctBackendJuliaValue(module$ctsem_kalman(.ctJuliaObjective(fit),
+  scores <- .ctBackendJuliaValue(module$ctsem_kalman(.ctJuliaObjective(fit, layer = TRUE),
     .ctJuliaNumericVector(as.numeric(fit$estimate$raw)),
     from_level = 1L, subject_matrices = TRUE,
     fields = .ctJuliaVector('subject_loglik'),

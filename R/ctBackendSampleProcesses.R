@@ -72,7 +72,8 @@
 
   if (is.null(handles)) {
     handles <- .ctBackendWarmWorkers(fit, workers = workers,
-      values = target$estimate, threads = threads)
+      values = target$estimate, threads = threads,
+      layer = identical(control$sampler, "saem") && !isTRUE(target$marginal))
     if (is.null(handles)) return(NULL)
   }
   # `resolved()` does not block, so this can say what the pause is for before

@@ -496,7 +496,7 @@
   if (is.null(spec$laplace)) return(0L)
   module <- .ctJuliaModule(spec$project)
   as.integer(.ctBackendJuliaValue(
-    module$ctsem_laplace_coordinate_dimension(.ctJuliaObjective(handle))))
+    module$ctsem_laplace_coordinate_dimension(.ctJuliaObjective(handle, layer = TRUE))))
 }
 
 # One draw of every random effect from the population, as natural deviations
@@ -508,7 +508,7 @@
   spec <- .ctBackendSpec(handle)
   module <- .ctJuliaModule(spec$project)
   as.numeric(.ctBackendJuliaValue(module$ctsem_laplace_population_deviations(
-    .ctJuliaObjective(handle), .ctJuliaNumericVector(as.numeric(raw)),
+    .ctJuliaObjective(handle, layer = TRUE), .ctJuliaNumericVector(as.numeric(raw)),
     .ctJuliaNumericVector(stats::rnorm(n)))))
 }
 
@@ -595,7 +595,7 @@
     return(NULL)
   }
   module <- .ctJuliaModule(spec$project)
-  objective <- .ctJuliaObjective(handle)
+  objective <- .ctJuliaObjective(handle, layer = TRUE)
   position <- as.integer(.ctBackendJuliaValue(
     module$ctsem_laplace_deviation_layout(objective))$level)
   out <- list()
@@ -635,7 +635,7 @@
   values <- if (!is.null(spec$laplace) && length(effects)) {
     module <- .ctJuliaModule(spec$project)
     matrix(as.numeric(.ctBackendJuliaValue(module$ctsem_laplace_subject_values(
-      .ctJuliaObjective(handle), .ctJuliaNumericVector(as.numeric(raw)),
+      .ctJuliaObjective(handle, layer = TRUE), .ctJuliaNumericVector(as.numeric(raw)),
       .ctJuliaNumericVector(as.numeric(effects)), ti_effects = ti_effects))),
       nrow = nsubjects)
   } else {

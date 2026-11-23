@@ -243,7 +243,7 @@ test_that("the check integrates the units its gate passes by Laplace's expansion
   fits <- .lc_fits("nonlinear")
   fit <- fits$off
   module <- ctsem:::.ctJuliaModule(fit$model_spec$project)
-  lap <- ctsem:::.ctJuliaObjective(fit, hybrid = TRUE)
+  lap <- ctsem:::.ctJuliaObjective(fit)
   x <- ctsem:::.ctJuliaNumericVector(as.numeric(fit$estimate$raw))
   ex <- ctsem:::.ctJuliaGet(module$ctsem_laplace_expansion(lap, x))
   rule <- function(nodes) as.numeric(ctsem:::.ctJuliaGet(
@@ -440,7 +440,7 @@ test_that("the refined fit's density places the flagged units' rules at each poi
   module <- .ctJuliaModule(fit$model_spec$project)
   x <- as.numeric(fit$estimate$raw)
   cont <- do.call(module$ctsem_laplace_continuation,
-    c(list(.ctJuliaObjective(fit, hybrid = TRUE), .ctJuliaNumericVector(x)),
+    c(list(.ctJuliaObjective(fit), .ctJuliaNumericVector(x)),
       .ctLaplaceContinuationArgs(.ctLaplaceContinueDefaults)))
   info <- .ctJuliaGet(module$ctsem_laplace_continuation_info(cont))
   flagged <- as.integer(info$flagged)[seq_len(info$nflagged)]

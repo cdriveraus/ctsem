@@ -2193,14 +2193,14 @@ ctScoreTest <- function(fit, covariates = NULL,
   }
   modes <- .ctJuliaFitModes(fit)
   if (!is.null(modes) && length(modes$at) == length(nm1)) {
-    .ctJuliaHoldModes(fit$model_spec, modes, hybrid = !layer, envir = hold)
+    .ctJuliaHoldModes(fit$model_spec, modes, layer = layer, envir = hold)
     at2 <- stats::setNames(numeric(length(nm2)), nm2)
     at2[nm1] <- modes$at
     modes$at <- as.numeric(at2)
-    .ctJuliaHoldModes(spec2, modes, hybrid = !layer, envir = hold)
+    .ctJuliaHoldModes(spec2, modes, layer = layer, envir = hold)
   }
-  value1 <- .ctJuliaEvaluate(fit, est, gradient = FALSE, cores = cores, hybrid = !layer)$value
-  ev <- .ctJuliaEvaluate(spec2, x2, gradient = TRUE, cores = cores, hybrid = !layer)
+  value1 <- .ctJuliaEvaluate(fit, est, gradient = FALSE, cores = cores, layer = layer)$value
+  ev <- .ctJuliaEvaluate(spec2, x2, gradient = TRUE, cores = cores, layer = layer)
   # With priors = TRUE every raw parameter has a normal(0, 1) prior, the new
   # terms too: at zero each adds log dnorm(0) to the objective, nothing to its
   # gradient and -1 to its own curvature. The terms are tested on the
@@ -2215,7 +2215,7 @@ ctScoreTest <- function(fit, covariates = NULL,
     "not the fit's and ", label, " cannot be tested for this model.", call. = FALSE)
   list(spec = spec2, x2 = x2, gradient = setNames(as.numeric(ev$gradient), nm2),
     theta = match(nm1, nm2), delta = match(names_new, nm2), priored = priored,
-    module = .ctJuliaModule(spec$project), objective = .ctJuliaObjective(spec2, hybrid = !layer),
+    module = .ctJuliaModule(spec$project), objective = .ctJuliaObjective(spec2, layer = layer),
     onestep = onestep, layer = layer)
 }
 

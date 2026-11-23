@@ -609,7 +609,7 @@ test_that("row scores sum to the subjects' scores, on the filter and the Laplace
   # filter integrates them, so there is nothing to sample (ESS Inf) and the
   # mixture is exact.
   for (hybrid in c(FALSE, TRUE)) {
-    obj <- ctsem:::.ctJuliaObjective(lfit, hybrid = hybrid)
+    obj <- ctsem:::.ctJuliaObjective(lfit, layer = !hybrid)
     old <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_sequential(obj,
       ctsem:::.ctJuliaNumericVector(lest)))
     mix <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_sequential_mixture(obj,
@@ -955,7 +955,7 @@ test_that("a unit with two maxima does not stop the extended families", {
     verbose = 0, optimcontrol = list(checks = FALSE, laplace_onestep = TRUE))))
   est <- fit$estimate$raw
   apart <- ctsem:::.ctJuliaEvaluate(fit, est, gradient = FALSE, cores = 1,
-    hybrid = FALSE)$value - ctJuliaEvaluate(fit, est, gradient = FALSE, cores = 1)$value
+    layer = TRUE)$value - ctJuliaEvaluate(fit, est, gradient = FALSE, cores = 1)$value
   skip_if(abs(apart) < 1e-3, 'this fit stopped where no unit has two maxima')
   st <- suppressMessages(ctScoreTest(fit, tests = 'statedependence', cores = 1,
     nboot = 99L, verbose = FALSE))

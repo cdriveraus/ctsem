@@ -499,7 +499,7 @@ test_that("beside a random drift the term is Laplace over the deviations' exact 
   spec <- .pu_spec(d, m, poprank = 1, popunique = "MANIFESTMEANS", priors = FALSE)
   expect_equal(length(spec$laplace$hybrid$effect), 3L)
   module <- ctsem:::.ctJuliaModule(spec$project)
-  o <- ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE)
+  o <- ctsem:::.ctJuliaObjective(handle(spec))
   set.seed(13)
   for (draw in 1:2) {
     x <- rnorm(length(.pu_names(spec)), 0, 0.3)
@@ -527,7 +527,7 @@ test_that("beside a random drift the term is Laplace over the deviations' exact 
   # the rule's reverse pass, not its accuracy.
   sq <- .pu_spec(d, m, poprank = 1, popunique = "MANIFESTMEANS",
     optimcontrol = list(laplace_soft_directions = "quadrature"))
-  so <- ctsem:::.ctJuliaObjective(handle(sq), hybrid = TRUE)
+  so <- ctsem:::.ctJuliaObjective(handle(sq))
   on.exit(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_soft_quadrature_adjoint!", TRUE),
     add = TRUE)
   prev <- ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_soft_directions!", so,
@@ -749,7 +749,7 @@ test_that("an objective with every effect in the filter sums its units as the ma
   for (spec in specs) {
     module <- ctsem:::.ctJuliaModule(spec$project)
     get <- ctsem:::.ctJuliaGet
-    o <- ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE)
+    o <- ctsem:::.ctJuliaObjective(handle(spec))
     expect_true(isTRUE(ctsem:::.ctJuliaCall("ContinuousTimeSEM._laplace_filter_only", o)))
     x <- rnorm(length(.pu_names(spec)), 0, 0.3)
     xx <- ctsem:::.ctJuliaNumericVector(x)
@@ -951,8 +951,8 @@ test_that("the soft-direction quadrature on integrated deviations is the layer's
   layer <- .pu_spec(d, m, poprank = 1, popunique = "MANIFESTMEANS",
     optimcontrol = list(laplace_soft_directions = "quadrature"))
   handle <- function(s) structure(s, class = c("ctJuliaModel", "ctFitModel"))
-  objectives <- list(ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE),
-    ctsem:::.ctJuliaObjective(handle(layer), hybrid = TRUE))
+  objectives <- list(ctsem:::.ctJuliaObjective(handle(spec)),
+    ctsem:::.ctJuliaObjective(handle(layer)))
   on.exit(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_soft_quadrature_adjoint!", TRUE),
     add = TRUE)
   previous <- lapply(objectives, function(o) ctsem:::.ctJuliaCall(
@@ -997,8 +997,8 @@ test_that("the soft-direction quadrature on integrated deviations is the layer's
   options(ctsem.laplace.hybrid = FALSE)
   flayer <- .pu_spec(d, m, optimcontrol = list(laplace_soft_directions = "quadrature"))
   expect_true(isTRUE(fspec$laplace$hybrid$block))
-  fobj <- list(ctsem:::.ctJuliaObjective(handle(fspec), hybrid = TRUE),
-    ctsem:::.ctJuliaObjective(handle(flayer), hybrid = TRUE))
+  fobj <- list(ctsem:::.ctJuliaObjective(handle(fspec)),
+    ctsem:::.ctJuliaObjective(handle(flayer)))
   fprev <- lapply(fobj, function(o) ctsem:::.ctJuliaCall(
     "ContinuousTimeSEM.ctsem_set_soft_directions!", o, "quadrature", hi = 0.95))
   on.exit(for (i in seq_along(fobj)) ctsem:::.ctJuliaCall(
@@ -1035,8 +1035,8 @@ test_that("quadrature integrates the filter's deviations at every node, and span
   layer <- .pu_spec(d, m, poprank = 1, popunique = "MANIFESTMEANS")
   handle <- function(s) structure(s, class = c("ctJuliaModel", "ctFitModel"))
   module <- ctsem:::.ctJuliaModule(spec$project)
-  oh <- ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE)
-  ol <- ctsem:::.ctJuliaObjective(handle(layer), hybrid = TRUE)
+  oh <- ctsem:::.ctJuliaObjective(handle(spec))
+  ol <- ctsem:::.ctJuliaObjective(handle(layer))
   set.seed(5)
   x <- rnorm(length(.pu_names(spec)), 0, 0.3)
   xx <- ctsem:::.ctJuliaNumericVector(x)
@@ -1095,8 +1095,8 @@ test_that("leave-one-out and linearised draws through the hybrid are the layer's
   layer <- .pu_spec(d, m, poprank = 1, popunique = "MANIFESTMEANS")
   handle <- function(s) structure(s, class = c("ctJuliaModel", "ctFitModel"))
   module <- ctsem:::.ctJuliaModule(spec$project)
-  objectives <- list(hybrid = ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE),
-    layer = ctsem:::.ctJuliaObjective(handle(layer), hybrid = TRUE))
+  objectives <- list(hybrid = ctsem:::.ctJuliaObjective(handle(spec)),
+    layer = ctsem:::.ctJuliaObjective(handle(layer)))
   set.seed(9)
   x <- rnorm(length(.pu_names(spec)), 0, 0.3)
   draws <- lapply(objectives, function(o) ctsem:::.ctBackendJuliaValue(
@@ -1151,7 +1151,7 @@ test_that("reporting through the hybrid is the layer's: population, subjects, mo
     x <- rnorm(length(.pu_names(hy)), 0, 0.3)
     module <- ctsem:::.ctJuliaModule(hy$project)
     report <- function(s) {
-      o <- ctsem:::.ctJuliaObjective(handle(s), hybrid = TRUE)
+      o <- ctsem:::.ctJuliaObjective(handle(s))
       xx <- ctsem:::.ctJuliaNumericVector(x)
       list(
         population = as.matrix(ctsem:::.ctBackendJuliaValue(
@@ -1202,7 +1202,7 @@ test_that("sequential predictions are the fitted model's own, row by row", {
         priors = FALSE)
       if (is.null(x)) x <- rnorm(length(.pu_names(spec)), 0, 0.3)
       module <- ctsem:::.ctJuliaModule(spec$project)
-      o <- ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE)
+      o <- ctsem:::.ctJuliaObjective(handle(spec))
       xx <- ctsem:::.ctJuliaNumericVector(x)
       seq <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_sequential(o, xx))
       value <- ctJuliaEvaluate(handle(spec), x, gradient = FALSE, cores = 1L)$value
@@ -1262,7 +1262,7 @@ test_that("a subject with nothing observed is predicted and reported as the laye
     if (h) expect_true(isTRUE(spec$laplace$hybrid$block))
     if (is.null(x)) x <- rnorm(length(.pu_names(spec)), 0, 0.3)
     module <- ctsem:::.ctJuliaModule(spec$project)
-    o <- ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE)
+    o <- ctsem:::.ctJuliaObjective(handle(spec))
     xx <- ctsem:::.ctJuliaNumericVector(x)
     out[[as.character(h)]] <- list(
       seq = ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_sequential(o, xx)),
@@ -1306,7 +1306,7 @@ test_that("a unit with every effect in the filter predicts its rows from one pas
         .pu_spec(d, m, poprank = case$rank, popunique = case$pu, priors = FALSE)
       if (is.null(x)) x <- rnorm(length(.pu_names(spec)), 0, 0.3)
       module <- ctsem:::.ctJuliaModule(spec$project)
-      o <- ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE)
+      o <- ctsem:::.ctJuliaObjective(handle(spec))
       expect_identical(isTRUE(ctsem:::.ctJuliaCall("ContinuousTimeSEM._laplace_filter_only",
         o)), h, info = label)
       xx <- ctsem:::.ctJuliaNumericVector(x)
@@ -1340,7 +1340,7 @@ test_that("a sequential prediction does not see the subject's later data", {
     spec <- .pu_spec(dd, m, poprank = 1, popunique = "MANIFESTMEANS")
     if (is.null(x)) x <<- rnorm(length(.pu_names(spec)), 0, 0.3)
     module <- ctsem:::.ctJuliaModule(spec$project)
-    o <- ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE)
+    o <- ctsem:::.ctJuliaObjective(handle(spec))
     xx <- ctsem:::.ctJuliaNumericVector(x)
     list(seq = ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_sequential(o, xx)),
       plug = ctsem:::.ctBackendJuliaValue(module$ctsem_kalman(o, xx,
@@ -1468,7 +1468,7 @@ test_that("initial means alone are folded as the augmented route integrates them
   module <- ctsem:::.ctJuliaModule(spec$project)
   get <- ctsem:::.ctJuliaGet
   value <- ctsem:::.ctBackendJuliaValue
-  o <- ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE)
+  o <- ctsem:::.ctJuliaObjective(handle(spec))
   expect_true(isTRUE(ctsem:::.ctJuliaCall("ContinuousTimeSEM._laplace_filter_only", o)))
   set.seed(41)
   x <- rnorm(length(.pu_names(spec)), 0, 0.3)
@@ -1517,7 +1517,7 @@ test_that("a fold's deviations are reported at their modes given the coordinates
   set.seed(43)
   x <- rnorm(length(.pu_names(hy)), 0, 0.2)
   subjects <- function(s) {
-    o <- ctsem:::.ctJuliaObjective(handle(s), hybrid = TRUE)
+    o <- ctsem:::.ctJuliaObjective(handle(s))
     matrix(as.numeric(ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_subject_values(o,
       ctsem:::.ctJuliaNumericVector(x)))), nrow = length(unique(d$id)))
   }

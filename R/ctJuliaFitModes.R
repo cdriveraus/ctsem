@@ -68,19 +68,19 @@
 }
 
 # Holds `modes` (`.ctJuliaResultModes()`) on the objective built from `spec`
-# (the hybrid, or the layer with `hybrid = FALSE`, whose units take only modes
+# (the fit's, or the layer with `layer = TRUE`, whose units take only modes
 # of their own length) until the function that called this returns. A hold
 # inside another lasts until its own caller returns, and the one under it then
 # holds again. Returns the units held, 0 where nothing was: no modes, not the
 # Laplace route, or the engine refused them, in which case the stage searches
 # as before.
-.ctJuliaHoldModes <- function(spec, modes, hybrid = TRUE, envir = parent.frame()) {
+.ctJuliaHoldModes <- function(spec, modes, layer = FALSE, envir = parent.frame()) {
   if (is.null(modes) || is.null(spec$laplace) || isTRUE(spec$laplace$quadratic)) {
     return(invisible(0L))
   }
   handle <- if (inherits(spec, "ctJuliaModel")) spec else
     structure(spec, class = c("ctJuliaModel", "ctFitModel"))
-  objective <- .ctJuliaObjective(handle, hybrid = hybrid)
+  objective <- .ctJuliaObjective(handle, layer = layer)
   held <- tryCatch(as.integer(.ctJuliaCall(
     "ContinuousTimeSEM.ctsem_laplace_hold_modes!", objective,
     .ctJuliaNumericVector(modes$at), .ctJuliaVector(as.integer(modes$units)),

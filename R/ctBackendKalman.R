@@ -150,7 +150,7 @@
   }
   module <- .ctJuliaModule(spec$project)
   hybrid <- .ctBackendHybridReports(spec)
-  arguments <- list(.ctJuliaObjective(fit, hybrid = hybrid),
+  arguments <- list(.ctJuliaObjective(fit, layer = !hybrid),
     if (persubject) .ctJuliaPut(raw) else .ctJuliaNumericVector(raw),
     subject_matrices = isTRUE(subjectmatrices))
   if (length(fields)) arguments$fields <- .ctJuliaVector(as.character(fields))
@@ -181,7 +181,7 @@
     } else if (!is.null(source)) {
       subjects <- attr(fit, "laplaceSubjects")
       fitted <- .ctBackendJuliaValue(module$ctsem_laplace_subject_values(
-        .ctJuliaObjective(source, hybrid = hybrid), .ctJuliaNumericVector(raw),
+        .ctJuliaObjective(source, layer = !hybrid), .ctJuliaNumericVector(raw),
         from_level = as.integer(from), ti_effects = FALSE))
       arguments$subject_values <- .ctJuliaPut(
         fitted[subjects, , drop = FALSE])
@@ -203,7 +203,7 @@
   mixture <- identical(sequential, 'mixture')
   if ((isTRUE(sequential) || mixture) && .ctBackendSequentialApplies(spec, from)) {
     seq <- .ctBackendJuliaValue(if (mixture)
-      module$ctsem_laplace_sequential_mixture(.ctJuliaObjective(fit, hybrid = TRUE),
+      module$ctsem_laplace_sequential_mixture(.ctJuliaObjective(fit),
         .ctJuliaNumericVector(raw),
         particles = as.integer(getOption('ctsem.sequential.particles', 512L)),
         seed = as.integer(getOption('ctsem.sequential.seed', 20261011L)),
@@ -676,7 +676,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 .ctBackendGenerate <- function(fit, raw, base, effects = NULL) {
   spec <- .ctBackendSpec(fit)
   module <- .ctJuliaModule(spec$project)
-  objective <- .ctJuliaObjective(fit)
+  objective <- .ctJuliaObjective(fit, layer = TRUE)
   raw <- .ctJuliaNumericVector(as.numeric(raw))
   # A draw of the random effects, when the caller has one.
   #
@@ -726,7 +726,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   spec <- .ctBackendSpec(fit)
   module <- .ctJuliaModule(spec$project)
   as.integer(.ctBackendJuliaValue(
-    module$ctsem_state_dimension(.ctJuliaObjective(fit))))
+    module$ctsem_state_dimension(.ctJuliaObjective(fit, layer = TRUE))))
 }
 
 # Where each subject's innovations sit inside the vector
@@ -736,14 +736,14 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 .ctBackendStateLayout <- function(fit) {
   spec <- .ctBackendSpec(fit)
   module <- .ctJuliaModule(spec$project)
-  layout <- .ctBackendJuliaValue(module$ctsem_state_layout(.ctJuliaObjective(fit)))
+  layout <- .ctBackendJuliaValue(module$ctsem_state_layout(.ctJuliaObjective(fit, layer = TRUE)))
   lapply(layout, as.numeric)
 }
 
 .ctBackendGenerateStates <- function(fit, raw, z, base, effects = NULL) {
   spec <- .ctBackendSpec(fit)
   module <- .ctJuliaModule(spec$project)
-  arguments <- list(.ctJuliaObjective(fit),
+  arguments <- list(.ctJuliaObjective(fit, layer = TRUE),
     .ctJuliaNumericVector(as.numeric(raw)),
     .ctJuliaNumericVector(as.numeric(z)), .ctJuliaPut(base),
     transition = .ctJuliaOr(spec$transition, "exponential"),
@@ -890,7 +890,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   # A zero-length vector deadlocks the bridge; a fit with no free parameter
   # sends one unread element, as `.ctGenerateJulia` does.
   values <- if (ncol(samples)) t(samples) else matrix(0, 1L, nsamples)
-  arguments <- list(.ctJuliaObjective(fit), .ctJuliaPut(values),
+  arguments <- list(.ctJuliaObjective(fit, layer = TRUE), .ctJuliaPut(values),
     .ctJuliaPut(base), .ctJuliaVector(seeds))
   if (statepath) {
     arguments$z <- .ctJuliaPut(z)

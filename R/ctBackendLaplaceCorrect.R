@@ -310,7 +310,7 @@
   # line at 0 s. Sent only where there is one, as the optimiser's hooks are.
   hook <- if (!is.null(progress)) list(progress = progress)
   r <- .ctJuliaGet(do.call(module$ctsem_laplace_check, c(list(
-    .ctJuliaObjective(fit, hybrid = TRUE), .ctJuliaNumericVector(est),
+    .ctJuliaObjective(fit), .ctJuliaNumericVector(est),
     draws = as.integer(draws), seeds = .ctJuliaVector(as.integer(seeds)),
     draws_df = as.numeric(control$draws_df),
     expansion_gate = .ctLaplaceExpansionGate), hook)))
@@ -518,7 +518,7 @@
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   module <- .ctJuliaModule(spec$project)
   cont <- try(do.call(module$ctsem_laplace_continuation,
-    c(list(.ctJuliaObjective(spec, hybrid = TRUE), .ctJuliaNumericVector(values)),
+    c(list(.ctJuliaObjective(spec), .ctJuliaNumericVector(values)),
       .ctLaplaceContinuationArgs(control))), silent = TRUE)
   if (inherits(cont, "try-error")) return(c(corrected = NA_real_,
     laplace = NA_real_, units = NA_real_))
@@ -715,7 +715,7 @@
     return(.ctLaplaceCheckedLoglik(fit, check))
   }
   cont <- try(do.call(module$ctsem_laplace_continuation,
-    c(list(.ctJuliaObjective(fit, hybrid = TRUE), .ctJuliaNumericVector(est)),
+    c(list(.ctJuliaObjective(fit), .ctJuliaNumericVector(est)),
       .ctLaplaceContinuationArgs(control,
         force = union(union(jump$units, check$carrying), as.integer(force))))),
     silent = TRUE)

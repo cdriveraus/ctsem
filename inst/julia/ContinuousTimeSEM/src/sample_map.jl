@@ -2026,6 +2026,70 @@ function _jmap_layer_deviations!(dev, report, laplace, sampler, Ls, x, devstarts
     return dev
 end
 
+"""
+    _sample_report_effects(laplace, report, sampler, results, nchains, ndraws, npar,
+        save_effects, seed, verbose, point)
+
+A joint sampler's kept draws as theta and natural deviations, the one report
+of the joint target whichever sampler drew it. `point(c, t)` gives chain `c`'s
+draw `t` as `(theta, x)`, `x` the joint sampler's vector on `laplace`. The
+deviations are laid out on `report`, the layer of the same fit (every effect a
+coordinate; `laplace` itself where `report` is `nothing`): each block's
+coordinate part from `laplace`'s matching block, and where `laplace`'s filter
+integrates effects, those drawn from their exact conditional given the draw
+(`_jmap_hybrid_range!`), so a sampled fit reports every effect. Returns
+`(pooled, effects, hybrid)`: the pooled draws with theta (and the deviations,
+under `save_effects`), the effects' summary, and whether any were integrated.
+"""
+function _sample_report_effects(laplace::CTSEMLaplaceObjective, report, sampler,
+    results, nchains::Int, ndraws::Int, npar::Int, save_effects::Bool, seed::Integer,
+    verbose::Bool, point)
+    layout = report === nothing ? laplace : report
+    match = _jmap_report_match(layout, laplace)
+    devstarts, ndev = _laplace_deviation_offsets(layout)
+    kept = save_effects ? npar + ndev : npar
+    pooled = _sample_pool(results, nchains, ndraws, npar; rows=kept)
+    draws = pooled.draws
+    total = nchains * ndraws
+    effect_sum = zeros(Float64, ndev)
+    effect_sq = zeros(Float64, ndev)
+    blocks = _laplace_deviation_blocks(layout)
+    effect_cross = zeros(Float64, _effect_cross_length(blocks))
+    hyb = laplace.objective.params.hybrid
+    hybrid = _hybrid_on(hyb)
+    lv = laplace.spec.levels[1]
+    mblocks = hybrid ? _jmap_member_blocks(layout, devstarts) : nothing
+    dev = zeros(Float64, ndev)
+    failed = 0
+    for c in 1:nchains, t in 1:ndraws
+        column = (c - 1) * ndraws + t
+        theta, x = point(c, t)
+        th = _laplace_extend(laplace, theta)
+        Ls = _laplace_popchols(th, laplace.spec)
+        _jmap_layer_deviations!(dev, layout, laplace, sampler, Ls, x, devstarts, match)
+        if hybrid && ndev > 0
+            B = _hybrid_dev_map(hyb, lv, th)
+            ok = _laplace_partition((mine, _w) -> _jmap_hybrid_range!(dev, laplace, th,
+                Ls, x, sampler, B, mblocks, seed, column, mine), laplace, sampler.nunits)
+            ok || (failed += 1)
+        end
+        @inbounds for j in 1:npar
+            draws[j, column] = theta[j]
+        end
+        @inbounds for j in 1:ndev
+            effect_sum[j] += dev[j]
+            effect_sq[j] += dev[j] * dev[j]
+            save_effects && (draws[npar + j, column] = dev[j])
+        end
+        _effect_cross_add!(effect_cross, dev, blocks)
+    end
+    failed > 0 && verbose && println(_console(), "  ", failed,
+        " draw(s) had a subject whose integrated effects could not be evaluated")
+    return (pooled=pooled,
+        effects=_effect_summary(effect_sum, effect_sq, effect_cross, total, blocks),
+        hybrid=hybrid)
+end
+
 # Each member's subject-level block start in the natural deviations, -1 where
 # it has none.
 function _jmap_member_blocks(laplace::CTSEMLaplaceObjective, devstarts)
@@ -2563,50 +2627,13 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
 
     # Theta and the natural deviations at every kept draw, in the report
     # objective's layout.
-    layout = report === nothing ? laplace : report
-    match = _jmap_report_match(layout, laplace)
-    devstarts, ndev = _laplace_deviation_offsets(layout)
-    kept = save_effects ? npar + ndev : npar
-    pooled = _sample_pool(results, nchains, ndraws, npar; rows=kept)
-    draws = pooled.draws
+    reported = _sample_report_effects(laplace, report, sampler, results, nchains,
+        ndraws, npar, save_effects, seed, verbose,
+        (c, t) -> _jmap_point(mf, view(results[c].draws, :, t)))
+    pooled = reported.pooled
+    hybrid = reported.hybrid
+    ndev = length(reported.effects.mean)
     total = nchains * ndraws
-    effect_sum = zeros(Float64, ndev)
-    effect_sq = zeros(Float64, ndev)
-    blocks = _laplace_deviation_blocks(layout)
-    effect_cross = zeros(Float64, _effect_cross_length(blocks))
-    hyb = laplace.objective.params.hybrid
-    hybrid = _hybrid_on(hyb)
-    lv = laplace.spec.levels[1]
-    mblocks = hybrid ? _jmap_member_blocks(layout, devstarts) : nothing
-    dev = zeros(Float64, ndev)
-    failed = 0
-    for c in 1:nchains
-        r = results[c]
-        for t in 1:ndraws
-            column = (c - 1) * ndraws + t
-            theta, x = _jmap_point(mf, view(r.draws, :, t))
-            th = _laplace_extend(laplace, theta)
-            Ls = _laplace_popchols(th, laplace.spec)
-            _jmap_layer_deviations!(dev, layout, laplace, sampler, Ls, x, devstarts, match)
-            if hybrid && ndev > 0
-                B = _hybrid_dev_map(hyb, lv, th)
-                ok = _laplace_partition((mine, _w) -> _jmap_hybrid_range!(dev, laplace, th,
-                    Ls, x, sampler, B, mblocks, seed, column, mine), laplace, sampler.nunits)
-                ok || (failed += 1)
-            end
-            @inbounds for j in 1:npar
-                draws[j, column] = theta[j]
-            end
-            @inbounds for j in 1:ndev
-                effect_sum[j] += dev[j]
-                effect_sq[j] += dev[j] * dev[j]
-                save_effects && (draws[npar + j, column] = dev[j])
-            end
-            _effect_cross_add!(effect_cross, dev, blocks)
-        end
-    end
-    failed > 0 && verbose && println(_console(), "  ", failed,
-        " draw(s) had a subject whose integrated effects could not be evaluated")
     # The kept draws' latent mean and sd per coordinate: 0 and 1 where the map
     # is right, so they say where it is not.
     lsum = zeros(D)
@@ -2624,8 +2651,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
             ndim=npar + ndev, maxdepth=Int(maxdepth),
             stepsize=[r.stepsize for r in results],
             warmup_divergent=[r.warmup_divergent for r in results], trace=final.trace,
-            saved_effects=save_effects,
-            effects=_effect_summary(effect_sum, effect_sq, effect_cross, total, blocks)),
+            saved_effects=save_effects, effects=reported.effects),
         (sampler="map", placement=_saem_placement_summary(nothing),
          map=(gradients=counter[] + extra + (hybrid ? total : 0),
               learn_gradients=learn_gradients, learn_secs=learned,

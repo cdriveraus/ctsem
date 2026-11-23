@@ -320,7 +320,7 @@ test_that("NUTS samples the joint posterior through the same runner", {
   # Jacobian and pullback the learnt one uses.
   checks <- lapply(c(FALSE, TRUE), function(tri)
     ctsem:::.ctJuliaGet(ctsem:::.ctJuliaModule(fit$model_spec$project)$
-      ctsem_sample_map_check(ctsem:::.ctJuliaObjective(fit, hybrid = TRUE),
+      ctsem_sample_map_check(ctsem:::.ctJuliaObjective(fit),
         as.numeric(fit$estimate$raw),
         hessian = ctsem:::.ctJuliaPut(as.matrix(fit$uncertainty$hessian)), tri = tri)))
   check <- checks[[1]]
@@ -510,7 +510,7 @@ test_that("the map couples each member to what its subject reads, its own TI val
   expect_equal(nrow(cells), 3L)
   x <- seq(-.2, .2, length.out = npar)
   x[cells$parameter] <- cells$mu + c(.3, -.4, .5)
-  obj <- ctsem:::.ctJuliaObjective(spec, hybrid = TRUE)
+  obj <- ctsem:::.ctJuliaObjective(spec)
   ctsem:::.ctJuliaEval(paste(
     "function __jmap_coupling(laplace, x::Vector{Float64})",
     "  CT = ContinuousTimeSEM",
@@ -569,7 +569,7 @@ test_that("a nested unit's map conditional is built and factored on its blocks",
   withr::local_options(ctsem.laplace.hybrid = FALSE)
   spec <- suppressMessages(ctFit(.nested_panel_data(), .nested_panel_model("intercepts"),
     backend = "julia", intoverpop = "laplace", fit = FALSE, cores = 2))
-  obj <- ctsem:::.ctJuliaObjective(spec, hybrid = FALSE)
+  obj <- ctsem:::.ctJuliaObjective(spec, layer = TRUE)
   module <- ctsem:::.ctJuliaModule(spec$project)
   set.seed(7)
   x <- ctsem:::.ctJuliaNumericVector(rnorm(ctsem:::.ctBackendNpar(spec), 0, 0.1))
@@ -666,7 +666,7 @@ test_that("theta's triangular map is the same fitted on the pool, and says how f
   # them on the pool (`_jmap_tri_fit(parallel = true)`); on the reanalysis
   # 2,868 of them were fitted one after another with nothing said.
   fit <- .sample_fixture()
-  obj <- ctsem:::.ctJuliaObjective(fit, hybrid = TRUE)
+  obj <- ctsem:::.ctJuliaObjective(fit)
   ctsem:::.ctJuliaEval(paste(
     "function __tri_pool(laplace)",
     "  CT = ContinuousTimeSEM",

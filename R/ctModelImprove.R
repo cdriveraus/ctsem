@@ -1778,12 +1778,12 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
     current <- .ctLaplaceOneStep(current)
     sp$spec <- .ctLaplaceOneStep(sp$spec)
   }
-  value1 <- .ctJuliaEvaluate(current, est, gradient = FALSE, cores = cores, hybrid = !layer)$value
+  value1 <- .ctJuliaEvaluate(current, est, gradient = FALSE, cores = cores, layer = layer)$value
   offset <- if (isTRUE(current$args$resolved$priors)) length(new) * stats::dnorm(0, log = TRUE) else 0
-  ev <- .ctJuliaEvaluate(sp$spec, x0, gradient = TRUE, cores = cores, hybrid = !layer)
+  ev <- .ctJuliaEvaluate(sp$spec, x0, gradient = TRUE, cores = cores, layer = layer)
   if (!isTRUE(abs(ev$value - value1 - offset) <= 1e-6 * max(1, abs(value1)))) return(NULL)
   module <- .ctJuliaModule(current$model_spec$project)
-  objective <- .ctJuliaObjective(sp$spec, hybrid = !layer)
+  objective <- .ctJuliaObjective(sp$spec, layer = layer)
   units <- as.matrix(.ctBackendWithMaxChunks(cores, .ctJuliaGet(module$ctsem_subject_gradients(
     objective, .ctJuliaVector(as.numeric(x0)))))$scores)
   theta <- match(nm1, nm2); delta <- match(test, nm2)

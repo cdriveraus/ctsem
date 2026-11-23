@@ -14,7 +14,7 @@ test_that("the engine's coreset evaluation is the weighted sum of the units it n
   skip_if_not(isTRUE(ctsem::ctJuliaStatus()$available))
   fit <- .coreset_fixture()
   module <- ctsem:::.ctJuliaModule(fit$model_spec$project)
-  obj <- ctsem:::.ctJuliaObjective(fit, hybrid = TRUE)
+  obj <- ctsem:::.ctJuliaObjective(fit)
   est <- as.numeric(fit$estimate$raw)
   set.seed(3)
   X <- sweep(matrix(rnorm(3 * length(est), 0, 0.05), 3), 2, est, "+")
@@ -94,7 +94,7 @@ test_that("on the marginal route a coreset is the weighted sum of the subjects i
   expect_false(ctsem:::.ctBackendIsLaplace(fit))
   expect_equal(ctsem:::.ctJuliaUnits(fit$model_spec), 60L)
   module <- ctsem:::.ctJuliaModule(fit$model_spec$project)
-  obj <- ctsem:::.ctJuliaObjective(fit, hybrid = TRUE)
+  obj <- ctsem:::.ctJuliaObjective(fit)
   value <- ctsem:::.ctBackendJuliaValue
   est <- as.numeric(fit$estimate$raw)
   set.seed(3)

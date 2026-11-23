@@ -173,7 +173,7 @@
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   module <- .ctJuliaModule(model_spec$project)
   ok <- try(.ctBackendWithMaxChunks(cores, module$ctsem_start_usable(
-    .ctJuliaObjective(spec, hybrid = TRUE), .ctJuliaNumericVector(start),
+    .ctJuliaObjective(spec), .ctJuliaNumericVector(start),
     gradient_method = gradient)), silent = TRUE)
   isTRUE(ok)
 }

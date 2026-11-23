@@ -1104,6 +1104,9 @@ maximum tree depth 10.
 
 Returns population draws as `npar x (nchains * ndraws)`, chain-major, with the
 random effects summarised rather than returned unless `save_effects` is set.
+On the hybrid objective the effects its filter integrates are integrated in
+the density, as the map's are, and reported as the map reports them, in the
+layout of `report`, the same fit's layer (`_sample_report_effects`).
 Diagnostics come back alongside: split R-hat and effective sample size per
 parameter, divergences, tree depths, step sizes and E-BFMI.
 
@@ -1121,22 +1124,12 @@ function _ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     rhat_target::Real=1.01, settle_tol::Real=0.0, resume=nothing,
     progress_overwrite::Bool=true, progress_callback=nothing,
     progress_sink=nothing, stepsize::Real=0.0,
-    starts::Union{Nothing,AbstractMatrix}=nothing, saem::Bool=false,
-    saem_nestep::Integer=50, coordinate=nothing)
+    starts::Union{Nothing,AbstractMatrix}=nothing, report=nothing,
+    coordinate=nothing)
 
     t0 = time()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
     _check_sample_arguments(nchains, ndraws, target_accept; nwarmup=nwarmup)
-
-    # `saem = true`: placed by SAEM's state, as `ctsem_saem_sample` is -- the
-    # chains start from its estimate and its chains' effects, and the metric is
-    # read there -- rather than from the point handed in.
-    placement = saem ? _saem_placement(laplace, collect(Float64, values)[1:Int(npar)];
-        nchains=nchains, seed=seed, nestep=saem_nestep, init_scale=init_scale) : nothing
-    if placement !== nothing
-        values = placement.theta
-        starts === nothing && (starts = placement.joint)
-    end
     sampler = ctsem_sampler(laplace, npar)
     start = collect(Float64, values)
     # Builds the metric *and* solves each unit's conditional mode at `start`,
@@ -1185,47 +1178,22 @@ function _ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     results = run.results
     ndraws = run.ndraws
 
-    ndim = sampler.ndim
     npar = sampler.npar
-    total = nchains * ndraws
-    # The effects are reported, summarised and kept as natural deviations
-    # (`_laplace_deviations!`), not as the coordinates the sampler moves.
-    devstarts, ndev = _laplace_deviation_offsets(laplace)
-    kept = save_effects ? npar + ndev : npar
-    pooled = _sample_pool(results, nchains, ndraws, npar; rows=kept)
-    draws = pooled.draws
-    # Running mean and sum of squares for the effects, so their summary costs
-    # nothing whether or not the draws themselves are kept.
-    effect_sum = zeros(Float64, ndev)
-    effect_sq = zeros(Float64, ndev)
-    # And products within each group's block, for its posterior covariance.
-    blocks = _laplace_deviation_blocks(laplace)
-    effect_cross = zeros(Float64, _effect_cross_length(blocks))
-    dev = zeros(Float64, ndev)
-    for c in 1:nchains
-        r = results[c]
-        for t in 1:ndraws
-            column = (c - 1) * ndraws + t
-            Ls = _laplace_popchols(r.draws[1:npar, t], laplace.spec)
-            _laplace_deviations!(dev, laplace, Ls, view(r.draws, (npar + 1):ndim, t),
-                devstarts)
-            @inbounds for j in 1:ndev
-                effect_sum[j] += dev[j]
-                effect_sq[j] += dev[j] * dev[j]
-                save_effects && (draws[npar + j, column] = dev[j])
-            end
-            _effect_cross_add!(effect_cross, dev, blocks)
-        end
-    end
+    # The effects are reported, summarised and kept as natural deviations, not
+    # as the coordinates the sampler moves, as the map reports them.
+    reported = _sample_report_effects(laplace, report, sampler, results, nchains,
+        ndraws, npar, save_effects, seed, verbose,
+        (c, t) -> (results[c].draws[1:npar, t], view(results[c].draws, :, t)))
+    pooled = reported.pooled
+    ndev = length(reported.effects.mean)
     # The reported joint dimension is the parameters and the natural
     # deviations, which is what `draws` holds when the effects are kept.
     return merge(_sample_result(pooled; nchains=nchains, ndraws=ndraws, npar=npar,
             ndim=npar + ndev, maxdepth=Int(maxdepth),
             stepsize=[r.stepsize for r in results],
             warmup_divergent=[r.warmup_divergent for r in results], trace=run.trace,
-            saved_effects=save_effects,
-            effects=_effect_summary(effect_sum, effect_sq, effect_cross, total, blocks)),
-        (placement=_saem_placement_summary(placement),))
+            saved_effects=save_effects, effects=reported.effects),
+        (placement=nothing,))
 end
 
 """

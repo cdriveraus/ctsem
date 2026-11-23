@@ -44,7 +44,7 @@ test_that("the inner solve ends at a maximum, scored as the evaluation scores it
   spec <- suppressMessages(ctFit(.modes_sign_data(), .modes_sign_model(),
     backend = "julia", intoverpop = "laplace", fit = FALSE))
   handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
-  objective <- ctsem:::.ctJuliaObjective(handle, hybrid = TRUE)
+  objective <- ctsem:::.ctJuliaObjective(handle)
   probes <- function(on) invisible(ctsem:::.ctJuliaCall(
     "ContinuousTimeSEM.ctsem_set_mode_probes!", on))
   on.exit(probes(TRUE), add = TRUE)
@@ -127,7 +127,7 @@ test_that("a unit with two maxima is scored by the better one's term", {
   spec <- suppressMessages(ctFit(.modes_sign_data(), .modes_sign_model(),
     backend = "julia", intoverpop = "laplace", fit = FALSE))
   handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
-  objective <- ctsem:::.ctJuliaObjective(handle, hybrid = TRUE)
+  objective <- ctsem:::.ctJuliaObjective(handle)
   set_sum <- function(on) invisible(ctsem:::.ctJuliaCall(
     "ContinuousTimeSEM.ctsem_set_mode_sum!", on))
   on.exit(set_sum(TRUE), add = TRUE)
@@ -247,7 +247,7 @@ test_that("a search where an anchored run stops joins the maxima it missed", {
   spec <- suppressMessages(ctFit(.modes_binary_data(), .modes_binary_model(),
     backend = "julia", intoverpop = "laplace", fit = FALSE))
   handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
-  objective <- ctsem:::.ctJuliaObjective(handle, hybrid = TRUE)
+  objective <- ctsem:::.ctJuliaObjective(handle)
   x <- c(0.0301148912, 4.5210688928, -1.1069526929, 0.0234851509, -0.0632376482,
     -0.0056830083, 2.0234889501, -1.0443493528, -0.0565364719)
   ctsem:::.ctJuliaEval(paste(
@@ -320,7 +320,7 @@ test_that("a wide unit leaves the stationary origin for a maximum", {
   spec <- suppressMessages(ctFit(d, m, backend = "julia",
     intoverpop = "laplace", fit = FALSE))
   handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
-  objective <- ctsem:::.ctJuliaObjective(handle, hybrid = TRUE)
+  objective <- ctsem:::.ctJuliaObjective(handle)
   x <- numeric(ctsem:::.ctBackendNpar(spec))
   ctJuliaEvaluate(handle, x, gradient = FALSE, cores = 1L)
   ctsem:::.ctJuliaEval(paste(
@@ -365,7 +365,7 @@ test_that("a better mode past the origin is found where the found one is pinned"
   spec <- suppressMessages(ctFit(.modes_reflect_data(), m, backend = "julia",
     intoverpop = "laplace", fit = FALSE))
   handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
-  objective <- ctsem:::.ctJuliaObjective(handle, hybrid = TRUE)
+  objective <- ctsem:::.ctJuliaObjective(handle)
   x <- c(0.5, 0.5)
   # Scored alone, which maximum the search reached (the combination of them
   # is `_laplace_mode_sum`'s, tested below).
@@ -444,7 +444,7 @@ test_that("a model of concave units goes unprobed and evaluates as when probed",
   # comparison below for the wrong reason.
   field <- ctsem:::.ctJuliaEval("o -> o.quadratic")
   expect_identical(vapply(handles, function(h)
-    isTRUE(field(ctsem:::.ctJuliaObjective(h, hybrid = TRUE))), logical(1)),
+    isTRUE(field(ctsem:::.ctJuliaObjective(h))), logical(1)),
     c(TRUE, FALSE))
   set.seed(9)
   npar <- ctsem:::.ctBackendNpar(spec)
@@ -503,8 +503,7 @@ test_that("the probes search only where a unit can have a second maximum", {
   # The engine holds the mean effects and the inert ones.
   held <- ctsem:::.ctJuliaEval(
     "o -> [sum(sum, o.affine; init = 0), sum(g -> sum(length, g; init = 0), o.inert; init = 0)]")
-  expect_equal(as.numeric(held(ctsem:::.ctJuliaObjective(handles[[1]],
-    hybrid = TRUE))), c(2, nrow(spec$laplace$inert)))
+  expect_equal(as.numeric(held(ctsem:::.ctJuliaObjective(handles[[1]]))), c(2, nrow(spec$laplace$inert)))
 
   prune <- function(on) invisible(ctsem:::.ctJuliaCall(
     "ContinuousTimeSEM.ctsem_set_laplace_prune!", on))
@@ -552,7 +551,7 @@ test_that("a nested unit's mode search reads its blocks, as its dense oracle doe
   spec <- suppressMessages(ctFit(.nested_panel_data(), m, backend = "julia",
     intoverpop = "laplace", fit = FALSE, cores = 2))
   expect_null(spec$laplace$hybrid)
-  obj <- ctsem:::.ctJuliaObjective(spec, hybrid = FALSE)
+  obj <- ctsem:::.ctJuliaObjective(spec, layer = TRUE)
   dims <- ctsem:::.ctJuliaEval("o -> collect(Int, o.units.dims)")
   expect_equal(as.integer(dims(obj)), c(52L, 52L))
   block <- function(on) invisible(ctsem:::.ctJuliaCall(
@@ -564,9 +563,9 @@ test_that("a nested unit's mode search reads its blocks, as its dense oracle doe
   for (sdx in c(0, 0.3)) {
     x <- rnorm(ctsem:::.ctBackendNpar(spec), 0, sdx)
     block(TRUE)
-    a <- ctsem:::.ctJuliaEvaluate(spec, x, hybrid = FALSE, cores = 2)
+    a <- ctsem:::.ctJuliaEvaluate(spec, x, layer = TRUE, cores = 2)
     block(FALSE)
-    b <- ctsem:::.ctJuliaEvaluate(spec, x, hybrid = FALSE, cores = 2)
+    b <- ctsem:::.ctJuliaEvaluate(spec, x, layer = TRUE, cores = 2)
     expect_equal(a$value, b$value, tolerance = 1e-8)
     expect_equal(a$gradient, b$gradient, tolerance = 1e-6)
   }
@@ -591,7 +590,7 @@ test_that("a nested unit's soft quadrature takes a binding floor from its blocks
   m <- .nested_panel_model("drift")
   spec <- suppressMessages(ctFit(.nested_panel_data(3, 8, 12), m, backend = "julia",
     intoverpop = "laplace", fit = FALSE, cores = 2))
-  obj <- ctsem:::.ctJuliaObjective(spec, hybrid = FALSE)
+  obj <- ctsem:::.ctJuliaObjective(spec, layer = TRUE)
   x <- rep(0, ctsem:::.ctBackendNpar(spec))
   for (lv in spec$laplace$levels) x[lv$sd_index[lv$sd_index > 0]] <- 2.5
   x <- x + 1.2 * as.numeric(ctsem:::.ctJuliaEval(
@@ -670,14 +669,14 @@ test_that("a unit's solve also starts from its known modes", {
   modes <- ctsem:::.ctJuliaEval("o -> reduce(hcat, o.modes)")
   x <- c(0, 0.5)
   probed <- evaluate(handle, x)
-  found <- as.matrix(modes(ctsem:::.ctJuliaObjective(handle, hybrid = TRUE)))
+  found <- as.matrix(modes(ctsem:::.ctJuliaObjective(handle)))
   n <- ncol(found)
   known <- spec
   known$laplace$known <- list(units = seq_len(n), values = found)
   kept <- structure(known, class = c("ctJuliaModel", "ctFitModel"))
   # The engine holds what it was sent.
   held <- ctsem:::.ctJuliaEval("o -> sum(length, o.known)")
-  expect_equal(held(ctsem:::.ctJuliaObjective(kept, hybrid = TRUE)), n)
+  expect_equal(held(ctsem:::.ctJuliaObjective(kept)), n)
   probes(FALSE)
   plain <- evaluate(handle, x)
   withknown <- evaluate(kept, x)
@@ -733,7 +732,7 @@ test_that("a known mode of another length is passed over", {
   spec$laplace$known <- list(units = c(1L, 1L, 2L),
     values = matrix(c(0.5, NaN, 0.5, 0.7, 0.9, NaN), 2))
   handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
-  objective <- ctsem:::.ctJuliaObjective(handle, hybrid = TRUE)
+  objective <- ctsem:::.ctJuliaObjective(handle)
   held <- ctsem:::.ctJuliaEval("o -> Int[length(k) for k in o.known]")
   expect_equal(as.integer(held(objective))[1:3], c(1L, 1L, 0L))
 })
@@ -753,7 +752,7 @@ test_that("anchored solves reach the searched modes, and a fit leaves none", {
   spec <- suppressMessages(ctFit(data, m, backend = "julia",
     intoverpop = "laplace", fit = FALSE))
   handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
-  objective <- ctsem:::.ctJuliaObjective(handle, hybrid = TRUE)
+  objective <- ctsem:::.ctJuliaObjective(handle)
   anchor <- ctsem:::.ctJuliaEval(
     "(o, x) -> ContinuousTimeSEM._ctsem_anchor_start!(o, x)")
   clear <- ctsem:::.ctJuliaEval(
@@ -789,7 +788,7 @@ test_that("anchored solves reach the searched modes, and a fit leaves none", {
   # The population mean; the sd collapses here, along a flat direction where
   # a fit stops anywhere (raw -4.78 and -4.76 at one setting).
   expect_equal(anchored$estimate$raw[1], searched$estimate$raw[1], tolerance = 1e-4)
-  expect_equal(held(ctsem:::.ctJuliaObjective(anchored, hybrid = TRUE)), 0)
+  expect_equal(held(ctsem:::.ctJuliaObjective(anchored)), 0)
 })
 
 test_that("a checkpoint keeps the point and the anchored modes, and a fit resumes from it", {
@@ -888,7 +887,7 @@ test_that("held modes give one function of the parameters, and holds nest", {
   spec <- suppressMessages(ctFit(.modes_sign_data(), .modes_sign_model(),
     backend = "julia", intoverpop = "laplace", fit = FALSE))
   handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
-  objective <- ctsem:::.ctJuliaObjective(handle, hybrid = TRUE)
+  objective <- ctsem:::.ctJuliaObjective(handle)
   module <- ctsem:::.ctJuliaModule(spec$project)
   value <- function(x) as.numeric(ctsem:::.ctJuliaGet(module$ctsem_laplace_evaluate(
     objective, ctsem:::.ctJuliaNumericVector(x), gradient = FALSE))$value)

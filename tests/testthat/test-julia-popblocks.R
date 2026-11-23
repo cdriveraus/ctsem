@@ -136,8 +136,7 @@ test_that("effects with no block in common are uncorrelated, fitted and reported
   set.seed(2)
   theta <- stats::rnorm(ctsem:::.ctBackendNpar(p), 0, 0.5)
   module <- ctsem:::.ctJuliaModule(p$project)
-  S <- as.matrix(module$ctsem_laplace_popcov(ctsem:::.ctJuliaObjective(p,
-    hybrid = TRUE), ctsem:::.ctJuliaNumericVector(theta), 1L))
+  S <- as.matrix(module$ctsem_laplace_popcov(ctsem:::.ctJuliaObjective(p), ctsem:::.ctJuliaNumericVector(theta), 1L))
   dimnames(S) <- list(lv$param, lv$param)
   expect_equal(unname(S["lev", c("mm2", "mm3")]), c(0, 0))
   expect_true(all(S["dr", c("lev", "mm2", "mm3")] != 0))

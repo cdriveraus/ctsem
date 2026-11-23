@@ -4,7 +4,13 @@
 \alias{.ctBackendWarmWorkers}
 \title{Start worker sessions and get them ready to sample}
 \usage{
-.ctBackendWarmWorkers(object, workers, values = NULL, threads = 1L)
+.ctBackendWarmWorkers(
+  object,
+  workers,
+  values = NULL,
+  threads = 1L,
+  layer = FALSE
+)
 }
 \arguments{
 \item{object}{A prepared `ctJuliaModel` or a `ctJuliaFit`.}
@@ -18,6 +24,10 @@ same code; a fit's own estimate is the natural choice when there is one.}
 all or one per worker (`.ctBackendWorkerThreads()`). Fixed when the
 session starts, so a pool warmed at other widths is replaced rather than
 reused.}
+
+\item{layer}{Whether the work the workers will do evaluates the layer
+(`.ctJuliaObjective(layer = TRUE)`, SAEM's kernel) rather than the fit's
+objective, so each builds and compiles the objective its chains use.}
 }
 \value{
 A list of future handles, or `NULL` when warming is unavailable.
