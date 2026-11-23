@@ -752,6 +752,11 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
       if (is.na(tr) || !nzchar(tr)) tr <- 'param'
       cell <- rebuilt$model$pars[rebuilt$model$pars$matrix == row$matrix &
         rebuilt$model$pars$row == row$row & rebuilt$model$pars$col == row$col, , drop = FALSE]
+      # A zero covariance the model without the change solves has no fixed
+      # coordinate to test against: refitted.
+      if (.ctCovReadsZeros(row$matrix) &&
+          isTRUE(.ctCovSolvedCells(rebuilt$model, row$matrix)[row$row, row$col]))
+        return(NULL)
       null <- if (nrow(cell) == 1L && is.na(cell$param)) suppressWarnings(as.numeric(cell$value)) else 0
       if (!is.finite(null)) return(NULL)
       tested[[a]] <- list(f = local({ tr <- tr; function(r) value(tr, r) }), null = null)
@@ -1548,19 +1553,24 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
         } }))
   }
   f <- st$fixed$cells
+  freename <- function(model, cell) {
+    name <- cell$suggested
+    while (name %in% model$pars$param) name <- paste0(name, '_')
+    name
+  }
   if (!is.null(f)) for (r in which(f$p_adj < alpha)) {
     cell <- f[r, ]
     if (cell$matrix == 'MANIFESTVAR' && !'errorcov' %in% relax) next
+    # A free parameter like any other. A zero covariance the model solved
+    # (`at`, `.ctScoreFixedModel()`) starts at its solved value, where the
+    # freed model is the current one.
     out[[length(out) + 1L]] <- list(key = paste0('fixed:', cell$cell), family = 'fixed',
       label = paste0(cell$cell, ' freed'), p = cell$p, rank = cell$p, class = cell$class,
+      start = if (isTRUE(cell$at != 0)) stats::setNames(cell$at, freename(model, cell)),
       edit = local({ cell <- cell; function(model, data, covs, args = list()) {
         k <- which(model$pars$matrix == cell$matrix & model$pars$row == cell$row &
           model$pars$col == cell$col)
-        name <- cell$suggested
-        while (name %in% model$pars$param) name <- paste0(name, '_')
-        model$pars$param[k] <- name; model$pars$value[k] <- NA
-        model$pars$transform[k] <- cell$transform; model$pars$indvarying[k] <- FALSE
-        for (e in grep('_effect$', names(model$pars), value = TRUE)) model$pars[[e]][k] <- 'FALSE'
+        model$pars <- .ctScoreFreeCell(model$pars, k, freename(model, cell), cell$transform)
         list(model = model, data = data)
       } }))
   }
