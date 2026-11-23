@@ -1,0 +1,225 @@
+---
+title: "Time dependent predictors and interventions"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+    self-contained-math: true
+execute:
+  message: false
+  warning: false
+vignette: >
+  %\VignetteIndexEntry{Time dependent predictors and interventions}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", message = FALSE,
+  warning = FALSE, fig.width = 7, fig.height = 4)
+```
+
+```{r libs}
+library(ctsem)
+library(ggplot2)
+```
+
+A time dependent predictor is a variable observed alongside the measurements
+that acts on the latent processes: a treatment session, a stressful event, a
+dose of a drug. This vignette shows how ctsem models such inputs, and how to
+model effects that are immediate, lasting, or that build up and fade.
+
+# Predictors are impulses
+
+A time dependent predictor is a column of the data, named in
+`ctModel(TDpredNames = )`. At each row, the processes shift by the
+predictor's value times its effect in `TDPREDEFFECT`, and the dynamics then
+carry the shift forward. A predictor of zero has no effect, so an event is
+coded 1 on the row at which it happens and 0 elsewhere.
+
+On its own, the effect of such an impulse fades at the rate the drift matrix
+sets for the process. A shock to mood that fades as quickly as mood's other
+fluctuations is described well that way. Many interventions are meant to
+change the level for good, or to have an effect that builds up over some days
+and then fades. These shapes are modelled with an extra latent process
+that receives the impulse and passes it on to the outcome through the drift
+matrix (Driver & Voelkle, 2018, *Understanding the time course of
+interventions with continuous time dynamic models*).
+
+# Simulated data
+
+One hundred people rate their mood at 25 irregular times over 20 days. Half
+of them receive a treatment on day 10, coded as `treat = 1` on their first
+rating from day 10 on. In the generating model the treatment's effect builds
+up over a few days and then fades. It acts through an input process that
+jumps to 1 at the treatment, returns to zero at a rate of 0.5 a day, and
+raises mood at a rate of 1 a day per unit of input. Mood returns to its own
+baseline at a rate of 0.3 a day, and each person has their own baseline.
+
+```{r simulate}
+set.seed(2)
+design <- do.call(rbind, lapply(1:100, function(i) {
+  d <- data.frame(id = i, time = sort(unique(round(runif(25, 0, 20), 2))),
+    treat = 0)
+  if (i <= 50) d$treat[which(d$time >= 10)[1]] <- 1
+  d
+}))
+
+gen <- ctModel(type = 'ct', silent = TRUE,
+  manifestNames = 'mood', latentNames = c('mood', 'input'),
+  TDpredNames = 'treat', LAMBDA = matrix(c(1, 0), 1, 2),
+  DRIFT = matrix(c(-0.3, 1,
+                    0,  -0.5), 2, 2, byrow = TRUE),
+  TDPREDEFFECT = matrix(c(0, 1), 2, 1),
+  DIFFUSION = matrix(c(0.5, 0, 0, 0), 2, 2),
+  CINT = matrix(0, 2, 1), T0MEANS = matrix(0, 2, 1), T0VAR = diag(c(1, 0)),
+  MANIFESTMEANS = matrix('mm|param|TRUE|0.5'), MANIFESTVAR = matrix(0.3))
+dat <- data.frame(ctGenerate(gen, datastruct = design, backend = 'julia',
+  values = c(mm = 0)))
+head(dat[dat$id == 1 & dat$time > 8, ])
+```
+
+`ctGenerate(datastruct = )` takes the design, here the ids, times and
+treatment column, and fills in the measurements.
+
+The average mood of the treated and untreated groups, in two-day bins:
+
+```{r plotdata, fig.height = 3.5}
+dat$group <- ifelse(dat$id <= 50, 'treated', 'control')
+dat$bin <- floor(dat$time / 2) * 2 + 1
+means <- aggregate(mood ~ group + bin, data = dat, FUN = mean)
+ggplot(means, aes(bin, mood, colour = group)) +
+  geom_vline(xintercept = 10, linetype = 'dashed', colour = 'grey50') +
+  geom_line() + geom_point() + theme_bw() +
+  labs(x = 'day', y = 'mean mood')
+```
+
+The groups differ a little before day 10 by chance, through the people's own
+baselines. After day 10 the treated group's mood rises for a few days and
+then falls back.
+
+# Three models of the treatment effect
+
+**An impulse.** The treatment shifts mood directly, and the shift fades at
+mood's own rate:
+
+```{r m-impulse}
+m_impulse <- ctModel(LAMBDA = matrix(1),
+  manifestNames = 'mood', latentNames = 'mood', TDpredNames = 'treat')
+```
+
+**A lasting change.** The treatment sets an input process to 1, where it
+stays, because its auto effect and its shocks are fixed at zero. The input
+affects mood through the drift matrix (`input_effect`), so mood moves
+gradually to a new equilibrium. The input's effect from the treatment is fixed
+at 1, which sets its scale, and the treatment has no direct effect on mood.
+The input starts at zero, with no variance.
+
+```{r m-level}
+m_level <- ctModel(LAMBDA = matrix(c(1, 0), 1, 2),
+  manifestNames = 'mood', latentNames = c('mood', 'input'),
+  TDpredNames = 'treat',
+  DRIFT = matrix(c('drift_mood', 'input_effect',
+                    0,            0), 2, 2, byrow = TRUE),
+  TDPREDEFFECT = matrix(c(0, 1), 2, 1),
+  DIFFUSION = matrix(c('diff_mood', 0, 0, 0), 2, 2),
+  T0MEANS = matrix(c('T0m_mood', 0), 2, 1),
+  T0VAR = matrix(c('T0var_mood', 0, 0, 0), 2, 2))
+```
+
+**An effect that builds up and fades.** The same, with the input's auto effect
+estimated, so the input returns to zero at an estimated rate:
+
+```{r m-dissipate}
+m_dissipate <- ctModel(LAMBDA = matrix(c(1, 0), 1, 2),
+  manifestNames = 'mood', latentNames = c('mood', 'input'),
+  TDpredNames = 'treat',
+  DRIFT = matrix(c('drift_mood', 'input_effect',
+                    0,            'drift_input'), 2, 2, byrow = TRUE),
+  TDPREDEFFECT = matrix(c(0, 1), 2, 1),
+  DIFFUSION = matrix(c('diff_mood', 0, 0, 0), 2, 2),
+  T0MEANS = matrix(c('T0m_mood', 0), 2, 1),
+  T0VAR = matrix(c('T0var_mood', 0, 0, 0), 2, 2))
+m_dissipate
+```
+
+Other shapes follow from the same idea. A direct effect in `TDPREDEFFECT`
+together with an input process gives an immediate shift plus a lasting change,
+and an input process with a second input feeding it gives an effect that
+builds up more slowly.
+
+```{r fits}
+fits <- list(
+  impulse   = ctFit(dat, m_impulse, cores = 2),
+  lasting   = ctFit(dat, m_level, cores = 2),
+  dissipate = ctFit(dat, m_dissipate, cores = 2))
+sapply(fits, function(f) c(logLik = f$estimate$loglik, AIC = summary(f)$aic))
+```
+
+The model in which the effect builds up and fades fits best by far. Its
+estimates, against generating values of -0.3 for `drift_mood`, 1 for
+`input_effect` and -0.5 for `drift_input`:
+
+```{r dissipate-est}
+summary(fits$dissipate)$popmeans[c('drift_mood', 'input_effect',
+  'drift_input'), c('mean', '2.5%', '97.5%')]
+```
+
+# The time course of the effect
+
+The expected effect of one treatment on the processes, a time $t$ later, is
+$e^{At} M$, with $A$ the drift matrix and $M$ the column of `TDPREDEFFECT`.
+Its first entry is the effect on mood. Computing it for each draw of the
+parameters gives its uncertainty:
+
+```{r timecourse}
+effect_course <- function(fit, times) {
+  e <- ctExtract(fit)
+  curves <- sapply(seq_len(dim(e$pop_DRIFT)[1]), function(i) {
+    A <- matrix(e$pop_DRIFT[i, , ], dim(e$pop_DRIFT)[2])
+    M <- e$pop_TDPREDEFFECT[i, , 1]
+    sapply(times, function(t) (expm::expm(A * t) %*% M)[1])
+  })
+  data.frame(time = times, mean = rowMeans(curves),
+    lower = apply(curves, 1, quantile, .025),
+    upper = apply(curves, 1, quantile, .975))
+}
+times <- seq(0, 12, by = 0.1)
+courses <- do.call(rbind, lapply(names(fits), function(n)
+  data.frame(model = n, effect_course(fits[[n]], times))))
+courses$model <- factor(courses$model, levels = names(fits))
+
+truth <- data.frame(time = times, mean = sapply(times, function(t)
+  (expm::expm(matrix(c(-0.3, 1, 0, -0.5), 2, 2, byrow = TRUE) * t) %*%
+    c(0, 1))[1]))
+
+ggplot(courses, aes(time, mean)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.3) +
+  geom_line(linewidth = 1) +
+  geom_line(data = truth, linetype = 'dashed', colour = 'red') +
+  facet_wrap(~model) + theme_bw() +
+  labs(x = 'days since treatment', y = 'effect on mood')
+```
+
+Each panel shows a model's estimated effect with its 95% interval, and the
+dashed line the effect that generated the data. The impulse model can only
+describe an effect that is largest at the moment of treatment, and it
+estimates a small one. The lasting change model fits an effect that builds up
+and never fades. The third model recovers the shape, an effect that peaks
+about three days after the treatment and then fades, though it fades a little
+more slowly than the effect that generated the data.
+
+# Notes
+
+- A predictor's value at a row acts at that row's time. For an intervention
+  that runs over a period, such as a course of therapy, either code each
+  session as its own impulse, or switch an input process on and off. In the
+  lasting change model, a second predictor coded 1 at the end of the period,
+  with an effect of -1 on the input, sets the input back to zero.
+- The size of the effect can vary between people and depend on covariates, as
+  any parameter can. Writing the input's effect in the drift matrix as
+  `'input_effect||TRUE'` lets it vary, and `'input_effect, tipreds=c(age)'`
+  lets it depend on age.
+- A missing value in a time dependent predictor is replaced by zero, with a
+  warning.

@@ -101,8 +101,11 @@ ctStanRawSamples<-function(fit){
 #'@param ... arguments passed to the method for the fit's backend.
 #'@examples
 #'\donttest{
-#'#posterior median over all subjects (also reflects mean of unconstrained pars)
-#'ctSummaryMatrices(ctstantestfit)
+#'m <- ctSummaryMatrices(ctstantestfit)
+#'names(m)
+#'m$DRIFT                          # posterior median of the drift matrix
+#'eigen(m$estimate$DRIFT)$values   # stable when every real part is negative
+#'m$asymDIFFUSIONcor               # stationary correlation within a subject
 #'}
 #'@return A named list of matrices, each summarised over the posterior (or
 #'approximate posterior) draws by \code{calcfunc}. These are the model's own

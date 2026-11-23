@@ -165,12 +165,24 @@ shared across items or studies estimates one power from all of them.
 row, so \code{c(0.5, 'power')} suits integer data with one estimated
 transform. Julia backend only.}
 
-\item{DRIFT}{n.latent*n.latent DRIFT matrix of continuous auto and cross effects, 
-relating the processes over time. 
-"auto" freely estimates all parameters.}
+\item{DRIFT}{n.latent*n.latent matrix of drift coefficients: auto effects on
+the diagonal and cross effects off it. The cell in row i and column j is the
+effect of process j on the rate of change of process i, per unit of time.
+A negative auto effect makes a process on its own return to its equilibrium
+after a shock. Whether the processes together are stable depends on the
+whole matrix. They are stable when every eigenvalue has a negative real
+part, which negative auto effects alone do not ensure. \code{\link{ctDiscretePars}}
+gives the effects over a time interval. With \code{type = 'dt'}, the
+autoregressive and cross-lagged coefficients from one occasion to the next.
+"auto" frees every cell, with the auto effects bounded below zero in
+continuous time.}
 
-\item{CINT}{n.latent * 1 matrix of latent process intercepts, allowing for non 0 
-asymptotic levels of the latent processes. Generally only necessary for additional trends and more complex dynamics.}
+\item{CINT}{n.latent * 1 matrix of continuous time intercepts. With a stable
+drift matrix the processes settle at \code{-solve(DRIFT, CINT)}. Fixed to
+zero by default, with the levels in \code{MANIFESTMEANS} instead. Free it
+for trends, or for individual differences in the equilibrium. A process and
+its first indicator share one level, so free only one of its \code{CINT}
+and that indicator's \code{MANIFESTMEANS}.}
 
 \item{DIFFUSION}{lower triangular n.latent*n.latent matrix of diffusion process 
 variance and covariance (latent error / dynamic innovation),
@@ -187,6 +199,10 @@ Default names are TD1, TD2, etc.}
 
 \item{TDPREDEFFECT}{n.latent*n.TDpred matrix of effects from time dependent predictors to latent processes.
 Effects from 1:n.TDpred columns TDpredictors go to 1:n.latent rows of latent processes.
+A predictor acts as an impulse: at each row the processes shift by its
+value times its effects, and the dynamics carry the shift forward. Effects
+that last or build up are modelled with an extra latent process, see
+\code{vignette('interventions')}.
 "auto" freely estimates all parameters.}
 
 \item{TDPREDMEANS}{Legacy argument for time-dependent predictor means, mainly to
@@ -245,10 +261,34 @@ For \code{type = 'ct'} or \code{'dt'}, a model of class
   \code{\link{ctGenerate}} or \code{\link{ctModelConvertOMX}}.
 }
 \description{
-This function is used to specify a continuous time structural equation model, 
-which can then be fit to data with function \code{\link{ctFit}}.
+Specifies a continuous or discrete time dynamic model, to be fitted with
+\code{\link{ctFit}} or used to generate data with \code{\link{ctGenerate}}.
 }
 \details{
+In continuous time (\code{type = 'ct'}) the latent processes
+\eqn{\eta(t)} of each subject follow
+\deqn{d\eta(t) = (A \eta(t) + b + M \chi(t)) dt + G dW(t)}{d eta(t) = (A eta(t) + b + M chi(t)) dt + G dW(t)}
+and are measured as
+\deqn{y(t) = \Lambda \eta(t) + \tau + \epsilon(t)}{y(t) = LAMBDA eta(t) + tau + epsilon(t)}
+Here \eqn{A} is \code{DRIFT}, \eqn{b} is \code{CINT}, \eqn{M} is
+\code{TDPREDEFFECT}, \eqn{\chi(t)} the time dependent predictors,
+\eqn{GG^\top}{GG'} is the covariance of the random shocks, given by
+\code{DIFFUSION}, \eqn{\Lambda}{LAMBDA} is \code{LAMBDA},
+\eqn{\tau}{tau} is \code{MANIFESTMEANS}, and the residuals
+\eqn{\epsilon(t)}{epsilon(t)} have the covariance given by
+\code{MANIFESTVAR}. The processes start at \code{T0MEANS}, with covariance
+\code{T0VAR}. In discrete time (\code{type = 'dt'}) the same matrices
+describe a vector autoregression, with \code{DRIFT} holding the
+autoregressive and cross-lagged coefficients from one occasion to the next.
+
+Any matrix not given takes a default: \code{DRIFT}, \code{DIFFUSION},
+\code{TDPREDEFFECT}, \code{T0MEANS}, \code{T0VAR}, \code{MANIFESTMEANS}
+and the diagonal of \code{MANIFESTVAR} are free, \code{CINT} is zero, and
+\code{T0MEANS} and \code{MANIFESTMEANS} vary over subjects. Printing the
+model shows every cell. \code{vignette('ctsem')} works through a first
+analysis, and \code{vignette('dynamics')} explains how to read the drift
+matrix.
+
 A matrix cell can be one of four things:
 
 \itemize{
@@ -324,33 +364,36 @@ is an error, because a bare name there declares a parameter. For a
 expression, such as \code{'log1p(exp(eta1))'}.
 }
 \examples{
- ### Frequentist example:
- ### impulse and level change time dependent predictor 
- ### example from Driver, Oud, Voelkle (2015)
- data('ctExample2')
- tdpredmodel <- ctModel(type='omx', n.manifest = 2, n.latent = 3, n.TDpred = 1, 
- Tpoints = 8, manifestNames = c('LeisureTime', 'Happiness'), 
- TDpredNames = 'MoneyInt', 
- latentNames = c('LeisureTime', 'Happiness', 'MoneyIntLatent'),
- LAMBDA = matrix(c(1,0, 0,1, 0,0), ncol = 3))
+# Two processes, each measured by one variable. Everything not given
+# takes a default, which printing the model shows.
+model <- ctModel(LAMBDA = diag(2),
+  manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'))
+model
 
- tdpredmodel$DIFFUSION[, 3] <- 0
- tdpredmodel$DIFFUSION[3, ] <- 0
- tdpredmodel$T0VAR[3, ] <- 0
- tdpredmodel$T0VAR[, 3] <- 0
- tdpredmodel$CINT[3] <- 0
- tdpredmodel$T0MEANS[3] <- 0
- tdpredmodel$DRIFT[3, ] <- 0
- 
- 
-###Bayesian example:
-model<-ctModel(type='ct',
-n.latent=2, latentNames=c('eta1','eta2'),
-n.manifest=2, manifestNames=c('Y1','Y2'),
-n.TDpred=1, TDpredNames='TD1', 
-n.TIpred=3, TIpredNames=c('TI1','TI2','TI3'),
-LAMBDA=diag(2))
+# A number fixes a cell and a name frees it. The same name in two cells
+# gives one parameter. Here eta1 affects eta2 but not the reverse, and the
+# two auto effects are equal.
+model <- ctModel(LAMBDA = diag(2),
+  manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+  DRIFT = matrix(c('a',     0,
+                   'cross', 'a'), 2, 2, byrow = TRUE))
+model$pars[model$pars$matrix \%in\% 'DRIFT', c('row', 'col', 'param', 'value')]
 
+# One process measured by three indicators, with a time dependent predictor
+# (an intervention) acting on it, and a time independent predictor (age)
+# affecting its auto effect only.
+model <- ctModel(LAMBDA = matrix(c(1, 'lambda2', 'lambda3'), 3, 1),
+  manifestNames = c('Y1', 'Y2', 'Y3'), latentNames = 'eta',
+  TDpredNames = 'treatment', TIpredNames = 'age', tipredDefault = FALSE,
+  DRIFT = 'drift_eta, tipreds=c(age)')
+
+# A random effect: the auto effect varies between subjects.
+model <- ctModel(LAMBDA = diag(1), manifestNames = 'Y1', latentNames = 'eta',
+  DRIFT = ctPar('drift_eta', indvarying = TRUE))
+
+# A discrete time cross-lagged panel model.
+model <- ctModel(type = 'dt', LAMBDA = diag(2),
+  manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'))
 
 }
 \seealso{

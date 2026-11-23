@@ -1,0 +1,348 @@
+---
+title: "Getting started with ctsem"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+    self-contained-math: true
+execute:
+  message: false
+  warning: false
+vignette: >
+  %\VignetteIndexEntry{Getting started with ctsem}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", message = FALSE,
+  warning = FALSE, fig.width = 7, fig.height = 4)
+```
+
+This article works through one analysis from start to end: the model, the
+data, specifying and fitting a model, reading the results, adding a covariate
+and checking the model. It assumes ctsem and its Julia engine are installed,
+as the README describes.
+
+```{r libs}
+library(ctsem)
+library(ggplot2)
+```
+
+# The model
+
+A ctsem model describes one or more latent processes that change over time,
+and the variables measured at the times they were observed. Within each
+subject the processes $\boldsymbol\eta(t)$ follow
+
+$$
+\mathrm{d}\boldsymbol\eta(t) = \big(A\,\boldsymbol\eta(t) + \mathbf b + M\boldsymbol\chi(t)\big)\,\mathrm{d}t + G\,\mathrm{d}\mathbf W(t)
+$$
+
+and the measurements are
+
+$$
+\mathbf y(t) = \Lambda\,\boldsymbol\eta(t) + \boldsymbol\tau + \boldsymbol\epsilon(t),
+\qquad \boldsymbol\epsilon(t) \sim N(\mathbf 0, \Theta)
+$$
+
+Each symbol is a matrix of `ctModel()`:
+
+| Matrix | Symbol | Holds | Default |
+|---|---|---|---|
+| `DRIFT` | $A$ | auto effects (diagonal) and cross effects between processes | free |
+| `CINT` | $\mathbf b$ | continuous time intercepts | zero |
+| `DIFFUSION` | $G$ | size and correlation of the random shocks to the processes | free |
+| `TDPREDEFFECT` | $M$ | effects of time dependent predictors $\boldsymbol\chi$ | free |
+| `T0MEANS` | | the processes' values at each subject's first observation | free, varying over subjects |
+| `T0VAR` | | their variance at the first observation | covered by the random `T0MEANS` |
+| `LAMBDA` | $\Lambda$ | loadings of the measured variables on the processes | must be given |
+| `MANIFESTMEANS` | $\boldsymbol\tau$ | intercepts of the measured variables | free, varying over subjects |
+| `MANIFESTVAR` | $\Theta$ | measurement error | free standard deviations |
+
+The drift matrix describes how the processes change. With a negative auto
+effect, a process on its own returns towards its equilibrium after a shock. A
+cross effect is the effect of one process on the rate of change of another.
+Whether the processes together return to equilibrium depends on the whole
+drift matrix, which `vignette('dynamics')` explains. The diffusion describes
+the random shocks that move the processes between observations, and so carry
+forward in time. Measurement error affects only the observation it belongs
+to. A time dependent predictor, such as an intervention, shifts the processes
+at the times it is observed, and the dynamics carry the shift forward.
+
+Any parameter can differ between subjects, as a random effect, and depend on
+subject level covariates (time independent predictors). By default the
+initial states and the intercepts of the measured variables differ between
+subjects, which allows for stable differences between people.
+
+With `type = 'dt'` the same matrices describe a discrete time model, in which
+`DRIFT` holds the autoregressive and cross-lagged coefficients from one
+occasion to the next.
+
+# Data
+
+ctsem takes data in long format: one row per subject and occasion, with a
+column for the subject id, one for the time, and one for each measured
+variable and predictor.
+
+- Times are numbers, in whatever unit suits the processes, such as hours, days
+  or years. They need not be equally spaced and can differ between subjects.
+  The estimated effects are per unit of time, so the unit decides their scale.
+  A unit over which the processes change noticeably, but do not settle
+  completely, usually works best.
+- A missing value is `NA`. A row can have some variables observed and others
+  missing.
+- A time independent predictor must have the same value on every row of a
+  subject.
+- A time dependent predictor is an input at the time of its row, and zero
+  means no input.
+
+The data for this article are simulated, so that the estimates can be
+compared with the values that generated them. One hundred people rated their
+stress and mood about once a day, at irregular times, for a month or so, and
+some ratings are missing. In the generating model stress lowers mood but mood
+does not affect stress, each person has their own typical stress and mood,
+and older people tend to be more stressed. `age` is standardised.
+
+```{r simulate}
+set.seed(1)
+gen <- ctModel(type = 'ct', silent = TRUE,
+  manifestNames = c('stress', 'mood'), latentNames = c('stress', 'mood'),
+  LAMBDA = diag(2), TIpredNames = 'age',
+  DRIFT = matrix(c(-0.5, 0, -0.25, -0.3), 2, 2, byrow = TRUE),
+  DIFFUSION = matrix(c(0.8, 0, 0, 0.6), 2, 2, byrow = TRUE),
+  CINT = matrix(0, 2, 1), T0MEANS = matrix(0, 2, 1), T0VAR = diag(1, 2),
+  MANIFESTMEANS = matrix(c('mm_stress|param|TRUE|0.5|age=0.3',
+    'mm_mood|param|TRUE|0.5'), 2, 1),
+  MANIFESTVAR = diag(0.4, 2))
+dat <- ctGenerate(gen, n = 100, Tpoints = 30, dtmean = 1, logdtsd = 0.5,
+  backend = 'julia', values = c(mm_stress = 3, mm_mood = 5))
+truelevels <- attr(dat, 'subjectpars')
+dat <- data.frame(dat)
+dat$time <- round(dat$time, 2)
+dat$stress[sample(nrow(dat), 200)] <- NA
+dat$mood[sample(nrow(dat), 200)] <- NA
+head(dat)
+```
+
+```{r plotdata, fig.height = 3.5}
+long <- rbind(
+  data.frame(dat[dat$id <= 3, c('id', 'time')], variable = 'stress',
+    value = dat$stress[dat$id <= 3]),
+  data.frame(dat[dat$id <= 3, c('id', 'time')], variable = 'mood',
+    value = dat$mood[dat$id <= 3]))
+ggplot(long[!is.na(long$value), ], aes(time, value, colour = variable)) +
+  geom_line() + geom_point(size = 1) + facet_wrap(~id, labeller = label_both) +
+  theme_bw() + labs(x = 'time (days)', y = NULL)
+```
+
+Data in wide format, with one row per subject, can be converted.
+`ctWideToLong()` gives one row per occasion, and `ctDeintervalise()` turns
+the time intervals of wide data into times:
+
+```{r wide}
+data(ctExample1)
+colnames(ctExample1)
+widelong <- ctWideToLong(ctExample1, Tpoints = 6, n.manifest = 2,
+  manifestNames = c('LeisureTime', 'Happiness'))
+widelong <- data.frame(ctDeintervalise(widelong))
+head(widelong)
+```
+
+# Specifying the model
+
+Each process is measured by one variable, with a loading of 1, so `LAMBDA` is
+an identity matrix. `ctModel()` takes the names of the time and id columns from
+its `time` and `id` arguments, which default to `'time'` and `'id'`.
+
+```{r model}
+model <- ctModel(LAMBDA = diag(2),
+  manifestNames = c('stress', 'mood'), latentNames = c('stress', 'mood'))
+model
+```
+
+Printing the model shows each matrix, with the name of each free parameter
+and the value of each fixed one. Everything not given to `ctModel()` takes the
+defaults in the table above. To change a matrix, give it to `ctModel()`. A
+number fixes a cell, and a name estimates it. This drift matrix would fix the
+effect of mood on stress at zero:
+
+```{r model-fixed, eval = FALSE}
+DRIFT = matrix(c('drift_stress',      0,
+                 'drift_mood_stress', 'drift_mood'), 2, 2, byrow = TRUE)
+```
+
+The same model can be written in lavaan, Mplus or formula syntax, which
+`vignette('model-syntax')` describes.
+
+# Fitting
+
+```{r fit}
+fit <- ctFit(dat, model, cores = 2)
+```
+
+By default `ctFit()` finds the maximum likelihood estimates, integrating over
+the latent states and over the differences between people. `cores` sets the
+number of CPU cores to use. `priors = TRUE` adds weakly informative priors,
+which helps with small data sets, and `optimize = FALSE` samples the
+posterior instead of optimising. `vignette('uncertainty')` compares these.
+
+# Reading the results
+
+`summary(fit)` prints every part of the result. The population values of the
+parameters are in `popmeans`:
+
+```{r popmeans}
+s <- summary(fit)
+s$popmeans
+```
+
+Each row is a parameter, with its estimate (`mean`), standard error (`sd`) and
+95% interval.
+
+- `drift_stress` and `drift_mood` are the auto effects, per day. On its own,
+  stress one unit above its equilibrium changes at a rate of about -0.5 units
+  a day, and after one day about `exp(-0.54)`, or 0.58, of the deviation is
+  left.
+- `drift_mood_stress` is the effect of stress on mood: more stress lowers the
+  rate of change of mood. `drift_stress_mood`, the effect of mood on stress,
+  is small and its interval includes zero.
+- `diff_stress` and `diff_mood` are the standard deviations of the random
+  shocks. `diff_mood_stress` is a parameter for their correlation, and is not
+  itself a correlation. The correlation is in
+  `s$parmatrices` and `ctSummaryMatrices(fit)$estimate$DIFFUSIONcor`.
+- `mvarstress` and `mvarmood` are the measurement error standard deviations.
+- `mm_stress` and `mm_mood` are the average levels of the two variables, and
+  `T0m_stress` and `T0m_mood` where the processes start relative to them.
+
+The drift matrix as a whole decides whether the processes are stable and how
+fast they change. They are stable when every eigenvalue has a negative real
+part, and the eigenvalues give the time scale:
+
+```{r drift}
+est <- ctSummaryMatrices(fit)$estimate
+est$DRIFT
+eigen(est$DRIFT)$values
+log(2) / abs(eigen(est$DRIFT)$values)    # half-lives, in days
+```
+
+Both eigenvalues are negative, and a disturbance to the system halves in one
+and a half to two days.
+
+How much people differ is in `popsd`, the standard deviations of the random
+effects:
+
+```{r popsd}
+s$popsd
+```
+
+People differ in their typical stress by a standard deviation of about 0.7
+and in their typical mood by about 0.5.
+
+Since the data are simulated, the dynamic parameters can be set against the
+values that generated them:
+
+```{r truth}
+pars <- c('drift_stress', 'drift_stress_mood', 'drift_mood_stress',
+  'drift_mood', 'diff_stress', 'diff_mood', 'mvarstress', 'mvarmood')
+data.frame(truth = c(-0.5, 0, -0.25, -0.3, 0.8, 0.6, 0.4, 0.4),
+  s$popmeans[pars, c('mean', '2.5%', '97.5%')])
+```
+
+Every interval contains the generating value.
+
+## Effects over time
+
+A cross effect in a continuous time model is an effect on a rate of change.
+The effect of stress on mood over a given time interval, the cross-lagged
+coefficient a discrete time model would estimate, depends on the interval:
+
+```{r discrete, fig.height = 4.4}
+ctDiscretePars(fit, times = seq(0, 10, by = 0.1), plot = TRUE)
+```
+
+A unit of stress is followed by lower mood, most strongly two to three days
+later, when the effect is about -0.2. `summary()` of
+`ctDiscretePars(fit, times = ...)` gives the peaks and their times, and
+`vignette('dynamics')` explains these curves.
+
+## Individual trajectories
+
+`ctPredict()` gives the model's predictions for each person over time. The
+plot shows the observations, and lines for each person's expected values
+given their earlier observations, with 95% intervals. The lines jump at each
+observation, as it updates the prediction. `kalmanvec = 'ysmooth'` uses all of
+a person's observations instead.
+
+```{r predict, fig.height = 4.4}
+ctPredict(fit, subjects = 1:2, plot = TRUE)
+```
+
+`ctSubjectPars()` gives each person's estimated parameters, here their own
+typical levels and starting states. They are close to the levels that
+generated the data:
+
+```{r subjectpars}
+sp <- ctSubjectPars(fit)
+dim(sp)                     # draws x subjects x parameters
+cor(sp[1, , 'mm_stress'], truelevels$mm_stress)
+```
+
+# A covariate
+
+Age is in the data but not in the model. `ctScoreTest()` tests, without
+refitting, whether a covariate would improve the model, and estimates the
+effect it would have on each parameter:
+
+```{r scoretest}
+covariates <- unique(dat[, c('id', 'age')])
+ctScoreTest(fit, covariates = covariates, tests = 'covariates')
+```
+
+Age affects the typical stress level, `mm_stress`, by about 0.3 per standard
+deviation of age, and no other parameter stands out. In the model, a covariate is a time independent predictor
+(`TIpredNames`), and its effects are given in the `tipreds` field of the
+parameters it affects. With `tipredDefault = FALSE` it affects only those.
+
+```{r model2}
+model2 <- ctModel(LAMBDA = diag(2),
+  manifestNames = c('stress', 'mood'), latentNames = c('stress', 'mood'),
+  TIpredNames = 'age', tipredDefault = FALSE,
+  MANIFESTMEANS = c('mm_stress, tipreds=c(age)', 'mm_mood'))
+fit2 <- ctFit(dat, model2, cores = 2)
+summary(fit2)$tipreds
+anova(fit, fit2)
+```
+
+`ctPar()` writes such cell strings, with fields for a cell's transform, its
+random effect and its covariate effects.
+
+# Checking the model
+
+`ctScoreTest()` also tests whether parameters the model holds fixed should
+differ between people, whether the dynamics depend on the level of a process,
+and whether cells fixed at zero should be free:
+
+```{r check}
+ctScoreTest(fit2)
+```
+
+Nothing stands out once the tests are adjusted for their number (`p_adj`).
+`ctFitAdequacy()` tests the model's one-step-ahead predictions against the
+data, and `ctModelImprove()` searches for a better model step by step.
+`vignette('score-tests')` describes all three.
+
+# Where next
+
+- `vignette('dynamics')`: reading drift matrices, stability, time scales and
+  effects over time.
+- `vignette('interventions')`: time dependent predictors, with effects that
+  are immediate, lasting or gradual.
+- `vignette('model-syntax')`: models in lavaan, Mplus or formula syntax.
+- `vignette('measurement-models')`: several indicators, and binary, ordinal,
+  count and censored variables.
+- `vignette('laplace-multilevel')`: random effects, and subjects nested in
+  groups.
+- `vignette('uncertainty')`: standard errors, sampling and priors.
+- `vignette('score-tests')`: checking and improving a model.

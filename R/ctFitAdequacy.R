@@ -257,6 +257,18 @@
 #'   structural equation models. \emph{Psychometrika, 82}, 533-558.
 #' @seealso \code{\link{ctPostPredPlots}} and \code{\link{ctFitCheckCov}} to
 #'   see the data against the fit.
+#' @examples
+#' \donttest{
+#' if (isTRUE(ctJuliaStatus()$available)) {
+#' model <- ctModel(LAMBDA = diag(2),
+#'   manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+#'   TDpredNames = 'TD1')
+#' fit <- ctFit(ctstantestdat, model, priors = TRUE)
+#' adequacy <- ctFitAdequacy(fit)
+#' adequacy            # one row per family of tests
+#' plot(adequacy)
+#' }
+#' }
 #' @export
 ctFitAdequacy <- function(fit, covariates = NULL,
   families = c('residuals', 'latent', 'volatility', 'pairs', 'periodic', 'distribution',

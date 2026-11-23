@@ -238,6 +238,19 @@ errors, so a failing statistic does not always point to where the problem
 is. \code{\link{ctScoreTest}} is more sensitive to the departures it
 covers, and \code{\link{ctModelImprove}} uses both.
 }
+\examples{
+\donttest{
+if (isTRUE(ctJuliaStatus()$available)) {
+model <- ctModel(LAMBDA = diag(2),
+  manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+  TDpredNames = 'TD1')
+fit <- ctFit(ctstantestdat, model, priors = TRUE)
+adequacy <- ctFitAdequacy(fit)
+adequacy            # one row per family of tests
+plot(adequacy)
+}
+}
+}
 \references{
 Newey, W. K. (1985). Maximum likelihood specification testing
   and conditional moment tests. \emph{Econometrica, 53}, 1047-1070.

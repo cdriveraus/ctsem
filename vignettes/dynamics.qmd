@@ -1,0 +1,310 @@
+---
+title: "Reading continuous time dynamics"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+    self-contained-math: true
+execute:
+  message: false
+  warning: false
+vignette: >
+  %\VignetteIndexEntry{Reading continuous time dynamics}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", message = FALSE,
+  warning = FALSE, fig.width = 7, fig.height = 4)
+```
+
+```{r libs}
+library(ctsem)
+library(ggplot2)
+```
+
+The dynamic part of a ctsem model is a set of differential equations, and its
+parameters are rates of change per unit of time. This vignette explains how to
+read them: what the auto and cross effects mean, how to tell whether the
+processes are stable, how fast they change, what the effects are over a given
+time interval, and where the processes settle. The first sections use drift
+matrices with chosen values, and the last applies the same steps to a fitted
+model.
+
+# One process
+
+A single latent process $\eta$ follows
+
+$$
+\mathrm{d}\eta(t) = \big(a\,\eta(t) + b\big)\,\mathrm{d}t + g\,\mathrm{d}W(t)
+$$
+
+- $a$ is the auto effect, the `DRIFT` matrix. When $\eta$ is one unit above
+  its equilibrium, it changes by $a$ units per unit of time. When $a$ is
+  negative the process returns towards an equilibrium, faster the more
+  negative it is. When $a$ is zero it has no equilibrium and wanders as a
+  random walk. When $a$ is positive a deviation grows.
+- $b$ is the continuous time intercept, `CINT`. With $a < 0$ the equilibrium
+  is $-b/a$.
+- $g$ is the size of the random shocks, `DIFFUSION`. With $a < 0$ the
+  process varies around its equilibrium with variance $g^2 / (-2a)$.
+
+Over a time interval $\Delta t$ the process is an autoregression with
+coefficient $e^{a \Delta t}$. A deviation from equilibrium halves in
+$\log(2) / |a|$ units of time, the half-life. The units are those of the time
+column in the data. With time in days, $a = -0.1$ gives a half-life of about 7
+days. The same process with time in weeks has $a = -0.7$.
+
+```{r one-process}
+intervals <- seq(0, 10, by = 0.1)
+onep <- expand.grid(interval = intervals, a = c(-0.1, -0.5, -1))
+onep$autoregression <- exp(onep$a * onep$interval)
+ggplot(onep, aes(interval, autoregression, colour = factor(a))) +
+  geom_line(linewidth = 1) + theme_bw() +
+  labs(x = 'time interval', y = 'autoregression', colour = 'auto effect a')
+log(2) / c(0.1, 0.5, 1)   # half-lives
+```
+
+# Two processes
+
+With more than one process, $a$ becomes the drift matrix $A$, $b$ the vector
+of intercepts, and $g$ a matrix $G$ whose product $GG^\top$ is the covariance
+of the shocks:
+
+$$
+\mathrm{d}\boldsymbol\eta(t) = \big(A\,\boldsymbol\eta(t) + \mathbf b\big)\,\mathrm{d}t + G\,\mathrm{d}\mathbf W(t)
+$$
+
+The diagonal of $A$ holds the auto effects. The entry in row $i$ and column $j$
+is the cross effect of process $j$ on the rate of change of process $i$. In
+ctsem's parameter names, `drift_eta2_eta1` is the effect of `eta1` on `eta2`.
+
+A cross effect is a rate. What a discrete time model would estimate as a
+cross-lagged coefficient for an interval $\Delta t$ is an entry of the matrix
+exponential $e^{A \Delta t}$, which depends on the whole drift matrix and on
+the interval. In this system `eta1` drives `eta2`:
+
+```{r two-process}
+A <- matrix(c(-0.4,  0,
+               0.3, -0.2), 2, 2, byrow = TRUE,
+  dimnames = list(c('eta1', 'eta2'), c('eta1', 'eta2')))
+A
+
+discrete <- function(A, intervals) {
+  do.call(rbind, lapply(intervals, function(dt) {
+    E <- expm::expm(A * dt)
+    data.frame(interval = dt, value = c(E),
+      effect = paste(rep(colnames(A), each = nrow(A)), '->',
+        rep(rownames(A), ncol(A))))
+  }))
+}
+d2 <- discrete(A, seq(0, 20, by = 0.1))
+ggplot(d2, aes(interval, value, colour = effect)) +
+  geom_line(linewidth = 1) + theme_bw() +
+  labs(x = 'time interval', y = 'discrete time effect')
+```
+
+The cross effect of `eta1` on `eta2` is zero over no time, rises as the change
+in `eta1` passes into `eta2`, and falls as both return to equilibrium. Its
+largest value is at an interval of about 3.5. A cross-lagged coefficient from a
+study with one interval between waves is one point on this curve, so two
+studies with different intervals can find quite different coefficients for the
+same process. A continuous time model fitted to either should give the same
+drift matrix.
+
+# Stability
+
+A system is stable when every disturbance fades and the processes return to
+their equilibrium. For one process that means $a < 0$. With more processes it
+depends on the whole drift matrix. The system is stable when every eigenvalue
+of $A$ has a negative real part. Negative auto effects do not
+ensure this, and a positive auto effect does not rule it out. For two processes
+the condition is the same as a negative sum of the auto effects together with
+a positive determinant of $A$.
+
+Three drift matrices show this:
+
+```{r stability}
+drifts <- list(
+  'negative auto effects, stable' =
+    matrix(c(-0.5, 0.2, 0.2, -0.5), 2, 2, byrow = TRUE),
+  'negative auto effects, unstable' =
+    matrix(c(-0.5, 0.7, 0.7, -0.5), 2, 2, byrow = TRUE),
+  'a positive auto effect, stable' =
+    matrix(c(0.1, -0.6, 0.6, -0.5), 2, 2, byrow = TRUE))
+lapply(drifts, function(A) eigen(A)$values)
+```
+
+The second matrix has the same auto effects as the first, but the two
+processes push each other up strongly enough that a disturbance grows. Its
+eigenvalues are 0.2 and -1.2, and the positive one makes it unstable. The
+third has a positive auto effect for the first process, which on its own would
+grow, but the second process pulls it back. Its eigenvalues are complex with
+real part -0.2, so it is stable and oscillates. The trajectories after a
+disturbance of one unit in the first process, with no further shocks
+($e^{At}$ times the disturbance):
+
+```{r trajectories}
+trajectory <- function(A, start, times) {
+  out <- t(sapply(times, function(t) expm::expm(A * t) %*% start))
+  data.frame(time = times, eta1 = out[, 1], eta2 = out[, 2])
+}
+paths <- do.call(rbind, lapply(names(drifts), function(n) {
+  p <- trajectory(drifts[[n]], start = c(1, 0), times = seq(0, 15, by = 0.1))
+  rbind(data.frame(system = n, time = p$time, process = 'eta1', value = p$eta1),
+        data.frame(system = n, time = p$time, process = 'eta2', value = p$eta2))
+}))
+paths$system <- factor(paths$system, levels = names(drifts))
+ggplot(paths, aes(time, value, colour = process)) +
+  geom_hline(yintercept = 0, colour = 'grey60') +
+  geom_line(linewidth = 1) + facet_wrap(~system, scales = 'free_y') +
+  theme_bw() + theme(legend.position = 'bottom')
+```
+
+An unstable system has no equilibrium to return to, so it has no stationary
+mean or variance. ctsem reports the asymptotic matrices described below as
+`NaN` for it. In a fitted model, an estimated drift matrix close to
+instability often means a slow process, such as a trend, that the model does
+not describe separately.
+
+# How fast
+
+The eigenvalues also give the time scale. Each real eigenvalue $\lambda$
+belongs to a combination of the processes that returns to equilibrium at rate
+$\lambda$, with half-life $\log(2) / |\lambda|$. The eigenvalue with the real
+part nearest zero is the slowest, and sets how long the system as a whole
+takes to settle. In the first system above each auto effect alone would give a
+half-life of `r round(log(2) / 0.5, 1)`. The processes support each other, and
+the slowest combination has a half-life of
+`r round(log(2) / 0.3, 1)`:
+
+```{r halflife}
+ev <- eigen(drifts[[1]])$values
+log(2) / abs(Re(ev))
+```
+
+Complex eigenvalues mean oscillation. The period is $2\pi / |\mathrm{Im}\,\lambda|$,
+and the amplitude halves in $\log(2) / |\mathrm{Re}\,\lambda|$. For the third
+system:
+
+```{r oscillation}
+ev <- eigen(drifts[[3]])$values
+c(period = 2 * pi / abs(Im(ev[1])), amplitude_halflife = log(2) / abs(Re(ev[1])))
+```
+
+A single process can only oscillate when it is modelled with a second, unseen
+process, its rate of change. `ctModelHigherOrder()` adds one to a model.
+
+# Where the processes settle
+
+A stable system fluctuates around its equilibrium with a stationary
+distribution, within each subject. Its mean is $-A^{-1}\mathbf b$, and its
+covariance $\Sigma$ solves $A\Sigma + \Sigma A^\top + GG^\top = 0$. ctsem
+reports these as `asymCINT` and `asymDIFFUSIONcov` (and the correlations as
+`asymDIFFUSIONcor`) in `summary(fit)$parmatrices` and `ctSummaryMatrices()`.
+For the first system with intercepts of 1 and 0 and independent unit shocks:
+
+```{r asymptotic}
+A <- drifts[[1]]
+b <- c(1, 0)
+Q <- diag(2)                                    # G G'
+-solve(A, b)                                    # equilibrium
+I <- diag(2)
+matrix(-solve(kronecker(I, A) + kronecker(A, I), c(Q)), 2, 2)   # stationary covariance
+```
+
+The second process has no intercept of its own, but it settles above zero
+because the first pushes it up.
+
+# Comparing effects across processes
+
+A cross effect is the change in process $i$ per unit of process $j$, so it
+depends on the units of both. When the processes are on different scales, the
+effects are easier to compare standardised by the stationary standard
+deviations, as the change in standard deviations of $i$ per standard deviation
+of $j$. `ctDiscretePars(fit, standardise = TRUE)` gives the discrete time
+effects on that scale, and `ctNetwork()` the network of effects at one
+interval.
+
+# A fitted model
+
+The README fits a model to the daily milk yield and fat percentage of 53 cows,
+with time in days. The same fit:
+
+```{r milk-fit, results = 'hide'}
+data(milkman_rdm1, package = 'doBy')
+milk <- data.frame(
+  cow   = milkman_rdm1$cowno,
+  day   = milkman_rdm1$dfc,
+  yield = as.numeric(scale(milkman_rdm1$my)),
+  fat   = as.numeric(scale(milkman_rdm1$fatpct)))
+
+model <- ctModel(LAMBDA = diag(2), manifestNames = c('yield', 'fat'),
+  latentNames = c('yield', 'fat'), time = 'day', id = 'cow')
+fit <- ctFit(milk, model, cores = 2)
+```
+
+The estimated drift matrix, with each row the process that changes:
+
+```{r milk-drift}
+est <- ctSummaryMatrices(fit)$estimate
+est$DRIFT
+eigen(est$DRIFT)$values
+log(2) / abs(eigen(est$DRIFT)$values)    # half-lives in days
+```
+
+Both eigenvalues are negative, so the two processes are stable together. The
+slower combination has a half-life of about two months, longer than either
+auto effect would give alone. The two cross effects form a loop that keeps a
+deviation going: higher fat lowers yield, and lower yield raises fat. Each draw of the fit's parameters gives its own
+drift matrix, and so its own eigenvalues, which gives their uncertainty:
+
+```{r milk-eigen-draws}
+draws <- ctExtract(fit)$pop_DRIFT
+slowest <- apply(draws, 1, function(A) max(Re(eigen(A)$values)))
+quantile(slowest, c(.025, .5, .975))
+quantile(log(2) / abs(slowest), c(.025, .5, .975))   # its half-life in days
+mean(slowest < 0)                                     # share of draws that are stable
+```
+
+The discrete time effects, over intervals from a day to five months. The time
+range should cover the time scale of the processes, which ctsem cannot choose
+for you:
+
+```{r milk-discrete, fig.height = 4.6}
+ctDiscretePars(fit, times = seq(0, 150, by = 1), plot = TRUE)
+```
+
+`summary()` of the same output gives each curve's peak, the interval at which
+it peaks, and the interval at which it has fallen to half the peak:
+
+```{r milk-discrete-summary}
+dp <- ctDiscretePars(fit, times = seq(0, 150, by = 1))
+s <- summary(dp)
+s[s$quantity %in% c('peak', 'peaktime', 'halftime'),
+  c('row', 'col', 'quantity', 'estimate', '2.5%', '97.5%')]
+```
+
+A higher fat percentage is followed by a lower yield, most strongly after about
+six weeks, when one unit of fat (the data are standardised, so about one
+standard deviation) goes with a yield about 0.29 lower. The effect of yield on
+fat is smaller and its interval includes zero.
+
+Within a cow, yield and fat vary together in the long run as well, through the
+cross effects and through shocks that affect both at once:
+
+```{r milk-asym}
+est$DIFFUSIONcor          # correlation of the shocks
+est$asymDIFFUSIONcor      # stationary correlation within a cow
+```
+
+# State dependent dynamics
+
+When a drift cell is an expression of the latent states, for example an auto
+effect that grows with the level of the process, the drift matrix differs from
+state to state, and so do its eigenvalues and the discrete time effects.
+Functions that report them then evaluate the model at one state and say which.
+`ctPhasePortrait()` and `ctStateDependencePlot()` show how the dynamics change
+across states.

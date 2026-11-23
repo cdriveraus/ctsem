@@ -257,6 +257,21 @@
 #'   refitted to every subject, and \code{selected} is the search's own choice
 #'   fitted to the subjects it searched on.
 #' @seealso \code{vignette('score-tests')}.
+#' @examples
+#' \donttest{
+#' if (isTRUE(ctJuliaStatus()$available)) {
+#' model <- ctModel(LAMBDA = diag(2),
+#'   manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+#'   TDpredNames = 'TD1')
+#' fit <- ctFit(ctstantestdat, model, priors = TRUE)
+#' improved <- ctModelImprove(fit)
+#' improved$history    # each change tried, and whether it was kept
+#' summary(improved$fit)
+#'
+#' # Only simplify parts of the model the data do not identify.
+#' reduced <- ctModelImprove(fit, reduceOnly = TRUE)
+#' }
+#' }
 #' @export
 ctModelImprove <- function(fit, covariates = NULL,
   relax = c('heterogeneity', 'covariates', 'statedependence', 'volatility', 'fixed', 'level',
