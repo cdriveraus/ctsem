@@ -1001,16 +1001,19 @@ ctStanModel <- ctModelConvertOMX
 #     correlations with the others (review/RANDOMEFFECTS-partial-
 #     identification-2026-09-07.md).
 #
-# An effect on a mean beside a categorical indicator is a coordinate too, and
-# there the two routes trade errors rather than one being wrong
-# (review/BINARY-cross-effect-bias-2026-11-23.md). The augmented filter
-# replaces the effect's posterior by a normal after each answer; in a
-# random-intercept logistic model its error in the population sd grows with
-# the sd (-0.007 at 1, -0.09 at 2, -0.6 at 4) and does not fall with more
-# answers a person. Laplace's falls with the answers (-0.06, -0.11, -0.50 at
-# five answers, -0.002, -0.01, -0.12 at fifty), and the random-effects check
-# measures it. Up to an sd of about 2 the two fits agree; augmented fitted
-# such models about ten times faster, checks included (2026-11-23, dev1).
+# Beside a categorical indicator the filter integrates initial means alone,
+# folded into the first state (`.ctJuliaLaplaceHybrid()`'s `fold`); the other
+# mean effects are coordinates, and there the two routes trade errors rather
+# than one being wrong (review/BINARY-cross-effect-bias-2026-11-23.md). The
+# augmented filter replaces the effect's posterior by a normal after each
+# answer; in a random-intercept logistic model its error in the population sd
+# grows with the sd (-0.007 at 1, -0.09 at 2, -0.6 at 4) and does not fall
+# with more answers a person. Laplace's falls with the answers (-0.06, -0.11,
+# -0.50 at five answers, -0.002, -0.01, -0.12 at fifty), and the
+# random-effects check measures it. An initial mean is informed by a person's
+# first answers and forgotten at the process's rate, hence the fold. Up to an
+# sd of about 2 the two fits agree; augmented fitted such models about ten
+# times faster, checks included (2026-11-23, dev1).
 #
 # An affine effect the filter does not take -- one parameter in several cells,
 # or a continuous intercept a stationary initial mean reads -- is a coordinate
