@@ -1128,10 +1128,16 @@ function _ctsem_subset_objective(L::CTSEMLaplaceObjective, keep::AbstractVector{
         :columns => [CTSEMUnitColumns() for _ in 1:n],
         # And its curvature at its anchor.
         :curvatures => [CTSEMUnitCurvature() for _ in 1:n])
+    # Per level (and group), not per unit, and the subset's units are of the
+    # same levels and groups: shared as they stand. Named, because the length
+    # check below cannot tell a level's vector from a unit's where a model has
+    # as many units as levels; two studies under two levels failed every
+    # random-effects check.
+    perlevel = (:affine, :inert)
     args = map(fieldnames(typeof(L))) do name
         haskey(fresh, name) && return fresh[name]
         v = getfield(L, name)
-        if v isa AbstractVector && NU > 1 && length(v) == NU
+        if !(name in perlevel) && v isa AbstractVector && NU > 1 && length(v) == NU
             error("_ctsem_subset_objective: CTSEMLaplaceObjective field `$(name)` ",
                 "has one entry per unit and is not known here; add it to `fresh`.")
         end
