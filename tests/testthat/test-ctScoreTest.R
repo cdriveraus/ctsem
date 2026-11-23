@@ -558,7 +558,7 @@ test_that("row scores sum to the subjects' scores, on the filter and the Laplace
   module <- ctsem:::.ctJuliaModule(lfit$model_spec$project)
   # The nodes are the layer's, where both effects are coordinates.
   quad <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_quadrature(
-    ctsem:::.ctJuliaObjective(lfit), ctsem:::.ctJuliaNumericVector(lest),
+    ctsem:::.ctJuliaObjective(lfit, layer = TRUE), ctsem:::.ctJuliaNumericVector(lest),
     nodes = 3L, contributions = TRUE))
   expect_equal(p3$logmarginal, as.numeric(quad$subject_loglik), tolerance = 1e-10)
   # Every unit's term is a concave quadratic here, so the nodes are placed from
@@ -568,7 +568,8 @@ test_that("row scores sum to the subjects' scores, on the filter and the Laplace
   evaluated <- lfit$model_spec
   evaluated$laplace$quadratic <- FALSE
   pe <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_posterior_nodes(
-    ctsem:::.ctJuliaObjective(structure(evaluated, class = c("ctJuliaModel", "ctFitModel"))),
+    ctsem:::.ctJuliaObjective(structure(evaluated, class = c("ctJuliaModel", "ctFitModel")),
+      layer = TRUE),
     ctsem:::.ctJuliaNumericVector(lest), nodes = 3L))
   expect_equal(p3$points, array(as.numeric(pe$points), dim(p3$points)), tolerance = 1e-8)
   expect_equal(p3$weights, as.matrix(pe$weights), tolerance = 1e-8)

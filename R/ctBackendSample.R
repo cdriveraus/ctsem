@@ -1205,8 +1205,8 @@
 # effect, on the layer.
 #' @keywords internal
 .ctBackendSampleObjective <- function(fit, target, sampler = NULL) {
-  if (isTRUE(target$state_explicit)) return(.ctJuliaJointObjective(fit, target$npar))
-  .ctJuliaObjective(fit, layer = identical(sampler, "saem") && !isTRUE(target$marginal))
+  if (isTRUE(target$state_explicit)) .ctJuliaJointObjective(fit, target$npar) else
+    .ctJuliaObjective(fit, layer = identical(sampler, "saem") && !isTRUE(target$marginal))
 }
 
 # How many draws per chain a run starts with and may extend to, given the count
