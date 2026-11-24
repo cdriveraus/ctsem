@@ -1010,16 +1010,43 @@ function _laplace_mode_fade(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, uhat::Vector{Float64}; gradient::Bool=false)
     geo = _laplace_modes_geometry(laplace, U, theta, [uhat])
     geo === nothing && return nothing
-    E = geo.geos[1].E
-    lam = E.values[1]
+    m = geo.geos[1]
+    if isempty(m.low.values)
+        # Above the fade's band the geometry keeps no pair: the smallest from
+        # the factorization, by inverse iteration.
+        m.F === nothing && return nothing
+        eig = _soft_smallest_eigenpair(m.M, m.blocks, m.F)
+        eig === nothing && return nothing
+        lam, v1 = eig.lambda, eig.v
+    else
+        lam, v1 = m.low.values[1], m.low.vectors[:, 1]
+    end
     gradient || return (lam=lam, grad=nothing)
     npar = length(theta)
     lam > 0 || return (lam=lam, grad=zeros(Float64, npar))
-    v1 = E.vectors[:, 1]
-    grad = _laplace_mode_close(laplace, U, theta, uhat, E, 0.0, v1 .* transpose(v1),
-        zeros(Float64, length(v1)))
+    grad = _laplace_mode_close(laplace, U, theta, uhat, m, 0.0,
+        (w=[1.0], v=[collect(Float64, v1)]), zeros(Float64, length(v1)))
     grad === nothing && return nothing
     return (lam=lam, grad=grad)
+end
+
+"""
+    _laplace_mode_lowest(M, blocks, d)
+
+The eigenpairs of a maximum's curvature `M` (a block matrix on `blocks`, width
+`d`) below `_LAPLACE_MODE_FADE`, the only ones its fade in the unit's
+combination reads (`_laplace_fade_weight` is one above them): from the blocks
+(`_laplace_block_lowest`), or by a dense decomposition where that declines.
+`nothing` where neither gives finite values.
+"""
+function _laplace_mode_lowest(M::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, d::Integer)
+    low = _laplace_block_lowest(M, blocks, _LAPLACE_MODE_FADE)
+    low === nothing || return low
+    E = _ctsem_symeig(_dense_sym(Matrix{Float64}(_laplace_block_dense(M, blocks, d))))
+    all(isfinite, E.values) || return nothing
+    n = count(<(_LAPLACE_MODE_FADE), E.values)
+    return (values=E.values[1:n], vectors=E.vectors[:, 1:n])
 end
 
 """
@@ -1028,7 +1055,10 @@ end
 Unit `U`'s maxima `modes` as their combination reads them
 (`_laplace_mode_sum`), in the soft-direction quadrature's coordinates
 (`_laplace_soft_quadrature_setup`): for each, its point `z0`, the unit objective `g`
-there and its curvature's eigendecomposition `E` (`geos`); for each pair, the
+there, its curvature `M` as a block matrix on `blocks`, that curvature's
+factorization `F` (`nothing` where it is not positive definite) and its
+eigenpairs below the fade's band, `low` (`_laplace_mode_lowest`) (`geos`);
+for each pair, the
 valley between them, the lowest `g` on the segment between them
 (`valley[k, j]`), and where on the segment it lies, as the fraction of the way
 from `k` (`vt[k, j]`). Numbers only, since the setup's closures hold the
@@ -1037,6 +1067,13 @@ calling task's workspace. `nothing` where a mode's quadratic cannot be had.
 The valley is the segment's minimum (`_laplace_segment_valley`), and at it the
 valley's derivative is the one its point gives with the point held, which is
 what `_laplace_mode_sum_gradient!` reads.
+
+Never a whole eigendecomposition: the fade reads only the eigenvalues under
+its band, and its reverse their vectors and solves with `M`. A nested unit's
+curvature made dense and decomposed by Jacobi was its width cubed at each
+maximum and evaluation: on the affect pilot's persons in studies, two
+maxima in a study of 200 persons was Jacobi on 2,200 coordinates, and a fit's
+setup took 44 minutes, mostly on one thread.
 """
 function _laplace_modes_geometry(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, modes::AbstractVector)
@@ -1048,9 +1085,17 @@ function _laplace_modes_geometry(laplace::CTSEMLaplaceObjective, U::Integer,
         st === nothing && return nothing
         k == 1 && (objf = st.objf)
         g = Float64(st.objf(st.z0).value)
-        M0 = _dense_sym(Matrix{Float64}(st.curvf(st.z0)))
-        (isfinite(g) && all(isfinite, M0)) || return nothing
-        geos[k] = (z0=copy(st.z0), g=g, E=_ctsem_symeig(M0))
+        # A copy: the curvature is the slot's scratch.
+        M0 = _laplace_copy_blockmatrix(st.curvb(st.z0))
+        for D in M0.diag
+            _laplace_symmetrise!(D)
+        end
+        (isfinite(g) && all(D -> all(isfinite, D), M0.diag) &&
+            all(row -> all(C -> all(isfinite, C), row), M0.coupling)) || return nothing
+        low = _laplace_mode_lowest(M0, st.blocks, length(st.z0))
+        low === nothing && return nothing
+        geos[k] = (z0=copy(st.z0), g=g, M=M0, blocks=st.blocks,
+            F=_soft_shifted_factor(M0, st.blocks, 0.0), low=low)
     end
     valley = fill(Inf, K, K)
     vt = zeros(Float64, K, K)
@@ -1191,24 +1236,29 @@ function _laplace_mode_point_gradient(laplace::CTSEMLaplaceObjective, U::Integer
 end
 
 """
-    _laplace_mode_close(laplace, U, theta, uhat, E, gbar, Mbar, zbar)
+    _laplace_mode_close(laplace, U, theta, uhat, geo, gbar, Mbar, zbar)
 
 The derivative with respect to the raw vector of `gbar g + tr(Mbar M) +
 zbar' z0` at unit `U`'s mode `uhat`, in the soft-direction quadrature's coordinates
-(`_laplace_soft_quadrature_setup`), the mode's own movement included: the soft-direction quadrature's
-closing pass (`_laplace_soft_quadrature_close!`), `E` the curvature's eigendecomposition
-there (`_laplace_modes_geometry`). `nothing` where the curvature is not
-positive definite, a pass fails or the result is not finite.
+(`_laplace_soft_quadrature_setup`), the mode's own movement included: the
+soft-direction quadrature's closing pass on the curvature's factorization
+(`_soft_factored_close!`), `geo` the mode's entry in `_laplace_modes_geometry`.
+`Mbar` is `sum_i w_i v_i v_i'`, as `(w, v)`, the fading eigenvalues' seeds
+(`_laplace_mode_seeds`), and the mode's movement is a block solve: nothing
+`d x d` is formed. `nothing` where the curvature is not positive definite, a
+pass fails or the result is not finite.
 """
 function _laplace_mode_close(laplace::CTSEMLaplaceObjective, U::Integer,
-    theta::Vector{Float64}, uhat::Vector{Float64}, E, gbar::Float64,
-    Mbar::AbstractMatrix{Float64}, zbar::AbstractVector{Float64})
-    all(>(0), E.values) || return nothing
+    theta::Vector{Float64}, uhat::Vector{Float64}, geo, gbar::Float64, Mbar,
+    zbar::AbstractVector{Float64})
+    geo.F === nothing && return nothing
     st = _laplace_soft_quadrature_setup(laplace, U, theta, uhat)
     st === nothing && return nothing
-    M0inv = _dense_spectral(E.vectors, [1 / l for l in E.values])
-    grad = _laplace_soft_quadrature_close!(zeros(Float64, length(theta)), st.G, st.z0, gbar,
-        Matrix{Float64}(Mbar), collect(Float64, zbar), M0inv)
+    Gamma = _SoftGamma(0.0, geo.F, geo.blocks, collect(Float64, Mbar.w),
+        Vector{Float64}[collect(Float64, v) for v in Mbar.v],
+        Vector{Float64}[collect(Float64, v) for v in Mbar.v])
+    grad = _soft_factored_close!(zeros(Float64, length(theta)), st.G, st.z0, gbar,
+        Gamma, collect(Float64, zbar), geo.F, geo.blocks)
     (grad === nothing || !all(isfinite, grad)) && return nothing
     return grad
 end
