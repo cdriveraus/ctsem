@@ -107,8 +107,11 @@
 }
 
 # The flat subspace of an identifiability report: each coordinate's share of
-# it, and the coordinates with zero curvature alone, which nothing the
-# likelihood computes reads. The share is taken on an orthonormal basis of the
+# it, the coordinates with zero curvature alone, which nothing the likelihood
+# computes reads, and the coordinates whose transform the optimiser reported
+# saturated (`saturated`). A saturated coordinate also has zero curvature, but
+# its parameter is read: it sits at the end of its range, as a variability
+# parameter `log1p_exp(param)` estimated at 0 does. The share is taken on an orthonormal basis of the
 # directions' loadings, since the report lists a direction twice where two
 # eigenvalues are equal to roundoff (two own variances at zero on the dis model
 # came as four directions) and keeps only the loadings above
@@ -118,7 +121,8 @@
   dirs <- Filter(function(d) is.null(d$partial), id$directions)
   params <- setdiff(unique(unlist(lapply(dirs, function(d) as.character(d$parameters)))),
     held)
-  out <- list(share = stats::setNames(numeric(), character()), unread = character())
+  out <- list(share = stats::setNames(numeric(), character()), unread = character(),
+    saturated = character())
   if (!length(params)) return(out)
   V <- matrix(0, length(params), length(dirs), dimnames = list(params, NULL))
   for (j in seq_along(dirs)) {
@@ -131,10 +135,12 @@
   q <- qr(V, tol = 1e-6)
   Q <- qr.Q(q)[, seq_len(q$rank), drop = FALSE]
   out$share <- stats::setNames(pmin(rowSums(Q^2), 1), params)
-  out$unread <- unique(unlist(lapply(dirs, function(d) {
+  out$saturated <- intersect(params,
+    unique(unlist(lapply(dirs, function(d) as.character(d$saturated)))))
+  out$unread <- setdiff(unique(unlist(lapply(dirs, function(d) {
     p <- setdiff(as.character(d$parameters), held)
     if (length(p) == 1L && isTRUE(abs(d$relative) < 1e-12)) p
-  })))
+  }))), out$saturated)
   out
 }
 
@@ -246,9 +252,12 @@
   mp <- mp[order(-share[mp], match(mp, coords))]
   if (length(mp)) {
     unread <- intersect(mp, flat$unread)
-    rest <- setdiff(mp, unread)
+    atend <- intersect(mp, flat$saturated)
+    rest <- setdiff(mp, c(unread, atend))
     finding('parameters', 'parameters', mp, paste(c(
       if (length(unread)) paste(.ctReduceAre(unread), 'not read by the likelihood'),
+      if (length(atend)) paste(.ctReduceAre(atend), if (length(atend) > 1L)
+        'at the ends of their ranges' else 'at the end of its range'),
       if (length(rest)) paste(.ctReduceAre(rest), 'not determined by the data')),
       collapse = '; '), if (candidates) .ctReduceParameterChanges(fit, model, mp))
   }
