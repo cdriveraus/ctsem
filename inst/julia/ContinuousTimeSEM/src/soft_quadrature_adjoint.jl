@@ -478,9 +478,15 @@ function _laplace_soft_quadrature_reverse(laplace::CTSEMLaplaceObjective, z0::Ve
     Ld = indefinite ? NaN : logdet(F0)
     E0 = _ctsem_symeig(M0)
     lam, V = E0.values, E0.vectors
-    if D > 1 && (lam[2] - lam[1]) <= 1e-3 * max(abs(lam[2]), 1.0)
+    # The pair hand-off's share and its derivatives in the two smallest
+    # eigenvalues, as the forward rule (`_laplace_soft_pair_weight`).
+    k2 = (D > 1 && !indefinite) ? _laplace_soft_partner(lam) : 0
+    slope = k2 > 0 ? _laplace_soft_pair_slope(lam[1], lam[k2], lo,
+        laplace.soft_pair_lo, laplace.soft_pair_hi) : (p=1.0, d1=0.0, d2=0.0)
+    pair = (p=slope.p, d1=slope.d1, d2=slope.d2, k2=k2)
+    (indefinite && D > 1 && (lam[2] - lam[1]) <= 1e-3 * max(abs(lam[2]), 1.0)) &&
         return nothing
-    end
+    p = pair.p
     lam1 = lam[1]
     v1 = V[:, 1]
     # The smoothstep weight and its derivative.
@@ -493,15 +499,17 @@ function _laplace_soft_quadrature_reverse(laplace::CTSEMLaplaceObjective, z0::Ve
         (1 - (3 * s^2 - 2 * s^3), -(6 * s - 6 * s^2) / (hi - lo))
     end
     lap = indefinite ? NaN : g0 - Ld / 2
+    # The Laplace term floored as the nodes are, which the rule hands off to.
+    Tc = indefinite ? NaN : lap - _laplace_soft_floor_logratio_sum(lam) / 2
     thetabar = zeros(Float64, npar)
     gbar0 = 0.0
     Mbar0 = zeros(Float64, D, D)
     zbar0 = zeros(Float64, D)
     M0inv = _dense_spectral(V, [1 / l for l in lam])
-    if iszero(w) && !indefinite
-        # The forward rule returns the plain term.
-        gbar0 = 1.0
-        Mbar0 .-= M0inv ./ 2
+    if (iszero(w) || iszero(p)) && !indefinite
+        # The forward rule returns the plain term, or the floored one, handed off.
+        gbar0 = p + _soft_handoff_dense!(Mbar0, M0inv, V, lam, lap, Tc, pair)
+        Mbar0 .-= (p / 2) .* M0inv
         return _laplace_soft_quadrature_close!(thetabar, G, z0, gbar0, Mbar0, zbar0, M0inv)
     end
     lam1c = max(lam1, 1.0)
@@ -570,7 +578,7 @@ function _laplace_soft_quadrature_reverse(laplace::CTSEMLaplaceObjective, z0::Ve
     if indefinite
         lapbar, softbar, wbar = 0.0, 1.0, 0.0
     else
-        lapbar, softbar, wbar = 1 - w, w, soft - lap
+        lapbar, softbar, wbar = p * (1 - w), p * w, p * (soft - lap)
     end
     lam1bar = wbar * wp
     lam1 > 1.0 && (lam1bar -= softbar / (2 * lam1c))
@@ -653,8 +661,39 @@ function _laplace_soft_quadrature_reverse(laplace::CTSEMLaplaceObjective, z0::Ve
     if !indefinite
         gbar0 += lapbar
         Mbar0 .-= (lapbar / 2) .* M0inv
+        gbar0 += _soft_handoff_dense!(Mbar0, M0inv, V, lam, lap + w * (soft - lap), Tc,
+            pair)
     end
     return _laplace_soft_quadrature_close!(thetabar, G, z0, gbar0, Mbar0, zbar0, M0inv)
+end
+
+"""
+The floored Laplace term's share of a term the rule hands off
+(`_laplace_soft_pair_weight`), `(1 - p) T_c`, `T_c = lap - sum_k phi(lambda_k)
+/ 2` with `phi` the node floor's log ratio (`_soft_floor_logratio`), and the
+share's own derivative, `(R - T_c) (d1 dlambda1 + d2 dlambda2)`, `R` the
+rule's value and `dlambda_k = v_k' dM v_k`, added to the mode curvature's
+cotangent `Mbar` (dense; `V`, `lam` its eigenpairs); returns the share of the
+mode value's cotangent. Nothing where the rule holds the whole term.
+"""
+function _soft_handoff_dense!(Mbar::Matrix{Float64}, M0inv::Matrix{Float64},
+    V::Matrix{Float64}, lam::Vector{Float64}, R::Float64, Tc::Float64, pair)
+    isone(pair.p) && return 0.0
+    q = 1 - pair.p
+    Mbar .-= (q / 2) .* M0inv
+    D = size(V, 1)
+    top = _laplace_soft_node_curvature_floor_top()
+    c = R - Tc
+    for k in eachindex(lam)
+        a = lam[k] < top ? -(q / 2) * _soft_floor_logratio_slope(lam[k]) : 0.0
+        k == 1 && (a += c * pair.d1)
+        k == pair.k2 && (a += c * pair.d2)
+        iszero(a) && continue
+        @inbounds for jj in 1:D, ii in 1:D
+            Mbar[ii, jj] += a * V[ii, k] * V[jj, k]
+        end
+    end
+    return q
 end
 
 """The mode's own terms, then its dependence: `dz0 = M0^-1 d(grad g)/dtheta`."""
@@ -705,8 +744,11 @@ function _laplace_soft_quadrature_reverse_factored(laplace::CTSEMLaplaceObjectiv
     eig = _soft_smallest_eigenpair(M0, blocks, F0)
     eig === nothing && return nothing
     lam1, v1 = eig.lambda, eig.v
-    _soft_second_above(M0, blocks, v1, lam1, _soft_degenerate_bar(lam1)) ||
-        return nothing
+    # The pair hand-off (`_soft_pair`), its share and derivatives, as the
+    # forward rule.
+    pair = _soft_pair(M0, blocks, v1, lam1, lo, laplace.soft_pair_lo, laplace.soft_pair_hi)
+    pair === nothing && return nothing
+    p = pair.p
     w, wp = if lam1 <= lo
         (1.0, 0.0)
     elseif lam1 >= hi
@@ -715,11 +757,20 @@ function _laplace_soft_quadrature_reverse_factored(laplace::CTSEMLaplaceObjectiv
         s = (lam1 - lo) / (hi - lo)
         (1 - (3 * s^2 - 2 * s^3), -(6 * s - 6 * s^2) / (hi - lo))
     end
-    iszero(w) && return plain()
+    (iszero(w) && isone(p)) && return plain()
     top = _laplace_soft_node_curvature_floor_top()
     centre = _soft_centre_floor(M0, blocks, v1, lam1, top)
     centre === nothing && return nothing
     lap = g0 - F0.logdet / 2
+    # The Laplace term floored as the nodes are, which the rule hands off to.
+    Tc = lap - ((lam1 < top ? _soft_floor_logratio(lam1) : 0.0) + centre.logratio) / 2
+    if iszero(w) || iszero(p)
+        # The plain term, or the floored one, handed off: `p lap + (1 - p) T_c`.
+        hand = _soft_handoff_factored(lap, Tc, pair, v1, lam1, centre)
+        return _soft_factored_close!(thetabar, G, z0, 1.0,
+            _SoftGamma(-p / 2 + hand.c0, F0, blocks, hand.wts, hand.as, hand.as),
+            zeros(Float64, D), F0, blocks)
+    end
     lam1c = max(lam1, 1.0)
     xs, ws = _gauss_hermite(3)
     nn = length(xs)
@@ -773,7 +824,7 @@ function _laplace_soft_quadrature_reverse_factored(laplace::CTSEMLaplaceObjectiv
     total = sum(ex)
     soft = peak + log(total) - log(lam1c) / 2 - log(pi) / 2
     # Reverse.
-    lapbar, softbar, wbar = 1 - w, w, soft - lap
+    lapbar, softbar, wbar = p * (1 - w), p * w, p * (soft - lap)
     lam1bar = wbar * wp
     lam1 > 1.0 && (lam1bar -= softbar / (2 * lam1c))
     gbar0, c0 = 0.0, 0.0
@@ -838,9 +889,42 @@ function _laplace_soft_quadrature_reverse_factored(laplace::CTSEMLaplaceObjectiv
     y1 === nothing && return nothing
     gbar0 += lapbar
     c0 -= lapbar / 2
+    if !isone(p)
+        hand = _soft_handoff_factored(lap + w * (soft - lap), Tc, pair, v1, lam1, centre)
+        gbar0 += 1 - p
+        c0 += hand.c0
+        append!(cw, hand.wts)
+        append!(ca, hand.as)
+    end
     G0 = _SoftGamma(c0, F0, blocks, vcat([lam1bar, -1.0], cw), vcat([v1, y1], ca),
         vcat([v1, v1], ca))
     return _soft_factored_close!(thetabar, G, z0, gbar0, G0, zbar0, F0, blocks)
+end
+
+"""
+`_soft_handoff_dense!` in the factorized reverse's terms: the floored Laplace
+term's share of the mode curvature's cotangent as a multiple of its inverse
+(`c0`) and low-rank terms (`wts`, each on `as[k] as[k]'`): its floored
+eigenvalues', those below the floor's top (`lambda1` and `centre`'s), and the
+hand-off's own derivative, `(R - T_c) (d1 v1 v1' + d2 v2 v2')`.
+"""
+function _soft_handoff_factored(R::Float64, Tc::Float64, pair, v1::Vector{Float64},
+    lam1::Float64, centre)
+    q = 1 - pair.p
+    top = _laplace_soft_node_curvature_floor_top()
+    wts, as = Float64[], Vector{Float64}[]
+    c = R - Tc
+    a1 = (lam1 < top ? -(q / 2) * _soft_floor_logratio_slope(lam1) : 0.0) + c * pair.d1
+    iszero(a1) || (push!(wts, a1); push!(as, v1))
+    for (k, mu) in enumerate(centre.values)
+        push!(wts, -(q / 2) * _soft_floor_logratio_slope(mu))
+        push!(as, centre.vectors[:, k])
+    end
+    if !iszero(c * pair.d2)
+        push!(wts, c * pair.d2)
+        push!(as, pair.v2)
+    end
+    return (c0=-q / 2, wts=wts, as=as)
 end
 
 """

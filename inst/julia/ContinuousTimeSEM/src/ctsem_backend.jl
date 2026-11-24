@@ -4154,8 +4154,12 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
                 append!(spent.history.gain, finish.history.gain)
                 append!(spent.history.alpha, finish.history.alpha)
                 append!(spent.history.value, finish.history.value)
-                if finish.hessian !== nothing
-                    held_hessian = finish.hessian
+                # A finish that ended on the jump holds the exact Hessian its
+                # walk was on (`held`), at the point the run goes on from.
+                H0 = finish.hessian !== nothing ? finish.hessian :
+                    hasproperty(finish, :held) ? finish.held : nothing
+                if H0 !== nothing
+                    held_hessian = H0
                     held_hessian_at = finish.hessian_at
                 end
                 finish = nothing

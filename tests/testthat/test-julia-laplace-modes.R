@@ -266,14 +266,20 @@ test_that("a search where an anchored run stops joins the maxima it missed", {
     "  again = C._ctsem_take_search_modes!(o, x, found)",
     "  jumped = C._ctsem_take_jump_modes!(o, x, (units = found.units[1:1],",
     "    point_units = found.units[1:1], point_values = reshape(found.modes[1], :, 1)), found)",
+    "  nfound = length(found.units)",
+    "  known1 = sum(length, o.known)",
+    "  near = C._ctsem_take_jump_modes!(o, x, (units = found.units[1:1],",
+    "    point_units = found.units[1:1],",
+    "    point_values = reshape(found.modes[1] .+ 1e-6, :, 1)), found)",
+    "  nearfound = length(found.units) - nfound",
     "  C.ctsem_laplace_clear_anchors!(o)",
     "  [full, held, t.change, t.units, after, again.units, several,",
-    "    length(found.units), sum(length, o.known) - known0, jumped]",
+    "    nfound, known1 - known0, jumped, near, nearfound]",
     "end", sep = "\n"))
   r <- as.numeric(ctsem:::.ctJuliaCall("Main._ctsem_test_take", objective,
     ctsem:::.ctJuliaNumericVector(x)))
   names(r) <- c("full", "held", "change", "units", "after", "again", "several",
-    "found", "known", "jumped")
+    "found", "known", "jumped", "near", "nearfound")
   # Held to one maximum each -- the one of largest weight, which is not always
   # of largest term -- the units with several score otherwise.
   expect_gte(r[["several"]], 3)
@@ -288,6 +294,11 @@ test_that("a search where an anchored run stops joins the maxima it missed", {
   expect_equal(r[["again"]], 0)
   # A jump's mode already known adds nothing for the run to go on with.
   expect_equal(r[["jumped"]], 0)
+  # Nor does one off a known maximum in its last digits, as a jump met again
+  # a step later brings: it is kept as known, so the caller does not resume
+  # on it, and the search at the point finds the maxima the run holds.
+  expect_equal(r[["nearfound"]], 1)
+  expect_equal(r[["near"]], 0)
 })
 
 # The sign fixture made wide: six loadings, each random by person, so each unit

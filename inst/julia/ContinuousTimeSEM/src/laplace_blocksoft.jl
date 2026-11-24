@@ -140,8 +140,10 @@ end
 Leaf `st.b`'s correction `S_b` at `base` (the file's header), `Mb` its
 curvature there on the subtree's blocks: the soft rule's term on its objective
 given the rest (`_laplace_soft_quadrature_term` with the leaf's closures) less
-its Laplace term. Also whether the rule scored it (`flagged`) or floored a
-degenerate pair (`floor`), and its Laplace logdet. `nothing` where its value
+its Laplace term. Also whether the rule scored it (`flagged`; a near-tied
+pair is handed off to the floored Laplace term, still flagged) or floored a
+degenerate pair where the curvature does not factor (`floor`), and its Laplace
+logdet. `nothing` where its value
 is not finite or `Mb` does not factor.
 """
 function _laplace_leaf_soft(laplace::CTSEMLaplaceObjective, U::Integer,
@@ -544,8 +546,9 @@ function _laplace_block_soft_gradient!(row::Vector{Float64},
         row .*= (1 - w)
     end
     w > 0 || return all(isfinite, row)
-    # The whole unit's term as its rule scored it: integrated, floored where
-    # its softest pair is degenerate (alike members usually are), or plain
+    # The whole unit's term as its rule scored it: integrated, or handed off to
+    # the floored Laplace term where its softest pair is near a tie (alike
+    # members usually are; both flagged), floored, or plain
     # Laplace above the band; each differentiated as such.
     inner = _laplace_unit_objective_gradient(laplace, U, theta, Ls, z, aws)
     ok, ld, _, _ = _laplace_block_factor(M, blocks)
