@@ -910,6 +910,7 @@ function _tan_laplace_seeded(laplace::CTSEMLaplaceObjective, U::Integer,
     D::AbstractMatrix{Float64}, nd::Int; mode::Int=_HYBRID_PROFILE)
     _tan_moves_factor(laplace.objective.params.hybrid, D, nd) &&
         throw(ArgumentError(_TAN_MOVES_FACTOR))
+    _CTSEM_OPCOUNT.sweep_seeded[] += length(members)
     ctx = _tan_laplace_context(laplace, values, mode)
     r = _tan_laplace_seeded!(ctx, laplace, Int(U), values, Ls, u, members, D, nd, mode)
     r === nothing && throw(ArgumentError(_TAN_NOT_JACOBIAN))

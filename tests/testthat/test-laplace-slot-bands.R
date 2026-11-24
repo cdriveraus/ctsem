@@ -100,3 +100,43 @@ test_that("a fit's pool width leaves the other routes working", {
   expect_s3_class(chk, "ctLaplaceCheck")
   expect_true(all(is.finite(unlist(chk[vapply(chk, is.numeric, logical(1))]))))
 })
+
+# A member under nested blocks takes its trace terms over its whole chain of
+# blocks in one factor (`_laplace_member_chain_trace!`): here a person's four
+# intercepts and their study's four drift effects, one jet a person, where the
+# block-by-block assembly took four.
+test_that("a nested unit's trace terms take each person's chain at once", {
+  skip_without_julia()
+  withr::local_options(ctsem.laplace.hybrid = FALSE)
+  spec <- suppressMessages(ctFit(.nested_panel_data(2, 6, 8),
+    .nested_panel_model("intercepts"), backend = "julia", intoverpop = "laplace",
+    fit = FALSE, cores = 1))
+  obj <- ctsem:::.ctJuliaObjective(spec, layer = TRUE)
+  x <- rep(0, ctsem:::.ctBackendNpar(spec))
+  for (lv in spec$laplace$levels) x[lv$sd_index[lv$sd_index > 0]] <- -1
+  r <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaEval(paste(
+    "(o, x) -> ContinuousTimeSEM._ctsem_with_max_chunks(1) do",
+    "  C = ContinuousTimeSEM",
+    "  C.ctsem_laplace_evaluate(o, x; gradient = false)",
+    "  C.ctsem_reset_opcounts!()",
+    "  r = C.ctsem_laplace_evaluate(o, x; gradient = true)",
+    "  jets = C.ctsem_opcounts().sweep_jet",
+    "  f = C._laplace_subject_gradients_forward(o, x)",
+    "  theta = C._laplace_extend(o, collect(Float64, x))",
+    "  Ls = C._laplace_popchols(theta, o.spec)",
+    "  lam = map(eachindex(o.units.members)) do U",
+    "    M = C._laplace_copy_blockmatrix(C._laplace_unit_curvature(o, U, theta, Ls, o.modes[U]))",
+    "    blocks = o.units.blocks[U]",
+    "    C._soft_smallest_eigenpair(M, blocks, C._soft_shifted_factor(M, blocks, 0.0)).lambda",
+    "  end",
+    "  (g = r.gradient, ref = vec(sum(f.scores; dims = 1)), jets = jets,",
+    "   members = sum(length, o.units.members), units = length(o.units.members),",
+    "   hard = all(>=(o.soft_blend_hi), lam))",
+    "end", sep = "\n"))(obj, ctsem:::.ctJuliaNumericVector(x)))
+  expect_equal(r$units, 2)
+  # Every unit above the soft-direction quadrature's band, so the plain
+  # assembly runs.
+  expect_true(isTRUE(r$hard))
+  expect_equal(as.numeric(r$g), as.numeric(r$ref), tolerance = 1e-8)
+  expect_equal(r$jets, r$members)
+})
