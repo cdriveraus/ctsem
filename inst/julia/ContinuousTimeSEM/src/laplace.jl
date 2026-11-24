@@ -5447,8 +5447,8 @@ the objective takes as the unit's) and `alt_modes[U]` (the rest kept).
 Returns the modes, their primals, the term, each mode's share `pi` and the
 weight `route` of its own gradient, what the closing passes are seeded with
 (`gbar`, `Mbar` and the valley points `pts`; `_laplace_mode_sum_gradient!`)
-with each curvature's eigendecomposition `E`, the index of the records'
-mode, `dominant`, and the fades (`fades`, with each mode's `f`), which the
+with each mode's geometry `E` (`_laplace_modes_geometry`), the index of the
+records' mode, `dominant`, and the fades (`fades`, with each mode's `f`), which the
 refined fit ranks its own rules by (`_placed_mode_sum!`). Where one share
 takes the whole term, every mode is returned all the same, for that ranking;
 the unit's gradient is then the one mode's.
@@ -5485,10 +5485,12 @@ function _laplace_mode_sum(laplace::CTSEMLaplaceObjective, U::Integer,
     fade, dscale = _LAPLACE_MODE_FADE, _LAPLACE_MODE_DEPTH
     # Each mode's curvature eigenvalues, and its valleys towards the others
     # below its height, each over its scale.
-    x = Vector{Float64}[geo.geos[k].E.values ./ fade for k in 1:K]
+    # Only those under the fade's band, where the weight is less than one.
+    x = Vector{Float64}[geo.geos[k].low.values ./ fade for k in 1:K]
     y = Vector{Float64}[Float64[j == k ? Inf :
         max(geo.geos[k].g - geo.valley[k, j], 0.0) / dscale for j in 1:K] for k in 1:K]
-    f = Float64[prod(_laplace_fade_weight, x[k]) * prod(_laplace_fade_weight, y[k])
+    f = Float64[prod(_laplace_fade_weight, x[k]; init=1.0) *
+        prod(_laplace_fade_weight, y[k]; init=1.0)
         for k in 1:K]
     live = findall(>(0), f)
     if isempty(live)
@@ -5512,7 +5514,7 @@ function _laplace_mode_sum(laplace::CTSEMLaplaceObjective, U::Integer,
     seeds = _laplace_mode_seeds(fades,
         _laplace_mode_fade_coefficients(shares, f, terms, value))
     return (value=value, modes=modes, prims=prims, pi=pi, route=route,
-        E=Any[g.E for g in geo.geos], gbar=seeds.gbar, Mbar=seeds.Mbar, pts=seeds.pts,
+        E=Any[g for g in geo.geos], gbar=seeds.gbar, Mbar=seeds.Mbar, pts=seeds.pts,
         dominant=lead, terms=terms, fades=fades)
 end
 
@@ -5595,7 +5597,8 @@ end
 
 What `_laplace_mode_sum_gradient!`'s closing passes are seeded with for
 `sum_k c_k d log f_k`, the maxima's fades (`_laplace_mode_sum`'s `fades`)
-weighted by `c`: each eigenvalue's `Mbar`, and each valley's point with the
+weighted by `c`: each mode's fading eigenvalues' `Mbar`, as weights and
+vectors (`w`, `v`; `_laplace_mode_close`), and each valley's point with the
 weight its depth's derivative takes (`gbar`, `pts`). The mode sum weights
 them by `f_k dT/df_k` of its terms, the refined fit's combination of placed
 rules by the same of their integrals (`_laplace_mode_fade_coefficients`).
@@ -5610,14 +5613,13 @@ function _laplace_mode_seeds(fades, c::Vector{Float64})
     for k in fades.live
         ck = c[k]
         ck == 0 && continue
-        E = geo.geos[k].E
+        low = geo.geos[k].low
         for i in eachindex(x[k])
             sx = _laplace_fade_slope(x[k][i])
             sx == 0 && continue
-            v = E.vectors[:, i]
-            Mbar[k] === nothing && (Mbar[k] = zeros(Float64, length(v), length(v)))
-            Mbar[k] .+= (ck * sx / (_laplace_fade_weight(x[k][i]) * fade)) .*
-                (v .* transpose(v))
+            Mbar[k] === nothing && (Mbar[k] = (w=Float64[], v=Vector{Float64}[]))
+            push!(Mbar[k].w, ck * sx / (_laplace_fade_weight(x[k][i]) * fade))
+            push!(Mbar[k].v, low.vectors[:, i])
         end
         for j in 1:K
             sy = _laplace_fade_slope(y[k][j])
@@ -5655,7 +5657,7 @@ function _laplace_mode_sum_gradient!(row::Vector{Float64},
     fill!(row, 0.0)
     part = zeros(Float64, length(theta))
     K = length(s.modes)
-    zbar = [zeros(Float64, length(s.E[k].values)) for k in 1:K]
+    zbar = [zeros(Float64, length(s.E[k].z0)) for k in 1:K]
     saved_mode = laplace.modes[U]
     saved_floored = laplace.logdet_floored[U]
     saved_repaired = laplace.mode_repaired[U]
@@ -5685,9 +5687,8 @@ function _laplace_mode_sum_gradient!(row::Vector{Float64},
             Mb = s.Mbar[k]
             (s.gbar[k] != 0 || Mb !== nothing || any(!iszero, zbar[k])) || continue
             records!(k)
-            D = length(zbar[k])
             gr = _laplace_mode_close(laplace, U, theta, s.modes[k], s.E[k], s.gbar[k],
-                Mb === nothing ? zeros(Float64, D, D) : Mb, zbar[k])
+                Mb === nothing ? (w=Float64[], v=Vector{Float64}[]) : Mb, zbar[k])
             gr === nothing && return false
             row .+= gr
         end
