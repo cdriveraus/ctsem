@@ -313,6 +313,17 @@ test_that('ctPar() and quoted cells give the other fields', {
   expect_same_model(
     ctModelLavaan('a ~ age\n a ~~ a\n eta1 =~ y1\n eta2 =~ y2\n eta1 ~ a*eta2'),
     ctModelLavaan('eta1 =~ y1\n eta2 =~ y2\n eta1 ~ a*eta2\n a ~~ a\n a ~ age'))
+  # including a label that a statement about a parameter gives
+  below <- ctModelLavaan('eta1 =~ y1\n start ~~ 0*start\n start ~ age\n T0m_eta1 ~ start*1')
+  expect_same_model(below,
+    ctModelLavaan('eta1 =~ y1\n T0m_eta1 ~ start*1\n start ~~ 0*start\n start ~ age'))
+  expect_identical(cell(below, 'T0MEANS', 1)$param, 'start')
+  expect_identical(as.character(cell(below, 'T0MEANS', 1)$indvarying), 'FALSE')
+  expect_identical(as.character(cell(below, 'T0MEANS', 1)$age_effect), 'TRUE')
+  expect_same_model(ctModelMplus('eta1 BY y1; start@0; [T0m_eta1] (start);'),
+    ctModelMplus('eta1 BY y1; [T0m_eta1] (start); start@0;'))
+  expect_error(ctModelLavaan('eta1 =~ y1\n a ~ b*1\n b ~ a*1'),
+    'no statement gives')
 })
 
 test_that('indicator types', {
