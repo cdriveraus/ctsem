@@ -665,16 +665,20 @@ A unit's exact curvature at its anchor, the first matrix of its anchored
 solves (`_laplace_newton_unit_mode`'s `warm`): `anchor`, at the coordinates
 `anchor_at` (empty: none), and `last`, the curvature the unit's last solve
 ended on, at `last_at`, which becomes the anchor's when the anchors move to
-that solve's modes (`_laplace_anchor_curvatures!`).
+that solve's modes (`_laplace_anchor_curvatures!`). A nested unit of several
+members keeps its members' shares instead (`anchor_elems`, `last_elems`:
+`_LaplacePSR1`'s `E`), never the `d x d` matrix.
 """
 mutable struct CTSEMUnitCurvature
     anchor::Matrix{Float64}
     anchor_at::Vector{Float64}
     last::Matrix{Float64}
     last_at::Vector{Float64}
+    anchor_elems::Vector{Float64}
+    last_elems::Vector{Float64}
 end
 CTSEMUnitCurvature() = CTSEMUnitCurvature(Matrix{Float64}(undef, 0, 0), Float64[],
-    Matrix{Float64}(undef, 0, 0), Float64[])
+    Matrix{Float64}(undef, 0, 0), Float64[], Float64[], Float64[])
 
 """
     CTSEMLaplaceObjective(objective, spec; inner_maxiter, inner_tol)
@@ -860,21 +864,29 @@ end
 """
 The exact curvature unit `U`'s solve ended on (`final`, its mode in
 `laplace.modes[U]`), kept for the anchors to take (`_laplace_anchor_curvatures!`):
-a unit held dense (`_laplace_dense_unit`) with one maximum, the units an
-anchored solve starts on a kept matrix (`_laplace_newton_unit_mode`). Before the primal reads `final`,
+a unit with one maximum, the units an anchored solve starts on a kept matrix
+(`_laplace_newton_unit_mode`); dense where the unit is held dense
+(`_laplace_dense_unit`), its members' shares otherwise (`_LaplacePSR1`). Before the primal reads `final`,
 which shifts a curvature it repairs in place.
 """
 function _laplace_keep_final!(laplace::CTSEMLaplaceObjective, U::Integer, final)
     _LAPLACE_WARM_CURVATURE[] || return nothing
     c = laplace.curvatures[U]
     d = laplace.units.dims[U]
-    if final === nothing || d == 0 || !_laplace_dense_unit(laplace, U) ||
-            !isempty(laplace.alt_modes[U]) || !isempty(laplace.block_modes[U])
+    if final === nothing || d == 0 || !isempty(laplace.alt_modes[U]) ||
+            !isempty(laplace.block_modes[U])
         resize!(c.last_at, 0)
         return nothing
     end
-    size(c.last) == (d, d) || (c.last = Matrix{Float64}(undef, d, d))
-    _laplace_dense_of!(c.last, final, laplace.units.blocks[U])
+    blocks = laplace.units.blocks[U]
+    if _laplace_dense_unit(laplace, U)
+        size(c.last) == (d, d) || (c.last = Matrix{Float64}(undef, d, d))
+        _laplace_dense_of!(c.last, final, blocks)
+    else
+        P = _laplace_psr1_init!(_laplace_psr1(laplace, U, blocks), final, blocks)
+        resize!(c.last_elems, length(P.E))
+        copyto!(c.last_elems, P.E)
+    end
     resize!(c.last_at, d)
     copyto!(c.last_at, laplace.modes[U])
     return nothing
@@ -894,6 +906,7 @@ function _laplace_anchor_curvatures!(laplace::CTSEMLaplaceObjective)
         a = U <= length(laplace.anchors) ? laplace.anchors[U] : Float64[]
         if !isempty(a) && c.last_at == a
             c.anchor, c.last = c.last, c.anchor
+            c.anchor_elems, c.last_elems = c.last_elems, c.anchor_elems
             c.anchor_at, c.last_at = c.last_at, c.anchor_at
             resize!(c.last_at, 0)
         elseif c.anchor_at != a
@@ -3087,7 +3100,9 @@ block is structurally zero rather than merely small.
 function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
     aws, positions, into::Union{Nothing,AbstractVector}=nothing,
-    mode::Int=_laplace_hmode(laplace), hook=nothing) where {T}
+    mode::Int=_laplace_hmode(laplace), hook=nothing;
+    chains::Union{Nothing,Vector{Float64}}=nothing,
+    chain_start::Union{Nothing,Vector{Int}}=nothing) where {T}
     spec = laplace.spec
     units = laplace.units
     members = units.members[U]
@@ -3113,6 +3128,10 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
         isfinite(loglik) || return loglik
         _hybrid_after!(hook, m, ws, u)
         _laplace_loading_chain!(acc_inner, grad, spec, Ls, offsets)
+        # Each member's own share on its chain's coordinates, for the inner
+        # solve's partitioned updates (`_LaplacePSR1`).
+        chains === nothing || _laplace_member_chain_out!(chains, chain_start[m], grad,
+            spec, Ls)
         return loglik
     end
 
@@ -3244,9 +3263,12 @@ exactly the coupling that makes the study a single integration unit.
 """
 function _laplace_unit_objective_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
-    aws, into::Union{Nothing,AbstractVector}=nothing) where {T}
+    aws, into::Union{Nothing,AbstractVector}=nothing;
+    chains::Union{Nothing,Vector{Float64}}=nothing,
+    chain_start::Union{Nothing,Vector{Int}}=nothing) where {T}
     result = _laplace_unit_loglik_gradient(laplace, U, values, Ls, u, aws,
-        eachindex(laplace.units.members[U]), into)
+        eachindex(laplace.units.members[U]), into; chains=chains,
+        chain_start=chain_start)
     isfinite(result.value) || return result
     inner = result.gradient
     @inbounds for a in eachindex(u)
@@ -4298,6 +4320,206 @@ gradient at most half the one it left."""
     maximum(abs, after; init=0.0) <= maximum(abs, before; init=0.0) / 2
 
 """
+`_laplace_loading_chain!` for one member into its own slice of `out`, from
+`start + 1`: its gradient on its chain's coordinates, a level at a time in
+level order (`_LaplacePSR1`'s layout).
+"""
+function _laplace_member_chain_out!(out::Vector{Float64}, start::Int,
+    grad::AbstractVector, spec::CTSEMLaplaceSpec, Ls)
+    pos = start
+    @inbounds for l in eachindex(spec.levels)
+        level = spec.levels[l]
+        k = nrandomeffects(level)
+        r = nlatent(level)
+        (k == 0 || r == 0) && continue
+        L = Ls[l]
+        for q in 1:r
+            a = 0.0
+            for pp in 1:k
+                a += L[pp, q] * Float64(grad[level.re_index[pp]])
+            end
+            out[pos + q] = a
+        end
+        pos += r
+    end
+    return out
+end
+
+"""
+The inner solve's partitioned SR1 (Griewank and Toint) for a nested unit of
+several members, whose curvature is block-sparse and a rank-one update would
+fill: `M = I + sum_m E_m`, `E_m` member `m`'s share of minus the log
+likelihood's Hessian on its chain's coordinates (`S`, a level at a time, from
+`start[m] + 1`; `E_m` column-major from `estart[m] + 1`), each updated by SR1
+from its own secant, the change in its own gradient (`_laplace_member_chain_out!`).
+From an exact curvature each `E_m` takes its member's entries, an entry several
+members share (a study's own block) split between them equally: the sum is the
+curvature, and the split only where each update starts. `blockof` and `place`
+say where a coordinate sits in the block matrix. Slot scratch throughout, so a
+solve allocates nothing for it.
+"""
+struct _LaplacePSR1
+    S::Vector{Int}
+    start::Vector{Int}
+    estart::Vector{Int}
+    E::Vector{Float64}
+    pcur::Vector{Float64}
+    ptry::Vector{Float64}
+    blockof::Vector{Int}
+    place::Vector{Int}
+    sbuf::Vector{Float64}
+    rbuf::Vector{Float64}
+end
+
+function _laplace_psr1(laplace::CTSEMLaplaceObjective, U::Integer,
+    blocks::Vector{CTSEMLaplaceBlock})
+    spec = laplace.spec
+    members = laplace.units.members[U]
+    offsets = laplace.units.offsets[U]
+    nm = length(members)
+    d = laplace.units.dims[U]
+    start = _laplace_scratch_vector!(laplace, Int, nm + 1, :psr1_start)
+    estart = _laplace_scratch_vector!(laplace, Int, nm + 1, :psr1_estart)
+    start[1] = 0
+    estart[1] = 0
+    widest = 0
+    for m in 1:nm
+        n = 0
+        for level in spec.levels
+            k, r = nrandomeffects(level), nlatent(level)
+            (k == 0 || r == 0) && continue
+            n += r
+        end
+        start[m + 1] = start[m] + n
+        estart[m + 1] = estart[m] + n * n
+        widest = max(widest, n)
+    end
+    S = _laplace_scratch_vector!(laplace, Int, start[nm + 1], :psr1_S)
+    for m in 1:nm
+        pos = start[m]
+        for (l, level) in enumerate(spec.levels)
+            k, r = nrandomeffects(level), nlatent(level)
+            (k == 0 || r == 0) && continue
+            for q in 1:r
+                S[pos + q] = offsets[m][l] + q
+            end
+            pos += r
+        end
+    end
+    blockof = _laplace_scratch_vector!(laplace, Int, d, :psr1_blockof)
+    place = _laplace_scratch_vector!(laplace, Int, d, :psr1_place)
+    for (b, block) in enumerate(blocks), i in 1:block.size
+        blockof[block.offset + i] = b
+        place[block.offset + i] = i
+    end
+    return _LaplacePSR1(S, start, estart,
+        _laplace_scratch_vector!(laplace, Float64, estart[nm + 1], :psr1_E),
+        _laplace_scratch_vector!(laplace, Float64, start[nm + 1], :psr1_p1),
+        _laplace_scratch_vector!(laplace, Float64, start[nm + 1], :psr1_p2),
+        blockof, place,
+        _laplace_scratch_vector!(laplace, Float64, widest, :psr1_s),
+        _laplace_scratch_vector!(laplace, Float64, widest, :psr1_r))
+end
+
+# The ancestor slot of block `a` among inner block `b`'s ancestors.
+@inline function _psr1_slot(blocks::Vector{CTSEMLaplaceBlock}, b::Int, a::Int)
+    t = findfirst(==(a), blocks[b].ancestors)
+    t === nothing && error("blocks $(b) and $(a) are not inner and ancestor")
+    return t
+end
+
+"""Each member's `E_m` from the exact curvature `M` (`_LaplacePSR1`)."""
+function _laplace_psr1_init!(P::_LaplacePSR1, M::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock})
+    nm = length(P.start) - 1
+    @inbounds for m in 1:nm
+        s0, e0 = P.start[m], P.estart[m]
+        n = P.start[m + 1] - s0
+        for j in 1:n, i in 1:n
+            c1, c2 = P.S[s0 + i], P.S[s0 + j]
+            b1, b2 = P.blockof[c1], P.blockof[c2]
+            p1, p2 = P.place[c1], P.place[c2]
+            v = if b1 == b2
+                M.diag[b1][p1, p2] - (p1 == p2 ? 1.0 : 0.0)
+            elseif b1 < b2
+                M.coupling[b1][_psr1_slot(blocks, b1, b2)][p1, p2]
+            else
+                M.coupling[b2][_psr1_slot(blocks, b2, b1)][p2, p1]
+            end
+            P.E[e0 + (j - 1) * n + i] = v / length(blocks[min(b1, b2)].members)
+        end
+    end
+    return P
+end
+
+"""`I + sum_m E_m` into the block matrix `M` (`_LaplacePSR1`)."""
+function _laplace_psr1_assemble!(M::CTSEMBlockMatrix{Float64}, P::_LaplacePSR1,
+    blocks::Vector{CTSEMLaplaceBlock})
+    for (b, block) in enumerate(blocks)
+        D = M.diag[b]
+        fill!(D, 0.0)
+        @inbounds for t in 1:block.size
+            D[t, t] = 1.0
+        end
+        for t in eachindex(block.ancestors)
+            fill!(M.coupling[b][t], 0.0)
+        end
+    end
+    nm = length(P.start) - 1
+    @inbounds for m in 1:nm
+        s0, e0 = P.start[m], P.estart[m]
+        n = P.start[m + 1] - s0
+        for j in 1:n, i in 1:n
+            c1, c2 = P.S[s0 + i], P.S[s0 + j]
+            b1, b2 = P.blockof[c1], P.blockof[c2]
+            v = P.E[e0 + (j - 1) * n + i]
+            if b1 == b2
+                M.diag[b1][P.place[c1], P.place[c2]] += v
+            elseif b1 < b2
+                M.coupling[b1][_psr1_slot(blocks, b1, b2)][P.place[c1], P.place[c2]] += v
+            end
+        end
+    end
+    return M
+end
+
+"""
+Each member's SR1 update from the accepted step `u - uold` and the change in
+its own gradient, `pold - pnew` its secant (`_LaplacePSR1`); skipped, as the
+dense update is, where the denominator is too small to trust.
+"""
+function _laplace_psr1_update!(P::_LaplacePSR1, u::Vector{Float64},
+    uold::Vector{Float64}, pnew::Vector{Float64}, pold::Vector{Float64})
+    nm = length(P.start) - 1
+    sv, rv = P.sbuf, P.rbuf
+    @inbounds for m in 1:nm
+        s0, e0 = P.start[m], P.estart[m]
+        n = P.start[m + 1] - s0
+        for i in 1:n
+            sv[i] = u[P.S[s0 + i]] - uold[P.S[s0 + i]]
+        end
+        den = 0.0
+        rn = 0.0
+        sn = 0.0
+        for i in 1:n
+            acc = 0.0
+            for j in 1:n
+                acc += P.E[e0 + (j - 1) * n + i] * sv[j]
+            end
+            rv[i] = (pold[s0 + i] - pnew[s0 + i]) - acc
+            den += rv[i] * sv[i]
+            rn += rv[i]^2
+            sn += sv[i]^2
+        end
+        abs(den) > 1e-8 * sqrt(rn * sn) || continue
+        for j in 1:n, i in 1:n
+            P.E[e0 + (j - 1) * n + i] += rv[i] * rv[j] / den
+        end
+    end
+    return P
+end
+
+"""
     _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start)
 
 Newton on `g_U` from one given starting point, reporting what happened rather
@@ -4367,6 +4589,12 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     # is read from an updated matrix: like a repaired one, it does not measure
     # the distance to the mode.
     sr1 = _LAPLACE_INNER_SR1[] && d > 0 && _laplace_dense_unit(laplace, U)
+    # The rest of the nested units update member by member (`_LaplacePSR1`).
+    psr1 = _LAPLACE_INNER_SR1[] && d > 0 && !sr1
+    P = psr1 ? _laplace_psr1(laplace, U, blocks) : nothing
+    pcur = psr1 ? P.pcur : _LAPLACE_NO_CHAINS
+    ptry = psr1 ? P.ptry : _LAPLACE_NO_CHAINS
+    cstart = psr1 ? P.start : _LAPLACE_NO_CHAIN_START
     # Taken whether or not they are used: a local that is either `nothing` or
     # an array makes every call on it dynamic. Empty where SR1 does not run: a
     # nested unit's `d` by `d` was a gigabyte a slot for a study of thousands.
@@ -4394,6 +4622,14 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
             exact = false
         end
     end
+    if warm && psr1 && _LAPLACE_WARM_CURVATURE[]
+        wc = laplace.curvatures[U]
+        if length(wc.anchor_elems) == length(P.E) && length(wc.anchor_at) == d &&
+                wc.anchor_at == start
+            copyto!(P.E, wc.anchor_elems)
+            exact = false
+        end
+    end
     # Whether the step that reached `u` was taken on an exact curvature, and
     # whether `fstore` holds an exact, unrepaired factorization, whose solve
     # measures the distance left. A start was reached by no step: from any
@@ -4412,11 +4648,11 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     # (`_laplace_unit_primal`'s `given`): one curvature a unit fewer.
     final = nothing
     current = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws,
-        gcur)
+        gcur; chains=psr1 ? pcur : nothing, chain_start=psr1 ? cstart : nothing)
     if !isfinite(current.value) && any(!iszero, u)
         fill!(u, 0.0)
         current = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws,
-            gcur)
+            gcur; chains=psr1 ? pcur : nothing, chain_start=psr1 ? cstart : nothing)
     end
     for iteration in 1:laplace.inner_maxiter
         iterations = iteration
@@ -4432,7 +4668,7 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         # curvature at this point, which is then the term's curvature too, so
         # the measurement costs nothing more. An SR1 solve first walks on, a
         # gradient a step, until its own step is under `inner_tol` (below).
-        small && !sr1 && (exact = true)
+        small && !(sr1 || psr1) && (exact = true)
         # The band, not just the slot. Each Newton step builds the curvature
         # over every block, and that is the bulk of the primal -- passing only
         # the slot alone left the count at its default, so the whole mode solve
@@ -4446,9 +4682,11 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
             Mx = _laplace_unit_curvature(laplace, U, values, Ls, u;
                 into=Mwork)::CTSEMBlockMatrix{Float64}
             sr1 && _laplace_dense_of!(B, Mx, blocks)
+            psr1 && _laplace_psr1_init!(P, Mx, blocks)
             Mx
         else
-            _laplace_block_from_dense!(Mwork, B, blocks)
+            psr1 ? _laplace_psr1_assemble!(Mwork, P, blocks) :
+                _laplace_block_from_dense!(Mwork, B, blocks)
             Mwork
         end
         used_exact = exact
@@ -4497,11 +4735,13 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
             end
             utry .= u .+ step
             trial = _laplace_unit_objective_gradient(laplace, U, values, Ls,
-                utry, aws, gtry)
+                utry, aws, gtry; chains=psr1 ? ptry : nothing,
+                chain_start=psr1 ? cstart : nothing)
             if isfinite(trial.value)
                 if _laplace_floor_step_taken(current.gradient, gtry)
                     u, utry = utry, u
                     gcur, gtry = gtry, gcur
+                    pcur, ptry = ptry, pcur
                     current = trial
                     stepped_exact = true
                     continue
@@ -4521,11 +4761,13 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         for _ in 1:20
             utry .= u .+ scale .* step
             trial = _laplace_unit_objective_gradient(laplace, U, values, Ls,
-                utry, aws, gtry)
+                utry, aws, gtry; chains=psr1 ? ptry : nothing,
+                chain_start=psr1 ? cstart : nothing)
             evaluable |= isfinite(trial.value)
             if isfinite(trial.value) && trial.value >= current.value - 1e-12
                 u, utry = utry, u
                 gcur, gtry = gtry, gcur
+                pcur, ptry = ptry, pcur
                 current = trial
                 accepted = true
                 break
@@ -4553,6 +4795,13 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
                     B[i, j] += rvec[i] * rvec[j] / den
                 end
             end
+            exact = scale < 1 ||
+                maximum(abs, gcur) > maximum(abs, gtry) / 2
+        end
+        if accepted && psr1
+            # `pcur` the accepted point's members' gradients, `ptry` the ones
+            # it left, as `gcur` and `gtry`.
+            _laplace_psr1_update!(P, u, utry, pcur, ptry)
             exact = scale < 1 ||
                 maximum(abs, gcur) > maximum(abs, gtry) / 2
         end
@@ -8903,6 +9152,11 @@ Hessian at eight threads (dev1).
 """
 _laplace_level_chol_solves(spec, Ls, dL) = !_laplace_square_roots(spec) ? nothing :
     [[Ls[l] \ dL[l][t] for t in eachindex(dL[l])] for l in eachindex(dL)]
+
+# The partitioned inner solve's buffers for a solve that runs none: never
+# written, so one of each is enough.
+const _LAPLACE_NO_CHAINS = Float64[]
+const _LAPLACE_NO_CHAIN_START = Int[]
 
 # `levelsweeps` for a unit that needs none: never written, so one is enough.
 const _LAPLACE_NO_LEVELSWEEPS = Vector{Matrix{Float64}}[]
