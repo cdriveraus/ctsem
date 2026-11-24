@@ -73,8 +73,9 @@
 #'   \item the first indicator of each process has a loading of 1, and other
 #'     loadings that are written are free;
 #'   \item each process has a free auto effect, free noise variance and free
-#'     initial mean and variance, and the noise and initial states of
-#'     different processes are correlated;
+#'     initial mean and variance, the initial mean varies between subjects,
+#'     and the noise and initial states of different processes are
+#'     correlated;
 #'   \item each indicator has a free residual variance and a free intercept,
 #'     and the intercept varies between subjects;
 #'   \item process intercepts are zero, and residuals of different indicators
@@ -88,7 +89,10 @@
 #' its value at the next occasion. A time dependent predictor acts as an
 #' impulse, shifting the process at each occasion by the effect times the
 #' value of the predictor. A covariance that is not written, or is fixed to
-#' zero, is zero in the fitted model.
+#' zero, is zero in the fitted model. Processes and indicators need different
+#' names. \code{\link{ctModel}} lets a process take the name of its indicator,
+#' but here a statement such as \code{y1 ~ 1} would then not say which of the
+#' two it is about.
 #'
 #' \strong{lavaan style.}
 #' \preformatted{
@@ -155,20 +159,48 @@
 #' the intercept and the effect of \code{eta2} vary. Fix or label a term with
 #' \code{0.5*eta2}, \code{"a"*eta2} or \code{NA*eta1}.
 #'
-#' \strong{Parameter names.} Every parameter has a name, either your label or
-#' the default shown by \code{print(model)} and \code{ctModelSyntax}:
-#' \code{drift_eta1} and \code{drift_eta1_eta2} (effect of eta2 on eta1),
-#' \code{diff_eta1} and \code{diff_eta2_eta1}, \code{cint_eta1},
-#' \code{T0m_eta1}, \code{T0var_eta1}, \code{lambda_y2_eta1}, \code{mm_y1},
-#' \code{mvary1}, \code{mvary2_y1} and \code{td_eta1_x}. In all three styles a
-#' statement with a parameter name on the left is about that parameter. For
-#' example \code{T0m_eta1 ~ 0*1} (lavaan) or \code{[T0m_eta1@0];} (Mplus)
-#' fixes an initial mean, and \code{drift_eta1 ~~ drift_eta1} or
-#' \code{drift_eta1;} makes an auto effect vary between subjects. A value
-#' given this way is on the scale ctsem stores, which for variances is a
-#' standard deviation. Values given with \code{~~}, \code{WITH} or a variance
-#' statement are variances. A name that is close to a parameter name and
-#' matches none is taken as a misspelling and refused.
+#' \strong{Parameter names.} Every parameter has a name, whether it is free or
+#' fixed. The name is your label if you gave one, and otherwise a default name
+#' made from the matrix and the variables. For processes \code{eta1} and
+#' \code{eta2}, indicators \code{y1} and \code{y2} and a time dependent
+#' predictor \code{x}, the default names are:
+#' \tabular{ll}{
+#'   \code{drift_eta1} \tab auto effect of eta1 \cr
+#'   \code{drift_eta1_eta2} \tab effect of eta2 on eta1 \cr
+#'   \code{td_eta1_x} \tab effect of x on eta1 \cr
+#'   \code{cint_eta1} \tab intercept of eta1 \cr
+#'   \code{diff_eta1} \tab noise sd of eta1 \cr
+#'   \code{diff_eta2_eta1} \tab noise covariance of eta1 and eta2 \cr
+#'   \code{T0m_eta1} \tab initial mean of eta1 \cr
+#'   \code{T0var_eta1} \tab initial sd of eta1 \cr
+#'   \code{T0var_eta2_eta1} \tab initial covariance of eta1 and eta2 \cr
+#'   \code{lambda_y2_eta1} \tab loading of y2 on eta1 \cr
+#'   \code{mm_y1} \tab intercept of y1 \cr
+#'   \code{mvary1} \tab residual sd of y1 \cr
+#'   \code{mvary2_y1} \tab residual covariance of y1 and y2 \cr
+#' }
+#' \code{print(model)} shows the names of the free parameters.
+#'
+#' A statement with a parameter's name on the left is about that parameter.
+#' This is how the styles reach the initial state, and random effects and
+#' predictors of any parameter. For the initial mean of eta1, in lavaan style:
+#' \preformatted{
+#' T0m_eta1 ~ 0*1          # fix it at 0
+#' T0m_eta1 ~ start*1      # give it the label start
+#' start ~~ start          # it varies between subjects
+#' start ~~ 0*start        # it is the same for every subject
+#' start ~ age             # it depends on age
+#' }
+#' In Mplus style these are \code{[T0m_eta1@0];}, \code{[T0m_eta1] (start);},
+#' \code{start;}, \code{start@0;} and \code{start ON age;}. In formula style
+#' they are \code{T0m_eta1 ~ 0}, \code{T0m_eta1 ~ "start"*1},
+#' \code{start ~ (1 | id)}, \code{start ~ (0 | id)} and \code{start ~ age}.
+#' The default name can be used in place of the label, and the statements can
+#' come in any order. A value given to a parameter by name is on the scale
+#' ctsem uses for that cell, which for a variance is a standard deviation.
+#' Values given with \code{~~}, \code{WITH} or a variance statement are
+#' variances. A name that is close to a parameter name and matches none is
+#' taken as a misspelling and refused.
 #'
 #' \strong{Other ctsem features.} Wherever a label can be written, a quoted
 #' ctsem cell or a \code{\link{ctPar}} call can be written instead, such as

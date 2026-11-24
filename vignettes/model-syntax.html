@@ -128,8 +128,8 @@ border-radius: 0 4px 4px 0;
   <li><a href="#what-is-estimated-when-you-say-nothing" id="toc-what-is-estimated-when-you-say-nothing">What is estimated when you say nothing</a></li>
   <li><a href="#fitting" id="toc-fitting">Fitting</a></li>
   <li><a href="#fixing-freeing-and-labelling" id="toc-fixing-freeing-and-labelling">Fixing, freeing and labelling</a></li>
-  <li><a href="#differences-between-subjects" id="toc-differences-between-subjects">Differences between subjects</a></li>
   <li><a href="#parameter-names" id="toc-parameter-names">Parameter names</a></li>
+  <li><a href="#differences-between-subjects" id="toc-differences-between-subjects">Differences between subjects</a></li>
   <li><a href="#indicators-that-are-not-gaussian" id="toc-indicators-that-are-not-gaussian">Indicators that are not Gaussian</a></li>
   <li><a href="#more-than-one-level" id="toc-more-than-one-level">More than one level</a></li>
   <li><a href="#other-ctsem-features" id="toc-other-ctsem-features">Other ctsem features</a></li>
@@ -213,6 +213,7 @@ border-radius: 0 4px 4px 0;
 </div>
 <p>A regression between processes is an effect over time. In a continuous time model (<code>type = &#39;ct&#39;</code>, the default) <code>eta1 ~ eta2</code> is the effect of the current level of <code>eta2</code> on the rate of change of <code>eta1</code>, an entry of the drift matrix. With <code>type = &#39;dt&#39;</code> it is the effect of <code>eta2</code> at one occasion on <code>eta1</code> at the next. The effect of a process on itself is its auto effect.</p>
 <p>The two kinds of effect are on different scales. An autoregression of 0.8 over one unit of time corresponds to a continuous time auto effect of log(0.8), about -0.22, and a positive auto effect in continuous time is a process that grows. Mplus writes a discrete time effect with its lag, <code>eta1 ON eta1&amp;1</code>. <code>ctModelMplus()</code> reads that with <code>type = &#39;dt&#39;</code>, and stops if it meets a lag in a continuous time model.</p>
+<p>Processes and indicators need different names. <code>ctModel()</code> lets a process take the name of its indicator, but in these styles a statement such as <code>Y1 ~ 1</code> would then not say which of the two it is about. A process measured by <code>Y1</code> could be called <code>eta_Y1</code>, for example.</p>
 <p>Printing the model shows what will be estimated.</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>m_lavaan</span>
@@ -269,6 +270,10 @@ border-radius: 0 4px 4px 0;
 <h1 id="what-is-estimated-when-you-say-nothing">What is estimated when you say nothing</h1>
 <p>Loadings, effects between processes and effects of predictors are in the model only if you write them. Everything else follows the defaults of <code>ctModel()</code>.</p>
 <table class="caption-top">
+<colgroup>
+<col style="width: 50%">
+<col style="width: 50%">
+</colgroup>
 <thead>
 <tr class="header">
 <th>Part of the model</th>
@@ -297,28 +302,32 @@ border-radius: 0 4px 4px 0;
 <td>free</td>
 </tr>
 <tr class="even">
-<td>Initial means, variances and covariances of the processes</td>
-<td>free</td>
+<td>Initial means of the processes</td>
+<td>free, and different for each subject</td>
 </tr>
 <tr class="odd">
+<td>Initial variances and covariances of the processes</td>
+<td>free</td>
+</tr>
+<tr class="even">
 <td>Intercepts of the indicators</td>
 <td>free, and different for each subject</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td>Intercepts of the processes</td>
 <td>zero</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td>Residual variances of the indicators</td>
 <td>free</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td>Residual covariances of the indicators</td>
 <td>zero</td>
 </tr>
 </tbody>
 </table>
-<p>Two of these differ from what lavaan or brms users may expect. The intercept of each indicator varies between subjects, because stable differences between people are usually present in repeated measures data. The noise of different processes is also correlated. Both can be switched off, as shown below.</p>
+<p>Some of these differ from what lavaan or brms users may expect. The intercepts of the indicators and the initial means of the processes vary between subjects, because people usually differ in their typical levels and in where they start. The noise of different processes is also correlated. Each of these can be switched off, as shown below.</p>
 <h1 id="fitting">Fitting</h1>
 <p>The model is fitted with <code>ctFit()</code> like any other. The data are in long format with one row per subject and occasion. Here a time dependent predictor <code>TD1</code> affects the first process. A time dependent predictor acts as an impulse. At each occasion the process shifts by the effect times the value of the predictor, and the dynamics carry the shift forward. This is also what <code>d(eta1) ~ TD1</code> means in formula style. The example data set is small, so the fit uses the default priors.</p>
 <div class="cell">
@@ -331,22 +340,22 @@ border-radius: 0 4px 4px 0;
 <span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>fit <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(ctsemtestdat, model, <span class="at">priors =</span> <span class="cn">TRUE</span>, <span class="at">cores =</span> <span class="dv">2</span>)</span>
 <span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a><span class="fu">round</span>(<span class="fu">summary</span>(fit)<span class="sc">$</span>popmeans, <span class="dv">2</span>)</span>
 <span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                  mean   sd  2.5%   50% 97.5%  mode</span></span>
-<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; T0m_eta1         4.45 1.52  1.63  4.50  7.47  4.38</span></span>
-<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; T0m_eta2         7.78 3.64  0.55  7.85 14.79  7.65</span></span>
-<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_eta1      -0.48 0.26 -1.17 -0.43 -0.14 -0.42</span></span>
-<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_eta1_eta2 -0.08 0.14 -0.36 -0.08  0.21 -0.09</span></span>
-<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_eta2_eta1  0.39 0.23 -0.07  0.39  0.84  0.39</span></span>
-<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_eta2      -0.35 0.20 -0.83 -0.31 -0.10 -0.31</span></span>
-<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; diff_eta1        1.99 0.20  1.62  1.98  2.40  1.98</span></span>
-<span id="cb4-17"><a href="#cb4-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; diff_eta2_eta1   0.47 0.10  0.28  0.48  0.68  0.48</span></span>
-<span id="cb4-18"><a href="#cb4-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; diff_eta2        2.42 0.21  2.02  2.41  2.85  2.41</span></span>
-<span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; mvarY1           0.60 0.09  0.45  0.60  0.79  0.60</span></span>
-<span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; mvarY2           0.46 0.14  0.25  0.44  0.76  0.45</span></span>
-<span id="cb4-21"><a href="#cb4-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; mm_Y1            1.99 1.53 -1.09  1.99  4.91  2.05</span></span>
-<span id="cb4-22"><a href="#cb4-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; mm_Y2            2.00 3.62 -5.06  1.98  9.12  2.12</span></span>
-<span id="cb4-23"><a href="#cb4-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; td_eta1_TD1      1.08 0.25  0.61  1.08  1.57  1.09</span></span></code></pre></div>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; T0m_eta1         4.30 1.48  1.40  4.32  7.19  4.38</span></span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; T0m_eta2         7.44 3.41  0.61  7.49 14.01  7.65</span></span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_eta1      -0.47 0.27 -1.08 -0.42 -0.13 -0.42</span></span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_eta1_eta2 -0.10 0.14 -0.37 -0.10  0.17 -0.09</span></span>
+<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_eta2_eta1  0.39 0.24 -0.04  0.39  0.87  0.39</span></span>
+<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_eta2      -0.37 0.21 -0.91 -0.32 -0.10 -0.31</span></span>
+<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; diff_eta1        1.98 0.20  1.62  1.96  2.42  1.98</span></span>
+<span id="cb4-17"><a href="#cb4-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; diff_eta2_eta1   0.48 0.10  0.27  0.48  0.68  0.48</span></span>
+<span id="cb4-18"><a href="#cb4-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; diff_eta2        2.41 0.21  2.03  2.40  2.86  2.41</span></span>
+<span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; mvarY1           0.61 0.09  0.45  0.60  0.81  0.60</span></span>
+<span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; mvarY2           0.46 0.14  0.26  0.44  0.78  0.45</span></span>
+<span id="cb4-21"><a href="#cb4-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; mm_Y1            2.13 1.45 -0.73  2.12  5.01  2.05</span></span>
+<span id="cb4-22"><a href="#cb4-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; mm_Y2            2.33 3.42 -4.26  2.26  9.20  2.12</span></span>
+<span id="cb4-23"><a href="#cb4-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; td_eta1_TD1      1.09 0.26  0.58  1.10  1.59  1.09</span></span></code></pre></div>
 </div>
-<p>The rows are named by parameter. <code>drift_eta1_eta2</code> is the effect of <code>eta2</code> on <code>eta1</code>, and <code>td_eta1_TD1</code> the effect of the predictor. These names are also how you refer to a parameter inside the syntax, which a later section uses.</p>
+<p>The rows are named by parameter. <code>drift_eta1_eta2</code> is the effect of <code>eta2</code> on <code>eta1</code>, and <code>td_eta1_TD1</code> the effect of the predictor. These names can also be used in the syntax, as the section on parameter names shows.</p>
 <h1 id="fixing-freeing-and-labelling">Fixing, freeing and labelling</h1>
 <p>A number fixes a parameter, a name labels it, and two parameters with the same label are equal.</p>
 <div class="cell">
@@ -397,70 +406,9 @@ border-radius: 0 4px 4px 0;
 <p>Formula style has no <code>~~</code>, so variances and covariances are set through their parameter names, which are described below. In lavaan and Mplus style a value given with <code>~~</code>, <code>WITH</code> or a variance statement is a variance or covariance, and only zero can be given for a covariance.</p>
 <p>A covariance that is not written, or is fixed to zero, is zero in the fitted model. With <code>Y1 ~~ Y2</code> and <code>Y2 ~~ Y3</code> in the model, <code>Y1</code> and <code>Y3</code> have a residual covariance of zero.</p>
 <p>As in lavaan and Mplus, a label on the first indicator of a process names its loading and leaves it at 1. Write <code>NA*Y1 + a*Y1</code> to free and label it, or <code>Y1* (a)</code> in Mplus style.</p>
-<h1 id="differences-between-subjects">Differences between subjects</h1>
-<p>Any parameter can vary between subjects, and any parameter can depend on a subject level covariate (a time independent predictor). In lavaan and Mplus style, label the parameter and then write statements about the label.</p>
-<div class="cell">
-<div class="sourceCode cell-code" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>m <span class="ot">&lt;-</span> <span class="fu">ctModelLavaan</span>(<span class="st">&#39;</span></span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="st">  eta1 =~ Y1</span></span>
-<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="st">  eta2 =~ Y2</span></span>
-<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="st">  eta1 ~ eta1 + cross*eta2</span></span>
-<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="st">  eta2 ~ eta2</span></span>
-<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a><span class="st">  cross ~~ cross               # the cross effect varies between subjects</span></span>
-<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a><span class="st">  cross ~ TI1                  # and depends on the covariate TI1</span></span>
-<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a><span class="st">&#39;</span>)</span></code></pre></div>
-</div>
-<p>Mplus users will recognise a random slope, followed by a between level model. Inside <code>%BETWEEN%</code> (or <code>level: 2</code> in lavaan style) the name of an indicator stands for its intercept.</p>
-<div class="cell">
-<div class="sourceCode cell-code" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>m_mplus <span class="ot">&lt;-</span> <span class="fu">ctModelMplus</span>(<span class="st">&#39;</span></span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="st">  eta1 BY Y1;</span></span>
-<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="st">  eta2 BY Y2;</span></span>
-<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="st">  cross | eta1 ON eta2;</span></span>
-<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a><span class="st">  eta2 ON eta2;</span></span>
-<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a><span class="st">  %BETWEEN%</span></span>
-<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a><span class="st">  cross ON TI1;</span></span>
-<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a><span class="st">&#39;</span>)</span>
-<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a><span class="fu">all.equal</span>(m<span class="sc">$</span>pars, m_mplus<span class="sc">$</span>pars)</span>
-<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span>
-<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a><span class="co"># intercepts that depend on TI1, and no random intercept for Y2</span></span>
-<span id="cb9-13"><a href="#cb9-13" aria-hidden="true" tabindex="-1"></a>m_between <span class="ot">&lt;-</span> <span class="fu">ctModelMplus</span>(<span class="st">&#39;</span></span>
-<span id="cb9-14"><a href="#cb9-14" aria-hidden="true" tabindex="-1"></a><span class="st">  eta1 BY Y1;</span></span>
-<span id="cb9-15"><a href="#cb9-15" aria-hidden="true" tabindex="-1"></a><span class="st">  eta2 BY Y2;</span></span>
-<span id="cb9-16"><a href="#cb9-16" aria-hidden="true" tabindex="-1"></a><span class="st">  %BETWEEN%</span></span>
-<span id="cb9-17"><a href="#cb9-17" aria-hidden="true" tabindex="-1"></a><span class="st">  Y1 Y2 ON TI1;</span></span>
-<span id="cb9-18"><a href="#cb9-18" aria-hidden="true" tabindex="-1"></a><span class="st">  Y2@0;</span></span>
-<span id="cb9-19"><a href="#cb9-19" aria-hidden="true" tabindex="-1"></a><span class="st">&#39;</span>)</span></code></pre></div>
-</div>
-<p>In formula style, random effects are written as in lme4 and brms. A term such as <code>(eta2 | id)</code> lets the effect of <code>eta2</code> vary over <code>id</code>. Predictors of a parameter go in a formula of their own, with the parameter on the left.</p>
-<div class="cell">
-<div class="sourceCode cell-code" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>m_formula <span class="ot">&lt;-</span> <span class="fu">ctModelFormula</span>(</span>
-<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>  Y1 <span class="sc">~</span> eta1,</span>
-<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>  Y2 <span class="sc">~</span> eta2,</span>
-<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">d</span>(eta1) <span class="sc">~</span> eta1 <span class="sc">+</span> <span class="st">&quot;cross&quot;</span><span class="sc">*</span>eta2 <span class="sc">+</span> (eta2 <span class="sc">|</span> id),</span>
-<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">d</span>(eta2) <span class="sc">~</span> eta2,</span>
-<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>  cross <span class="sc">~</span> TI1)</span>
-<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a><span class="fu">all.equal</span>(m<span class="sc">$</span>pars, m_formula<span class="sc">$</span>pars)</span>
-<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
-</div>
-<p>A formula for a parameter can say everything about it. <code>1</code> estimates it, a number fixes it, <code>(1 | id)</code> makes it vary, <code>(0 | id)</code> stops it varying, and <code>s()</code> gives a smooth effect of a covariate.</p>
-<div class="cell">
-<div class="sourceCode cell-code" id="cb11"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>m <span class="ot">&lt;-</span> <span class="fu">ctModelFormula</span>(</span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>  Y1 <span class="sc">~</span> eta1,</span>
-<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>  Y2 <span class="sc">~</span> eta2,</span>
-<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">d</span>(eta1) <span class="sc">~</span> eta1 <span class="sc">+</span> eta2,</span>
-<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">d</span>(eta2) <span class="sc">~</span> eta2,</span>
-<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>  drift_eta1_eta2 <span class="sc">~</span> TI1 <span class="sc">+</span> (<span class="dv">1</span> <span class="sc">|</span> id),   <span class="co"># varies, and depends on TI1</span></span>
-<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a>  mm_Y1 <span class="sc">~</span> <span class="fu">s</span>(TI2, <span class="at">k =</span> <span class="dv">5</span>),              <span class="co"># smooth effect on the intercept of Y1</span></span>
-<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a>  mm_Y2 <span class="sc">~</span> (<span class="dv">0</span> <span class="sc">|</span> id))                   <span class="co"># no random intercept for Y2</span></span></code></pre></div>
-</div>
-<p>All random effects in a model are correlated with each other. <code>poprank</code> and <code>popblocks</code> in <code>ctFit()</code> give their covariance a simpler structure.</p>
 <h1 id="parameter-names">Parameter names</h1>
-<p>Every parameter has a name. It is your label if you gave one, and otherwise the default name, which <code>print(model)</code> and <code>summary(fit)</code> show.</p>
+<p>Every parameter has a name, whether it is free or fixed. The name is your label if you gave one, and otherwise a default name made from the matrix and the variables. For processes <code>eta1</code> and <code>eta2</code>, indicators <code>Y1</code> and <code>Y2</code>, and a time dependent predictor <code>TD1</code>, the default names are:</p>
 <table class="caption-top">
-<colgroup>
-<col style="width: 50%">
-<col style="width: 50%">
-</colgroup>
 <thead>
 <tr class="header">
 <th>Parameter</th>
@@ -477,16 +425,32 @@ border-radius: 0 4px 4px 0;
 <td><code>drift_eta1_eta2</code></td>
 </tr>
 <tr class="odd">
-<td>Noise sd of <code>eta1</code>, noise covariance parameter</td>
-<td><code>diff_eta1</code>, <code>diff_eta2_eta1</code></td>
+<td>Effect of <code>TD1</code> on <code>eta1</code></td>
+<td><code>td_eta1_TD1</code></td>
 </tr>
 <tr class="even">
-<td>Process intercept</td>
+<td>Intercept of <code>eta1</code></td>
 <td><code>cint_eta1</code></td>
 </tr>
 <tr class="odd">
-<td>Initial mean, sd, covariance parameter</td>
-<td><code>T0m_eta1</code>, <code>T0var_eta1</code>, <code>T0var_eta2_eta1</code></td>
+<td>Noise sd of <code>eta1</code></td>
+<td><code>diff_eta1</code></td>
+</tr>
+<tr class="even">
+<td>Noise covariance of <code>eta1</code> and <code>eta2</code></td>
+<td><code>diff_eta2_eta1</code></td>
+</tr>
+<tr class="odd">
+<td>Initial mean of <code>eta1</code></td>
+<td><code>T0m_eta1</code></td>
+</tr>
+<tr class="even">
+<td>Initial sd of <code>eta1</code></td>
+<td><code>T0var_eta1</code></td>
+</tr>
+<tr class="odd">
+<td>Initial covariance of <code>eta1</code> and <code>eta2</code></td>
+<td><code>T0var_eta2_eta1</code></td>
 </tr>
 <tr class="even">
 <td>Loading of <code>Y2</code> on <code>eta1</code></td>
@@ -497,34 +461,150 @@ border-radius: 0 4px 4px 0;
 <td><code>mm_Y1</code></td>
 </tr>
 <tr class="even">
-<td>Residual sd of <code>Y1</code>, residual covariance parameter</td>
-<td><code>mvarY1</code>, <code>mvarY2_Y1</code></td>
+<td>Residual sd of <code>Y1</code></td>
+<td><code>mvarY1</code></td>
 </tr>
 <tr class="odd">
-<td>Effect of the time dependent predictor <code>x</code> on <code>eta1</code></td>
-<td><code>td_eta1_x</code></td>
+<td>Residual covariance of <code>Y1</code> and <code>Y2</code></td>
+<td><code>mvarY2_Y1</code></td>
 </tr>
 </tbody>
 </table>
-<p>In all three styles a statement with a parameter name on the left is about that parameter. This reaches the parts of a ctsem model that lavaan, Mplus and brms have no words for, such as the initial state.</p>
+<p>In the name of an effect, the process affected comes first. In the name of a covariance, the variable that comes later in the model comes first. <code>print(model)</code> shows the names of the free parameters, and <code>summary(fit)</code> reports the estimates under the same names.</p>
+<p>A statement with a parameter’s name on the left is about that parameter. This is how the syntax reaches the parts of a ctsem model that lavaan, Mplus and brms have no words for, such as the initial state of a process. The table shows the statements for the initial mean of <code>eta1</code>.</p>
+<table class="caption-top">
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>To</th>
+<th>lavaan style</th>
+<th>Mplus style</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Estimate it</td>
+<td><code>T0m_eta1 ~ 1</code></td>
+<td><code>[T0m_eta1];</code></td>
+</tr>
+<tr class="even">
+<td>Fix it at 0</td>
+<td><code>T0m_eta1 ~ 0*1</code></td>
+<td><code>[T0m_eta1@0];</code></td>
+</tr>
+<tr class="odd">
+<td>Give it the label <code>start</code></td>
+<td><code>T0m_eta1 ~ start*1</code></td>
+<td><code>[T0m_eta1] (start);</code></td>
+</tr>
+<tr class="even">
+<td>Let it vary between subjects</td>
+<td><code>start ~~ start</code></td>
+<td><code>start;</code></td>
+</tr>
+<tr class="odd">
+<td>Make it the same for every subject</td>
+<td><code>start ~~ 0*start</code></td>
+<td><code>start@0;</code></td>
+</tr>
+<tr class="even">
+<td>Let it depend on the covariate <code>TI1</code></td>
+<td><code>start ~ TI1</code></td>
+<td><code>start ON TI1;</code></td>
+</tr>
+</tbody>
+</table>
+<p>The last three statements could also use the default name <code>T0m_eta1</code>. Once a parameter has a label, <code>print(model)</code> and <code>summary(fit)</code> show the label, and the statements about it can come in any order. In formula style, one formula for the parameter can say all of this, as in <code>T0m_eta1 ~ &quot;start&quot;*1 + TI1 + (0 | id)</code>.</p>
 <div class="cell">
-<div class="sourceCode cell-code" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>m <span class="ot">&lt;-</span> <span class="fu">ctModelLavaan</span>(<span class="st">&#39;</span></span>
-<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="st">  eta1 =~ Y1</span></span>
-<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="st">  T0m_eta1 ~ 0*1                 # initial mean fixed to zero</span></span>
-<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a><span class="st">  drift_eta1 ~~ drift_eta1       # the auto effect varies between subjects</span></span>
-<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a><span class="st">  diff_eta1 ~ TI1                # the noise depends on TI1</span></span>
-<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a><span class="st">&#39;</span>)</span>
-<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a>m_mplus <span class="ot">&lt;-</span> <span class="fu">ctModelMplus</span>(<span class="st">&#39;</span></span>
-<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a><span class="st">  eta1 BY Y1;</span></span>
-<span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a><span class="st">  [T0m_eta1@0];</span></span>
-<span id="cb12-11"><a href="#cb12-11" aria-hidden="true" tabindex="-1"></a><span class="st">  drift_eta1;</span></span>
-<span id="cb12-12"><a href="#cb12-12" aria-hidden="true" tabindex="-1"></a><span class="st">  diff_eta1 ON TI1;</span></span>
-<span id="cb12-13"><a href="#cb12-13" aria-hidden="true" tabindex="-1"></a><span class="st">&#39;</span>)</span>
-<span id="cb12-14"><a href="#cb12-14" aria-hidden="true" tabindex="-1"></a><span class="fu">all.equal</span>(m<span class="sc">$</span>pars, m_mplus<span class="sc">$</span>pars)</span>
-<span id="cb12-15"><a href="#cb12-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
+<div class="sourceCode cell-code" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>m <span class="ot">&lt;-</span> <span class="fu">ctModelLavaan</span>(<span class="st">&#39;</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="st">  eta1 =~ Y1</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="st">  T0m_eta1 ~ start*1           # label the initial mean of eta1 &quot;start&quot;</span></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="st">  start ~~ 0*start             # the same for every subject</span></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="st">  start ~ TI1                  # and depending on TI1</span></span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a><span class="st">  drift_eta1 ~~ drift_eta1     # the auto effect varies between subjects</span></span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a><span class="st">&#39;</span>)</span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a>m_mplus <span class="ot">&lt;-</span> <span class="fu">ctModelMplus</span>(<span class="st">&#39;</span></span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a><span class="st">  eta1 BY Y1;</span></span>
+<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a><span class="st">  [T0m_eta1] (start);</span></span>
+<span id="cb8-12"><a href="#cb8-12" aria-hidden="true" tabindex="-1"></a><span class="st">  start@0;</span></span>
+<span id="cb8-13"><a href="#cb8-13" aria-hidden="true" tabindex="-1"></a><span class="st">  start ON TI1;</span></span>
+<span id="cb8-14"><a href="#cb8-14" aria-hidden="true" tabindex="-1"></a><span class="st">  drift_eta1;</span></span>
+<span id="cb8-15"><a href="#cb8-15" aria-hidden="true" tabindex="-1"></a><span class="st">&#39;</span>)</span>
+<span id="cb8-16"><a href="#cb8-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-17"><a href="#cb8-17" aria-hidden="true" tabindex="-1"></a>m_formula <span class="ot">&lt;-</span> <span class="fu">ctModelFormula</span>(</span>
+<span id="cb8-18"><a href="#cb8-18" aria-hidden="true" tabindex="-1"></a>  Y1 <span class="sc">~</span> eta1,</span>
+<span id="cb8-19"><a href="#cb8-19" aria-hidden="true" tabindex="-1"></a>  <span class="fu">d</span>(eta1) <span class="sc">~</span> eta1,</span>
+<span id="cb8-20"><a href="#cb8-20" aria-hidden="true" tabindex="-1"></a>  T0m_eta1 <span class="sc">~</span> <span class="st">&quot;start&quot;</span><span class="sc">*</span><span class="dv">1</span> <span class="sc">+</span> TI1 <span class="sc">+</span> (<span class="dv">0</span> <span class="sc">|</span> id),</span>
+<span id="cb8-21"><a href="#cb8-21" aria-hidden="true" tabindex="-1"></a>  drift_eta1 <span class="sc">~</span> (<span class="dv">1</span> <span class="sc">|</span> id))</span>
+<span id="cb8-22"><a href="#cb8-22" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-23"><a href="#cb8-23" aria-hidden="true" tabindex="-1"></a><span class="fu">all.equal</span>(m<span class="sc">$</span>pars, m_mplus<span class="sc">$</span>pars)</span>
+<span id="cb8-24"><a href="#cb8-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span>
+<span id="cb8-25"><a href="#cb8-25" aria-hidden="true" tabindex="-1"></a><span class="fu">all.equal</span>(m<span class="sc">$</span>pars, m_formula<span class="sc">$</span>pars)</span>
+<span id="cb8-26"><a href="#cb8-26" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
 </div>
-<p>A value given to a parameter by name is on the scale ctsem stores. For <code>diff_eta1</code>, <code>T0var_eta1</code> and <code>mvarY1</code> that is a standard deviation.</p>
+<p>A value given to a parameter by name is on the scale ctsem uses for that cell. For <code>diff_eta1</code>, <code>T0var_eta1</code> and <code>mvarY1</code> this is a standard deviation, while <code>~~</code>, <code>WITH</code> and an Mplus variance statement take a variance. A covariance cell holds a covariance parameter, which <code>ctCov()</code> computes from a covariance matrix. Fixing it at 0 makes the covariance zero.</p>
+<h1 id="differences-between-subjects">Differences between subjects</h1>
+<p>Any parameter can vary between subjects, and any parameter can depend on a subject level covariate (a time independent predictor). In lavaan and Mplus style, label the parameter and then write statements about the label.</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>m <span class="ot">&lt;-</span> <span class="fu">ctModelLavaan</span>(<span class="st">&#39;</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="st">  eta1 =~ Y1</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="st">  eta2 =~ Y2</span></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="st">  eta1 ~ eta1 + cross*eta2</span></span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a><span class="st">  eta2 ~ eta2</span></span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a><span class="st">  cross ~~ cross               # the cross effect varies between subjects</span></span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a><span class="st">  cross ~ TI1                  # and depends on the covariate TI1</span></span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a><span class="st">&#39;</span>)</span></code></pre></div>
+</div>
+<p>Mplus users will recognise a random slope, followed by a between level model. Inside <code>%BETWEEN%</code> (or <code>level: 2</code> in lavaan style) the name of an indicator stands for its intercept.</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>m_mplus <span class="ot">&lt;-</span> <span class="fu">ctModelMplus</span>(<span class="st">&#39;</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="st">  eta1 BY Y1;</span></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="st">  eta2 BY Y2;</span></span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="st">  cross | eta1 ON eta2;</span></span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="st">  eta2 ON eta2;</span></span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a><span class="st">  %BETWEEN%</span></span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a><span class="st">  cross ON TI1;</span></span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a><span class="st">&#39;</span>)</span>
+<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a><span class="fu">all.equal</span>(m<span class="sc">$</span>pars, m_mplus<span class="sc">$</span>pars)</span>
+<span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span>
+<span id="cb10-11"><a href="#cb10-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-12"><a href="#cb10-12" aria-hidden="true" tabindex="-1"></a><span class="co"># intercepts that depend on TI1, and no random intercept for Y2</span></span>
+<span id="cb10-13"><a href="#cb10-13" aria-hidden="true" tabindex="-1"></a>m_between <span class="ot">&lt;-</span> <span class="fu">ctModelMplus</span>(<span class="st">&#39;</span></span>
+<span id="cb10-14"><a href="#cb10-14" aria-hidden="true" tabindex="-1"></a><span class="st">  eta1 BY Y1;</span></span>
+<span id="cb10-15"><a href="#cb10-15" aria-hidden="true" tabindex="-1"></a><span class="st">  eta2 BY Y2;</span></span>
+<span id="cb10-16"><a href="#cb10-16" aria-hidden="true" tabindex="-1"></a><span class="st">  %BETWEEN%</span></span>
+<span id="cb10-17"><a href="#cb10-17" aria-hidden="true" tabindex="-1"></a><span class="st">  Y1 Y2 ON TI1;</span></span>
+<span id="cb10-18"><a href="#cb10-18" aria-hidden="true" tabindex="-1"></a><span class="st">  Y2@0;</span></span>
+<span id="cb10-19"><a href="#cb10-19" aria-hidden="true" tabindex="-1"></a><span class="st">&#39;</span>)</span></code></pre></div>
+</div>
+<p>In formula style, random effects are written as in lme4 and brms. A term such as <code>(eta2 | id)</code> lets the effect of <code>eta2</code> vary over <code>id</code>. Predictors of a parameter go in a formula of their own, with the parameter on the left.</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb11"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>m_formula <span class="ot">&lt;-</span> <span class="fu">ctModelFormula</span>(</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>  Y1 <span class="sc">~</span> eta1,</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>  Y2 <span class="sc">~</span> eta2,</span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">d</span>(eta1) <span class="sc">~</span> eta1 <span class="sc">+</span> <span class="st">&quot;cross&quot;</span><span class="sc">*</span>eta2 <span class="sc">+</span> (eta2 <span class="sc">|</span> id),</span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">d</span>(eta2) <span class="sc">~</span> eta2,</span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>  cross <span class="sc">~</span> TI1)</span>
+<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a><span class="fu">all.equal</span>(m<span class="sc">$</span>pars, m_formula<span class="sc">$</span>pars)</span>
+<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
+</div>
+<p>A formula for a parameter can say everything about it. <code>1</code> estimates it, a number fixes it, <code>(1 | id)</code> makes it vary, <code>(0 | id)</code> stops it varying, and <code>s()</code> gives a smooth effect of a covariate.</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>m <span class="ot">&lt;-</span> <span class="fu">ctModelFormula</span>(</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>  Y1 <span class="sc">~</span> eta1,</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>  Y2 <span class="sc">~</span> eta2,</span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">d</span>(eta1) <span class="sc">~</span> eta1 <span class="sc">+</span> eta2,</span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">d</span>(eta2) <span class="sc">~</span> eta2,</span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a>  drift_eta1_eta2 <span class="sc">~</span> TI1 <span class="sc">+</span> (<span class="dv">1</span> <span class="sc">|</span> id),   <span class="co"># varies, and depends on TI1</span></span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a>  mm_Y1 <span class="sc">~</span> <span class="fu">s</span>(TI2, <span class="at">k =</span> <span class="dv">5</span>),              <span class="co"># smooth effect on the intercept of Y1</span></span>
+<span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a>  mm_Y2 <span class="sc">~</span> (<span class="dv">0</span> <span class="sc">|</span> id))                   <span class="co"># no random intercept for Y2</span></span></code></pre></div>
+</div>
+<p>All random effects in a model are correlated with each other. <code>poprank</code> and <code>popblocks</code> in <code>ctFit()</code> give their covariance a simpler structure.</p>
 <h1 id="indicators-that-are-not-gaussian">Indicators that are not Gaussian</h1>
 <p>The type of each indicator is an argument. Binary, ordinal, count and censored indicators are available.</p>
 <div class="cell">
