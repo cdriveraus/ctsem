@@ -1306,6 +1306,7 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
       cells$row == row & cells$col == col)
   covcell <- function(matrix, i, j) idx(matrix, max(i, j), min(i, j))
   ishandle <- function(x) x %in% c(nm$labels, cells$auto)
+  deferring <- FALSE
   # The cells a name stands for: a label, a default name, or in a between
   # block an indicator or process for its intercept.
   target <- function(x, between, src) {
@@ -1327,6 +1328,13 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
     if (!length(rows) && between) {
       if (x %in% manifests) rows <- idx('MANIFESTMEANS', match(x, manifests), 1L)
       else if (x %in% latents) rows <- idx('CINT', match(x, latents), 1L)
+    }
+    if (!length(rows) && x %in% nm$labels) {
+      # a label that a statement not yet applied gives to a parameter
+      if (deferring) stop(structure(class = c('ctSynUnnamed', 'error',
+        'condition'), list(message = x, call = NULL)))
+      stop("In '", src, "', ", x, ' is a label that no statement gives to a ',
+        'parameter of this model.', call. = FALSE)
     }
     if (!length(rows)) {
       known <- unique(c(nm$labels, cells$auto[!is.na(cells$auto)]))
@@ -1389,8 +1397,9 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
     }
   }
 
-  # First the statements about variables, which also give the labels, then
-  # those about parameters, so their order in the text does not matter.
+  # First the statements about variables, which give most labels, then those
+  # about parameters, each once the labels it uses are given, so the order of
+  # the statements in the text does not matter.
   later <- list()
   measured <- character()
   steps <- list()
@@ -1454,62 +1463,77 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
   }
   tis <- character()
   smooths <- character()
-  for (s in later) {
-    lev <- if (s$kind %in% c('reg', 'int', 'cov', 'vary')) .ctSynLevel(s$level, ids)
-    between <- !is.null(lev)
-    if (s$kind == 'reg') {
-      rows <- target(s$lhs, between, s$src)
-      if (!is.null(s$smooth)) {
-        call <- tryCatch(parse(text = s$smooth)[[1L]], error = function(e) NULL)
-        if (is.null(call) || length(call) < 2L || !is.name(call[[2L]])) stop(
-          "'", s$src, "': a smooth is written s(covariate) or ",
-          's(covariate, k = 8).', call. = FALSE)
-        pred <- as.character(call[[2L]])
-        smooths[pred] <- paste(deparse(call), collapse = '')
-        spec <- 'TRUE'
-      } else {
-        pred <- s$rhs
-        if (pred %in% cells$vars) stop("'", s$src, "': ", pred, ' is a ',
-          'variable of the model, and a predictor of a parameter is a time ',
-          'independent predictor.', call. = FALSE)
-        tis <- c(tis, pred)
-        # a quoted label or number is a cell with nothing but its name
-        quoted <- if (identical(s$mod$type, 'cell')) s$mod$fields$param
-        spec <- if (is.null(s$mod) || s$mod$type %in% c('free', 'start')) 'TRUE' else
-          if (s$mod$type == 'fixed') .ctSynNumber(s$mod$value) else
-            if (s$mod$type == 'label') s$mod$value else
-              if (!is.null(quoted) && !is.na(quoted)) quoted else stop("'", s$src,
-                "': a predictor effect takes a number or a label.", call. = FALSE)
-      }
-      for (k in rows) {
-        cells$tip[[k]][pred] <- spec
-        cells$tipset[k] <- TRUE
-      }
-    } else if (s$kind == 'int') {
-      cells <- .ctSynApply(cells, target(s$lhs, between, s$src), s$mod,
-        src = s$src)
-    } else if (s$kind == 'cov') {
-      a <- target(s$lhs, between, s$src)
-      b <- target(s$rhs, between, s$src)
-      fixed <- identical(s$mod$type, 'fixed')
-      if (identical(a, b)) {
-        if ((fixed && s$mod$value != 0) || identical(s$mod$type, 'label') ||
-            identical(s$mod$type, 'cell')) stop("'", s$src, "': the variance ",
-          'of a random effect is estimated. It can be switched off with 0. ',
-          'ctPar(sdscale = ) scales its prior.', call. = FALSE)
-        cells <- .ctSynVary(cells, a, lev, !fixed)
-      } else if (fixed) stop("'", s$src, "': random effects are always ",
-        'correlated with each other. poprank and popblocks in ctFit() give ',
-        'their covariance a simpler structure.', call. = FALSE)
-    } else if (s$kind == 'vary') {
-      cells <- .ctSynVary(cells, target(s$target, between, s$src), lev, s$on)
-    } else if (s$kind == 'equal') {
-      a <- target(s$a, FALSE, s$src)
-      b <- target(s$b, FALSE, s$src)
-      if (!all(cells$free[c(a, b)])) stop("'", s$src, "': both parameters ",
-        'must be free.', call. = FALSE)
-      cells$name[b] <- cells$name[a[1L]]
+  # A statement about a parameter may use a label that a statement below it
+  # gives (start ~~ 0*start above T0m_eta1 ~ start*1). One that does waits
+  # for the next pass. Each finds its cells before it changes anything, so a
+  # statement that waits has changed nothing. A pass that applies nothing
+  # leaves labels no statement gives, and the next pass says so.
+  deferring <- TRUE
+  while (length(later)) {
+    waiting <- list()
+    for (s in later) {
+      applied <- tryCatch({
+        lev <- if (s$kind %in% c('reg', 'int', 'cov', 'vary')) .ctSynLevel(s$level, ids)
+        between <- !is.null(lev)
+        if (s$kind == 'reg') {
+          rows <- target(s$lhs, between, s$src)
+          if (!is.null(s$smooth)) {
+            call <- tryCatch(parse(text = s$smooth)[[1L]], error = function(e) NULL)
+            if (is.null(call) || length(call) < 2L || !is.name(call[[2L]])) stop(
+              "'", s$src, "': a smooth is written s(covariate) or ",
+              's(covariate, k = 8).', call. = FALSE)
+            pred <- as.character(call[[2L]])
+            smooths[pred] <- paste(deparse(call), collapse = '')
+            spec <- 'TRUE'
+          } else {
+            pred <- s$rhs
+            if (pred %in% cells$vars) stop("'", s$src, "': ", pred, ' is a ',
+              'variable of the model, and a predictor of a parameter is a time ',
+              'independent predictor.', call. = FALSE)
+            tis <- c(tis, pred)
+            # a quoted label or number is a cell with nothing but its name
+            quoted <- if (identical(s$mod$type, 'cell')) s$mod$fields$param
+            spec <- if (is.null(s$mod) || s$mod$type %in% c('free', 'start')) 'TRUE' else
+              if (s$mod$type == 'fixed') .ctSynNumber(s$mod$value) else
+                if (s$mod$type == 'label') s$mod$value else
+                  if (!is.null(quoted) && !is.na(quoted)) quoted else stop("'", s$src,
+                    "': a predictor effect takes a number or a label.", call. = FALSE)
+          }
+          for (k in rows) {
+            cells$tip[[k]][pred] <- spec
+            cells$tipset[k] <- TRUE
+          }
+        } else if (s$kind == 'int') {
+          cells <- .ctSynApply(cells, target(s$lhs, between, s$src), s$mod,
+            src = s$src)
+        } else if (s$kind == 'cov') {
+          a <- target(s$lhs, between, s$src)
+          b <- target(s$rhs, between, s$src)
+          fixed <- identical(s$mod$type, 'fixed')
+          if (identical(a, b)) {
+            if ((fixed && s$mod$value != 0) || identical(s$mod$type, 'label') ||
+                identical(s$mod$type, 'cell')) stop("'", s$src, "': the variance ",
+              'of a random effect is estimated. It can be switched off with 0. ',
+              'ctPar(sdscale = ) scales its prior.', call. = FALSE)
+            cells <- .ctSynVary(cells, a, lev, !fixed)
+          } else if (fixed) stop("'", s$src, "': random effects are always ",
+            'correlated with each other. poprank and popblocks in ctFit() give ',
+            'their covariance a simpler structure.', call. = FALSE)
+        } else if (s$kind == 'vary') {
+          cells <- .ctSynVary(cells, target(s$target, between, s$src), lev, s$on)
+        } else if (s$kind == 'equal') {
+          a <- target(s$a, FALSE, s$src)
+          b <- target(s$b, FALSE, s$src)
+          if (!all(cells$free[c(a, b)])) stop("'", s$src, "': both parameters ",
+            'must be free.', call. = FALSE)
+          cells$name[b] <- cells$name[a[1L]]
+        }
+        TRUE
+      }, ctSynUnnamed = function(e) FALSE)
+      if (!applied) waiting[[length(waiting) + 1L]] <- s
     }
+    if (length(waiting) == length(later)) deferring <- FALSE
+    later <- waiting
   }
 
   mats <- list()
