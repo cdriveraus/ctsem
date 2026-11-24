@@ -35,6 +35,12 @@ curvatures they formed. Their ratios say how far a solve's start was from its
 mode: an anchored solve one step from its anchor takes one iteration and one
 curvature, a search from the origin several.
 
+The `sweep_*` counts are the Laplace route's second-order member passes, a
+member each: a unit curvature's (`_laplace_columns_jacobian`, a pass per lane
+chunk), the seeded first-order sweeps (`_tan_laplace_seeded`) and the jets
+(`_laplace_unit_jet_gradient`). A sweep costs about its member's pass whatever
+its lanes, so these say where a unit's value and gradient go.
+
 The `overshoot_*` counts are the overshoot probe's (`_ctsem_overshot`): trial
 points, sets it skipped as already tried, full evaluations of a trial, the
 screen's gradients at the estimate (`CTSEMProbeScreen`), its sampled
@@ -68,6 +74,9 @@ const _CTSEM_OPCOUNT = (
     inner_solves = Ref(0),
     inner_iterations = Ref(0),
     inner_curvatures = Ref(0),
+    sweep_curvature = Ref(0),
+    sweep_seeded = Ref(0),
+    sweep_jet = Ref(0),
     overshoot_trials = Ref(0),
     overshoot_repeats = Ref(0),
     overshoot_values = Ref(0),

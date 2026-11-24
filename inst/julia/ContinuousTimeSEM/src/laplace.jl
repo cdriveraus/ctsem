@@ -860,21 +860,21 @@ end
 """
 The exact curvature unit `U`'s solve ended on (`final`, its mode in
 `laplace.modes[U]`), kept for the anchors to take (`_laplace_anchor_curvatures!`):
-a unit of one block and one maximum, the units an anchored solve starts on a
-kept matrix (`_laplace_newton_unit_mode`). Before the primal reads `final`,
+a unit held dense (`_laplace_dense_unit`) with one maximum, the units an
+anchored solve starts on a kept matrix (`_laplace_newton_unit_mode`). Before the primal reads `final`,
 which shifts a curvature it repairs in place.
 """
 function _laplace_keep_final!(laplace::CTSEMLaplaceObjective, U::Integer, final)
     _LAPLACE_WARM_CURVATURE[] || return nothing
     c = laplace.curvatures[U]
     d = laplace.units.dims[U]
-    if final === nothing || d == 0 || length(laplace.units.blocks[U]) != 1 ||
-            !isempty(laplace.alt_modes[U])
+    if final === nothing || d == 0 || !_laplace_dense_unit(laplace, U) ||
+            !isempty(laplace.alt_modes[U]) || !isempty(laplace.block_modes[U])
         resize!(c.last_at, 0)
         return nothing
     end
     size(c.last) == (d, d) || (c.last = Matrix{Float64}(undef, d, d))
-    copyto!(c.last, final.diag[1])
+    _laplace_dense_of!(c.last, final, laplace.units.blocks[U])
     resize!(c.last_at, d)
     copyto!(c.last_at, laplace.modes[U])
     return nothing
@@ -2601,6 +2601,37 @@ function _laplace_block_of(dense::AbstractMatrix{T},
     return M
 end
 
+"""
+Whether unit `U`'s inner solve holds its curvature dense between exact ones
+(`_laplace_newton_unit_mode`'s SR1 updates, the anchors' kept curvature): one
+block, or one member, whose blocks are then a chain and their diagonals and
+couplings the whole matrix. A person alone in a study is two blocks of one
+member, and held block-sparse it formed the exact curvature at every Newton
+step (the affect pilot's 486 such units, 1.3 times their cost as persons).
+"""
+_laplace_dense_unit(laplace::CTSEMLaplaceObjective, U::Integer) =
+    length(laplace.units.blocks[U]) == 1 || length(laplace.units.members[U]) == 1
+
+"""`M` as the dense `out`, for a `_laplace_dense_unit`."""
+_laplace_dense_of!(out::Matrix{Float64}, M::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}) = length(blocks) == 1 ?
+    copyto!(out, M.diag[1]) : _laplace_block_dense!(out, M, blocks)
+
+"""The dense `dense` into `M`'s blocks, in place: `_laplace_dense_of!`'s inverse."""
+function _laplace_block_from_dense!(M::CTSEMBlockMatrix{Float64},
+    dense::Matrix{Float64}, blocks::Vector{CTSEMLaplaceBlock})
+    length(blocks) == 1 && return (copyto!(M.diag[1], dense); M)
+    for (b, block) in enumerate(blocks)
+        rows = (block.offset + 1):(block.offset + block.size)
+        M.diag[b] .= view(dense, rows, rows)
+        for (t, a) in enumerate(block.ancestors)
+            cols = (blocks[a].offset + 1):(blocks[a].offset + blocks[a].size)
+            M.coupling[b][t] .= view(dense, rows, cols)
+        end
+    end
+    return M
+end
+
 """The Cholesky type `_laplace_block_factor` produces for element type `T`."""
 # The engine's own factorization, not `LinearAlgebra.Cholesky`: this runs once
 # per block per Newton step per subject, inside the threaded subject loop, and
@@ -3749,6 +3780,7 @@ function _laplace_columns_jacobian(laplace::CTSEMLaplaceObjective, U::Integer,
     d = length(base)
     width = _ctsem_dual_width(n, _CTSEM_CURVATURE_WIDTHS[])
     nx = max(n, width)
+    _CTSEM_OPCOUNT.sweep_curvature[] += length(members) * cld(n, max(width, 1))
     # By the hand-coded second order (`tangent_laplace.jl`), the soft-direction quadrature's
     # cross curvature read off the same sweeps; at another element type -- the
     # nested-gradient oracle's -- forward mode over the members' gradient.
@@ -4315,8 +4347,8 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     # forms its own exact curvature (`_laplace_unit_primal`), so nothing the
     # objective reports rests on an updated matrix. The probes read the last
     # exact curvature, which every solve ends on (below). Not on a unit of
-    # nested blocks, whose curvature is stored block-sparse and a rank-one
-    # update would fill.
+    # several members under nested blocks, whose curvature is stored
+    # block-sparse and a rank-one update would fill (`_laplace_dense_unit`).
     #
     # Where the solve ends must not depend on which, and the gradient bound
     # alone did not say it: it is relative to the unit's value
@@ -4334,7 +4366,7 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     # same point to verify it. Neither the step bound nor a failed line search
     # is read from an updated matrix: like a repaired one, it does not measure
     # the distance to the mode.
-    sr1 = _LAPLACE_INNER_SR1[] && d > 0 && length(blocks) == 1
+    sr1 = _LAPLACE_INNER_SR1[] && d > 0 && _laplace_dense_unit(laplace, U)
     # Taken whether or not they are used: a local that is either `nothing` or
     # an array makes every call on it dynamic. Empty where SR1 does not run: a
     # nested unit's `d` by `d` was a gigabyte a slot for a study of thousands.
@@ -4413,10 +4445,10 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
             _CTSEM_OPCOUNT.inner_curvatures[] += 1
             Mx = _laplace_unit_curvature(laplace, U, values, Ls, u;
                 into=Mwork)::CTSEMBlockMatrix{Float64}
-            sr1 && copyto!(B, Mx.diag[1])
+            sr1 && _laplace_dense_of!(B, Mx, blocks)
             Mx
         else
-            copyto!(Mwork.diag[1], B)
+            _laplace_block_from_dense!(Mwork, B, blocks)
             Mwork
         end
         used_exact = exact
@@ -8704,15 +8736,11 @@ end
 # study is, and one level is just the case where every unit is a single block
 # with no ancestors and the cross terms vanish.
 #
-# The cross terms need a *mixed* second derivative rather than a directional
-# one, which polarisation gives as a difference of two directional ones
-# (`_laplace_cross_jets!`): every trace term is then a sum of second
-# directional derivatives, and jets (`CTSEMTraceJet`) carry
-# `_CTSEM_JET_WIDTH` of them a sweep. Two independent seeds, one per tag,
-# gave each mixed derivative in a hyper-dual sweep of its own until
-# 2026-10-26; the jets agreed with them to 1e-14 on binary, hybrid and
-# two-level units, and took the cross terms at two directions a pair against
-# the hyper-dual's nine components.
+# Summed member by member, the diagonal and cross terms a member reaches are
+# one trace, `tr(C_m A_m)` over its chain of blocks (`C_m` the selected
+# inverse there), so a factor of `C_m` makes all of them second directional
+# derivatives along its columns (`_laplace_member_chain_trace!`), which jets
+# (`CTSEMTraceJet`) carry `_CTSEM_JET_WIDTH` a sweep.
 #
 # Directions are taken in *parameter* space throughout, and that is not a
 # detail: a direction in `u` space moves with `L(theta)` while a
@@ -8817,48 +8845,6 @@ _laplace_seeded_lanes(laplace::CTSEMLaplaceObjective) =
     ForwardDiff.npartials(_laplace_curvature_dual(laplace))
 
 """
-    _laplace_cross_jets!(Pm, laplace, U, values, Ls, u, members, P, Q, w, npairs)
-
-Add `sum_r w[r] d2 g_m / dp_r dq_r` to each member's column of `Pm`, `g_m` the
-member's gradient and `p_r`, `q_r` the first `npairs` columns of `P` and `Q`
-(raw-parameter directions): by polarisation,
-`w d2_pq = d2_a - d2_b` with `a, b = sqrt(|w| / 4) (p +- sign(w) q)`, so the sum
-is the difference of two jets' second parts, `_CTSEM_JET_WIDTH` pairs a sweep
-each. A mixed derivative is what a hyper-dual sweep gave one pair at a time.
-"""
-function _laplace_cross_jets!(Pm::Matrix{Float64}, laplace::CTSEMLaplaceObjective,
-    U::Integer, values::Vector{Float64}, Ls::Vector{Matrix{Float64}},
-    u::Vector{Float64}, members, P::Matrix{Float64}, Q::Matrix{Float64},
-    w::Vector{Float64}, npairs::Int)
-    npar = size(P, 1)
-    W = _CTSEM_JET_WIDTH
-    Da = _laplace_scratch_matrix!(laplace, Float64, npar, W, :cross_jet_a)
-    Db = _laplace_scratch_matrix!(laplace, Float64, npar, W, :cross_jet_b)
-    r = 0
-    while r < npairs
-        nd = min(W, npairs - r)
-        @inbounds for j in 1:nd
-            c = sqrt(abs(w[r + j]) / 4)
-            s = sign(w[r + j])
-            for t in 1:npar
-                Da[t, j] = c * (P[t, r + j] + s * Q[t, r + j])
-                Db[t, j] = c * (P[t, r + j] - s * Q[t, r + j])
-            end
-        end
-        for (D, sgn) in ((Da, 1.0), (Db, -1.0))
-            pass = _laplace_unit_jet_gradient(laplace, U, values, Ls, u, members, D, nd)
-            pass.ok || (_LAPLACE_DIAG[] = 14; return false)
-            all(isfinite, pass.dS) || (_LAPLACE_DIAG[] = 15; return false)
-            @inbounds for (c, m) in enumerate(members), t in 1:npar
-                Pm[t, m] += sgn * pass.dS[t, c]
-            end
-        end
-        r += nd
-    end
-    return true
-end
-
-"""
     _laplace_unit_jet_gradient(laplace, U, values, Ls, u, members, D, ndirs)
 
 One reverse sweep over the given members at `CTSEMTraceJet{W}`, `W` the
@@ -8882,6 +8868,7 @@ function _laplace_unit_jet_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     members, D::Matrix{Float64}, ndirs::Int, ::Val{W},
     mode::Int=_laplace_hmode(laplace)) where {W}
     ndirs <= W || throw(ArgumentError("$(ndirs) directions for a jet of width $(W)"))
+    _CTSEM_OPCOUNT.sweep_jet[] += length(members)
     # By the hand-coded sweeps with second parts (`_tan_laplace_jet`).
     return _tan_laplace_jet(laplace, U, values, Ls, u, members, D, ndirs,
         CTSEMTraceJet{W}; mode=mode)
@@ -8919,6 +8906,148 @@ _laplace_level_chol_solves(spec, Ls, dL) = !_laplace_square_roots(spec) ? nothin
 
 # `levelsweeps` for a unit that needs none: never written, so one is enough.
 const _LAPLACE_NO_LEVELSWEEPS = Vector{Matrix{Float64}}[]
+
+"""
+    _laplace_member_chains(blocks, nmem)
+
+Each member's blocks, outermost first: the innermost block holding it (the
+first in block order, which puts descendants before ancestors) and that
+block's ancestors.
+"""
+function _laplace_member_chains(blocks::Vector{CTSEMLaplaceBlock}, nmem::Int)
+    leaf = zeros(Int, nmem)
+    for (b, block) in enumerate(blocks), m in block.members
+        leaf[m] == 0 && (leaf[m] = b)
+    end
+    return [leaf[m] == 0 ? Int[] : sort!(vcat(leaf[m], blocks[leaf[m]].ancestors);
+        rev=true) for m in 1:nmem]
+end
+
+"""
+    _laplace_member_shift!(dir, spec, Ls, blocks, chain, s)
+
+`sum_b L_b s_b` over a member's blocks, scattered onto the raw parameters: the
+shift its whole chain imposes along `s`. Levels can move the same parameters
+(a drift varying by person and by study), so the blocks add.
+"""
+function _laplace_member_shift!(dir::Vector{Float64}, spec, Ls::Vector{Matrix{Float64}},
+    blocks::Vector{CTSEMLaplaceBlock}, chain::Vector{Int}, s::AbstractVector{Float64})
+    fill!(dir, 0.0)
+    for c in chain
+        l = blocks[c].level
+        rho = spec.levels[l].re_index
+        L = Ls[l]
+        off = blocks[c].offset
+        @inbounds for p in eachindex(rho)
+            acc = 0.0
+            for q in 1:blocks[c].size
+                acc += L[p, q] * s[off + q]
+            end
+            dir[rho[p]] += acc
+        end
+    end
+    return dir
+end
+
+"""
+    _laplace_member_chain_trace!(Pm, llvm, seen, laplace, U, values, Ls, u, blocks,
+                                 Cdiag, Ccoup, isactive, chain, m)
+
+Member `m`'s share of `psi = tr(C A)` and its gradient, for a member under nested
+blocks (`chain`, outermost first): `tr(C_m A_m)` over the chain's active
+coordinates, `C_m` the selected inverse there -- each block's diagonal and its
+couplings to its ancestors, which is all the selected inverse holds -- and
+`A_m` the member's curvature. Summed over members that is every block's
+diagonal term and every cross term at once. With `C_m = U'U` (the engine's
+upper factor, the outermost block's coordinates first) the trace is the sum of
+second directional derivatives along `U`'s rows in parameter space, a jet's
+lanes; ordered so, the innermost block's rows move its own coordinates alone.
+
+Taken block by block with the cross terms by polarisation, as until
+2026-11-24, a person under a study took their own block's jets, two more for
+each ancestor along directions moving both levels, and a share of each
+ancestor's: on the affect pilot's study units the gradient was five times its
+people's as single units, the cross jets moving the study's random drift.
+"""
+function _laplace_member_chain_trace!(Pm::Matrix{Float64}, llvm::Matrix{Float64},
+    seen::Vector{Bool}, laplace::CTSEMLaplaceObjective, U::Integer,
+    values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, Cdiag, Ccoup, isactive::Vector{Bool},
+    chain::Vector{Int}, m::Int)
+    spec = laplace.spec
+    npar = length(values)
+    nc = length(chain)
+    # Each chain block's slot among an inner block's ancestors, for the
+    # couplings: `slot[i, j]` for chain blocks i inner of j.
+    slot = _laplace_scratch_matrix!(laplace, Int, nc, nc, :mc_slot)
+    @inbounds for i in 1:nc, j in 1:nc
+        slot[i, j] = chain[i] < chain[j] ?
+            something(findfirst(==(chain[j]), blocks[chain[i]].ancestors), 0) : 0
+    end
+    # The chain's active coordinates, outermost first: chain position and
+    # position in the block.
+    cp = empty!(_laplace_scratch_vector!(laplace, Int, 0, :mc_cp))
+    cj = empty!(_laplace_scratch_vector!(laplace, Int, 0, :mc_cj))
+    for (i, c) in enumerate(chain)
+        off = blocks[c].offset
+        for j in 1:blocks[c].size
+            isactive[off + j] || continue
+            push!(cp, i); push!(cj, j)
+        end
+    end
+    dm = length(cp)
+    dm == 0 && return true
+    Cm = _laplace_scratch_matrix!(laplace, Float64, dm, dm, :mc_C)
+    @inbounds for i2 in 1:dm, i1 in 1:i2
+        p1, j1, p2, j2 = cp[i1], cj[i1], cp[i2], cj[i2]
+        c1, c2 = chain[p1], chain[p2]
+        Cm[i1, i2] = if c1 == c2
+            (Cdiag[c1][j1, j2] + Cdiag[c1][j2, j1]) / 2
+        elseif c1 < c2
+            slot[p1, p2] > 0 || return false
+            Ccoup[c1][slot[p1, p2]][j1, j2]
+        else
+            slot[p2, p1] > 0 || return false
+            Ccoup[c2][slot[p2, p1]][j2, j1]
+        end
+    end
+    _ctsem_cholesky!(Cm, dm) || (_LAPLACE_DIAG[] = 11; return false)
+    W = _CTSEM_JET_WIDTH
+    Dj = _laplace_scratch_matrix!(laplace, Float64, npar, W, :mc_jetdirs)
+    mv = _laplace_scratch_vector!(laplace, Int, 1, :mc_member)
+    mv[1] = m
+    j0 = 0
+    while j0 < dm
+        nd = min(W, dm - j0)
+        fill!(view(Dj, :, 1:nd), 0.0)
+        @inbounds for jj in 1:nd
+            j = j0 + jj
+            for z in j:dm
+                w = Cm[j, z]
+                iszero(w) && continue
+                c = chain[cp[z]]
+                l = blocks[c].level
+                rho = spec.levels[l].re_index
+                L = Ls[l]
+                q = cj[z]
+                for pp in eachindex(rho)
+                    Dj[rho[pp], jj] += w * L[pp, q]
+                end
+            end
+        end
+        jpass = _laplace_unit_jet_gradient(laplace, U, values, Ls, u, mv, Dj, nd)
+        jpass.ok || (_LAPLACE_DIAG[] = 12; return false)
+        (all(isfinite, jpass.dS) && all(isfinite, jpass.d0)) ||
+            (_LAPLACE_DIAG[] = 13; return false)
+        @inbounds for t in 1:npar
+            Pm[t, m] += jpass.dS[t, 1]
+            seen[m] || (llvm[t, m] = jpass.d0[t, 1])
+        end
+        seen[m] = true
+        j0 += nd
+    end
+    return true
+end
 
 """
     _laplace_seeded_unit_gradient!(out, laplace, U, values, Ls, dL, dLsolved, M,
@@ -9069,6 +9198,11 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     # `seen[m] = true` is a read-modify-write of that word: two tasks setting
     # *different* members race on it and one write is simply lost.
     seen = fill!(_laplace_scratch_vector!(laplace, Bool, nmem, :sg_seen), false)
+    # Each member's blocks, outermost first (`_laplace_member_chains`). A member
+    # under one block alone shares that block's directions with the others
+    # there; a member under nested blocks takes its trace over all of them at
+    # once (`_laplace_member_chain_trace!`).
+    chains = _laplace_member_chains(blocks, nmem)
 
     assemble! = function (mine)
         # `local`, and not for tidiness. Assignment inside a closure binds the
@@ -9097,7 +9231,7 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
             k == 0 && continue
             empty!(subsA)
             for m in block.members
-                ownedA[m] && push!(subsA, m)
+                ownedA[m] && length(chains[m]) == 1 && push!(subsA, m)
             end
             isempty(subsA) && continue
         # Diagonal term. tr(C[b,b] A[b,b]) = tr(W H) with W = L C[b,b] L', so a
@@ -9200,105 +9334,11 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
                 seen[m] = true
             end
         end
-        # Cross terms with each ancestor, twice over as the trace requires.
-        # `tr(C[a,b] A[b,a]) = tr(V H)` with `V = L_a C[a,b] L_b'`, `H` the
-        # members' mixed second derivative between the two levels' parameters,
-        # spelled as directional derivatives in whichever of three ways takes
-        # the fewest pairs, all equal by linearity:
-        #
-        #  - over the ancestor's dimensions, `sum_j (L_b C[a,b]' e_j)' H (L_a e_j)`,
-        #    one pair per dimension of `a`;
-        #  - over this block's, `sum_i (L_b e_i)' H (L_a C[a,b] e_i)`, one pair
-        #    per dimension of `b`;
-        #  - over this level's parameters, `V` absorbing both factors: the first
-        #    direction a bare basis vector, the second `V`'s matching column.
-        #
-        # Each folds `C[a,b]` into one side. Swept along both loadings' columns
-        # with `C[a,b]` as weights, as to 2026-11-23, it was `rank_b * rank_a`
-        # pairs or the parameter count: on the affect pilot's persons in
-        # studies (48 person coordinates under 4 study own variances) 48 pairs a
-        # person where the ancestor's dimensions take 4, and the cross terms
-        # were most of a nested unit's gradient. Inactive rows and columns of
-        # `C[a,b]` are zero, so their pairs are skipped.
-        kparl = length(spec.levels[l].re_index)
-        for (t, a) in enumerate(block.ancestors)
-            la = blocks[a].level
-            nb = block.size
-            na = blocks[a].size
-            Cba = Ccoup[b][t]                       # C[b,a], rank_b by rank_a
-            acta = 0
-            @inbounds for j in 1:na
-                isactive[blocks[a].offset + j] && (acta += 1)
-            end
-            actb = 0
-            @inbounds for i in 1:nb
-                isactive[block.offset + i] && (actb += 1)
-            end
-            width = max(na, nb, kparl)
-            Pc = _laplace_scratch_matrix!(laplace, Float64, npar, width, :sg_cross_p)
-            Qc = _laplace_scratch_matrix!(laplace, Float64, npar, width, :sg_cross_q)
-            wc = _laplace_scratch_vector!(laplace, Float64, width, :sg_cross_w)
-            npairs = 0
-            if acta <= min(actb, kparl)
-                for j in 1:na
-                    isactive[blocks[a].offset + j] || continue
-                    scatter_loaded!(dir1, l, L, view(Cba, :, j))
-                    scatter!(dir2, la, view(Ls[la], :, j))
-                    npairs += 1
-                    @inbounds for tt in 1:npar
-                        Pc[tt, npairs] = dir1[tt]
-                        Qc[tt, npairs] = dir2[tt]
-                    end
-                    wc[npairs] = 2.0
-                end
-            elseif actb <= kparl
-                for i in 1:nb
-                    isactive[block.offset + i] || continue
-                    scatter!(dir1, l, view(L, :, i))
-                    scatter_loaded!(dir2, la, Ls[la], view(Cba, i, :))
-                    npairs += 1
-                    @inbounds for tt in 1:npar
-                        Pc[tt, npairs] = dir1[tt]
-                        Qc[tt, npairs] = dir2[tt]
-                    end
-                    wc[npairs] = 2.0
-                end
-            else
-                # `Vcross`, not `V`: the explicit terms below use a `V` of
-                # their own at this function's scope, and this assignment would
-                # land on it. Harmless only because that one is reallocated
-                # before it is read -- a reordering, or lifting this loop into
-                # a closure, makes it a silent wrong answer.
-                # Vcross = Ls[la] C[a,b] L', through `T1 = C[a,b] L'`, by the
-                # engine's kernels rather than two locking BLAS products.
-                T1 = _laplace_scratch_matrix!(laplace, Float64, na, kparl, :sg_T1)
-                @inbounds for q in 1:kparl, j in 1:na
-                    acc = 0.0
-                    for i in 1:nb
-                        acc += Cba[i, j] * L[q, i]
-                    end
-                    T1[j, q] = acc
-                end
-                Vcross = _laplace_scratch_matrix!(laplace, Float64,
-                    size(Ls[la], 1), kparl, :sg_Vcross)
-                _ctsem_mul!(Vcross, Ls[la], T1)
-                for q in 1:kparl
-                    # The basis direction `e_q` of this level, scattered.
-                    fill!(dir1, 0.0)
-                    dir1[spec.levels[l].re_index[q]] = 1.0
-                    scatter!(dir2, la, view(Vcross, :, q))
-                    npairs += 1
-                    @inbounds for tt in 1:npar
-                        Pc[tt, npairs] = dir1[tt]
-                        Qc[tt, npairs] = dir2[tt]
-                    end
-                    wc[npairs] = 2.0
-                end
-            end
-            npairs > 0 || continue
-            _laplace_cross_jets!(Pm, laplace, U, values, Ls, uhat, subsA, Pc, Qc, wc,
-                npairs) || return false
-        end
+    end
+    for m in mine
+        length(chains[m]) > 1 || continue
+        _laplace_member_chain_trace!(Pm, llvm, seen, laplace, U, values, Ls, uhat,
+            blocks, Cdiag, Ccoup, isactive, chains[m], m) || return false
     end
     return true
     end
@@ -9367,12 +9407,21 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         subsB = _laplace_scratch_vector!(laplace, Int, 0, :sg_subsB)
         dir = _laplace_scratch_vector!(laplace, Float64, npar, :sg_dirB)
         @inbounds for m in mine; ownedB[m] = true; end
+        for m in mine
+            length(chains[m]) > 1 || continue
+            _laplace_member_shift!(dir, spec, Ls, blocks, chains[m], s)
+            empty!(subsB); push!(subsB, m)
+            pass = sweep(subsB, dir)
+            pass.ok || (_LAPLACE_DIAG[] = 16; return false)
+            all(isfinite, pass.d1c) || (_LAPLACE_DIAG[] = 17; return false)
+            @inbounds for t in 1:npar; Bsm[t, m] += pass.d1c[t, 1]; end
+        end
         for (b, block) in enumerate(blocks)
             k = block.size
             k == 0 && continue
             empty!(subsB)
             for m in block.members
-                ownedB[m] && push!(subsB, m)
+                ownedB[m] && length(chains[m]) == 1 && push!(subsB, m)
             end
             isempty(subsB) && continue
             sb = view(s, (block.offset + 1):(block.offset + k))
