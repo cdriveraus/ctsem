@@ -82,6 +82,22 @@ test_that("findings follow the shares, whatever the parameters are", {
   expect_length(ctsem:::.ctReduceFindings(fit, candidates = FALSE)[[1]]$candidates, 0L)
 })
 
+test_that("a parameter whose transform saturated is at the end of its range", {
+  # Zero curvature alone, as an unread parameter has, but the optimiser
+  # reported its transform saturated: a variance estimated at 0.
+  testthat::local_mocked_bindings(.ctReduceValues = .reduce_values)
+  dir <- .reduce_dir('mvar2', relative = -1e-18)
+  dir$saturated <- 'mvar2'
+  fit <- .reduce_fit(list(dir, .reduce_dir('mvar21', relative = 1e-15)))
+  flat <- ctsem:::.ctReduceFlat(fit$identifiability)
+  expect_identical(flat$saturated, 'mvar2')
+  expect_identical(flat$unread, 'mvar21')
+  f <- ctsem:::.ctReduceFindings(fit)
+  expect_identical(f[[1]]$text, paste('mvar21 is not read by the likelihood;',
+    'mvar2 is at the end of its range'))
+  expect_true('mvar2 fixed at 0' %in% vapply(f[[1]]$candidates, `[[`, '', 'label'))
+})
+
 test_that("the changes edit the model as they say", {
   testthat::local_mocked_bindings(.ctReduceValues = .reduce_values)
   m <- .reduce_model()
