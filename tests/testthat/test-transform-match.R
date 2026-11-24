@@ -45,3 +45,29 @@ test_that("an exact reading reproduces its text, and one no template fits stays 
     expect_equal(read, expected, tolerance = 1e-13, info = ctm$pars$transform[r])
   }
 })
+
+# A cell reading one state is first offered to the template reading above. A
+# long one -- the Wiener first-passage series written as cells -- once stopped
+# setup twice: the search's start grid, the count of the expression's numbers
+# to the fourth (1458 GB at 200 terms), and an environment keyed by the cell's
+# text, which R limits to 10000 bytes.
+test_that("a long cell reading one state is set up as a calculation", {
+  bsum <- function(x) if (length(x) == 1L) x else {
+    h <- length(x) %/% 2L
+    paste0("(", bsum(x[1:h]), " + ", bsum(x[-(1:h)]), ")")
+  }
+  digits <- paste(rep("1234567890", 25), collapse = "")
+  long <- paste0("eta1 * ", bsum(sprintf("exp(-0.%d%s * eta1)", 1:40, digits)))
+  expect_gt(nchar(long), 10000)
+  read <- ctsem:::ctModelTransformsToNum(list(pars = data.frame(matrix = "PARS",
+    row = 1, col = 1, param = "p1", value = NA_real_,
+    transform = gsub("eta1", "param", long), indvarying = FALSE, sdscale = 1,
+    stringsAsFactors = FALSE)))$pars
+  expect_identical(read$transform, gsub("eta1", "param", long))
+  m <- suppressMessages(ctModel(type = "ct", manifestNames = "y1",
+    latentNames = "eta1", LAMBDA = matrix(1), MANIFESTMEANS = matrix(long),
+    DRIFT = matrix("drift"), CINT = matrix(0), T0MEANS = matrix("t0m")))
+  dat <- data.frame(id = rep(1:3, each = 4), time = rep(0:3, 3),
+    y1 = c(0.1, -0.3, 0.2, 0.5, -0.1, 0.4, 0.0, -0.2, 0.3, 0.1, -0.4, 0.2))
+  expect_s3_class(suppressMessages(ctFit(dat, m, fit = FALSE)), "ctFitModel")
+})

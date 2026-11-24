@@ -283,7 +283,31 @@ ctModelTransformsToNum<-function(ctm){
     param <- param[keep]
     y <- y[keep]
     # plot(param,y)
-    
+
+    # The numbers the expression writes, which seed the search below.
+    etmp<-gsub('\\(',' ',e)
+    etmp<-gsub('\\)',' ',etmp)
+    etmp<- gsub('([^0-9])\\.','\\10.',etmp) #add a zero in front of decimal only numbers
+    escn <- unlist(regmatches(etmp, gregexpr('[0-9,.]+e+-?[0-9\\b[0-9]+', etmp))) #replace scientific notation
+    escn<- as.numeric(gsub('\\(', '-', gsub(',', '', escn)))
+    etmp <- gsub('\\b[0-9,.]+e+-?[0-9\\b[0-9]+','',etmp)
+    etmp <- gsub("\\[.*\\]","",etmp)
+    exprnumbers <- unlist(regmatches(etmp, gregexpr('\\b[0-9,.]+\\b', etmp)))
+    exprnumbers <- suppressWarnings(as.numeric(gsub('\\(', '-', gsub(',', '', exprnumbers))))
+    exprnumbers <- c(exprnumbers,escn)
+    # A template has four numbers, and the exact reading above takes every
+    # expression that is one. An expression writing more is no template, and
+    # its numbers' product grid is the size of their count to the fourth: a
+    # cell of 200 Wiener series terms asked for 1458 GB. Left as written.
+    if (length(setdiff(unique(exprnumbers[!is.na(exprnumbers)]), c(0, 1))) > 4L) {
+      none <- formula.types[1, ]
+      none$lsfit <- Inf
+      none$exact <- FALSE
+      .ct_transform_fits$text <- c(.ct_transform_fits$text, e)
+      .ct_transform_fits$row <- c(.ct_transform_fits$row, list(none))
+      return(none)
+    }
+
     # Try to fit each formula to the data.
     success <- FALSE
     for(tryi in 1:2){ #if no success try with more enthusiasm
@@ -322,17 +346,7 @@ ctModelTransformsToNum<-function(ctm){
         }
         
         if(tryi==1){
-          etmp<-gsub('\\(',' ',e)
-          etmp<-gsub('\\)',' ',etmp)
-          etmp<- gsub('([^0-9])\\.','\\10.',etmp) #add a zero in front of decimal only numbers
-          escn <- unlist(regmatches(etmp, gregexpr('[0-9,.]+e+-?[0-9\\b[0-9]+', etmp))) #replace scientific notation
-          escn<- as.numeric(gsub('\\(', '-', gsub(',', '', escn)))
-          etmp <- gsub('\\b[0-9,.]+e+-?[0-9\\b[0-9]+','',etmp)
-          etmp <- gsub("\\[.*\\]","",etmp)
-          samplestarts <- unlist(regmatches(etmp, gregexpr('\\b[0-9,.]+\\b', etmp)))
-          samplestarts <- as.numeric(gsub('\\(', '-', gsub(',', '', samplestarts)))
-          samplestarts <- c(samplestarts,escn)
-          samplestarts <- unique(c(samplestarts,0,1))#,rep(0,max(0,4-length(samplestarts))))
+          samplestarts <- unique(c(exprnumbers,0,1))#,rep(0,max(0,4-length(samplestarts))))
           samplestarts <- unique(c(samplestarts,-samplestarts))
           teststarts=expand.grid(rep(list(samplestarts), 4))
           if(is.na(formula.types$meanscale[i])) teststarts[,3] <- 1
@@ -862,7 +876,11 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
     matrixname_v[i] <- nm
     when_v[i] <- when
     stateref_v[i] <- stateref
-    if(!is.na(ctspec$param[i]) && is.null(firstrow[[paste0('p', ctspec$param[i])]])){
+    # Only plain names are looked up above. A calculation cell's text can run
+    # past the 10000 bytes an environment's names allow (the Wiener series on
+    # the augmented route was 17583), so it is not recorded.
+    if(!is.na(ctspec$param[i]) && !grepl('[', ctspec$param[i], fixed = TRUE) &&
+        is.null(firstrow[[paste0('p', ctspec$param[i])]])){
       assign(paste0('p', ctspec$param[i]), i, envir = firstrow)
     }
   }
