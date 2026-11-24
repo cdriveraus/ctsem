@@ -586,8 +586,9 @@ test_that("a nested unit's mode search reads its blocks, as its dense oracle doe
 # The case under test: a person whose better maximum lies past the origin's,
 # and one whose better maximum becomes the better one only once an earlier
 # person's has moved the study's intercept (person 2 of study 1, by 0.07).
-test_that("a nested unit's persons each reach their best maximum given the rest", {
-  skip_without_julia()
+# Persons with sign-ambiguous loadings in two studies of six, each study one
+# nested unit: a study intercept over the persons' loadings.
+.modes_nested_spec <- function() {
   set.seed(3)
   n <- 12; nt <- 10
   d <- data.frame(id = rep(1:n, each = nt), time = rep(0:(nt - 1), n))
@@ -606,8 +607,14 @@ test_that("a nested unit's persons each reach their best maximum given the rest"
   m$pars$indvarying <- ifelse(m$pars$param %in% "lambda", "id",
     ifelse(m$pars$param %in% "mm", "study", FALSE))
   m$pars$transform[m$pars$param %in% "lambda"] <- "param"
-  spec <- suppressMessages(ctFit(d, m, backend = "julia", intoverpop = "laplace",
+  suppressMessages(ctFit(d, m, backend = "julia", intoverpop = "laplace",
     fit = FALSE, cores = 1))
+}
+
+test_that("a nested unit's persons each reach their best maximum given the rest", {
+  skip_without_julia()
+  n <- 12
+  spec <- .modes_nested_spec()
   obj <- ctsem:::.ctJuliaObjective(spec)
   dims <- ctsem:::.ctJuliaEval("o -> collect(Int, o.units.dims)")
   expect_equal(as.integer(dims(obj)), c(7L, 7L))
@@ -665,6 +672,76 @@ test_that("a nested unit's persons each reach their best maximum given the rest"
 # take every eigenpair, are their oracle. The point is fixed; the test first
 # checks that a node there holds two floored pairs, so it fails if it stops
 # exercising them.
+test_that("a nested unit's persons combine their own maxima, continuously", {
+  skip_without_julia()
+  spec <- .modes_nested_spec()
+  obj <- ctsem:::.ctJuliaObjective(spec)
+  np <- ctsem:::.ctBackendNpar(spec)
+  ctsem:::.ctJuliaEval(paste(
+    "_ctsem_test_bs_start(o, x) = (ContinuousTimeSEM._ctsem_anchor_start!(o, collect(Float64, x)); nothing)",
+    "function _ctsem_test_bs_step(o, x)",
+    "  r = ContinuousTimeSEM.ctsem_laplace_evaluate(o, collect(Float64, x); gradient=true)",
+    "  ContinuousTimeSEM._ctsem_anchor_here!(o)",
+    "  vcat(r.value, r.gradient, sum(length, o.block_modes), sum(length, o.alt_modes))",
+    "end",
+    "_ctsem_test_bs_value(o, x) = ContinuousTimeSEM.ctsem_laplace_evaluate(o, collect(Float64, x); gradient=false).value",
+    "_ctsem_test_bs_clear(o) = (ContinuousTimeSEM.ctsem_laplace_clear_anchors!(o); nothing)",
+    sep = "\n"))
+  on.exit({
+    invisible(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_mode_sum!", TRUE))
+    invisible(ctsem:::.ctJuliaCall("Main._ctsem_test_bs_clear", obj))
+  }, add = TRUE)
+  jv <- function(f, x) as.numeric(ctsem:::.ctJuliaCall(f, obj,
+    ctsem:::.ctJuliaNumericVector(x)))
+  # Where every person's own maximum is the best at full weight, the term is
+  # the unit's at its mode.
+  x <- c(0.3, 0.5, 0, 0)[seq_len(np)]
+  on <- ctsem:::.ctJuliaEvaluate(spec, x, gradient = FALSE, cores = 1L)$value
+  invisible(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_mode_sum!", FALSE))
+  off <- ctsem:::.ctJuliaEvaluate(spec, x, gradient = FALSE, cores = 1L)$value
+  invisible(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_mode_sum!", TRUE))
+  expect_equal(on, off, tolerance = 1e-10)
+  # At the population mean every person's other maximum is the person's (no
+  # maximum of the whole study is kept), and one of them carries the term.
+  x <- numeric(np)
+  invisible(jv("Main._ctsem_test_bs_start", x))
+  r <- jv("Main._ctsem_test_bs_step", x)
+  expect_gt(r[np + 2], 0)
+  expect_equal(r[np + 3], 0)
+  invisible(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_mode_sum!", FALSE))
+  single <- jv("Main._ctsem_test_bs_value", x)
+  invisible(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_mode_sum!", TRUE))
+  expect_gt(r[1] - single, 1e-3)
+  # Held, as a run evaluates, the gradient is the value's.
+  h <- 1e-6
+  fd <- sapply(seq_len(np), function(j) {
+    e <- numeric(np); e[j] <- h
+    (jv("Main._ctsem_test_bs_value", x + e) - jv("Main._ctsem_test_bs_value", x - e)) /
+      (2 * h)
+  })
+  expect_equal(r[2:(np + 1)], fd, tolerance = 1e-5)
+  invisible(ctsem:::.ctJuliaCall("Main._ctsem_test_bs_clear", obj))
+  # Walked through the stretch where persons' preferences turn, the anchors
+  # moved at every step as an optimiser's accepted steps move them, each
+  # step's change against the trapezoid of its end gradients: creases where a
+  # person's alternative overtakes its own maximum, which shrink with the
+  # step, and no jump, which would not. A study-wide maximum kept beside the
+  # persons' credited their flips twice and dropped the term 3 nats here.
+  walk <- function(K) {
+    x0 <- c(0.15, 0.09375, 0, 0)[seq_len(np)]
+    dir <- (c(0.10, 0.1125, 0, 0)[seq_len(np)] - x0) / K
+    invisible(jv("Main._ctsem_test_bs_start", x0))
+    out <- t(sapply(0:K, function(k) jv("Main._ctsem_test_bs_step", x0 + k * dir)))
+    invisible(ctsem:::.ctJuliaCall("Main._ctsem_test_bs_clear", obj))
+    g <- out[, 2:(np + 1)] %*% dir
+    max(abs(diff(out[, 1]) - (head(g, -1) + tail(g, -1)) / 2))
+  }
+  coarse <- walk(50)
+  fine <- walk(200)
+  expect_lt(coarse, 0.05)
+  expect_lt(fine, coarse / 2)
+})
+
 test_that("a nested unit's soft quadrature takes a binding floor from its blocks", {
   skip_without_julia()
   withr::local_options(ctsem.laplace.hybrid = FALSE)
@@ -676,10 +753,14 @@ test_that("a nested unit's soft quadrature takes a binding floor from its blocks
   for (lv in spec$laplace$levels) x[lv$sd_index[lv$sd_index > 0]] <- 2.5
   x <- x + 1.2 * as.numeric(ctsem:::.ctJuliaEval(
     "n -> randn(ContinuousTimeSEM.Random.Xoshiro(37), n)")(length(x)))
+  # The modes Newton from the origin reaches, the probes off: they find
+  # better, stiffer maxima of these units, and the rule is tested where the
+  # floor binds, at whichever mode that is.
   compare <- ctsem:::.ctJuliaEval(paste(
     "(o, x) -> begin",
     "  C = ContinuousTimeSEM",
-    "  C.ctsem_laplace_evaluate(o, x; gradient = false)",
+    "  was = C.ctsem_set_mode_probes!(false)",
+    "  try C.ctsem_laplace_evaluate(o, x; gradient = false) finally C.ctsem_set_mode_probes!(was) end",
     "  theta = C._laplace_extend(o, collect(Float64, x))",
     "  Ls = C._laplace_popchols(theta, o.spec)",
     "  aws = C._laplace_workspace!(o, Float64, length(theta))",

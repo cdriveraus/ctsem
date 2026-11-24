@@ -300,6 +300,11 @@ function _laplace_draw_copy(laplace::CTSEMLaplaceObjective, coreset::CTSEMCorese
         alt[U] = Vector{Float64}[]
     end
     draw.alt_modes = alt
+    blk = copy(laplace.block_modes)
+    for U in coreset.units
+        blk[U] = CTSEMBlockMode[]
+    end
+    draw.block_modes = blk
     draw.inner_iterations = copy(laplace.inner_iterations)
     draw.inner_gradient = copy(laplace.inner_gradient)
     draw.inner_converged = copy(laplace.inner_converged)
