@@ -1120,6 +1120,9 @@ function _ctsem_subset_objective(L::CTSEMLaplaceObjective, keep::AbstractVector{
         :alt_modes => [Vector{Float64}[] for _ in 1:n],
         :alt_anchors => isempty(L.alt_anchors) ? Vector{Vector{Float64}}[] :
             L.alt_anchors[keep],
+        :block_modes => [CTSEMBlockMode[] for _ in 1:n],
+        :block_anchors => isempty(L.block_anchors) ? Vector{CTSEMBlockMode}[] :
+            L.block_anchors[keep],
         :mode_values => [Float64[] for _ in 1:n],
         :anchor_values => isempty(L.anchor_values) ? Vector{Float64}[] :
             L.anchor_values[keep],

@@ -1009,16 +1009,18 @@ columns of `B` (directions in `z`), by the hand-coded sweeps, into `Gt`
 the soft-direction quadrature's first-order pass and the mode's cross derivatives seeded a
 dual in `z` for. In joint coordinates (`layout`) each member's filter is at the
 deviations `z` fixes, their directions among the lanes. `false` where a
-member cannot be evaluated.
+member cannot be evaluated. `group` and `prior` restrict it to those members
+and those coordinates' prior (`_laplace_unit_theta_gradient`).
 """
 function _tan_laplace_theta_gradient!(Gt::Matrix{Float64}, Gz::Matrix{Float64},
     laplace::CTSEMLaplaceObjective, U::Integer, theta::Vector{Float64},
     Ls::Vector{Matrix{Float64}}, dL, positions, z::Vector{Float64},
-    B::AbstractMatrix{Float64}, nl::Int, layout)
+    B::AbstractMatrix{Float64}, nl::Int, layout; group::Vector{Int}=Int[],
+    prior::Vector{Int}=Int[])
     mode = layout === nothing ? _laplace_hmode(laplace) : _HYBRID_FIXED
     ctx = _tan_laplace_context(laplace, theta, mode)
     st = _tan_laplace_theta_gradient_!(Gt, Gz, ctx, laplace, Int(U), theta, Ls, dL,
-        positions, z, B, nl, layout)::Int
+        positions, z, B, nl, layout, group, prior)::Int
     st == _TAN_REFUSED && throw(ArgumentError(_TAN_NOT_JACOBIAN))
     return st == _TAN_OK
 end
@@ -1026,7 +1028,8 @@ end
 function _tan_laplace_theta_gradient_!(Gt::Matrix{Float64}, Gz::Matrix{Float64},
     ctx::TanLaplaceContext{W,DC}, laplace::CTSEMLaplaceObjective, U::Int,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, dL, positions,
-    z::Vector{Float64}, B::AbstractMatrix{Float64}, nl::Int, layout) where {W,DC}
+    z::Vector{Float64}, B::AbstractMatrix{Float64}, nl::Int, layout,
+    group::Vector{Int}=Int[], prior::Vector{Int}=Int[]) where {W,DC}
     spec, units = laplace.spec, laplace.units
     objective = laplace.objective
     members = units.members[U]
@@ -1050,7 +1053,7 @@ function _tan_laplace_theta_gradient_!(Gt::Matrix{Float64}, Gz::Matrix{Float64},
     u = view(z, 1:d)
     g0 = view(Gt, :, 1)
     gm = zeros(npar)
-    for m in eachindex(members)
+    for m in (isempty(group) ? eachindex(members) : group)
         offsets = units.offsets[U][m]
         i = members[m]
         xw = _laplace_member_values!(ctx.xw, theta, spec, Ls, uw, offsets)
@@ -1079,7 +1082,7 @@ function _tan_laplace_theta_gradient_!(Gt::Matrix{Float64}, Gz::Matrix{Float64},
         layout === nothing || _tan_laplace_fixed_gradient!(Gz, ctx.sw.hs, mod, layout, m,
             nl, objective.subject_objectives[i].data)
     end
-    @inbounds for a in 1:D
+    @inbounds for a in (isempty(prior) ? (1:D) : prior)
         Gz[a, 1] -= z[a]
         for w in 1:nl
             Gz[a, 1 + w] -= B[a, w]

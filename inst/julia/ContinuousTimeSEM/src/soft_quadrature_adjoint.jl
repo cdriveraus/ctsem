@@ -63,11 +63,15 @@ vector -- through each member's filter, and for the level parameters through
 `(theta, z)`, or `nothing` if a member cannot be evaluated. Generic in
 `eltype(z)`, so a seeded `z` returns both gradients' directional derivatives.
 `layout` is `nothing` for the unit's own coordinates, or the joint layout for
-`z = (u, d_1, ...)`, the filter at the fixed deviations `d_m`.
+`z = (u, d_1, ...)`, the filter at the fixed deviations `d_m`. `group` (member
+positions) and `prior` (coordinates) restrict the objective to those members
+and those coordinates' prior, all where empty: a nested unit's subtree given
+the rest of the unit (`_laplace_block_sum`).
 """
 function _laplace_unit_theta_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, dL, positions,
-    z::AbstractVector{S}, layout) where {S}
+    z::AbstractVector{S}, layout; group::Vector{Int}=Int[],
+    prior::Vector{Int}=Int[]) where {S}
     spec = laplace.spec
     units = laplace.units
     members = units.members[U]
@@ -84,7 +88,7 @@ function _laplace_unit_theta_gradient(laplace::CTSEMLaplaceObjective, U::Integer
     Gtheta = zeros(S, npar)
     Gz = zeros(S, D)
     mode = layout === nothing ? _laplace_hmode(laplace) : _HYBRID_FIXED
-    for m in eachindex(members)
+    for m in (isempty(group) ? eachindex(members) : group)
         offsets = units.offsets[U][m]
         shifted = _laplace_member_values!(shift, theta, spec, Ls, u, offsets)
         if layout !== nothing
@@ -112,7 +116,7 @@ function _laplace_unit_theta_gradient(laplace::CTSEMLaplaceObjective, U::Integer
             _hybrid_fixed_gradient!(Gz, layout.offs[m], hb; add = true)
         end
     end
-    @inbounds for a in 1:D
+    @inbounds for a in (isempty(prior) ? (1:D) : prior)
         Gz[a] -= z[a]
     end
     return (theta=Gtheta, z=Gz)
@@ -124,6 +128,8 @@ hand the hand-coded sweeps (`_tan_laplace_theta_gradient!`,
 `_tan_laplace_theta_jet!`), and the coordinates each member reads
 (`_soft_quadrature_member_coordinates`). Called, `_laplace_unit_theta_gradient`
 at `zz`: what the tests' oracle differentiates (test/dual_oracles.jl).
+`group` and `prior` are that function's: a subtree's objective
+(`_laplace_block_sum`), every member and coordinate where empty.
 """
 struct _SoftQuadratureThetaGradient{L,DL,P,Y}
     laplace::L
@@ -134,12 +140,15 @@ struct _SoftQuadratureThetaGradient{L,DL,P,Y}
     positions::P
     layout::Y
     coords::Vector{Vector{Int}}
+    group::Vector{Int}
+    prior::Vector{Int}
 end
-_SoftQuadratureThetaGradient(laplace, U, theta, Ls, dL, positions, layout) =
+_SoftQuadratureThetaGradient(laplace, U, theta, Ls, dL, positions, layout;
+    group::Vector{Int}=Int[], prior::Vector{Int}=Int[]) =
     _SoftQuadratureThetaGradient(laplace, Int(U), theta, Ls, dL, positions, layout,
-        _soft_quadrature_member_coordinates(laplace, U, layout))
+        _soft_quadrature_member_coordinates(laplace, U, layout), group, prior)
 (g::_SoftQuadratureThetaGradient)(zz) = _laplace_unit_theta_gradient(g.laplace, g.U, g.theta,
-    g.Ls, g.dL, g.positions, zz, g.layout)
+    g.Ls, g.dL, g.positions, zz, g.layout; group=g.group, prior=g.prior)
 
 """
     _soft_quadrature_member_coordinates(laplace, U, layout)
@@ -176,7 +185,8 @@ function _soft_quadrature_directional(G::_SoftQuadratureThetaGradient, z::Vector
     Gt = zeros(Float64, npar, 2)
     Gz = zeros(Float64, D, 2)
     _tan_laplace_theta_gradient!(Gt, Gz, G.laplace, G.U, G.theta, G.Ls, G.dL,
-        G.positions, z, reshape(beta, D, 1), 1, G.layout) || return nothing
+        G.positions, z, reshape(beta, D, 1), 1, G.layout; group=G.group,
+        prior=G.prior) || return nothing
     return (theta=Gt[:, 2], z=Gz[:, 2])
 end
 
@@ -242,6 +252,11 @@ function _soft_quadrature_trace!(thetabar::Vector{Float64}, zbar::Vector{Float64
     pos = Vector{Matrix{Float64}}(undef, nm)
     neg = Vector{Matrix{Float64}}(undef, nm)
     for m in 1:nm
+        # A subtree's objective (`G.group`) holds its own members alone.
+        if !isempty(G.group) && !(m in G.group)
+            pos[m] = neg[m] = zeros(Float64, 0, 0)
+            continue
+        end
         Gm = _soft_member_gamma(Gamma, G, m)
         n = size(Gm, 1)
         if n == 0

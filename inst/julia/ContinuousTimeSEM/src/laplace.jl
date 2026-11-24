@@ -391,6 +391,18 @@ struct CTSEMLaplaceBlock
 end
 
 """
+Another maximum of one block of a nested unit, given the rest of the unit at
+its mode: block `b`'s subtree (the block and the blocks beneath it) at
+coordinates `y`, laid out as `_laplace_subtree` lays them. A nested unit's
+blocks combine their own maxima (`_laplace_block_sum`), so a person's other
+maximum is that person's, not a maximum of the whole study.
+"""
+struct CTSEMBlockMode
+    b::Int
+    y::Vector{Float64}
+end
+
+"""
     CTSEMLaplaceUnits
 
 How the integral factorises.
@@ -769,6 +781,13 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     # point, each followed from there as `anchors` follows its mode
     # (`_laplace_follow_modes`); empty outside one.
     alt_anchors::Vector{Vector{Vector{Float64}}}
+    # Per nested unit, its blocks' other maxima given the rest of the unit at
+    # its mode (`CTSEMBlockMode`, `_laplace_block_sum`), and within an
+    # optimisation those at the last accepted point, which each evaluation
+    # follows from (empty outside one). Rebound per unit, never written in
+    # place.
+    block_modes::Vector{Vector{CTSEMBlockMode}}
+    block_anchors::Vector{Vector{CTSEMBlockMode}}
     # Per unit, the parameters (extended) its `modes` were solved at, and
     # within an optimisation those its anchors were, from which a maximum
     # Newton loses over a long step is followed again (`_laplace_follow_one`).
@@ -809,7 +828,8 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
         inert === nothing ? Vector{Vector{Int}}[] : inert,
         isempty(known) ? [Vector{Float64}[] for _ in 1:nunits] : known,
         Vector{Float64}[], [Vector{Float64}[] for _ in 1:nunits],
-        Vector{Vector{Float64}}[], [Float64[] for _ in 1:nunits], Vector{Float64}[],
+        Vector{Vector{Float64}}[], [CTSEMBlockMode[] for _ in 1:nunits],
+        Vector{CTSEMBlockMode}[], [Float64[] for _ in 1:nunits], Vector{Float64}[],
         [CTSEMUnitColumns() for _ in 1:nunits],
         [CTSEMUnitCurvature() for _ in 1:nunits])
 end
@@ -3938,6 +3958,12 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
     if !retain && !isempty(laplace.anchors) && length(laplace.anchors[U]) == d
         held = _laplace_newton_unit_mode(laplace, U, values, Ls, aws,
             laplace.anchors[U]; warm=true)
+        # A nested unit's blocks' other maxima, from where they stood at the
+        # last accepted point: the evaluation follows them given the unit's
+        # maximum (`_laplace_block_sums`).
+        laplace.block_modes[U] = (isempty(laplace.block_anchors) ||
+            U > length(laplace.block_anchors)) ? CTSEMBlockMode[] :
+            laplace.block_anchors[U]
         # A unit with other maxima follows each from its own anchor
         # (`_laplace_follow_modes`); the sum over them decides its term
         # (`_laplace_mode_sum`), and the first kept stands as its mode till then.
@@ -4024,6 +4050,11 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
     # Every maximum the search reaches, for the sum over them
     # (`_laplace_mode_sum`); the choice of one below is the probes' as before.
     set = (_LAPLACE_MODE_SUM[] && best.converged) ? Any[best] : nothing
+    # A nested unit's blocks keep their own other maxima (`_laplace_block_sum`),
+    # each block's search on its subtree (`_laplace_probe_nested`).
+    nblocks = length(laplace.units.blocks[U])
+    blockset = (set !== nothing && nblocks > 1 && !_laplace_joint_hybrid(laplace)) ?
+        [Vector{Float64}[] for _ in 1:nblocks] : nothing
     # A warm solve follows the unit's other maxima from where they stood, as
     # an anchored one does: a Hessian's differencing points all start from the
     # same modes (`_laplace_mode_snapshot`), every one of them.
@@ -4034,23 +4065,44 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
             (r.converged && isfinite(r.value)) || continue
             _laplace_mode_join!(set, laplace, U, values, Ls, aws, r)
         end
+        if blockset !== nothing
+            for e in laplace.block_modes[U]
+                1 <= e.b <= nblocks && push!(blockset[e.b], e.y)
+            end
+        end
     end
     if _LAPLACE_MODE_PROBES[] && !laplace.quadratic && best.converged && 0 < d &&
             !(fromwarm && _LAPLACE_WARM_START[])
-        best = _laplace_probe_modes(laplace, U, values, Ls, aws, best; set=set)
+        best = _laplace_probe_modes(laplace, U, values, Ls, aws, best; set=set,
+            blockset=blockset)
     end
     # And from the modes the fit saw where this unit's term jumped.
     (best.converged && !isempty(laplace.known[U])) &&
-        (best = _laplace_known_modes(laplace, U, values, Ls, aws, best; set=set))
-    # And past a maximum near its fold, the one it hands over to.
-    (set === nothing || !best.converged) ||
-        _laplace_partner_modes!(set, laplace, U, values, Ls, aws)
+        (best = _laplace_known_modes(laplace, U, values, Ls, aws, best; set=set,
+            blockset=blockset))
+    # And past a maximum near its fold, the one it hands over to: for a nested
+    # unit, past a block's configuration near its fold, given the rest.
+    if set !== nothing && best.converged
+        blockset === nothing ? _laplace_partner_modes!(set, laplace, U, values, Ls, aws) :
+            _laplace_block_partners!(blockset, laplace, U, values, Ls, aws, copy(best.u))
+    end
+    # And each block at its best configuration given the others, as they move
+    # one another through the unit's shared effects.
+    (blockset !== nothing && best.converged) &&
+        (best = _laplace_block_settle!(blockset, laplace, U, values, Ls, aws, best))
     # Bound once for the comprehension, which captures what it reads: `best`,
     # assigned above more than once, would be a `Core.Box`.
     chosen = best.u
     laplace.modes[U] = chosen
-    laplace.alt_modes[U] = set === nothing ? Vector{Float64}[] :
+    found_alts = set === nothing ? Vector{Float64}[] :
         Vector{Float64}[m.u for m in set if _laplace_maxabsdiff(m.u, chosen) >= 1e-4]
+    # A nested unit keeps as maxima of its own only those that are no block's
+    # other maximum: the rest are its persons' (`_laplace_block_project!`).
+    laplace.alt_modes[U] = blockset === nothing ? found_alts :
+        Vector{Float64}[m for m in found_alts if !_laplace_block_project!(blockset,
+            laplace, U, values, Ls, aws, collect(Float64, chosen), m)]
+    laplace.block_modes[U] = blockset === nothing ? CTSEMBlockMode[] :
+        CTSEMBlockMode[CTSEMBlockMode(b, y) for b in 1:nblocks for y in blockset[b]]
     laplace.inner_iterations[U] = best.iterations
     laplace.inner_gradient[U] = best.gradmax
     laplace.inner_converged[U] = best.converged
@@ -4109,6 +4161,7 @@ found at once."""
 function _laplace_record_empty_mode!(laplace::CTSEMLaplaceObjective, U::Integer)
     isempty(laplace.modes[U]) || (laplace.modes[U] = Float64[])
     isempty(laplace.alt_modes[U]) || (laplace.alt_modes[U] = Vector{Float64}[])
+    isempty(laplace.block_modes[U]) || (laplace.block_modes[U] = CTSEMBlockMode[])
     laplace.inner_iterations[U] = 0
     laplace.inner_gradient[U] = 0.0
     laplace.inner_converged[U] = true
@@ -4611,7 +4664,7 @@ block at a time instead (`_laplace_probe_nested`).
 """
 function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, found;
-    set=nothing)
+    set=nothing, blockset=nothing)
     d = length(found.u)
     blocks = laplace.units.blocks[U]
     # A copy, in the unit's own block storage: `found.curvature` is the slot's
@@ -4632,7 +4685,7 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     # A unit of nested blocks is searched a block at a time, each block's
     # starts evaluating only the members under it (`_laplace_probe_nested`).
     (screened && length(blocks) > 1) && return _laplace_probe_nested(laplace, U,
-        values, Ls, aws, found, M, F, blocks; set=set)
+        values, Ls, aws, found, M, F, blocks; set=set, blockset=blockset)
     # The soft directions, each a column of `D` already scaled to its reach,
     # softest first. Over the span a second mode can
     # lie in (`_laplace_probe_span`): there a direction's precision is its
@@ -4811,37 +4864,48 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
 end
 
 """
-    _laplace_probe_nested(laplace, U, values, Ls, aws, found, M, F, blocks; set)
+    _laplace_probe_nested(laplace, U, values, Ls, aws, found, M, F, blocks; set,
+        blockset)
 
 `_laplace_probe_modes` for a unit of nested blocks -- persons in a study --
-whose curvature `M` factors at `found` (`F`): the same starts, screen and
-choice between maxima, taken a block at a time. For each block `b`, the soft
-directions of its span (`_laplace_probe_span_blocks`) given every coordinate
-outside `b`'s subtree (`b` and the blocks beneath it) at `found`: their
-precision is `b`'s within the subtree, the Schur complement of the subtree's
-own curvature, and the blocks beneath `b` move to their conditional mean along
-each. Then the subtree's reflection, `-found.u` within it, where `found.u` has
-a part along the span there. A person's block is searched as a unit of its own
-would be, conditional on the study's effects; the study's block, at the top,
-moves every person, as the whole unit's search did.
+whose curvature `M` factors at `found` (`F`): the same starts and screen, taken
+a block at a time. For each block `b`, the soft directions of its span
+(`_laplace_probe_span_blocks`) given every coordinate outside `b`'s subtree (`b`
+and the blocks beneath it) at the base: their precision is `b`'s within the
+subtree, the Schur complement of the subtree's own curvature, and the blocks
+beneath `b` move to their conditional mean along each. Then the subtree's
+reflection, `-u` within it, where the base has a part along the span there.
 
-A start moves only the subtree's coordinates, so its value differs from
-`found`'s only by the terms of the members under `b` (`blocks[b].members`),
-and the screen evaluates those alone; its gradient in the subtree's
-coordinates is theirs too, and its test of where Newton would land reads the
-subtree's curvature. So a person's starts cost a person's passes, and a
-study's search costs about what its persons' would as units of their own.
+A start moves only the subtree's coordinates, so its value differs from the
+base's only by the terms of the members under `b` (`blocks[b].members`), and
+the screen evaluates those alone; its gradient in the subtree's coordinates is
+theirs too, and its test of where Newton would land reads the subtree's
+curvature. Below the top, Newton runs on the subtree alone, the rest of the
+unit held (`_laplace_block_newton`): a maximum it reaches that a valley parts
+from the block's other configurations is the block's (`blockset[b]`, which
+`_laplace_block_sum` combines), and where its conditional term is the better
+the block takes it, its old configuration kept beside it, for the later
+blocks' starts to leave from. So a person's search costs a person's passes,
+and what one person's search found and another's compose: from `found` alone,
+of two persons with better maxima on a fixture of sign-ambiguous loadings the
+study kept one. The top block, the study's, moves every person: its starts
+leave from the whole unit's maximum with the persons' choices composed
+(Newton on the whole unit from the base), Newton from them runs on the whole
+unit, and a maximum it reaches is the whole unit's (`set`), chosen between as
+before (`_laplace_prefer_mode`).
+
 Searched as one unit, every start evaluated every member, and the span's
 directions were mixed through `M^-1` over the whole unit: on the affect
 pilot's persons in studies about 19 starts a person, each a pass over the
 whole study, and a first evaluation at 40 persons a study that had not
-finished in 28 minutes. Newton from a start that passes the screen runs on
-the whole unit, as before, and a better mode it reaches is the point the
-later blocks' starts leave from.
+finished in 28 minutes. With Newton on the whole unit from a person's start, a
+study of 200 persons with two maxima each kept 190 maxima of the whole study,
+each a pass over all of it at every evaluation.
 """
 function _laplace_probe_nested(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, found,
-    M::CTSEMBlockMatrix{Float64}, F, blocks::Vector{CTSEMLaplaceBlock}; set=nothing)
+    M::CTSEMBlockMatrix{Float64}, F, blocks::Vector{CTSEMLaplaceBlock}; set=nothing,
+    blockset=nothing)
     d = length(found.u)
     nb = length(blocks)
     nmem = length(laplace.units.members[U])
@@ -4853,8 +4917,8 @@ function _laplace_probe_nested(laplace::CTSEMLaplaceObjective, U::Integer,
     total = _laplace_unit_loglik_value(laplace, U, values, Ls, found.u, aws,
         Float64[]; each=each).value
     isfinite(total) || return found
-    # The point the starts leave from: `found`, then the best mode so far
-    # (below).
+    # The point the starts leave from: `found`, then with each block's better
+    # configuration, and the best mode so far (below).
     baseu = found.u
     basevalue = found.value
     usq = dot(baseu, baseu)
@@ -4863,21 +4927,46 @@ function _laplace_probe_nested(laplace::CTSEMLaplaceObjective, U::Integer,
     best = found
     bestterm = NaN
     improved = false
+    # The blocks that took another configuration since `M` was the base's.
+    shifted = falses(nb)
     seen = [found.u]
     counted = false
-    pos = zeros(Int, nb)
     for b in 1:nb
         kb = blocks[b].size
         kb == 0 && continue
+        st = _laplace_subtree(blocks, b)
+        S, idx, sub = st.S, st.idx, st.sub
+        top = length(S) == nb
+        # Below the top, the block's own search (`blockset`); without one -- the
+        # sum over maxima off, its oracle -- the whole unit's, as before.
+        blocklocal = !top && blockset !== nothing
+        # A block above one that took another configuration starts from the
+        # base as it now is: at the top, the whole unit's maximum again.
+        if any(t -> shifted[t], S)
+            if top
+                rn = _laplace_whole_mode_record(laplace, U, values, Ls, aws, baseu, found)
+                if rn !== nothing
+                    best, bestterm, baseu = rn, NaN, rn.u
+                end
+            end
+            Mb = _laplace_copy_blockmatrix(top && best.final !== nothing ? best.final :
+                _laplace_unit_curvature(laplace, U, values, Ls, copy(baseu)))
+            for Dg in Mb.diag
+                _laplace_symmetrise!(Dg)
+            end
+            Fb = _soft_shifted_factor(Mb, blocks, 0.0)
+            Fb === nothing && return best
+            tb = _laplace_unit_loglik_value(laplace, U, values, Ls, baseu, aws,
+                Float64[]; each=each).value
+            isfinite(tb) || return best
+            M, F, total = Mb, Fb, tb
+            usq = dot(baseu, baseu)
+            basevalue = tb - usq / 2
+            copyto!(work, baseu)
+            fill!(shifted, false)
+        end
         Qb = cols === nothing ? Matrix{Float64}(I, kb, kb) : cols[b]
         nq = size(Qb, 2)
-        # The subtree, in the unit's order (a block's ancestors after it, as the
-        # factorization takes them), and its coordinates in `u`.
-        S = Int[t for t in 1:nb if t == b || b in blocks[t].ancestors]
-        idx = Int[]
-        for t in S
-            append!(idx, (blocks[t].offset + 1):(blocks[t].offset + blocks[t].size))
-        end
         dS = length(idx)
         uS = baseu[idx]
         # The reflection where the base has a part along the span within the
@@ -4905,33 +4994,15 @@ function _laplace_probe_nested(laplace::CTSEMLaplaceObjective, U::Integer,
         (nq > 0 || reflected) || continue
         # The subtree's own curvature and its factor: the whole unit's at the
         # top block.
-        if length(S) == nb
-            sub = blocks
+        if top
             Ms = M
             Fs = F
         else
-            fill!(pos, 0)
-            for (k, t) in enumerate(S)
-                pos[t] = k
-            end
-            sub = Vector{CTSEMLaplaceBlock}(undef, length(S))
-            off = 0
-            for (k, t) in enumerate(S)
-                sub[k] = CTSEMLaplaceBlock(off, blocks[t].size, blocks[t].members,
-                    blocks[t].level, Int[pos[a] for a in blocks[t].ancestors if pos[a] > 0])
-                off += blocks[t].size
-            end
-            Ms = CTSEMBlockMatrix{Float64}(Matrix{Float64}[M.diag[t] for t in S],
-                Vector{Matrix{Float64}}[Matrix{Float64}[M.coupling[t][r]
-                    for (r, a) in enumerate(blocks[t].ancestors) if pos[a] > 0] for t in S])
+            Ms = _laplace_subtree_matrix(M, blocks, st)
             Fs = _soft_shifted_factor(Ms, sub, 0.0)
             Fs === nothing && continue
         end
-        ob = 0
-        for t in S
-            t == b && break
-            ob += blocks[t].size
-        end
+        ob = sub[st.pos[b]].offset
         # The soft directions over the block's span, as `_laplace_probe_modes`
         # takes them over the unit's: `X = M_S^-1 Q`, the span's precision in
         # the subtree `C^-1 = (Q' X)^-1`, and a direction's reach mapped into
@@ -4986,6 +5057,13 @@ function _laplace_probe_nested(laplace::CTSEMLaplaceObjective, U::Integer,
         for m in group
             base += each[m]
         end
+        # Below the top, the block's configurations as `_laplace_block_sum`
+        # scores them, its own first, and the best other one by conditional
+        # term so far.
+        hown = base - sum(abs2, uS) / 2
+        configs = blocklocal ? Any[(y=uS, h=hown, M=Ms, F=Fs)] : Any[]
+        tauown = blocklocal ? hown - Fs.logdet / 2 : NaN
+        better = nothing
         delta = zeros(Float64, dS)
         moved = zeros(Float64, dS)
         miss = zeros(Float64, dS)
@@ -5061,30 +5139,70 @@ function _laplace_probe_nested(laplace::CTSEMLaplaceObjective, U::Integer,
                     end
                 end
             end
-            r = outward ? _laplace_newton_unit_mode(laplace, U, values, Ls, aws, work) :
-                nothing
+            if !outward
+                @inbounds for i in 1:dS
+                    work[idx[i]] = uS[i]
+                end
+                continue
+            end
+            _CTSEM_OPCOUNT.probe_newtons[] += 1
+            if blocklocal
+                rb = _laplace_block_newton(laplace, U, values, Ls, aws, baseu, st,
+                    uS .+ delta)
+                @inbounds for i in 1:dS
+                    work[idx[i]] = uS[i]
+                end
+                (rb.converged && isfinite(rb.value) && rb.F !== nothing) || continue
+                _laplace_block_join!(configs, laplace, U, values, Ls, aws, baseu, st,
+                    rb) || continue
+                tau = rb.value - rb.F.logdet / 2
+                tau > tauown && (better === nothing || tau > better.tau) &&
+                    (better = (y=rb.y, tau=tau))
+                continue
+            end
+            r = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, work)
             @inbounds for i in 1:dS
                 work[idx[i]] = uS[i]
             end
-            r === nothing && continue
-            _CTSEM_OPCOUNT.probe_newtons[] += 1
             (r.converged && isfinite(r.value)) || continue
             any(m -> _laplace_maxabsdiff(m, r.u) < 1e-4, seen) && continue
             push!(seen, r.u)
             set === nothing || _laplace_mode_join!(set, laplace, U, values, Ls, aws, r)
-            best, bestterm, better = _laplace_prefer_mode(laplace, U, values, Ls, aws,
+            best, bestterm, b2 = _laplace_prefer_mode(laplace, U, values, Ls, aws,
                 best, bestterm, r, found)
-            better && (_CTSEM_OPCOUNT.probe_better[] += 1; improved = true)
+            b2 && (_CTSEM_OPCOUNT.probe_better[] += 1; improved = true)
         end
-        # A better mode becomes the base the later blocks' starts leave from,
-        # its curvature and members' values with it, so that what one member's
-        # search found and another's composes. From `found` alone each start
-        # carried only its own block's move, and of two persons with better
-        # maxima the study kept one: on a fixture of sign-ambiguous loadings,
-        # one person's better maximum moved the study's effect, and with it
-        # moved, the next person's other maximum became the better one by 0.07.
-        # A rebase costs a pass over the members and a factorization, beside
-        # the whole-unit Newton that found the mode.
+        if blocklocal
+            # The block's other maxima for the sum over them, and where one's
+            # conditional term is the better, the block takes it, its own kept
+            # beside it.
+            if blockset !== nothing
+                for c in 2:length(configs)
+                    better !== nothing && _laplace_maxabsdiff(configs[c].y, better.y) < 1e-12 &&
+                        continue
+                    push!(blockset[b], copy(configs[c].y))
+                end
+                better === nothing || push!(blockset[b], copy(uS))
+            end
+            if better !== nothing
+                _CTSEM_OPCOUNT.probe_better[] += 1
+                baseu = copy(baseu)
+                baseu[idx] .= better.y
+                tb = _laplace_unit_loglik_value(laplace, U, values, Ls, baseu, aws,
+                    Float64[]; positions=group, each=each).value
+                isfinite(tb) || return best
+                total = sum(each)
+                usq = dot(baseu, baseu)
+                basevalue = total - usq / 2
+                copyto!(work, baseu)
+                shifted[b] = true
+            end
+            continue
+        end
+        # A better mode of the whole unit becomes the base the later blocks'
+        # starts leave from, its curvature and members' values with it. A
+        # rebase costs a pass over the members and a factorization, beside the
+        # whole-unit Newton that found the mode.
         if improved
             improved = false
             Mb = _laplace_copy_blockmatrix(best.final === nothing ?
@@ -5107,7 +5225,26 @@ function _laplace_probe_nested(laplace::CTSEMLaplaceObjective, U::Integer,
             copyto!(work, baseu)
         end
     end
+    # Blocks that took another configuration where no block above searched
+    # after them: the base made the whole unit's maximum.
+    if any(shifted)
+        rn = _laplace_whole_mode_record(laplace, U, values, Ls, aws, baseu, found)
+        rn === nothing || (best = rn)
+    end
     return best
+end
+
+"""Newton on the whole unit from `start`, as the record the search keeps for a
+mode (`_laplace_prefer_mode`'s), adding to `found`'s iterations and repairs;
+`nothing` where it does not converge."""
+function _laplace_whole_mode_record(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws,
+    start::Vector{Float64}, found)
+    rn = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start)
+    (rn.converged && isfinite(rn.value)) || return nothing
+    return (u=rn.u, value=rn.value, gradmax=rn.gradmax, converged=true,
+        iterations=found.iterations + rn.iterations,
+        repaired=found.repaired || rn.repaired, curvature=nothing, final=rn.final)
 end
 
 """
@@ -5160,7 +5297,7 @@ a step of 0.3.
 """
 function _laplace_known_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, found;
-    set=nothing)
+    set=nothing, blockset=nothing)
     best = found
     bestterm = NaN
     d = length(found.u)
@@ -5170,7 +5307,14 @@ function _laplace_known_modes(laplace::CTSEMLaplaceObjective, U::Integer,
         _laplace_maxabsdiff(start, best.u) < 1e-4 && continue
         r = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start)
         (r.converged && isfinite(r.value)) || continue
-        set === nothing || _laplace_mode_join!(set, laplace, U, values, Ls, aws, r)
+        # A nested unit's blocks take what differs from the mode as their own
+        # (`_laplace_block_project!`); a unit of one block, the maximum itself.
+        if blockset !== nothing
+            _laplace_block_project!(blockset, laplace, U, values, Ls, aws,
+                collect(Float64, best.u), r.u)
+        elseif set !== nothing
+            _laplace_mode_join!(set, laplace, U, values, Ls, aws, r)
+        end
         _laplace_maxabsdiff(r.u, best.u) < 1e-4 && continue
         best, bestterm, _ = _laplace_prefer_mode(laplace, U, values, Ls, aws,
             best, bestterm, r, found)
@@ -5456,9 +5600,14 @@ the unit's gradient is then the one mode's.
 function _laplace_mode_sum(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls, aws, primal)
     all_modes = vcat([laplace.modes[U]], laplace.alt_modes[U])
-    all_prims = Any[primal]
+    # Each maximum's curvature a copy: a wide nested unit's is the slot's
+    # scratch, which the next maximum's primal overwrites, and every route
+    # below reads its own.
+    keep_M(p) = merge(p, (M=_laplace_copy_blockmatrix(p.M),))
+    all_prims = Any[keep_M(primal)]
     for k in 2:length(all_modes)
-        push!(all_prims, _laplace_unit_primal(laplace, U, theta, Ls, all_modes[k], aws))
+        push!(all_prims, keep_M(_laplace_unit_primal(laplace, U, theta, Ls,
+            all_modes[k], aws)))
     end
     all_terms = Float64[p.term for p in all_prims]
     finite = findall(isfinite, all_terms)
@@ -5748,6 +5897,7 @@ function _ctsem_anchor_start!(laplace::CTSEMLaplaceObjective, x::AbstractVector;
     _laplace_forget_curvatures!(laplace)
     _LAPLACE_ANCHORS[] || return nothing
     laplace.alt_anchors = Vector{Vector{Float64}}[]
+    laplace.block_anchors = Vector{CTSEMBlockMode}[]
     known = laplace.known
     resuming = resume_units !== nothing && resume_values !== nothing &&
         !isempty(resume_units) && any(>(0), resume_units)
@@ -5766,6 +5916,7 @@ function _ctsem_anchor_start!(laplace::CTSEMLaplaceObjective, x::AbstractVector;
     isfinite(r.value) || return nothing
     laplace.anchors = [copy(m) for m in laplace.modes]
     laplace.alt_anchors = [Vector{Float64}[copy(m) for m in a] for a in laplace.alt_modes]
+    laplace.block_anchors = [copy(a) for a in laplace.block_modes]
     laplace.anchor_values = _laplace_values_copy(laplace.mode_values)
     _laplace_anchor_curvatures!(laplace)
     return nothing
@@ -5803,6 +5954,13 @@ function _ctsem_anchor_modes(laplace::CTSEMLaplaceObjective; known::Bool=true)
                 push!(units, U); push!(modes, m)
             end
         end
+        if U <= length(laplace.block_anchors)
+            blocks = laplace.units.blocks[U]
+            for e in laplace.block_anchors[U]
+                push!(units, U)
+                push!(modes, _laplace_block_expand(blocks, laplace.anchors[U], e))
+            end
+        end
         (known && U <= length(laplace.known)) || continue
         for k in laplace.known[U]
             any(j -> _laplace_maxabsdiff(modes[j], k) < 1e-8, j0:length(modes)) &&
@@ -5831,6 +5989,7 @@ function _ctsem_anchor_here!(laplace::CTSEMLaplaceObjective)
     isempty(laplace.anchors) && return nothing
     laplace.anchors = [copy(m) for m in laplace.modes]
     laplace.alt_anchors = [Vector{Float64}[copy(m) for m in a] for a in laplace.alt_modes]
+    laplace.block_anchors = [copy(a) for a in laplace.block_modes]
     laplace.anchor_values = _laplace_values_copy(laplace.mode_values)
     _laplace_anchor_curvatures!(laplace)
     return nothing
@@ -5855,6 +6014,8 @@ function _ctsem_anchor_take!(laplace::CTSEMLaplaceObjective,
     for (j, U) in enumerate(units)
         laplace.anchors[U] = subset.anchors[j]
         laplace.alt_anchors[U] = subset.alt_anchors[j]
+        (isempty(laplace.block_anchors) || isempty(subset.block_anchors)) ||
+            (laplace.block_anchors[U] = subset.block_anchors[j])
         laplace.anchor_values[U] = subset.anchor_values[j]
     end
     _laplace_anchor_curvatures!(laplace)
@@ -5903,7 +6064,21 @@ function _ctsem_anchor_finish!(laplace::CTSEMLaplaceObjective, x::AbstractVector
             for m in found_only
                 push!(missu, U); push!(missm, m)
             end
-            isempty(found_only) || (setgain += su[U] - hu[U])
+            # A nested unit's blocks' other maxima, as maxima of the whole unit
+            # at the anchored mode (`_laplace_block_expand`), which a hold reads
+            # back as the blocks' (`_laplace_block_classify`).
+            blocks = laplace.units.blocks[U]
+            missblock = false
+            for e in c.hb[U]
+                any(f -> _laplace_block_same(e, f), c.sb[U]) && continue
+                push!(keptu, U); push!(keptm, _laplace_block_expand(blocks, hm[U], e))
+            end
+            for e in c.sb[U]
+                any(f -> _laplace_block_same(e, f), c.hb[U]) && continue
+                push!(missu, U); push!(missm, _laplace_block_expand(blocks, hm[U], e))
+                missblock = true
+            end
+            (isempty(found_only) && !missblock) || (setgain += su[U] - hu[U])
         end
         packed(units, modes) = begin
             isempty(units) && return ([0], zeros(1, 1))
@@ -5977,6 +6152,7 @@ function _ctsem_anchor_compare(laplace::CTSEMLaplaceObjective, xv::Vector{Float6
     hu = collect(Float64, held.unit_loglik)
     hm = [copy(m) for m in laplace.modes]
     ha = [Vector{Float64}[copy(m) for m in a] for a in laplace.alt_modes]
+    hb = [copy(a) for a in laplace.block_modes]
     ctsem_laplace_clear_anchors!(laplace)
     searched = try
         ctsem_laplace_evaluate(laplace, xv; gradient=false)
@@ -5984,9 +6160,10 @@ function _ctsem_anchor_compare(laplace::CTSEMLaplaceObjective, xv::Vector{Float6
         _ctsem_must_propagate(err) && rethrow()
         return nothing
     end
-    return (held=Float64(held.value), hu=hu, hm=hm, ha=ha,
+    return (held=Float64(held.value), hu=hu, hm=hm, ha=ha, hb=hb,
         su=collect(Float64, searched.unit_loglik), sm=[copy(m) for m in laplace.modes],
-        sa=[Vector{Float64}[copy(m) for m in a] for a in laplace.alt_modes])
+        sa=[Vector{Float64}[copy(m) for m in a] for a in laplace.alt_modes],
+        sb=[copy(a) for a in laplace.block_modes])
 end
 
 """
@@ -6043,11 +6220,13 @@ function _ctsem_merge_modes!(laplace::CTSEMLaplaceObjective, xv::Vector{Float64}
     found::CTSEMFoundModes)
     saved = laplace.anchors
     saved_alt = laplace.alt_anchors
+    saved_blocks = laplace.block_anchors
     saved_values = laplace.anchor_values
+    restore!() = (laplace.anchors = saved; laplace.alt_anchors = saved_alt;
+        laplace.block_anchors = saved_blocks; laplace.anchor_values = saved_values)
     c = _ctsem_anchor_compare(laplace, xv)
     if c === nothing
-        laplace.anchors = saved; laplace.alt_anchors = saved_alt
-        laplace.anchor_values = saved_values
+        restore!()
         return (change=NaN, units=0)
     end
     n = length(c.hu)
@@ -6057,6 +6236,31 @@ function _ctsem_merge_modes!(laplace::CTSEMLaplaceObjective, xv::Vector{Float64}
     Ls = _laplace_popchols(theta, laplace.spec)
     aws = _laplace_workspace!(laplace, Float64, length(theta))
     changed = 0
+    # A nested unit's blocks' other maxima (`CTSEMBlockMode`), joined as the
+    # unit's are: each found by only one of the two kept, and put in the known
+    # modes as a maximum of the whole unit (`_laplace_block_expand`), which a
+    # later search reads back as the block's (`_laplace_block_project!`).
+    blockanchors = Vector{Vector{CTSEMBlockMode}}(undef, n)
+    blockchanged = falses(n)
+    for U in 1:n
+        hb, sb = c.hb[U], c.sb[U]
+        hb_only = CTSEMBlockMode[e for e in hb if !any(f -> _laplace_block_same(e, f), sb)]
+        sb_only = CTSEMBlockMode[e for e in sb if !any(f -> _laplace_block_same(e, f), hb)]
+        blockanchors[U] = vcat(hb, sb_only)
+        (isempty(hb_only) && isempty(sb_only)) && continue
+        _LAPLACE_MODE_SUM[] || continue
+        blockchanged[U] = true
+        blocks = laplace.units.blocks[U]
+        for e in hb_only
+            isempty(c.hm[U]) || _ctsem_known_add!(laplace, U,
+                _laplace_block_expand(blocks, c.hm[U], e), found)
+        end
+        for e in sb_only
+            isempty(c.sm[U]) || _ctsem_known_add!(laplace, U,
+                _laplace_block_expand(blocks, c.sm[U], e), found)
+        end
+    end
+    changed += count(blockchanged)
     for U in 1:n
         hs = isempty(c.hm[U]) ? Vector{Float64}[] : vcat([c.hm[U]], c.ha[U])
         ss = isempty(c.sm[U]) ? Vector{Float64}[] : vcat([c.sm[U]], c.sa[U])
@@ -6070,7 +6274,7 @@ function _ctsem_merge_modes!(laplace::CTSEMLaplaceObjective, xv::Vector{Float64}
             alts[U] = isempty(hs) ? c.sa[U] : c.ha[U]
             continue
         end
-        changed += 1
+        blockchanged[U] || (changed += 1)
         if _LAPLACE_MODE_SUM[]
             set = c.su[U] < c.hu[U] ? vcat(hs, found_only) : vcat(ss, held_only)
             anchors[U] = set[1]
@@ -6093,12 +6297,12 @@ function _ctsem_merge_modes!(laplace::CTSEMLaplaceObjective, xv::Vector{Float64}
         end
     end
     if changed == 0
-        laplace.anchors = saved; laplace.alt_anchors = saved_alt
-        laplace.anchor_values = saved_values
+        restore!()
         return (change=NaN, units=0)
     end
     laplace.anchors = anchors
     laplace.alt_anchors = alts
+    laplace.block_anchors = blockanchors
     laplace.anchor_values = fill(theta, n)
     merged = try
         ctsem_laplace_evaluate(laplace, xv; gradient=false)
@@ -6107,8 +6311,7 @@ function _ctsem_merge_modes!(laplace::CTSEMLaplaceObjective, xv::Vector{Float64}
         nothing
     end
     if merged === nothing || !isfinite(merged.value)
-        laplace.anchors = saved; laplace.alt_anchors = saved_alt
-        laplace.anchor_values = saved_values
+        restore!()
         return (change=NaN, units=0)
     end
     _ctsem_anchor_here!(laplace)
@@ -6180,6 +6383,7 @@ ctsem_laplace_clear_anchors!(::Any) = nothing
 ctsem_laplace_clear_anchors!(laplace::CTSEMLaplaceObjective) =
     (laplace.anchors = Vector{Float64}[];
      laplace.alt_anchors = Vector{Vector{Float64}}[];
+     laplace.block_anchors = Vector{CTSEMBlockMode}[];
      laplace.anchor_values = Vector{Float64}[]; nothing)
 
 export ctsem_set_mode_anchors!, ctsem_laplace_clear_anchors!, ctsem_set_mode_sum!
@@ -6271,20 +6475,31 @@ function ctsem_laplace_hold_modes!(laplace::CTSEMLaplaceObjective,
     M = Matrix{Float64}(modes)
     anchors = [Float64[] for _ in 1:n]
     alts = [Vector{Float64}[] for _ in 1:n]
+    blockalts = [CTSEMBlockMode[] for _ in 1:n]
     for (j, U) in enumerate(units)
         (1 <= U <= n && j <= size(M, 2)) || continue
         m = _laplace_known_column(M, j)
         (length(m) == laplace.units.dims[U] && all(isfinite, m)) || continue
-        isempty(anchors[U]) ? (anchors[U] = m) : push!(alts[U], m)
+        if isempty(anchors[U])
+            anchors[U] = m
+            continue
+        end
+        # A nested unit's maximum that differs from its mode within one block's
+        # subtree alone is that block's other maximum (`_laplace_block_expand`).
+        blocks = laplace.units.blocks[U]
+        e = length(blocks) > 1 ? _laplace_block_classify(blocks, anchors[U], m) : nothing
+        e === nothing ? push!(alts[U], m) : push!(blockalts[U], e)
     end
     held = count(!isempty, anchors)
     held == 0 && return 0
     lock(_LAPLACE_HOLDS_LOCK) do
         push!(get!(() -> Any[], _LAPLACE_HOLDS, laplace),
-            (laplace.anchors, laplace.alt_anchors, laplace.anchor_values))
+            (laplace.anchors, laplace.alt_anchors, laplace.block_anchors,
+                laplace.anchor_values))
     end
     laplace.anchors = anchors
     laplace.alt_anchors = alts
+    laplace.block_anchors = blockalts
     laplace.anchor_values = [at for _ in 1:n]
     _laplace_forget_curvatures!(laplace)
     return held
@@ -6307,7 +6522,8 @@ function ctsem_laplace_release_modes!(laplace::CTSEMLaplaceObjective)
     if under === nothing
         ctsem_laplace_clear_anchors!(laplace)
     else
-        laplace.anchors, laplace.alt_anchors, laplace.anchor_values = under
+        laplace.anchors, laplace.alt_anchors, laplace.block_anchors,
+            laplace.anchor_values = under
     end
     return left
 end
@@ -8294,6 +8510,11 @@ function _laplace_store_unit_primal!(laplace::CTSEMLaplaceObjective, U::Integer,
     U <= length(laplace.mode_values) && (laplace.mode_values[U] = theta)
     primal = _laplace_unit_primal(laplace, U, theta, Ls, laplace.modes[U], aws;
         given=given)
+    # A wide nested unit's curvature is the slot's scratch, which scoring its
+    # other maxima overwrites: kept for the gradient, it is a copy.
+    others = combo !== nothing && isfinite(primal.term) &&
+        (!isempty(laplace.alt_modes[U]) || !isempty(laplace.block_modes[U]))
+    others && (primal = merge(primal, (M=_laplace_copy_blockmatrix(primal.M),)))
     laplace.mode_repaired[U] = primal.fac.repaired
     primal_curvature[U] = (primal.fac.factors, primal.fac.coupling)
     primal_matrices[U] = primal.M
@@ -8303,7 +8524,9 @@ function _laplace_store_unit_primal!(laplace::CTSEMLaplaceObjective, U::Integer,
     # A unit with other maxima (`alt_modes`) is scored by the sum over them
     # (`_laplace_mode_sum`); its records are the largest term's, and `combo`
     # keeps what the gradient needs where more than one mode is summed.
-    if combo !== nothing && isfinite(term) && !isempty(laplace.alt_modes[U])
+    top = nothing
+    lead = primal
+    if others && !isempty(laplace.alt_modes[U])
         s = _laplace_mode_sum(laplace, U, theta, Ls, aws, primal)
         p = s.prims[s.dominant]
         laplace.mode_repaired[U] = p.fac.repaired
@@ -8312,10 +8535,34 @@ function _laplace_store_unit_primal!(laplace::CTSEMLaplaceObjective, U::Integer,
         laplace.logdet_floored[U] = p.floored
         primal_soft_quadrature[U] = p.soft_quadrature
         term = s.value
+        lead = p
         # Where one share takes the whole term its gradient is that mode's,
         # by the unit's own route.
-        count(>(0), s.pi) > 1 && (combo[U] = s)
+        count(>(0), s.pi) > 1 && (top = s)
     end
+    # A nested unit's blocks then add their own maxima's combinations
+    # (`_laplace_block_sums`), against the unit's maximum of largest weight.
+    if others && isfinite(term) && !isempty(laplace.block_modes[U]) &&
+            !_laplace_joint_hybrid(laplace) && isfinite(lead.term)
+        zlead = copy(laplace.modes[U])
+        bs = _laplace_block_sums(laplace, U, theta, Ls, aws, zlead, Float64(lead.term),
+            lead.M)
+        if bs !== nothing
+            term += bs.value
+            if !isempty(bs.blocks)
+                Mf = _laplace_copy_blockmatrix(lead.M)
+                for D in Mf.diag
+                    _laplace_symmetrise!(D)
+                end
+                combo[U] = (top=top, blocks=bs.blocks,
+                    lead=(z=zlead, M=lead.M, fac=lead.fac,
+                        soft_quadrature=lead.soft_quadrature, floored=lead.floored,
+                        F=_soft_shifted_factor(Mf, laplace.units.blocks[U], 0.0)))
+                top = nothing
+            end
+        end
+    end
+    top === nothing || (combo[U] = top)
     if !isfinite(term)
         chunk_ok[_laplace_slot()] = false
         chunk_bad[_laplace_slot()] = term
@@ -9867,8 +10114,13 @@ function _laplace_evaluate(laplace::CTSEMLaplaceObjective, theta::Vector{Float64
                 local row, good, fell, w
                 row = rows[_laplace_slot()]
                 if combo !== nothing && combo[U] !== nothing
-                    good = _laplace_mode_sum_gradient!(row, laplace, U, theta, Ls,
-                        dLlevels, dLsolved, combo[U])
+                    # A nested unit whose blocks combine their own maxima
+                    # (`_laplace_block_sums`), or the whole unit's maxima alone.
+                    good = haskey(combo[U], :blocks) ?
+                        _laplace_unit_combo_gradient!(row, laplace, U, theta, Ls,
+                            dLlevels, dLsolved, combo[U]) :
+                        _laplace_mode_sum_gradient!(row, laplace, U, theta, Ls,
+                            dLlevels, dLsolved, combo[U])
                     fell = false
                 else
                     good, fell = _laplace_unit_gradient_route!(row, laplace, U, theta,
@@ -11199,9 +11451,11 @@ function _ctsem_optimise_setup!(o::CTSEMLaplaceObjective)
     # cleared, and the last fit's other maxima.
     o.anchors = Vector{Float64}[]
     o.alt_anchors = Vector{Vector{Float64}}[]
+    o.block_anchors = Vector{CTSEMBlockMode}[]
     o.anchor_values = Vector{Float64}[]
     for U in eachindex(o.alt_modes)
         isempty(o.alt_modes[U]) || (o.alt_modes[U] = Vector{Float64}[])
+        isempty(o.block_modes[U]) || (o.block_modes[U] = CTSEMBlockMode[])
     end
     # The diagnostics describe the run that is about to happen, and
     # `_ctsem_optimise_verbose_shape` reads `inner_converged` before the first
@@ -11996,17 +12250,19 @@ the parameters each was solved at (`mode_values`).
 struct _LaplaceModeSnapshot
     modes::Vector{Vector{Float64}}
     alt::Vector{Vector{Vector{Float64}}}
+    blocks::Vector{Vector{CTSEMBlockMode}}
     values::Vector{Vector{Float64}}
 end
 _laplace_mode_snapshot(laplace::CTSEMLaplaceObjective) =
     _LaplaceModeSnapshot(deepcopy(laplace.modes), deepcopy(laplace.alt_modes),
-        copy(laplace.mode_values))
+        deepcopy(laplace.block_modes), copy(laplace.mode_values))
 Base.getindex(s::_LaplaceModeSnapshot, units::AbstractVector{<:Integer}) =
-    _LaplaceModeSnapshot(s.modes[units], s.alt[units], s.values[units])
+    _LaplaceModeSnapshot(s.modes[units], s.alt[units], s.blocks[units], s.values[units])
 function _laplace_restore_modes!(laplace::CTSEMLaplaceObjective, s::_LaplaceModeSnapshot)
     for U in eachindex(s.modes)
         laplace.modes[U] = copy(s.modes[U])
         laplace.alt_modes[U] = Vector{Float64}[copy(m) for m in s.alt[U]]
+        laplace.block_modes[U] = copy(s.blocks[U])
         laplace.mode_values[U] = s.values[U]
     end
     return nothing
