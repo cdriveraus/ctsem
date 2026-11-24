@@ -89,6 +89,11 @@ grows. Mplus writes a discrete time effect with its lag, `eta1 ON eta1&1`.
 `ctModelMplus()` reads that with `type = 'dt'`, and stops if it meets a lag in
 a continuous time model.
 
+Processes and indicators need different names. `ctModel()` lets a process take
+the name of its indicator, but in these styles a statement such as `Y1 ~ 1`
+would then not say which of the two it is about. A process measured by `Y1`
+could be called `eta_Y1`, for example.
+
 Printing the model shows what will be estimated.
 
 ```{r print}
@@ -107,16 +112,18 @@ only if you write them. Everything else follows the defaults of `ctModel()`.
 | Auto effect of each process | free |
 | Effects between processes | zero unless written |
 | Process noise (diffusion) variances and covariances | free |
-| Initial means, variances and covariances of the processes | free |
+| Initial means of the processes | free, and different for each subject |
+| Initial variances and covariances of the processes | free |
 | Intercepts of the indicators | free, and different for each subject |
 | Intercepts of the processes | zero |
 | Residual variances of the indicators | free |
 | Residual covariances of the indicators | zero |
 
-Two of these differ from what lavaan or brms users may expect. The intercept of
-each indicator varies between subjects, because stable differences between
-people are usually present in repeated measures data. The noise of different
-processes is also correlated. Both can be switched off, as shown below.
+Some of these differ from what lavaan or brms users may expect. The intercepts
+of the indicators and the initial means of the processes vary between
+subjects, because people usually differ in their typical levels and in where
+they start. The noise of different processes is also correlated. Each of these
+can be switched off, as shown below.
 
 # Fitting
 
@@ -140,8 +147,8 @@ round(summary(fit)$popmeans, 2)
 ```
 
 The rows are named by parameter. `drift_eta1_eta2` is the effect of `eta2` on
-`eta1`, and `td_eta1_TD1` the effect of the predictor. These names are also how
-you refer to a parameter inside the syntax, which a later section uses.
+`eta1`, and `td_eta1_TD1` the effect of the predictor. These names can also be
+used in the syntax, as the section on parameter names shows.
 
 # Fixing, freeing and labelling
 
@@ -211,6 +218,87 @@ residual covariance of zero.
 As in lavaan and Mplus, a label on the first indicator of a process names its
 loading and leaves it at 1. Write `NA*Y1 + a*Y1` to free and label it, or
 `Y1* (a)` in Mplus style.
+
+# Parameter names
+
+Every parameter has a name, whether it is free or fixed. The name is your label
+if you gave one, and otherwise a default name made from the matrix and the
+variables. For processes `eta1` and `eta2`, indicators `Y1` and `Y2`, and a
+time dependent predictor `TD1`, the default names are:
+
+| Parameter | Default name |
+|---|---|
+| Auto effect of `eta1` | `drift_eta1` |
+| Effect of `eta2` on `eta1` | `drift_eta1_eta2` |
+| Effect of `TD1` on `eta1` | `td_eta1_TD1` |
+| Intercept of `eta1` | `cint_eta1` |
+| Noise sd of `eta1` | `diff_eta1` |
+| Noise covariance of `eta1` and `eta2` | `diff_eta2_eta1` |
+| Initial mean of `eta1` | `T0m_eta1` |
+| Initial sd of `eta1` | `T0var_eta1` |
+| Initial covariance of `eta1` and `eta2` | `T0var_eta2_eta1` |
+| Loading of `Y2` on `eta1` | `lambda_Y2_eta1` |
+| Intercept of `Y1` | `mm_Y1` |
+| Residual sd of `Y1` | `mvarY1` |
+| Residual covariance of `Y1` and `Y2` | `mvarY2_Y1` |
+
+In the name of an effect, the process affected comes first. In the name of a
+covariance, the variable that comes later in the model comes first.
+`print(model)` shows the names of the free parameters, and `summary(fit)`
+reports the estimates under the same names.
+
+A statement with a parameter's name on the left is about that parameter. This
+is how the syntax reaches the parts of a ctsem model that lavaan, Mplus and
+brms have no words for, such as the initial state of a process. The table
+shows the statements for the initial mean of `eta1`.
+
+| To | lavaan style | Mplus style |
+|---|---|---|
+| Estimate it | `T0m_eta1 ~ 1` | `[T0m_eta1];` |
+| Fix it at 0 | `T0m_eta1 ~ 0*1` | `[T0m_eta1@0];` |
+| Give it the label `start` | `T0m_eta1 ~ start*1` | `[T0m_eta1] (start);` |
+| Let it vary between subjects | `start ~~ start` | `start;` |
+| Make it the same for every subject | `start ~~ 0*start` | `start@0;` |
+| Let it depend on the covariate `TI1` | `start ~ TI1` | `start ON TI1;` |
+
+The last three statements could also use the default name `T0m_eta1`. Once a
+parameter has a label, `print(model)` and `summary(fit)` show the label, and
+the statements about it can come in any order. In formula style, one formula
+for the parameter can say all of this, as in
+`T0m_eta1 ~ "start"*1 + TI1 + (0 | id)`.
+
+```{r names}
+m <- ctModelLavaan('
+  eta1 =~ Y1
+  T0m_eta1 ~ start*1           # label the initial mean of eta1 "start"
+  start ~~ 0*start             # the same for every subject
+  start ~ TI1                  # and depending on TI1
+  drift_eta1 ~~ drift_eta1     # the auto effect varies between subjects
+')
+
+m_mplus <- ctModelMplus('
+  eta1 BY Y1;
+  [T0m_eta1] (start);
+  start@0;
+  start ON TI1;
+  drift_eta1;
+')
+
+m_formula <- ctModelFormula(
+  Y1 ~ eta1,
+  d(eta1) ~ eta1,
+  T0m_eta1 ~ "start"*1 + TI1 + (0 | id),
+  drift_eta1 ~ (1 | id))
+
+all.equal(m$pars, m_mplus$pars)
+all.equal(m$pars, m_formula$pars)
+```
+
+A value given to a parameter by name is on the scale ctsem uses for that cell.
+For `diff_eta1`, `T0var_eta1` and `mvarY1` this is a standard deviation, while
+`~~`, `WITH` and an Mplus variance statement take a variance. A covariance cell
+holds a covariance parameter, which `ctCov()` computes from a covariance
+matrix. Fixing it at 0 makes the covariance zero.
 
 # Differences between subjects
 
@@ -285,47 +373,6 @@ m <- ctModelFormula(
 
 All random effects in a model are correlated with each other. `poprank` and
 `popblocks` in `ctFit()` give their covariance a simpler structure.
-
-# Parameter names
-
-Every parameter has a name. It is your label if you gave one, and otherwise
-the default name, which `print(model)` and `summary(fit)` show.
-
-| Parameter | Default name |
-|---|---|
-| Auto effect of `eta1` | `drift_eta1` |
-| Effect of `eta2` on `eta1` | `drift_eta1_eta2` |
-| Noise sd of `eta1`, noise covariance parameter | `diff_eta1`, `diff_eta2_eta1` |
-| Process intercept | `cint_eta1` |
-| Initial mean, sd, covariance parameter | `T0m_eta1`, `T0var_eta1`, `T0var_eta2_eta1` |
-| Loading of `Y2` on `eta1` | `lambda_Y2_eta1` |
-| Intercept of `Y1` | `mm_Y1` |
-| Residual sd of `Y1`, residual covariance parameter | `mvarY1`, `mvarY2_Y1` |
-| Effect of the time dependent predictor `x` on `eta1` | `td_eta1_x` |
-
-In all three styles a statement with a parameter name on the left is about
-that parameter. This reaches the parts of a ctsem model that lavaan, Mplus and
-brms have no words for, such as the initial state.
-
-```{r names}
-m <- ctModelLavaan('
-  eta1 =~ Y1
-  T0m_eta1 ~ 0*1                 # initial mean fixed to zero
-  drift_eta1 ~~ drift_eta1       # the auto effect varies between subjects
-  diff_eta1 ~ TI1                # the noise depends on TI1
-')
-
-m_mplus <- ctModelMplus('
-  eta1 BY Y1;
-  [T0m_eta1@0];
-  drift_eta1;
-  diff_eta1 ON TI1;
-')
-all.equal(m$pars, m_mplus$pars)
-```
-
-A value given to a parameter by name is on the scale ctsem stores. For
-`diff_eta1`, `T0var_eta1` and `mvarY1` that is a standard deviation.
 
 # Indicators that are not Gaussian
 
