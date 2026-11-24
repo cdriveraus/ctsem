@@ -85,10 +85,10 @@ end
 
 """The subtree's block of a unit's block curvature `M`, copied (the unit's
 curvature is the slot's scratch) and symmetrised."""
-function _laplace_subtree_matrix(M::CTSEMBlockMatrix{Float64},
-    blocks::Vector{CTSEMLaplaceBlock}, st)
-    A = CTSEMBlockMatrix{Float64}(Matrix{Float64}[copy(M.diag[t]) for t in st.S],
-        Vector{Matrix{Float64}}[Matrix{Float64}[copy(M.coupling[t][r])
+function _laplace_subtree_matrix(M::CTSEMBlockMatrix{T},
+    blocks::Vector{CTSEMLaplaceBlock}, st) where {T}
+    A = CTSEMBlockMatrix{T}(Matrix{T}[copy(M.diag[t]) for t in st.S],
+        Vector{Matrix{T}}[Matrix{T}[copy(M.coupling[t][r])
             for (r, a) in enumerate(blocks[t].ancestors) if st.pos[a] > 0] for t in st.S])
     for D in A.diag
         _laplace_symmetrise!(D)
@@ -105,28 +105,29 @@ Hessian in its coordinates, by the members' sweeps over its columns alone
 (`_laplace_columns_jacobian`).
 """
 function _laplace_subtree_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
-    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64}, st)
+    values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
+    st) where {T}
     blocks = laplace.units.blocks[U]
     Jw = _laplace_columns_jacobian(laplace, U, values, Ls, u, copy(st.idx),
         copy(st.members), _laplace_hmode(laplace), nothing)
-    diag = Matrix{Float64}[]
-    coup = Vector{Matrix{Float64}}[]
+    diag = Matrix{T}[]
+    coup = Vector{Matrix{T}}[]
     for (k, t) in enumerate(st.S)
         kt = blocks[t].size
         ot = blocks[t].offset
         ct = st.sub[k].offset
-        D = Matrix{Float64}(undef, kt, kt)
+        D = Matrix{T}(undef, kt, kt)
         @inbounds for j in 1:kt, i in 1:kt
-            D[i, j] = (i == j ? 1.0 : 0.0) - (Jw[ot + i, ct + j] + Jw[ot + j, ct + i]) / 2
+            D[i, j] = (i == j ? one(T) : zero(T)) - (Jw[ot + i, ct + j] + Jw[ot + j, ct + i]) / 2
         end
         push!(diag, D)
-        row = Matrix{Float64}[]
+        row = Matrix{T}[]
         for a in blocks[t].ancestors
             st.pos[a] > 0 || continue
             ka = blocks[a].size
             oa = blocks[a].offset
             ca = st.sub[st.pos[a]].offset
-            C = Matrix{Float64}(undef, kt, ka)
+            C = Matrix{T}(undef, kt, ka)
             @inbounds for j in 1:ka, i in 1:kt
                 C[i, j] = -(Jw[ot + i, ca + j] + Jw[oa + j, ct + i]) / 2
             end
@@ -134,7 +135,7 @@ function _laplace_subtree_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
         end
         push!(coup, row)
     end
-    return CTSEMBlockMatrix{Float64}(diag, coup)
+    return CTSEMBlockMatrix{T}(diag, coup)
 end
 
 """The subtree's objective `h_b` at the unit's coordinates `u`: its members' log
@@ -518,6 +519,16 @@ function _laplace_block_sums(laplace::CTSEMLaplaceObjective, U::Integer,
     entries = laplace.block_modes[U]
     isempty(entries) && return nothing
     blocks = laplace.units.blocks[U]
+    # Where the unit's leaves integrate their own soft directions
+    # (laplace_blocksoft.jl), each leaf configuration's value carries its own
+    # correction, weighted as the unit's term weights them, `1 - w`.
+    softw = nothing
+    if _laplace_block_soft_on(laplace, U)
+        rest = _laplace_rest_lowest(Mstar, blocks, _laplace_leaves(blocks))
+        softw = 1 - (rest === nothing ? 0.0 :
+            _laplace_smoothstep_weight(rest.lambda, laplace.soft_blend_lo,
+                laplace.soft_blend_hi))
+    end
     kept = CTSEMBlockMode[]
     parts = Any[]
     total = 0.0
@@ -526,7 +537,8 @@ function _laplace_block_sums(laplace::CTSEMLaplaceObjective, U::Integer,
         st = _laplace_subtree(blocks, b)
         n = length(st.idx)
         alts = Vector{Float64}[e.y for e in entries if e.b == b && length(e.y) == n]
-        r = _laplace_block_sum(laplace, U, theta, Ls, aws, zstar, tstar, Mstar, st, alts)
+        r = _laplace_block_sum(laplace, U, theta, Ls, aws, zstar, tstar, Mstar, st, alts;
+            softw=(softw !== nothing && length(st.S) == 1) ? softw : nothing)
         if r === nothing
             # Not scored here (its own curvature does not factor): its maxima
             # are kept for the next evaluation, and it adds nothing.
@@ -553,7 +565,8 @@ configuration's curvature does not factor or its value is not finite.
 """
 function _laplace_block_sum(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, aws, zstar::Vector{Float64},
-    tstar::Float64, Mstar::CTSEMBlockMatrix{Float64}, st, alts::Vector{Vector{Float64}})
+    tstar::Float64, Mstar::CTSEMBlockMatrix{Float64}, st, alts::Vector{Vector{Float64}};
+    softw::Union{Nothing,Float64}=nothing)
     blocks = laplace.units.blocks[U]
     idx = st.idx
     n = length(idx)
@@ -577,6 +590,22 @@ function _laplace_block_sum(laplace::CTSEMLaplaceObjective, U::Integer,
     K == 1 && return (value=0.0, kept=kept, active=false)
     tau = Float64[c.h - c.F.logdet / 2 for c in configs]
     dtau = tau .- tau[1]
+    # A leaf whose soft directions it integrates itself: each configuration's
+    # correction (`_laplace_leaf_soft`), the own one's already in the unit's
+    # term, so a configuration's value against it moves by the difference.
+    Sv = zeros(Float64, K)
+    if softw !== nothing
+        point = y -> (u = copy(zstar); u[idx] .= y; u)
+        for c in 1:K
+            _laplace_leaf_soft_gate(laplace, configs[c].M, 1,
+                laplace.soft_blend_hi) || continue
+            sc = _laplace_leaf_soft(laplace, U, theta, Ls, aws, point(configs[c].y), st,
+                configs[c].M)
+            sc === nothing && return nothing
+            Sv[c] = sc.S
+        end
+        dtau .+= softw .* (Sv .- Sv[1])
+    end
     low = Any[_laplace_mode_lowest(c.M, st.sub, n) for c in configs]
     any(isnothing, low) && return nothing
     fade, dscale = _LAPLACE_MODE_FADE, _LAPLACE_MODE_DEPTH
@@ -678,44 +707,17 @@ function _laplace_block_sum(laplace::CTSEMLaplaceObjective, U::Integer,
                 y=configs[c].y .+ t .* (configs[j].y .- configs[c].y)))
         end
     end
+    # The corrections' seeds: `d dtau_c` carries `softw (dS_c - dS_own)` and
+    # `-(S_c - S_own) dw`, so each configuration's `dS_c` takes `softw
+    # ktau_c` and the rest's weight `-sum_c ktau_c S_c`.
+    kS = softw === nothing ? zeros(Float64, K) : softw .* ktau
+    dwcoef = softw === nothing ? 0.0 : -sum(ktau[c] * Sv[c] for c in 1:K)
     active = any(!iszero, alpha) || any(!isempty, lw) || !isempty(pts) ||
-        any(!iszero, kt)
+        any(!iszero, kt) || any(c -> kS[c] != 0 && Sv[c] != 0, 1:K)
     return (value=value, kept=kept, active=active, st=st, configs=configs,
         alpha=alpha, gam=gam, lw=lw, lv=lv, pts=pts, kt=kt, kstar=-sum(kt),
-        wholes=wholes, pi=pi, f=f, s=s, dtau=dtau, J=J, a=a)
-end
-
-"""
-A trace term's adjoint on a subtree's coordinates (`_laplace_block_sum`): `c
-M_SS^-1 + sum_k w_k v_k v_k'`, `M_SS^-1` held as its selected inverse on the
-subtree's blocks (`inner`, a `_SoftGamma`), `v_k` in the subtree's coordinates
-and `loc` placing the unit's in them; zero outside the subtree. A member's block
-of it is all `_soft_quadrature_trace!` reads.
-"""
-struct _SubtreeGamma
-    c::Float64
-    inner::Union{Nothing,_SoftGamma}
-    loc::Vector{Int}
-    w::Vector{Float64}
-    v::Vector{Vector{Float64}}
-end
-
-function _soft_member_gamma(Gamma::_SubtreeGamma, G::_SoftQuadratureThetaGradient,
-    m::Integer)
-    S = G.coords[m]
-    n = length(S)
-    out = zeros(Float64, n, n)
-    for j in 1:n, i in 1:n
-        p, q = Gamma.loc[S[i]], Gamma.loc[S[j]]
-        (p == 0 || q == 0) && continue
-        acc = Gamma.inner === nothing ? 0.0 :
-            Gamma.c * _soft_inverse_entry(Gamma.inner, p, q)
-        for k in eachindex(Gamma.w)
-            acc += Gamma.w[k] * Gamma.v[k][p] * Gamma.v[k][q]
-        end
-        out[i, j] = acc
-    end
-    return out
+        wholes=wholes, pi=pi, f=f, s=s, dtau=dtau, J=J, a=a, S=Sv, kS=kS,
+        dwcoef=dwcoef)
 end
 
 """
@@ -759,9 +761,8 @@ function _laplace_block_sum_gradient!(thetabar::Vector{Float64}, zbar::Vector{Fl
     end
     for c in 1:K
         (r.alpha[c] != 0 || r.gam[c] != 0 || !isempty(r.lw[c])) || continue
-        Gamma = _SubtreeGamma(r.gam[c],
-            r.gam[c] == 0 ? nothing : _SoftGamma(1.0, r.configs[c].F, st.sub), st.loc,
-            r.lw[c], r.lv[c])
+        Gamma = _SubtreeMemberGamma(_SoftGamma(r.gam[c], r.configs[c].F, st.sub,
+            r.lw[c], r.lv[c], r.lv[c]), st.loc)
         zb = _laplace_soft_quadrature_vjp!(thetabar, G, point(r.configs[c].y),
             r.alpha[c], nothing, Gamma)
         zb === nothing && return false
@@ -769,6 +770,16 @@ function _laplace_block_sum_gradient!(thetabar::Vector{Float64}, zbar::Vector{Fl
             k = st.loc[i]
             k == 0 ? (rest[i] += zb[i]) : (zS[c][k] += zb[i])
         end
+    end
+    # The leaf's corrections, each through its configuration's own maximum
+    # (`_laplace_leaf_soft_gradient!`), what they leave on the rest to `z*`.
+    for c in 1:K
+        (r.kS[c] != 0 && r.S[c] != 0) || continue
+        zb = zeros(Float64, d)
+        _laplace_leaf_soft_gradient!(thetabar, zb, laplace, U, theta, Ls, dL, positions,
+            _laplace_workspace!(laplace, Float64, length(theta)), point(r.configs[c].y),
+            st, r.configs[c].M, r.kS[c]) === nothing && return false
+        rest .+= zb
     end
     # Each other configuration's own movement, given `z*`: `dy = M_SS^-1 d(grad
     # h_b)`, along its subtree's members.
@@ -839,6 +850,23 @@ function _laplace_unit_combo_gradient!(row::Vector{Float64},
     for r in combo.blocks
         _laplace_block_sum_gradient!(thetabar, zbar, laplace, U, theta, Ls, dLlevels,
             positions, lead.z, r) || return false
+    end
+    # The leaves' corrections move with the rest's weight
+    # (`_laplace_block_soft_term`), through its eigenvalue at `z*`.
+    wcoef = sum(r.dwcoef for r in combo.blocks; init=0.0)
+    if wcoef != 0
+        blocks = laplace.units.blocks[U]
+        rest = _laplace_rest_lowest(lead.M, blocks, _laplace_leaves(blocks))
+        if rest !== nothing
+            _, wp = _laplace_smoothstep_weight_slope(rest.lambda, laplace.soft_blend_lo,
+                laplace.soft_blend_hi)
+            if wp != 0
+                glam = _laplace_rest_lambda_gradient(laplace, U, theta, Ls, dLlevels,
+                    positions, lead.z, lead.M, rest.v)
+                glam === nothing && return false
+                thetabar .+= (wcoef * wp) .* glam
+            end
+        end
     end
     if any(!iszero, zbar)
         lead.F === nothing && return false

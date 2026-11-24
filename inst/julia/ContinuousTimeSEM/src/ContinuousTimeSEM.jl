@@ -120,6 +120,7 @@ include("hybrid_joint.jl")
 include("tangent_laplace.jl")
 include("soft_quadrature_adjoint.jl")
 include("laplace_blocksum.jl")
+include("laplace_blocksoft.jl")
 include("laplace_sequential.jl")
 # After kalman_trace.jl and laplace.jl: it reads the filter trace on one route
 # and the unit curvature on the other.

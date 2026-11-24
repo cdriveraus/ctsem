@@ -8680,7 +8680,8 @@ off once) it took the image's build from 11.8 to 17.0 GB on dev2.
 function _laplace_unit_gradient_fallback!(row::Vector{Float64},
     laplace::CTSEMLaplaceObjective, U::Integer, theta::Vector{Float64})
     fill!(row, 0.0)
-    if _LAPLACE_PRIOR_FLOOR[] && laplace.soft_directions === :quadrature && !laplace.logdet_floored[U]
+    if _LAPLACE_PRIOR_FLOOR[] && laplace.soft_directions === :quadrature &&
+            !laplace.logdet_floored[U] && !_laplace_block_soft_on(laplace, U)
         g = _laplace_soft_quadrature_unit_adjoint(laplace, U, theta)
         if g !== nothing && all(isfinite, g)
             row .= g
@@ -8913,6 +8914,15 @@ function _laplace_unit_primal(laplace::CTSEMLaplaceObjective, U::Integer,
         inner.value - _laplace_prior_floor_logdet(logdetM) / 2
     else
         T(NaN)
+    end
+    # A nested unit's leaves integrate their own soft directions
+    # (laplace_blocksoft.jl); the whole unit's rule below where a piece cannot
+    # be scored.
+    if soft_quadrature_on && ok && !fac.repaired && !isempty(u) && isfinite(inner.value) &&
+            _laplace_block_soft_on(laplace, U)
+        bs = _laplace_block_soft_term(laplace, U, values, Ls, u, aws, M, logdetM, inner)
+        bs === nothing ||
+            return (term=bs.term, M=M, fac=fac, soft_quadrature=bs.active, floored=false)
     end
     if soft_quadrature_on && ok && !isempty(u) && isfinite(inner.value)
         # The factorization shifted a repaired `M` in place, so the soft-quadrature term
@@ -10482,6 +10492,13 @@ function _laplace_unit_gradient_route!(row::Vector{Float64}, laplace::CTSEMLapla
     U::Integer, theta::Vector{Float64}, Ls, dLlevels, dLsolved, soft_quadrature::Bool, M,
     curvature)
     fill!(row, 0.0)
+    if soft_quadrature && _laplace_block_soft_on(laplace, U) && !laplace.mode_repaired[U]
+        # Scored leaf by leaf (`_laplace_block_soft_term`); differences of that
+        # term where a piece fails.
+        _laplace_block_soft_gradient!(row, laplace, U, theta, Ls, dLlevels, dLsolved, M,
+            curvature) && return (true, false)
+        return (_laplace_unit_term_difference!(row, laplace, U, theta), true)
+    end
     if soft_quadrature
         # A unit the soft-direction quadrature scored is differentiated through its own term,
         # its own fallback included; see `_laplace_soft_quadrature_unit_gradient`.

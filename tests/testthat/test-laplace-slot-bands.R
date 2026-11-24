@@ -140,3 +140,57 @@ test_that("a nested unit's trace terms take each person's chain at once", {
   expect_equal(as.numeric(r$g), as.numeric(r$ref), tolerance = 1e-8)
   expect_equal(r$jets, r$members)
 })
+
+# A nested unit's leaves integrate their own soft directions
+# (`_laplace_block_soft_term`): each person's soft rule given the study at its
+# mode, the whole unit's rule blended in as the study's own curvature, its
+# Schur complement, turns soft. These Gaussian persons are never soft below
+# the band's usual top (their curvature is the prior's and more), so the top is
+# raised to 3 here, which puts every person's rule and the study's blend to
+# work; the gradient is checked against forward mode over the term.
+test_that("a nested unit's leaves integrate their own soft directions", {
+  skip_without_julia()
+  withr::local_options(ctsem.laplace.hybrid = FALSE)
+  spec <- suppressMessages(ctFit(.nested_panel_data(3, 8, 4),
+    .nested_panel_model("drift"), backend = "julia", intoverpop = "laplace",
+    fit = FALSE, cores = 1))
+  obj <- ctsem:::.ctJuliaObjective(spec, layer = TRUE)
+  x <- rep(0, ctsem:::.ctBackendNpar(spec))
+  for (lv in spec$laplace$levels) x[lv$sd_index[lv$sd_index > 0]] <- 1.5
+  set.seed(1)
+  x <- x + rnorm(length(x), 0, 0.5)
+  r <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaEval(paste(
+    "(o, x) -> begin",
+    "  C = ContinuousTimeSEM",
+    "  top = o.soft_blend_hi",
+    "  o.soft_blend_hi = 3.0",
+    "  try",
+    "    theta = C._laplace_extend(o, collect(Float64, x))",
+    "    g = C.ctsem_laplace_evaluate(o, x; gradient = true)",
+    "    Ls = C._laplace_popchols(theta, o.spec)",
+    "    soft = 0; w = Float64[]",
+    "    for U in eachindex(o.units.members)",
+    "      M = C._laplace_copy_blockmatrix(C._laplace_unit_curvature(o, U, theta, Ls, o.modes[U]))",
+    "      blocks = o.units.blocks[U]; leaves = C._laplace_leaves(blocks)",
+    "      soft += count(b -> C._laplace_leaf_soft_gate(o, M, b, o.soft_blend_hi), leaves)",
+    "      push!(w, C._laplace_smoothstep_weight(C._laplace_rest_lowest(M, blocks, leaves).lambda,",
+    "        o.soft_blend_lo, o.soft_blend_hi))",
+    "    end",
+    "    nested = C.ctsem_laplace_evaluate(o, x; gradient = true, nested_gradient = true)",
+    "    was = C.ctsem_set_block_soft!(false)",
+    "    whole = try C.ctsem_laplace_evaluate(o, x; gradient = false).value finally",
+    "      C.ctsem_set_block_soft!(was) end",
+    "    (g = g.gradient, value = g.value, nested = nested.gradient, soft = soft, w = w,",
+    "     whole = whole)",
+    "  finally",
+    "    o.soft_blend_hi = top",
+    "  end",
+    "end", sep = "\n"))(obj, ctsem:::.ctJuliaNumericVector(x)))
+  # Exercised: persons soft given the study, and the study's blend between
+  # its ends.
+  expect_gt(r$soft, 0)
+  expect_true(any(r$w > 0 & r$w < 1))
+  expect_equal(as.numeric(r$g), as.numeric(r$nested), tolerance = 1e-7)
+  # The whole unit's rule is the oracle switch's, and another integral.
+  expect_gt(abs(r$value - r$whole), 1e-3)
+})
