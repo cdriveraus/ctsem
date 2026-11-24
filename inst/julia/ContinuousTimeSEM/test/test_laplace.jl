@@ -668,6 +668,78 @@ end
     end
 end
 
+@testset "the soft-direction quadrature handed off as its pair closes" begin
+    C = ContinuousTimeSEM
+    # The fixtures' flagged units have their two smallest eigenvalues further
+    # apart than the default hand-off; a band up to twice the widest relative
+    # gap puts every one of them inside it, each at its own share.
+    for (label, make) in _soft_factored_cases()
+        laplace, values = make()
+        whole = ctsem_laplace_evaluate(laplace, values; gradient=true)
+        theta = C._laplace_extend(laplace, collect(Float64, values))
+        gaps = Float64[]
+        lowest = Inf
+        for U in eachindex(laplace.modes)
+            u = laplace.modes[U]
+            length(u) > 1 || continue
+            st = C._laplace_soft_quadrature_setup(laplace, U, theta, u)
+            st === nothing && continue
+            lam = eigvals(Symmetric(Matrix(st.curvf(st.z0))))
+            k2 = C._laplace_soft_partner(lam)
+            (lam[1] < laplace.soft_blend_hi && k2 > 0) || continue
+            push!(gaps, C._laplace_soft_pair_gap(lam[1], lam[k2], laplace.soft_blend_lo))
+            lowest = min(lowest, lam[1])
+        end
+        @test (label, !isempty(gaps)) == (label, true)
+        ctsem_set_soft_directions!(laplace, :quadrature; pair_lo=0.0,
+            pair_hi=2 * maximum(gaps))
+        handed = ctsem_laplace_evaluate(laplace, values; gradient=true)
+        @test (label, laplace.soft_quadrature_units >= length(gaps)) == (label, true)
+        @test (label, handed.value != whole.value) == (label, true)
+        if label == "one block"
+            prototype = sum(C._laplace_soft_quadrature_unit_reference(laplace, values, U;
+                lo=laplace.soft_blend_lo, hi=laplace.soft_blend_hi, pair_lo=0.0,
+                pair_hi=2 * maximum(gaps), nodes=3, newton_steps=1).value
+                for U in eachindex(laplace.units.members))
+            @test isapprox(handed.value, prototype; rtol=1e-10)
+        end
+        # The gradient against forward mode over the rule, and differences.
+        nested = ctsem_laplace_evaluate(laplace, values; gradient=true,
+            nested_gradient=true)
+        @test (label, isapprox(handed.gradient, nested.gradient; rtol=1e-8,
+            atol=1e-10)) == (label, true)
+        reference = _value_finite_difference(laplace, values)
+        @test (label, norm(handed.gradient - reference) / norm(reference) < 1e-5) ==
+            (label, true)
+        # By factorizations as densely.
+        previous = ctsem_set_soft_quadrature_factored!(false)
+        dense = try
+            ctsem_laplace_evaluate(laplace, values; gradient=true)
+        finally
+            ctsem_set_soft_quadrature_factored!(previous)
+        end
+        @test (label, isapprox(handed.value, dense.value; rtol=1e-11)) == (label, true)
+        @test (label, isapprox(handed.gradient, dense.gradient; rtol=1e-8,
+            atol=1e-10)) == (label, true)
+        # Past the hand-off every flagged unit takes the Laplace term with its
+        # eigenvalues floored as the nodes floor them. Here none is below the
+        # floor's top and every logdet is positive, so that is the logdet
+        # floor's term, value and gradient, its gradient by the hand-off's
+        # reverse pass.
+        @test (label, lowest > C._laplace_soft_node_curvature_floor_top()) == (label, true)
+        # No relative gap exceeds one.
+        ctsem_set_soft_directions!(laplace, :quadrature; pair_lo=1.0, pair_hi=1.5)
+        floored = ctsem_laplace_evaluate(laplace, values; gradient=true)
+        @test (label, laplace.soft_quadrature_units >= length(gaps)) == (label, true)
+        ctsem_set_soft_directions!(laplace, :logdet_floor)
+        floor = ctsem_laplace_evaluate(laplace, values; gradient=true)
+        @test (label, all(.!laplace.logdet_floored)) == (label, true)
+        @test (label, isapprox(floored.value, floor.value; rtol=1e-12)) == (label, true)
+        @test (label, isapprox(floored.gradient, floor.gradient; rtol=1e-10,
+            atol=1e-12)) == (label, true)
+    end
+end
+
 @testset "the factorized soft-direction quadrature's linear algebra" begin
     C = ContinuousTimeSEM
     rng = Random.MersenneTwister(31)
@@ -738,7 +810,8 @@ end
     plain, _ = _fresh_nonlinear_two()
     before = ctsem_laplace_evaluate(plain, values; gradient=true)
     previous = ctsem_set_soft_directions!(soft, :quadrature; lo=0.8, hi=1.1)
-    @test previous == (soft_directions=:logdet_floor, lo=0.2, hi=0.7)
+    @test previous == (soft_directions=:logdet_floor, lo=0.2, hi=0.7, pair_lo=0.05,
+        pair_hi=0.2)
     g = ctsem_laplace_evaluate(soft, values; gradient=true)
     after = ctsem_laplace_evaluate(plain, values; gradient=true)
     @test g.value != before.value
@@ -749,6 +822,8 @@ end
     @test ctsem_laplace_evaluate(fresh, values; gradient=false).value == before.value
     @test_throws ArgumentError ctsem_set_soft_directions!(plain, :eigen)
     @test_throws ArgumentError ctsem_set_soft_directions!(plain, :quadrature; lo=0.7, hi=0.2)
+    @test_throws ArgumentError ctsem_set_soft_directions!(plain, :quadrature;
+        pair_lo=0.3, pair_hi=0.2)
     @test ctsem_laplace_diagnostics(soft).soft_directions === :quadrature
 end
 

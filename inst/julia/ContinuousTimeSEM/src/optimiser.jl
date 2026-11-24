@@ -3767,8 +3767,10 @@ there, with `handback` set and no final Hessian, for L-BFGS to go on from.
 `_ctsem_lbfgs`'s line search does, along one line (`trust`): one confirmed (a
 search that found no step, or the third running that found one only below it)
 and named by the route (`_ctsem_jump_units`) ends the finish where its steps
-stand, with no Hessian and the units in `jumped`. A jump the route names
-nothing for ends the watch, and the steps go on.
+stand, with no Hessian and the units in `jumped`; the exact Hessian the walk
+was on, if it was on one, comes back as `held` (at `hessian_at`), for the
+run's next finish. A jump the route names nothing for ends the watch, and the
+steps go on.
 
 `value_at(y)`, the maximised objective or `-Inf` for the ladder and the probe,
 defaults to the route's own predicate (`_ctsem_probe_value`); `fg!` is the
@@ -4217,8 +4219,14 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     # What a finish ended on a jump returns: the point the steps stand on and
     # no Hessian, final or walked, since the objective has no curvature there;
     # the route ends the run on the units named (`ctsem_optimize`'s "jump").
-    on_jump(named, x, f, G, hat, steps, gain, gcalls, escapes) = (x=x, f=f, G=G,
-        hessian=nothing, hessian_at=hat, distance=NaN, steps=steps, gain=gain,
+    # The exact Hessian the walk was on, where it was one (`held`, of the
+    # maximised objective, at `hat`), goes back with it for the run's next
+    # finish to walk (`hessian0`), should the run take the jump's modes and
+    # go on: returned as nothing, each such round formed it again at the same
+    # point (an hour a round at 600 parameters and 300 units).
+    on_jump(named, x, f, G, hat, steps, gain, gcalls, escapes, held) = (x=x, f=f, G=G,
+        hessian=nothing, held=held === nothing ? nothing : -held, hessian_at=hat,
+        distance=NaN, steps=steps, gain=gain,
         full_hessians=full_hessians[], subset_hessians=subset_hessians[],
         krylov_models=kmodels[], krylov_products=kspent[], fcalls=fcalls[],
         gcalls=gcalls, escapes=escapes, saddle=false, ladder_tried=false,
@@ -4565,7 +4573,8 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             history=history, handback=true, walked=nothing, jumped=nothing,
             flatwalk=nothing)
         jumped === nothing ||
-            return on_jump(jumped, x, f, G, hat, steps, gain, gcalls, escapes)
+            return on_jump(jumped, x, f, G, hat, steps, gain, gcalls, escapes,
+                (exact && !krylov) ? H : nothing)
         H === nothing && break
         # `final = :walked`: where the walk ended, the matrix it walked on, and
         # no exact Hessian formed for it -- for a caller that steps again from
@@ -4670,7 +4679,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                         if verdict.confirmed
                             jumped = name_jump(seen)
                             jumped === nothing || return on_jump(jumped, x, f,
-                                G, hat, steps, gain, gcalls, escapes)
+                                G, hat, steps, gain, gcalls, escapes, H)
                             watching = false; seen = nothing; crept = 0
                         end
                     end

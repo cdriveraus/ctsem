@@ -741,6 +741,10 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     soft_directions::Symbol
     soft_blend_lo::Float64
     soft_blend_hi::Float64
+    # The gap between the two smallest eigenvalues over which the rule hands
+    # off to the logdet floor as they close (`_laplace_soft_pair_weight`).
+    soft_pair_lo::Float64
+    soft_pair_hi::Float64
     # Units the soft-direction quadrature flagged at the last evaluation.
     soft_quadrature_units::Int
     # Whether every unit's inner problem is a concave quadratic: Gaussian
@@ -812,12 +816,15 @@ end
 function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec;
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
     soft_directions=:logdet_floor, soft_blend_lo::Real=0.2, soft_blend_hi::Real=0.7,
+    soft_pair_lo::Real=_LAPLACE_SOFT_PAIR_LO, soft_pair_hi::Real=_LAPLACE_SOFT_PAIR_HI,
     inert::Union{Nothing,Vector{Vector{Vector{Int}}}}=nothing, quadratic::Bool=false,
     hybrid_term=:twostep, affine::Vector{Vector{Bool}}=Vector{Bool}[],
     known::Vector{Vector{Vector{Float64}}}=Vector{Vector{Float64}}[])
     Symbol(soft_directions) in (:logdet_floor, :quadrature) ||
         throw(ArgumentError("soft_directions must be :quadrature or :logdet_floor"))
     0 < soft_blend_lo < soft_blend_hi || throw(ArgumentError("the gate needs 0 < lo < hi"))
+    0 <= soft_pair_lo < soft_pair_hi ||
+        throw(ArgumentError("the pair hand-off needs 0 <= lo < hi"))
     Symbol(hybrid_term) in (:twostep, :onestep) ||
         throw(ArgumentError("the hybrid term is :twostep or :onestep"))
     nsubjects = length(objective.subject_objectives)
@@ -828,7 +835,8 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
         Int(inner_maxiter), Float64(inner_tol), [Dict{Any,Any}()],
         zeros(Int, nunits), zeros(Float64, nunits), falses(nunits), falses(nunits),
         falses(nunits), falses(nunits), Float64[], Symbol(soft_directions), Float64(soft_blend_lo),
-        Float64(soft_blend_hi), 0, quadratic, Symbol(hybrid_term), affine,
+        Float64(soft_blend_hi), Float64(soft_pair_lo), Float64(soft_pair_hi), 0, quadratic,
+        Symbol(hybrid_term), affine,
         inert === nothing ? Vector{Vector{Int}}[] : inert,
         isempty(known) ? [Vector{Float64}[] for _ in 1:nunits] : known,
         Vector{Float64}[], [Vector{Float64}[] for _ in 1:nunits],
@@ -6493,9 +6501,11 @@ maximum either found (the set `_laplace_mode_sum` combines; under its oracle,
 `ctsem_set_mode_sum!(false)`, the one mode the search's rule prefers,
 `_laplace_prefer_mode`), and each maximum one of them missed put in the known
 modes (`_ctsem_known_add!`), so later searches reach it too. Returns the
-change this makes to the objective at `x` and the units whose maxima changed;
-`NaN` and 0, the anchors as they were, where the two agree or an evaluation
-fails.
+change this makes to the objective at `x`, the units whose maxima differ
+between the two, and of those the units the run now holds a maximum for that
+it did not (`joined`): where the search only misses one the run holds, the run
+goes on with the maxima it had. `NaN` and 0, the anchors as they were, where
+the two agree or an evaluation fails.
 """
 function _ctsem_merge_modes!(laplace::CTSEMLaplaceObjective, xv::Vector{Float64},
     found::CTSEMFoundModes)
@@ -6508,7 +6518,7 @@ function _ctsem_merge_modes!(laplace::CTSEMLaplaceObjective, xv::Vector{Float64}
     c = _ctsem_anchor_compare(laplace, xv)
     if c === nothing
         restore!()
-        return (change=NaN, units=0)
+        return (change=NaN, units=0, joined=0)
     end
     n = length(c.hu)
     anchors = Vector{Vector{Float64}}(undef, n)
@@ -6517,6 +6527,7 @@ function _ctsem_merge_modes!(laplace::CTSEMLaplaceObjective, xv::Vector{Float64}
     Ls = _laplace_popchols(theta, laplace.spec)
     aws = _laplace_workspace!(laplace, Float64, length(theta))
     changed = 0
+    joined = 0
     # A nested unit's blocks' other maxima (`CTSEMBlockMode`), joined as the
     # unit's are: each found by only one of the two kept, and put in the known
     # modes as a maximum of the whole unit (`_laplace_block_expand`), which a
@@ -6531,6 +6542,7 @@ function _ctsem_merge_modes!(laplace::CTSEMLaplaceObjective, xv::Vector{Float64}
         (isempty(hb_only) && isempty(sb_only)) && continue
         _LAPLACE_MODE_SUM[] || continue
         blockchanged[U] = true
+        isempty(sb_only) || (joined += 1)
         blocks = laplace.units.blocks[U]
         for e in hb_only
             isempty(c.hm[U]) || _ctsem_known_add!(laplace, U,
@@ -6556,6 +6568,7 @@ function _ctsem_merge_modes!(laplace::CTSEMLaplaceObjective, xv::Vector{Float64}
             continue
         end
         blockchanged[U] || (changed += 1)
+        isempty(found_only) || (joined += 1)
         if _LAPLACE_MODE_SUM[]
             set = c.su[U] < c.hu[U] ? vcat(hs, found_only) : vcat(ss, held_only)
             anchors[U] = set[1]
@@ -6573,13 +6586,14 @@ function _ctsem_merge_modes!(laplace::CTSEMLaplaceObjective, xv::Vector{Float64}
                 isfinite(a.value) &&
                 _laplace_prefer_mode(laplace, U, theta, Ls, aws, s, NaN, a, s)[3]
             anchors[U] = held_better ? c.hm[U] : c.sm[U]
+            (held_better || _laplace_maxabsdiff(c.sm[U], c.hm[U]) < 1e-4) || (joined += 1)
             alts[U] = Vector{Float64}[]
             _ctsem_known_add!(laplace, U, anchors[U], found)
         end
     end
     if changed == 0
         restore!()
-        return (change=NaN, units=0)
+        return (change=NaN, units=0, joined=0)
     end
     laplace.anchors = anchors
     laplace.alt_anchors = alts
@@ -6593,10 +6607,10 @@ function _ctsem_merge_modes!(laplace::CTSEMLaplaceObjective, xv::Vector{Float64}
     end
     if merged === nothing || !isfinite(merged.value)
         restore!()
-        return (change=NaN, units=0)
+        return (change=NaN, units=0, joined=0)
     end
     _ctsem_anchor_here!(laplace)
-    return (change=Float64(merged.value) - c.held, units=changed)
+    return (change=Float64(merged.value) - c.held, units=changed, joined=joined)
 end
 
 """
@@ -6619,10 +6633,10 @@ where it learns of them; at the end of the run, after the finish's Hessian,
 it cost the affect pilot nine hours a time. `NaN` and 0 on a route without
 anchors.
 """
-_ctsem_take_search_modes!(::Any, x, found) = (change=NaN, units=0)
+_ctsem_take_search_modes!(::Any, x, found) = (change=NaN, units=0, joined=0)
 function _ctsem_take_search_modes!(laplace::CTSEMLaplaceObjective, x::AbstractVector,
     found::CTSEMFoundModes)
-    isempty(laplace.anchors) && return (change=NaN, units=0)
+    isempty(laplace.anchors) && return (change=NaN, units=0, joined=0)
     return _ctsem_merge_modes!(laplace, collect(Float64, x), found)
 end
 
@@ -6636,8 +6650,22 @@ anchors joined with a search at `x` that starts from them too
 terms continuous there: where the solve reached a unit's better mode only at
 isolated points, a start there makes its term continuous (R's
 `.ctJuliaOptimise()` once did this by a new run). `false` where the jump
-added no mode, which another run could not change either, or on a route
-without known modes.
+added nothing at `x`, which another run could not change either, or on a
+route without known modes.
+
+Added nothing is judged at `x`: whether the search there, from the jump's
+modes, gave some unit a maximum the run did not hold (`_ctsem_merge_modes!`'s
+`joined`). Not by whether a mode was new to the known modes: the modes a jump
+sees are where Newton stopped at points off `x`, so a jump met again a step
+later brings modes that differ from the last ones in their last digits and
+are the same maxima. Judged so, the run on the SWB timescales model
+(smoke_psm_gesis_orig, 300 people, juliaFit 331d72c6) took unit 206's jump as
+new at every round, and each round formed the exact Hessian again (an hour at
+eight threads) to step into the same jump of 0.375 nats. Nor by whether the
+two sets differ: where the run holds a maximum the search misses, the run
+goes on with what it held, and the round changes nothing. The modes still go
+to the known modes and `found`, so the caller, which reads a jump's modes
+against those, does not resume on them either.
 """
 _ctsem_take_jump_modes!(::Any, x, named, found) = false
 function _ctsem_take_jump_modes!(laplace::CTSEMLaplaceObjective, x::AbstractVector,
@@ -6650,8 +6678,10 @@ function _ctsem_take_jump_modes!(laplace::CTSEMLaplaceObjective, x::AbstractVect
         _ctsem_known_add!(laplace, U, _laplace_known_column(named.point_values, j), found)
     end
     length(found.units) > n0 || return false
-    isempty(laplace.anchors) || _ctsem_merge_modes!(laplace, collect(Float64, x), found)
-    return true
+    # Unanchored, every evaluation searches, and a new known mode is a new
+    # start for each of them.
+    isempty(laplace.anchors) && return true
+    return _ctsem_merge_modes!(laplace, collect(Float64, x), found).joined > 0
 end
 
 """
@@ -7119,7 +7149,10 @@ integrand has. `:logdet_floor`, the engine's default, floors each unit's
 `logdet(M)` at zero (`_laplace_prior_floor_logdet`). `:quadrature`, R's
 default, scores a unit whose inner curvature has an eigenvalue below `hi` by
 the soft-direction quadrature, blending into plain Laplace between `lo` and
-`hi` (defaults 0.2 and 0.7; see `_laplace_soft_quadrature_term`).
+`hi` (defaults 0.2 and 0.7; see `_laplace_soft_quadrature_term`), and handing
+off to the Laplace term with its eigenvalues floored as the rule's nodes floor
+them as the relative gap between its two smallest eigenvalues closes from
+`pair_hi` to `pair_lo` (defaults 0.2 and 0.05; `_laplace_soft_pair_weight`).
 
 The rule belongs to the objective, not to the session, so fitting one model
 under `:quadrature` changes nothing about how any other objective evaluates.
@@ -7127,19 +7160,24 @@ From R it is set when the objective is built, from the
 `laplace_soft_directions` entry of `optimcontrol`, and travels on the fit's
 specification, so every post-fit route that rebuilds the objective evaluates
 under the rule the fit used. Returns the previous setting as
-`(soft_directions, lo, hi)`.
+`(soft_directions, lo, hi, pair_lo, pair_hi)`.
 """
 function ctsem_set_soft_directions!(laplace::CTSEMLaplaceObjective, rule;
-    lo::Real=laplace.soft_blend_lo, hi::Real=laplace.soft_blend_hi)
+    lo::Real=laplace.soft_blend_lo, hi::Real=laplace.soft_blend_hi,
+    pair_lo::Real=laplace.soft_pair_lo, pair_hi::Real=laplace.soft_pair_hi)
     f = Symbol(rule)
     f in (:logdet_floor, :quadrature) ||
         throw(ArgumentError("soft_directions must be :quadrature or :logdet_floor"))
     0 < lo < hi || throw(ArgumentError("the gate needs 0 < lo < hi"))
+    0 <= pair_lo < pair_hi || throw(ArgumentError("the pair hand-off needs 0 <= lo < hi"))
     previous = (soft_directions=laplace.soft_directions, lo=laplace.soft_blend_lo,
-        hi=laplace.soft_blend_hi)
+        hi=laplace.soft_blend_hi, pair_lo=laplace.soft_pair_lo,
+        pair_hi=laplace.soft_pair_hi)
     laplace.soft_directions = f
     laplace.soft_blend_lo = Float64(lo)
     laplace.soft_blend_hi = Float64(hi)
+    laplace.soft_pair_lo = Float64(pair_lo)
+    laplace.soft_pair_hi = Float64(pair_hi)
     return previous
 end
 export ctsem_set_soft_directions!
@@ -7406,10 +7444,11 @@ end
 #
 # Scope. Every width, multilevel units whole: by block factorizations where the
 # nodes' floor is the identity, densely where it binds (see "by block
-# factorizations" below). A unit whose two smallest eigenvalues are within a
-# relative 1e-3 of each other keeps `T_total`: the soft direction is not
-# defined there, and a rule that chose one would be discontinuous in theta. On
-# the weak-data study the smallest gap was 0.24.
+# factorizations" below). As the two smallest eigenvalues close, relative to
+# the second, the rule hands off to the Laplace term with every eigenvalue
+# floored as the nodes floor them (`_laplace_soft_pair_weight`): the soft
+# direction is not defined at a tie, and near one it turns as fast as one over
+# the gap. On the weak-data study the smallest gap was 0.24, above the hand-off.
 #
 # Provenance of the constants, as Appendix B of
 # `CT-SEM/review/OPTIM-consolidation-plan-2026-09-25.md` sorts them. The band
@@ -7421,8 +7460,10 @@ end
 # the exact per-unit reference (`LAPLACE-eigenwise-floor-2026-09-23.md`,
 # `LAPLACE-gated-gaps-2026-09-24.md` section 1). Categorical indicators
 # (family D) and nested units (family N) were only checked afterwards, and
-# the constants were not refitted there. The `1e-3` degenerate-pair gap is a
-# numerical guard.
+# the constants were not refitted there. The pair hand-off's band (relative
+# gaps 0.05 to 0.2) is set to leave every weak-data unit as it was and take the
+# unit that stalled the SWB timescales fit (relative gap 0.03) off the
+# one-direction rule.
 
 
 """
@@ -7598,6 +7639,116 @@ end
 end
 
 """
+The relative gap between a unit's two smallest curvature eigenvalues
+(`_laplace_soft_pair_gap`) below which the soft-direction quadrature hands off
+to the floored Laplace term (`_laplace_soft_pair_weight`), and above which it is
+the one-direction rule unchanged. On the objective (`soft_pair_lo`,
+`soft_pair_hi`, `ctsem_set_soft_directions!`); these are the defaults. A
+weak-data unit's two smallest eigenvalues, the rule's calibration, were at
+least 0.24 apart, a relative gap above 0.25 wherever the rule runs.
+"""
+const _LAPLACE_SOFT_PAIR_LO = 0.05
+const _LAPLACE_SOFT_PAIR_HI = 0.2
+
+"""
+    _laplace_soft_pair_gap(lambda1, lambda2, lo)
+
+The gap between a unit's two smallest curvature eigenvalues against the
+second, or against the soft band's low end `lo` where the second is below it:
+`(lambda2 - lambda1) / max(lambda2, lo)`. Relative, because what the rule
+needs is a softest direction that stands apart from the next: a maximum at
+its fold has `lambda1` near zero beside a `lambda2` of a few hundredths, an
+eigenvector as well defined as any, and the rule integrated along it is what
+keeps that maximum's term from crediting the vanishing direction. The floor
+`lo` keeps two eigenvalues near zero and near each other a tie.
+"""
+@inline function _laplace_soft_pair_gap(lambda1, lambda2, lo::Real)
+    return (lambda2 - lambda1) / (_laplace_deepvalue(lambda2) > lo ? lambda2 : lo)
+end
+
+"""
+    _laplace_soft_partner(values)
+
+The index among a curvature's eigenvalues, sorted ascending, of the softest
+direction's partner in the pair hand-off (`_laplace_soft_pair_gap`): the second
+smallest that is not the prior's own, one to roundoff; 0 where there is none.
+A direction the likelihood does not inform -- an effect on an item the subject
+never answered -- has the prior's curvature and none across, so it neither
+turns the softest eigenvector nor needs the rule. Read as a tie, it handed the
+layer's unit off where the hybrid, which integrates those effects in the
+filter and holds no coordinate for them, did not.
+"""
+function _laplace_soft_partner(values::AbstractVector{<:Real})
+    for k in 2:length(values)
+        abs(Float64(_laplace_deepvalue(values[k])) - 1) > 1e-9 && return k
+    end
+    return 0
+end
+
+"""
+    _laplace_soft_pair_weight(r, lo, hi)
+
+The soft-direction quadrature's share of a unit's term against `T_c`, the
+Laplace term with each eigenvalue floored as the rule's nodes floor them
+(`_laplace_soft_floor_logratio_sum`), `T = T_c + p (T_rule - T_c)`, as a
+function of the pair's relative gap `r` (`_laplace_soft_pair_gap`): zero at
+and below `lo`, one at and above `hi` (the rule unchanged, to the last bit), the
+C1 smoothstep between. The rule integrates along the softest eigenvector, and
+near a tie that turns as fast as one over the gap: on the SWB timescales model
+(smoke_psm_gesis_orig, 300 people, unit 206; eigenvalues 0.478 and 0.493) a
+node's value moved 3 nats for a parameter step of 1e-4 that moved the mode
+0.005 prior sds. Continuous, but its curvature along the gradient was -2.4e6
+against the floored term's 2.4e4, with bumps at that scale, and every line
+search and Newton step the fit took read it as a jump at that unit, hour after
+hour. Until then a pair within 1e-3 took the logdet floor at a switch. Handed
+off to that floor over an absolute gap instead, a maximum at its fold
+(eigenvalues 0.0015 and 0.061) credited its vanishing direction 3 nats, ranked
+above the unit's healthy maximum, and its gradient was 7e6.
+"""
+@inline _laplace_soft_pair_weight(r, lo::Real, hi::Real) =
+    1 - _laplace_smoothstep_weight(r, lo, hi)
+
+# `_laplace_soft_pair_weight` at the pair `(lambda1, lambda2)` and its
+# derivatives in each, at Float64, for the reverse passes and the factorized
+# rule.
+function _laplace_soft_pair_slope(lambda1::Float64, lambda2::Float64, blo::Float64,
+    lo::Float64, hi::Float64)
+    r = _laplace_soft_pair_gap(lambda1, lambda2, blo)
+    r <= lo && return (p=0.0, d1=0.0, d2=0.0)
+    r >= hi && return (p=1.0, d1=0.0, d2=0.0)
+    s = (r - lo) / (hi - lo)
+    dp = (6 * s - 6 * s^2) / (hi - lo)
+    den = lambda2 > blo ? lambda2 : blo
+    return (p=3 * s^2 - 2 * s^3, d1=-dp / den,
+        d2=lambda2 > blo ? dp * lambda1 / lambda2^2 : dp / blo)
+end
+
+"""
+    _laplace_soft_floor_logratio_sum(values)
+
+`sum_k (log f(lambda_k) - log lambda_k)` over a curvature's eigenvalues, `f`
+the node floor (`_laplace_soft_node_curvature_floor`): what the floor adds to
+`-2` times the Laplace term. Generic in the element type, exact to first order
+in the dual parts.
+"""
+function _laplace_soft_floor_logratio_sum(values::AbstractVector{T}) where {T}
+    s = zero(T)
+    top = _laplace_soft_node_curvature_floor_top()
+    for x in values
+        v = Float64(_laplace_deepvalue(x))
+        v < top || continue
+        s += _soft_floor_logratio(v) + _soft_floor_logratio_slope(v) * (x - v)
+    end
+    return s
+end
+
+# The term handed off at share `p` (`_laplace_soft_pair_weight`): the rule's
+# value `R` itself where `p` is one, so a unit off the hand-off keeps its value
+# to the last bit.
+@inline _laplace_soft_handoff(R, Tc, p) =
+    isone(_laplace_deepvalue(p)) ? R : Tc + p * (R - Tc)
+
+"""
     _laplace_soft_quadrature_term(laplace, U, values, Ls, u, aws; M, logdetM, inner)
 
 Unit `U`'s term under the soft-direction quadrature, generic in the element type: returns
@@ -7617,8 +7768,11 @@ cost of its members rather than `d^3`, and densely below otherwise: the same
 function either way, at any width.
 
 `floor` says whether the unit still needs the total floor. Only the explicit
-fallback does -- a unit with a degenerate soft pair, where no soft direction is
-defined. Everywhere else the eigenvalue is known, and
+fallback does -- a curvature that does not factor at the mode and has a
+degenerate soft pair, where no soft direction is defined. Where it factors, a
+pair whose relative gap is under `soft_pair_hi` hands the rule off to the
+Laplace term with each eigenvalue floored as the nodes floor them
+(`_laplace_soft_pair_weight`). Everywhere else the eigenvalue is known, and
 it makes the floor unnecessary: above the band (`lambda_min >= hi`) the plain
 Laplace term is bounded by `-d log(hi) / 2` and accurate there (+0.015 nats on
 units with eigenvalues in 0.7 to 1, against the exact reference), and inside
@@ -7679,12 +7833,22 @@ function _laplace_soft_quadrature_term(laplace::CTSEMLaplaceObjective, U::Intege
     dense = _laplace_block_dense(M, blocks, d)
     E = _laplace_eig_first_order(dense)
     lam = E.primal.values
-    if d > 1 && (lam[2] - lam[1]) <= 1e-3 * max(abs(lam[2]), 1.0)
+    # The rule's share against the floored Laplace term `Tc` as the two
+    # smallest eigenvalues close (`_laplace_soft_pair_weight`). A curvature
+    # that does not factor has no Laplace term to hand off to and keeps the
+    # switch to the total floor at a tie.
+    k2 = (d > 1 && !indefinite) ? _laplace_soft_partner(lam) : 0
+    p = k2 > 0 ? _laplace_soft_pair_weight(
+        _laplace_soft_pair_gap(E.values[1], E.values[k2], lo), laplace.soft_pair_lo,
+        laplace.soft_pair_hi) : one(T)
+    (indefinite && d > 1 && (lam[2] - lam[1]) <= 1e-3 * max(abs(lam[2]), 1.0)) &&
         return (value=total, flagged=false, logdet_floor=true)
-    end
+    Tc = indefinite ? T(NaN) : lap - _laplace_soft_floor_logratio_sum(E.values) / 2
+    iszero(_laplace_deepvalue(p)) && return (value=Tc, flagged=true, logdet_floor=false)
     lam1 = E.values[1]
     w = _laplace_smoothstep_weight(lam1, lo, hi)
-    iszero(_laplace_deepvalue(w)) && return (value=lap, flagged=true, logdet_floor=false)
+    iszero(_laplace_deepvalue(w)) &&
+        return (value=_laplace_soft_handoff(lap, Tc, p), flagged=true, logdet_floor=false)
     v1 = E.vectors[:, 1]
     # The other directions as an orthonormal basis of v1's complement, by
     # Gram-Schmidt from the primal eigenvectors. Everything below depends on
@@ -7734,7 +7898,8 @@ function _laplace_soft_quadrature_term(laplace::CTSEMLaplaceObjective, U::Intege
     isfinite(peak) || return (value=T(NaN), flagged=true, logdet_floor=false)
     soft = peak + log(sum(exp.(terms .- peak))) - log(lam1c) / 2 - log(pi) / 2
     indefinite && return (value=soft, flagged=true, logdet_floor=false)
-    return (value=lap + w * (soft - lap), flagged=true, logdet_floor=false)
+    return (value=_laplace_soft_handoff(lap + w * (soft - lap), Tc, p), flagged=true,
+        logdet_floor=false)
 end
 
 ################################################################################
@@ -8405,10 +8570,33 @@ function _soft_second_above(M::CTSEMBlockMatrix{Float64},
     return count !== nothing && count <= 1
 end
 
-"""The second eigenvalue at or below which the dense rule calls `lambda1`'s pair
-degenerate, `lambda1 + 1e-3 max(|lambda2|, 1)`, solved for its own `lambda2`."""
-_soft_degenerate_bar(lambda1::Float64) = lambda1 + 1e-3 <= 1 ? lambda1 + 1e-3 :
-    lambda1 / (1 - 1e-3)
+"""
+    _soft_pair(M, blocks, v1, lambda1, blo, lo, hi)
+
+The pair hand-off (`_laplace_soft_pair_weight`) by factorizations: the rule's
+share `p`, its derivatives `d1`, `d2` in the two smallest eigenvalues, and the
+second eigenvector `v2` where the pair is inside the band, which the reverse
+needs for the gap's derivative. A factorization says a second eigenvalue far
+enough above `lambda1` leaves the rule as it is; only inside the band are the
+two smallest eigenpairs taken from the blocks (`_laplace_block_lowest`).
+`nothing` where they cannot be. `blo` is the soft band's low end, which the
+gap is measured against below it (`_laplace_soft_pair_gap`).
+"""
+function _soft_pair(M::CTSEMBlockMatrix{Float64}, blocks::Vector{CTSEMLaplaceBlock},
+    v1::Vector{Float64}, lambda1::Float64, blo::Float64, lo::Float64, hi::Float64)
+    # The second eigenvalue at which the relative gap reaches `hi`; none where
+    # `hi` is one or more, which no relative gap reaches.
+    bar = hi >= 1 ? Inf :
+        lambda1 + hi * blo <= blo ? lambda1 + hi * blo : lambda1 / (1 - hi)
+    _soft_second_above(M, blocks, v1, lambda1, bar) &&
+        return (p=1.0, d1=0.0, d2=0.0, v2=Float64[])
+    low = _laplace_block_lowest(M, blocks, bar)
+    (low === nothing || length(low.values) < 2) && return nothing
+    k2 = _laplace_soft_partner(low.values)
+    k2 == 0 && return (p=1.0, d1=0.0, d2=0.0, v2=Float64[])
+    s = _laplace_soft_pair_slope(lambda1, low.values[k2], blo, lo, hi)
+    return (p=s.p, d1=s.d1, d2=s.d2, v2=low.vectors[:, k2])
+end
 
 """
     _soft_deflated_solve(eig, blocks, b)
@@ -8491,16 +8679,21 @@ function _laplace_soft_quadrature_factored(laplace::CTSEMLaplaceObjective,
     eig = _soft_smallest_eigenpair(M, blocks, F0)
     eig === nothing && return nothing
     lam1, v1 = eig.lambda, eig.v
-    _soft_second_above(M, blocks, v1, lam1, _soft_degenerate_bar(lam1)) ||
-        return (value=g - max(logdetM, 0.0) / 2, flagged=false, logdet_floor=true)
-    lap = g - logdetM / 2
-    w = _laplace_smoothstep_weight(lam1, lo, hi)
-    iszero(w) && return (value=lap, flagged=true, logdet_floor=false)
+    pair = _soft_pair(M, blocks, v1, lam1, lo, laplace.soft_pair_lo, laplace.soft_pair_hi)
+    pair === nothing && return nothing
     top = _laplace_soft_node_curvature_floor_top()
     # The centre's complement is M's other eigenpairs, and those below the
     # floor's top are floored: their `log f - log lambda` added to the logdet.
     centre = _soft_centre_floor(M, blocks, v1, lam1, top)
     centre === nothing && return nothing
+    lap = g - logdetM / 2
+    # The Laplace term floored as the nodes are, which the rule hands off to.
+    Tc = lap - ((lam1 < top ? _soft_floor_logratio(lam1) : 0.0) + centre.logratio) / 2
+    iszero(pair.p) && return (value=Tc, flagged=true, logdet_floor=false)
+    w = _laplace_smoothstep_weight(lam1, lo, hi)
+    iszero(w) &&
+        return (value=_laplace_soft_handoff(lap, Tc, pair.p), flagged=true,
+            logdet_floor=false)
     lam1c = max(lam1, 1.0)
     xs, ws = _gauss_hermite(3)
     terms = zeros(Float64, length(xs))
@@ -8536,7 +8729,8 @@ function _laplace_soft_quadrature_factored(laplace::CTSEMLaplaceObjective,
     peak = maximum(terms)
     isfinite(peak) || return (value=NaN, flagged=true, logdet_floor=false)
     soft = peak + log(sum(exp.(terms .- peak))) - log(lam1c) / 2 - log(pi) / 2
-    return (value=lap + w * (soft - lap), flagged=true, logdet_floor=false)
+    return (value=_laplace_soft_handoff(lap + w * (soft - lap), Tc, pair.p),
+        flagged=true, logdet_floor=false)
 end
 
 """

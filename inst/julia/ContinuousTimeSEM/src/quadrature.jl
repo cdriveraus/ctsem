@@ -1080,7 +1080,10 @@ end
 `T = T_lap + w(lambda_min) (T_soft - T_lap)` for one unit, value only, at the
 modes of the last `ctsem_laplace_evaluate` at `values` under the total floor.
 `T_lap` is the unfloored Laplace term: a unit with an eigenvalue to go on needs
-no floor, see `_laplace_soft_quadrature_term`.
+no floor, see `_laplace_soft_quadrature_term`. As the two smallest
+eigenvalues' relative gap closes from `pair_hi` to `pair_lo`, `T` is handed off
+to the Laplace term with each eigenvalue floored as the nodes floor them
+(`_laplace_soft_pair_weight`).
 The Float64 reference for `_laplace_soft_quadrature_term`; see the section comment.
 
 The gate is exact and costs no likelihood sweep: `M - hi I` is block-factored
@@ -1093,6 +1096,7 @@ Returns `(value, weight, lambda_min, flagged)`.
 """
 function _laplace_soft_quadrature_unit_reference(laplace::CTSEMLaplaceObjective,
     values::AbstractVector, U::Integer; lo::Real=0.2, hi::Real=0.7,
+    pair_lo::Real=_LAPLACE_SOFT_PAIR_LO, pair_hi::Real=_LAPLACE_SOFT_PAIR_HI,
     nodes::Integer=3, newton_steps::Integer=1)
     theta = collect(Float64, values)
     _laplace_ensure_pool!(laplace)
@@ -1109,13 +1113,22 @@ function _laplace_soft_quadrature_unit_reference(laplace::CTSEMLaplaceObjective,
     _laplace_exceeds_identity(M, blocks, hi) &&
         return (value=lap, weight=0.0, lambda_min=Inf, flagged=false)
     d = length(u)
-    lambda = _ctsem_symeig(_laplace_block_dense(M, blocks, d)).values[1]
+    lams = _ctsem_symeig(_laplace_block_dense(M, blocks, d)).values
+    lambda = lams[1]
+    # The Laplace term floored as the nodes are, and the rule's share against it.
+    Tc = lap - sum(l -> l < _laplace_soft_node_curvature_floor_top() ?
+        _soft_floor_logratio(l) : 0.0, lams; init=0.0) / 2
+    k2 = d > 1 ? _laplace_soft_partner(lams) : 0
+    p = k2 > 0 ? _laplace_soft_pair_weight(_laplace_soft_pair_gap(lams[1], lams[k2], lo),
+        pair_lo, pair_hi) : 1.0
+    p == 0 && return (value=Tc, weight=0.0, lambda_min=lambda, flagged=true)
     w = _laplace_soft_weight(lambda, lo, hi)
-    w == 0 && return (value=lap, weight=0.0, lambda_min=lambda, flagged=true)
+    w == 0 && return (value=_laplace_soft_handoff(lap, Tc, p), weight=0.0,
+        lambda_min=lambda, flagged=true)
     soft = _laplace_soft_rule_unit(laplace, theta, U; nodes=nodes,
         ndirs=1, tau=0.0, recenter=true, newton_steps=newton_steps)
-    return (value=lap + w * (soft - lap), weight=w, lambda_min=lambda,
-        flagged=true)
+    return (value=_laplace_soft_handoff(lap + w * (soft - lap), Tc, p), weight=w,
+        lambda_min=lambda, flagged=true)
 end
 
 ################################################################################
