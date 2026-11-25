@@ -462,15 +462,21 @@
   as.numeric(fit$estimate$loglik)
 }
 
-# What a fit the check flagged and nothing corrected says, in its warning and
-# in print(): the move, Laplace's error in the log likelihood (`gap`, where it
-# is resolved past twice `gap_se`), that the estimates and intervals are
-# Laplace's while the log likelihood the fit reports is the integrated one
-# (`.ctLaplaceCheckedLoglik()`), and the calls that remove the error. They
-# answer different questions, so the message says which is which rather than
-# ranking them: the refined fit is the estimate with those units integrated,
-# and its curvature, for building a model on; sampling the joint posterior,
-# which has no Laplace error, gives the intervals to report.
+# What a fit the check flagged and nothing corrected says, in its message and
+# in print(): how far correcting would move the estimates, the parameter it
+# moves most, and the two calls -- the refined fit for corrected estimates to
+# build a model on, sampling the joint posterior, which has no Laplace error,
+# for intervals to report. The log likelihood's own error is left to print(),
+# whose log likelihood line gives both values.
+#
+# Some Laplace error is the usual case with random effects on dynamics or
+# noise, so below a standard error it is said as a message (Charles,
+# 2026-11-25): warned at every flag, it read as a fit that had failed. At a
+# standard error or more the estimates' meaning changes, so it is a warning,
+# and says where the error comes from and that fewer such effects reduce it,
+# which is the model-building advice a reader can act on. Laplace is exact for
+# random intercepts in linear Gaussian models (`laplace$quadratic`, never
+# flagged); the error comes from effects whose unit posterior is not Gaussian.
 #
 # The step is the check's linearisation, right in size to about one standard
 # error and no guide past it, in either direction: on the bench it read the
@@ -480,43 +486,28 @@
 # "up to" its value, anomS1's warning said 1 standard error where the
 # posterior mean was 1.9 posterior sds away and Laplace's interval held 1 per
 # cent of the mass (review/REVIEW-fit-uncertainty-2026-10-29.md, section 6).
-# The gap is not the trigger -- its level does not predict a move -- but a
-# large one says Laplace is off throughout, which is why the fit reports the
-# integrated log likelihood (`.ctLaplaceCheckedLoglik()`).
 #
-# Past a standard error the message adds that sampling starts at the fit's
-# estimate, and that from the refined fit it may need far less warmup. On the
-# hc-wellbeing reanalysis's 1,000-subject analogue the Laplace estimate lay
-# 20-65 posterior sds from all of the joint posterior's mass, in a basin of
-# Laplace's own; four map chains started there took 57 to 150-odd minutes and
-# ended in different basins (R-hat 1.65), and started at the refined fit 23-26
-# minutes, all in the right one (review/SAMPLING-map-regions-2026-11-25.md).
-# Below a standard error the estimate is near the mass and the sentence would
-# only add the refinement's cost.
-.ctLaplaceShiftMessage <- function(shift, worst, carrying, units,
-  gap = NA_real_, gap_se = NA_real_) {
+# Past a standard error the message says to sample the refined fit. Sampling
+# starts at the fit's estimate: on the hc-wellbeing reanalysis's
+# 1,000-subject analogue the Laplace estimate lay 20-65 posterior sds from all
+# of the joint posterior's mass, in a basin of Laplace's own; four map chains
+# started there took 57 to 212 minutes and ended in different basins
+# (R-hat 1.65-2.40), and started at the refined fit 23-26 minutes, all in the right
+# one (review/SAMPLING-map-regions-2026-11-25.md). Below a standard error the
+# estimate is near the mass and the refinement would only add its cost.
+.ctLaplaceShiftMessage <- function(shift, worst) {
+  refine <- "ctFitUncertainty(fit, intoverpop = 'quadrature')"
   sample <- "ctFitUncertainty(fit, 'sample', intoverpop = 'none')"
-  move <- if (shift < 1) {
-    paste0("by about ", format(shift, digits = 2), " standard errors here (", worst, ")")
-  } else {
-    paste0("by a standard error or more here (", worst, ": ", format(shift, digits = 2),
-      " by the check's linear step, which is no guide to the size past one)")
-  }
-  resolved <- is.finite(gap) && abs(gap) >= 0.05 &&
-    (!is.finite(gap_se) || abs(gap) > 2 * gap_se)
-  paste0("Laplace's error moves the estimates ", move, ", carried by ", carrying,
-    " of ", units, " units",
-    if (resolved) paste0(", and puts Laplace's log likelihood ", format(abs(gap), digits = 2),
-      " nats ", if (gap < 0) "above" else "below", " the integrated one, which the fit ",
-      "reports"),
-    ". The estimates and their intervals are Laplace's, ",
-    "uncorrected. ctFitUncertainty(fit, intoverpop = 'quadrature') refines the ",
-    "estimates with those units integrated by quadrature; ",
-    sample,
-    " samples the joint posterior, which has no Laplace error, for intervals to report.",
-    if (shift >= 1) paste0(" Sampling starts at the fit's estimate, and from the ",
-      "refined fit it may need much less warmup."),
-    " See fit$laplace$correction$check.")
+  if (shift < 1) return(paste0("Correcting for Laplace approximation error would ",
+    "move some estimates by about ", format(shift, digits = 2), " standard errors ",
+    "(most: ", worst, "). ", refine, " gives corrected estimates, and ", sample,
+    " intervals to report."))
+  paste0("Correcting for Laplace approximation error would move some estimates ",
+    "by a standard error or more (most: ", worst, "), so they and their ",
+    "intervals are approximate. This error comes from random effects on the ",
+    "dynamics, noise or categorical items, and is larger with few observations ",
+    "per unit. Fewer such random effects reduce it. ", refine, " gives corrected ",
+    "estimates, and ", sample, " on the corrected fit gives intervals to report.")
 }
 
 # The log posterior the quadrature correction would report at `values`, from
@@ -589,8 +580,9 @@
   if (!is.null(sink)) on.exit(sink("", "break"), add = TRUE)
   failed <- function(phrase) {
     if (!is.null(sink)) sink("", "break")
-    warning("Laplace continuation skipped: ", phrase, ". The uncorrected fit is ",
-      "returned; see fit$laplace$correction.", call. = FALSE)
+    warning("Correcting the estimates for Laplace approximation error failed (",
+      phrase, "), so the uncorrected fit is returned. See fit$laplace$correction.",
+      call. = FALSE)
     fit$laplace$correction <- list(method = "quadrature", status = "failed",
       applied = FALSE, message = phrase, nodes = as.integer(control$nodes))
     fit
@@ -603,7 +595,7 @@
   # `verbose > 0` alone already satisfies -- so there is no separate case left
   # for a bare `verbose > 0` to reach for a plainer `message()` here.
   if (!is.null(sink)) {
-    sink(sprintf("Laplace continuation screen (%d nodes) | %8s",
+    sink(sprintf("Correcting for Laplace approximation error, screen (%d nodes) | %8s",
       control$nodes, .ctDuration(seconds())), "update")
   }
   # Units whose Laplace terms jumped in the fit (`fit$laplace$jump`) are
@@ -617,13 +609,12 @@
   # Gaussian basin's. Said, with the call that integrates the units named.
   if (!correct && !is.null(jump)) {
     named <- as.integer(jump$units)
-    msg <- sprintf(paste0("The fit stopped where the Laplace term of %s %s ",
-      "jumps, at no maximum, so its estimate and standard errors are ",
-      "approximate. ctFitUncertainty(fit, intoverpop = 'quadrature') refines ",
-      "the estimate with %s integrated by quadrature; ctFitUncertainty(fit, 'sample', ",
-      "intoverpop = 'none') ",
-      "samples the joint posterior, for intervals to report."), if (length(named) == 1L) "unit" else "units",
-      paste(named, collapse = ", "), if (length(named) == 1L) "it" else "them")
+    msg <- sprintf(paste0("The fit stopped where the Laplace approximation for ",
+      "%s %s jumps, so the estimates and standard errors are approximate. ",
+      "ctFitUncertainty(fit, intoverpop = 'quadrature') gives corrected estimates, ",
+      "and ctFitUncertainty(fit, 'sample', intoverpop = 'none') intervals to ",
+      "report."), if (length(named) == 1L) "unit" else "units",
+      .ctNameList(named, 6L))
     warning(msg, call. = FALSE)
     fit$laplace$correction <- list(method = "quadrature", status = "jump",
       applied = FALSE, units = named, message = msg, laplace_estimate = est,
@@ -662,8 +653,8 @@
       bar = as.numeric(control$material), control = control,
       progress = if (!is.null(sink)) function(done, total) sink(sprintf(
         "Random-effects check, every unit on %d draws, %s | %8s", checkdraws,
-        if (done < total) sprintf("seed %d of %d", done, total - 1L) else
-          "Laplace's expansion", .ctDuration(seconds())), "update")),
+        if (done < total) sprintf("pass %d of %d", done, total - 1L) else
+          "finishing", .ctDuration(seconds())), "update")),
       error = function(e) {
         checkfailed <<- .ctLaplaceTryReason(structure("", condition = e))
         NULL
@@ -676,9 +667,9 @@
   if (!correct && is.null(check)) {
     if (!is.null(sink)) sink("", "break")
     if (!is.null(checkfailed) || !is.null(.ctBackendStoredHessian(fit, est))) {
-      warning("Laplace's error could not be checked at this estimate",
-        if (!is.null(checkfailed)) paste0(" (", checkfailed, ")"),
-        "; ctLaplaceCheck(fit) measures it.", call. = FALSE)
+      warning("The Laplace approximation's error could not be checked at this ",
+        "estimate", if (!is.null(checkfailed)) paste0(" (", checkfailed, ")"),
+        ". ctLaplaceCheck(fit) measures it.", call. = FALSE)
     }
     fit$laplace$correction <- list(method = "quadrature", status = "unchecked",
       applied = FALSE, message = checkfailed, laplace_estimate = est,
@@ -713,12 +704,12 @@
     return(.ctLaplaceCheckedLoglik(fit, check))
   }
   # A move found and asked only to check: said once, with the calls that
-  # correct it, and kept in the record for print().
+  # correct it, and kept in the record for print(). A warning only from a
+  # standard error up (`.ctLaplaceShiftMessage()`).
   if (!correct) {
     if (!is.null(sink)) sink("", "break")
-    said <- .ctLaplaceShiftMessage(check$max_shift, checkrecord$worst,
-      length(check$carrying), check$units, gap = check$gap, gap_se = check$gap_se)
-    warning(said, call. = FALSE)
+    said <- .ctLaplaceShiftMessage(check$max_shift, checkrecord$worst)
+    if (isTRUE(check$max_shift >= 1)) warning(said, call. = FALSE) else message(said)
     fit$laplace$correction <- list(method = "quadrature", status = "flagged",
       applied = FALSE, message = said, laplace_estimate = est,
       loglik_laplace = as.numeric(fit$estimate$loglik),

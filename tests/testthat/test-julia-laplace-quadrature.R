@@ -80,21 +80,28 @@
     model <- if (identical(which, "linear")) .lc_linear_model() else .lc_nonlinear_model()
     # 'checked' by name: what these tests read is the draws a corrected fit
     # takes on the hybrid, which the default's curvature does not take.
-    # The warnings are kept on the fit, for the tests that read them: the
-    # default's check warns where it finds a move.
+    # The warnings and messages are kept on the fit, for the tests that read
+    # them: the default's check says so where it finds a move, as a message
+    # below a standard error and a warning from one up.
     fitwith <- function(correct, uncertainty = "checked") {
       set.seed(11)
       warned <- character()
-      fit <- withCallingHandlers(suppressMessages(ctFit(data, model,
+      said <- character()
+      fit <- withCallingHandlers(ctFit(data, model,
         backend = "julia", cores = 1,
         intoverpop = if (identical(correct, "refit")) "quadrature" else "laplace",
         optimcontrol = c(list(finishsamples = 100, uncertainty = uncertainty),
-          if (identical(correct, "off")) list(checks = FALSE)))),
+          if (identical(correct, "off")) list(checks = FALSE))),
         warning = function(w) {
           warned <<- c(warned, conditionMessage(w))
           invokeRestart("muffleWarning")
+        },
+        message = function(m) {
+          said <<- c(said, conditionMessage(m))
+          invokeRestart("muffleMessage")
         })
       attr(fit, "warned") <- warned
+      attr(fit, "said") <- said
       fit
     }
     fits <- list(off = fitwith("off"), quadrature = fitwith("refit"))
@@ -207,10 +214,14 @@ test_that("the default checks and warns, and the correction it names is the fit-
     tolerance = 1e-8)
   expect_identical(ctsem:::.ctFitOptimisedLoglik(default), fits$off$estimate$loglik)
   expect_identical(default$estimate$rawposterior, fits$off$estimate$rawposterior)
-  warned <- attr(default, "warned")
+  # Said once with both calls: a message below a standard error, a warning
+  # from one up.
+  said <- c(attr(default, "warned"), attr(default, "said"))
   expect_true(any(grepl("ctFitUncertainty(fit, intoverpop = 'quadrature')",
-    warned, fixed = TRUE)))
-  expect_true(any(grepl("intoverpop = 'none'", warned, fixed = TRUE)))
+    said, fixed = TRUE)))
+  expect_true(any(grepl("intoverpop = 'none'", said, fixed = TRUE)))
+  expect_true(any(grepl(corr$message, attr(default,
+    if (corr$check$max_shift >= 1) "warned" else "said"), fixed = TRUE)))
   expect_true(any(grepl(corr$message, capture.output(print(default)), fixed = TRUE)))
   # The correction it names is the fit-time one: the refined fit on the units
   # its check named, from the same estimate, then its objective's curvature.
@@ -524,7 +535,7 @@ test_that("the quadrature correction reports progress at the default verbosity",
   # Hessian on the same line -- phases that went a combined 22 minutes without
   # a word on Charles's ordinal fit (2026-09-28) when each was gated on
   # `verbose > 0` alone.
-  expect_true(any(grepl("Laplace continuation screen", seen, fixed = TRUE)))
+  expect_true(any(grepl("Correcting for Laplace approximation error, screen", seen, fixed = TRUE)))
   expect_true(any(grepl("Refined fit, rules placed", seen, fixed = TRUE)))
 })
 
@@ -815,34 +826,26 @@ test_that("draws' defaults reach the engine, and a flag names both corrections",
   expect_identical(control$draws_df, 4)
   expect_identical(.ctLaplaceContinuationArgs(control)$draws_df, 4)
   # Both corrections are named, whatever the move.
-  plain <- .ctLaplaceShiftMessage(0.63, "popsd_drift", 27L, 40L)
-  wide <- .ctLaplaceShiftMessage(2.3, "popsd_mm_Y5", 97L, 100L)
+  plain <- .ctLaplaceShiftMessage(0.63, "popsd_drift")
+  wide <- .ctLaplaceShiftMessage(2.3, "popsd_mm_Y5")
   for (said in c(plain, wide)) {
     expect_match(said, "ctFitUncertainty(fit, intoverpop = 'quadrature')", fixed = TRUE)
     expect_match(said, "intoverpop = 'none'", fixed = TRUE)
-    expect_match(said, "their intervals", fixed = TRUE)
+    expect_match(said, "Laplace approximation error", fixed = TRUE)
   }
   # The step is a linearisation: a size below one standard error, a range
   # past it, where it has read moves of 10 se as 1 and of 1.6 as 3.8.
-  expect_match(plain, "by about 0.63 standard errors here (popsd_drift)", fixed = TRUE)
-  expect_match(wide, "by a standard error or more here (popsd_mm_Y5: 2.3 by",
-    fixed = TRUE)
+  expect_match(plain, "by about 0.63 standard errors (most: popsd_drift)", fixed = TRUE)
+  expect_match(wide, "by a standard error or more (most: popsd_mm_Y5)", fixed = TRUE)
   expect_no_match(plain, "or more", fixed = TRUE)
-  # Past a standard error, sampling the refined fit is suggested: the sampler
-  # starts at the fit's estimate, which may then be far from the mass.
-  expect_match(wide, "from the refined fit it may need much less warmup", fixed = TRUE)
-  expect_no_match(plain, "refined fit", fixed = TRUE)
-  # The log likelihood's error where the check resolves it, with its sign;
-  # nothing where it is within its noise.
-  expect_no_match(plain, "nats", fixed = TRUE)
-  above <- .ctLaplaceShiftMessage(1.01, "diff_anom", 661L, 800L, gap = -30.3,
-    gap_se = 0.2)
-  expect_match(above, "puts Laplace's log likelihood 30 nats above the integrated one",
-    fixed = TRUE)
-  below <- .ctLaplaceShiftMessage(0.4, "drift", 43L, 60L, gap = 1.2, gap_se = 0.1)
-  expect_match(below, "1.2 nats below", fixed = TRUE)
-  noisy <- .ctLaplaceShiftMessage(0.4, "drift", 43L, 60L, gap = 0.3, gap_se = 0.2)
-  expect_no_match(noisy, "nats", fixed = TRUE)
+  expect_no_match(wide, "2.3", fixed = TRUE)
+  # Past a standard error: where the error comes from, that fewer such effects
+  # reduce it, and that the corrected fit is the one to sample, since the
+  # sampler starts at the fit's estimate, which may then be far from the mass.
+  expect_match(wide, "Fewer such random effects reduce it", fixed = TRUE)
+  expect_match(wide, "on the corrected fit", fixed = TRUE)
+  expect_no_match(plain, "corrected fit", fixed = TRUE)
+  expect_no_match(plain, "Fewer", fixed = TRUE)
 })
 
 # The gated-gaps A14 config (review/LAPLACE-gated-gaps-2026-09-24.md): 40

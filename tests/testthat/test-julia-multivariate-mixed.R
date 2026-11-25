@@ -208,7 +208,7 @@ test_that("the Laplace correction handles more than one random effect", {
   expect_identical(corr$method, "quadrature")
   expect_true(corr$status %in% c("exact", "checked"))
   expect_false(corr$applied)
-  expect_false(any(grepl("Laplace's error", warned, fixed = TRUE)))
+  expect_false(any(grepl("Laplace approximation error", warned, fixed = TRUE)))
   expect_true(corr$check$status %in% c("passed", "unresolved"))
   if (identical(corr$status, "exact")) {
     expect_null(default$estimate$loglik_method)

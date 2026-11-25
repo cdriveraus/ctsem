@@ -662,7 +662,13 @@ T0VARredundancies <- function(ctm) {
     (ctm$pars$row %in% ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying] |
         ctm$pars$col %in% ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying])
   if(any(whichT0VAR_T0MEANSindvarying)){
-    message('T0VAR rows/columns for latents with individually varying T0MEANS disabled: RAWPOPVAR gives their covariance.')
+    varying <- sort(unique(as.integer(ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' &
+        ctm$pars$indvarying])))
+    named <- if (length(ctm$latentNames) >= max(varying)) ctm$latentNames[varying] else varying
+    one <- length(named) == 1L
+    message('T0VAR is fixed for ', paste(named, collapse = ', '), ', since the ',
+      'random effects on ', if (one) 'its' else 'their', ' T0MEANS give ',
+      if (one) 'its' else 'their', ' initial variance.')
     ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col == ctm$pars$row ] <- 1e-3
     ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col != ctm$pars$row ] <- 0
     ctm$pars$param[whichT0VAR_T0MEANSindvarying] <- NA
@@ -877,8 +883,9 @@ T0VARredundancies <- function(ctm) {
 #' parameter, such as \code{fit$estimate$raw} from a julia fit or
 #' \code{fit$stanfit$rawest} from a stan fit. With \code{backend='julia'} it
 #' may also be a fit, whose estimates are matched to this model's parameters
-#' by name, so that a model extended by a predictor or a smooth starts from
-#' the earlier estimates with the new coefficients at zero. With
+#' by name, and its population loadings to this model's by effect, so that a
+#' model extended by a predictor, a smooth or a random effect starts from the
+#' earlier estimates with the new parameters at or near zero. With
 #' \code{backend='stan'} and \code{optimize=FALSE}, \code{'optimize'}
 #' optimises first and starts the chains there.
 #' @param priors \code{FALSE} (the default), \code{TRUE} or \code{'randomCorr'}.

@@ -177,7 +177,9 @@
 #'   refitted the same way. To compare the models with their random effects
 #'   integrated more exactly, start the search from a fit with
 #'   \code{intoverpop = 'quadrature'}, so that every refit is refined in the
-#'   same way.
+#'   same way. A change is not taken, and pruning drops it, when the
+#'   random-effects check shows that the Laplace approximation's error differs
+#'   between the current fit and the refit by enough to reverse the decision.
 #'
 #' @param fit A fit from \code{\link{ctFit}} with \code{backend = 'julia'}.
 #' @param covariates Optional subject level covariates the model may add, as
@@ -1279,71 +1281,92 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   L
 }
 
-# Raw starting loadings for a refit of a reduced-rank level (`spec2`, the
-# refit's specification; `names2`, its raw names), from the current fit's,
-# block by block (a level without blocks is one): each block's loadings on the
-# effects it keeps, the effects it gains at zero, and each dimension it gains
-# along one of `add` -- deviations on the effects' raw scales, named by
-# effect, such as a block test's direction times its one-step sd -- or,
-# failing one, a small loading on the effect that dimension starts at: at zero
-# a new dimension's gradient vanishes. Then rotated into echelon form
-# (`.ctImproveGivens()`), which keeps each block's covariance. Matched by name
-# alone, a block's new dimension took the next block's loadings, whose
-# dimensions are numbered after it, and a block whose basis changed lost
-# loadings now held at zero.
+# Raw starting loadings for a model's reduced-rank levels (`spec2`, its
+# specification; `names2`, its raw names), from another fit's (`current`), a
+# level matched to the fit's by name and taken block by block (a level without
+# blocks is one): each block's loadings on the effects it keeps, the effects it
+# gains at zero, and each dimension it gains along one of `add` -- deviations
+# on the subject level's effects' raw scales, named by effect, such as a block
+# test's direction times its one-step sd -- or, failing one, a small loading on
+# an effect the block gains, or where it gains none, on the effect that
+# dimension starts at. At zero a new dimension's gradient vanishes, and on an
+# effect the fit had, the loading would change that effect's variance. Then
+# rotated into echelon form (`.ctImproveGivens()`), which keeps each block's
+# covariance. Matched by name alone, a block's new dimension took the next
+# block's loadings, whose dimensions are numbered after it, and a block whose
+# basis changed lost loadings now held at zero. ctModelImprove's refits and
+# ctFit(inits = fit) start from this.
 .ctImproveBlockStart <- function(current, spec2, names2, add = NULL) {
-  lv2 <- spec2$laplace$levels[[1]]
-  if (is.null(lv2) || !length(lv2$load_index) || !isTRUE(lv2$rank > 0)) return(NULL)
   asblocks <- function(lv) if (length(lv$blocks)) lv$blocks else
     list(list(name = 'level', rank = lv$rank, param = lv$param))
-  old <- list()
-  lv1 <- current$model_spec$laplace$levels[[1]]
-  if (!is.null(lv1) && length(lv1$load_index) && isTRUE(lv1$rank > 0)) {
-    est <- .ctFitRawEstimate(current)
-    ent <- .ctJuliaLoadingEntries(lv1)
-    L1 <- matrix(0, length(lv1$param), lv1$rank,
-      dimnames = list(as.character(lv1$param), NULL))
-    L1[cbind(ent$row, ent$col)] <- est[lv1$load_index] * as.numeric(lv1$sd_scale)[ent$row]
+  loads <- function(lv) !is.null(lv) && length(lv$load_index) && isTRUE(lv$rank > 0)
+  levels1 <- current$model_spec$laplace$levels
+  est <- NULL
+  out <- numeric()
+  for (l in seq_along(spec2$laplace$levels)) {
+    lv2 <- spec2$laplace$levels[[l]]
+    if (!loads(lv2)) next
+    old <- list()
+    lv1 <- Find(function(lv) identical(as.character(lv$name), as.character(lv2$name)),
+      levels1)
+    if (loads(lv1)) {
+      if (is.null(est)) est <- .ctFitRawEstimate(current)
+      ent <- .ctJuliaLoadingEntries(lv1)
+      L1 <- matrix(0, length(lv1$param), lv1$rank,
+        dimnames = list(as.character(lv1$param), NULL))
+      L1[cbind(ent$row, ent$col)] <- est[lv1$load_index] * as.numeric(lv1$sd_scale)[ent$row]
+      at <- 0L
+      for (b in asblocks(lv1)) {
+        old[[b$name]] <- L1[as.character(b$param), at + seq_len(b$rank), drop = FALSE]
+        at <- at + b$rank
+      }
+    }
+    # The block tests' directions are the subject level's.
+    toadd <- if (l == 1L) add
+    param2 <- as.character(lv2$param)
+    scale2 <- stats::setNames(as.numeric(lv2$sd_scale), param2)
+    ent2 <- .ctJuliaLoadingEntries(lv2)
+    raw <- rep(NA_real_, length(lv2$load_index))
     at <- 0L
-    for (b in asblocks(lv1)) {
-      old[[b$name]] <- L1[as.character(b$param), at + seq_len(b$rank), drop = FALSE]
+    for (b in asblocks(lv2)) {
+      members <- param2[param2 %in% b$param]
+      L <- matrix(0, length(members), b$rank, dimnames = list(members, NULL))
+      o <- old[[b$name]]
+      had <- 0L
+      if (!is.null(o)) {
+        had <- min(ncol(o), b$rank)
+        k <- intersect(members, rownames(o))
+        L[k, seq_len(had)] <- o[k, seq_len(had), drop = FALSE]
+      }
+      gained <- setdiff(members, rownames(o))
+      used <- character()
+      for (j in seq_len(b$rank - had) + had) {
+        fits <- vapply(toadd, function(v) length(v) > 0L &&
+          all(names(v)[v != 0] %in% members), logical(1))
+        if (any(fits)) {
+          v <- toadd[[which(fits)[1]]]
+          toadd <- toadd[-which(fits)[1]]
+          k <- intersect(names(v), members)
+          L[k, j] <- v[k]
+          next
+        }
+        # One effect a dimension, so that the new columns start independent.
+        e <- setdiff(gained, used)[1L]
+        if (is.na(e)) e <- if (members[j] %in% used) setdiff(members, used)[1L] else members[j]
+        used <- c(used, e)
+        L[e, j] <- 0.1 * scale2[[e]]
+      }
+      L <- .ctImproveGivens(L)
+      for (k in which(ent2$col > at & ent2$col <= at + b$rank)) {
+        e <- param2[ent2$row[k]]
+        raw[k] <- L[e, ent2$col[k] - at] / scale2[[e]]
+      }
       at <- at + b$rank
     }
+    ok <- is.finite(raw)
+    out <- c(out, stats::setNames(raw[ok], names2[lv2$load_index[ok]]))
   }
-  param2 <- as.character(lv2$param)
-  scale2 <- stats::setNames(as.numeric(lv2$sd_scale), param2)
-  ent2 <- .ctJuliaLoadingEntries(lv2)
-  raw <- rep(NA_real_, length(lv2$load_index))
-  at <- 0L
-  for (b in asblocks(lv2)) {
-    members <- param2[param2 %in% b$param]
-    L <- matrix(0, length(members), b$rank, dimnames = list(members, NULL))
-    o <- old[[b$name]]
-    had <- 0L
-    if (!is.null(o)) {
-      had <- min(ncol(o), b$rank)
-      k <- intersect(members, rownames(o))
-      L[k, seq_len(had)] <- o[k, seq_len(had), drop = FALSE]
-    }
-    for (j in seq_len(b$rank - had) + had) {
-      fits <- vapply(add, function(v) length(v) > 0L &&
-        all(names(v)[v != 0] %in% members), logical(1))
-      if (any(fits)) {
-        v <- add[[which(fits)[1]]]
-        add <- add[-which(fits)[1]]
-        k <- intersect(names(v), members)
-        L[k, j] <- v[k]
-      } else L[j, j] <- 0.1 * scale2[[members[j]]]
-    }
-    L <- .ctImproveGivens(L)
-    for (k in which(ent2$col > at & ent2$col <= at + b$rank)) {
-      e <- param2[ent2$row[k]]
-      raw[k] <- L[e, ent2$col[k] - at] / scale2[[e]]
-    }
-    at <- at + b$rank
-  }
-  ok <- is.finite(raw)
-  stats::setNames(raw[ok], names2[lv2$load_index[ok]])
+  if (length(out)) out
 }
 
 # A covariate added to the model and its data as a time independent predictor
@@ -2324,6 +2347,37 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
     return(out)
   }
   n <- .ctFitNsubjects(current)
+  verdict <- .ctImproveVerdict(dll, dk, n, criterion, alpha)
+  # Laplace's error is signed unit by unit, by the shape of each unit's
+  # likelihood in its effects, so over thousands of units it can differ
+  # between two models by more than the change: on the hc-wellbeing
+  # reanalysis a second process whose noise cancelled the first's gained 264
+  # on Laplace and lost 39 on the check's integrals, and a one-process life
+  # satisfaction model lost 127 on Laplace and gained 45 on the integrals
+  # (review/LAPLACE-plateau-credit-2026-11-25.md in CT-SEM). Where both fits
+  # carry the check's integral and the change in Laplace's error, resolved past
+  # both checks' errors, gives the other verdict, neither value is evidence:
+  # the integrals are read at estimates Laplace placed. Undecided keeps the
+  # simpler model, in a search and in pruning alike.
+  e0 <- .ctLaplaceCheckedGap(current); e1 <- .ctLaplaceCheckedGap(refit)
+  if (!is.null(e0) && !is.null(e1)) {
+    dgap <- e1$gap - e0$gap
+    err <- 2 * sqrt(e0$se^2 + e1$se^2) + e0$bound + e1$bound
+    integrated <- .ctImproveVerdict(dll + dgap, dk, n, criterion, alpha)
+    if (abs(dgap) > err && !identical(integrated$accept, verdict$accept)) {
+      out <- bad(sprintf(paste("%.3g on Laplace and %.3g on the check's integrals:",
+        "Laplace's error differs by %.3g between the two and decides it, so no",
+        "evidence either way"), dll, dll + dgap, dgap))
+      out$dloglik <- dll; out$dpar <- dk
+      return(out)
+    }
+  }
+  verdict
+}
+
+# A comparison's verdict on a change of `dll` in log likelihood and `dk` in
+# parameters, by `criterion`.
+.ctImproveVerdict <- function(dll, dk, n, criterion, alpha) {
   if (criterion == 'LR' && dk > 0) {
     p <- stats::pchisq(2 * dll, dk, lower.tail = FALSE)
     return(list(accept = p < alpha, dloglik = dll, dpar = dk, value = p,
@@ -2333,6 +2387,21 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   delta <- -2 * dll + penalty * dk
   list(accept = delta < 0, dloglik = dll, dpar = dk, value = delta, score = -delta,
     note = sprintf('%s change %.3g', if (criterion == 'BIC') 'BIC' else 'AIC', delta))
+}
+
+# The random-effects check's measure of Laplace's error on a fit that reports
+# its integral (`.ctLaplaceCheckedLoglik()`): the integral less Laplace's
+# value, the draws' standard error and the expansion's bound. NULL otherwise.
+.ctLaplaceCheckedGap <- function(fit) {
+  e <- fit$estimate
+  if (!identical(e$loglik_method, "checked") || is.null(e$loglik_laplace)) return(NULL)
+  gap <- as.numeric(e$loglik) - as.numeric(e$loglik_laplace)
+  if (length(gap) != 1L || !is.finite(gap)) return(NULL)
+  num <- function(x) {
+    x <- suppressWarnings(as.numeric(x))
+    if (length(x) == 1L && is.finite(x)) x else 0
+  }
+  list(gap = gap, se = num(e$loglik_se), bound = num(e$loglik_bound))
 }
 
 #' Plot a model improvement search

@@ -191,7 +191,27 @@ test_that("a coordinate in the flat subspace gets no reported spread, and is sai
   # Said, rather than only computed -- in the brief register the warning uses,
   # since R truncates a warning at 1000 bytes.
   expect_warning(ctsem:::.ctBackendIdentifyWarn(NULL, data.frame(), check),
-    "No width at all for")
+    "No standard error for")
+})
+
+test_that("a long list of unidentified parameters is shortened and says where all are", {
+  # No julia needed. Forty-one parameters in one direction, as a model with
+  # correlated random effects at two levels gives: four named, a count, and
+  # the field that holds every one, under R's 1000-byte warning limit.
+  many <- c("popsd_a", sprintf("rawcor_a__b%d", 1:40))
+  said <- tryCatch(ctsem:::.ctBackendIdentifyWarn(list(nweak = 1L,
+    parameters = many, directions = list()), data.frame()),
+    warning = conditionMessage)
+  expect_match(said, "popsd_a, rawcor_a__b1, rawcor_a__b2, rawcor_a__b3 and 37 more",
+    fixed = TRUE)
+  expect_match(said, "fit$identifiability$parameters lists all 41.", fixed = TRUE)
+  expect_lt(nchar(said, type = "bytes"), 1000)
+  # A short list is whole, with no pointer to the rest.
+  few <- tryCatch(ctsem:::.ctBackendIdentifyWarn(list(nweak = 1L,
+    parameters = many[1:3], directions = list()), data.frame()),
+    warning = conditionMessage)
+  expect_match(few, "popsd_a, rawcor_a__b1, rawcor_a__b2.", fixed = TRUE)
+  expect_no_match(few, "lists all", fixed = TRUE)
 })
 
 test_that("a genuinely redundant parameter still gets the fix-or-remove advice", {
