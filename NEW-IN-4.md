@@ -32,7 +32,8 @@ while the engine compiles.
   differences in the dynamics. In linear models, random intercepts are
   integrated exactly. `intoverpop = 'augmented'` gives the old method, and
   `ctFit()` warns when that method meets nonlinear dynamics.
-- Each fit checks the approximation and warns if it affects the estimates.
+- Each fit checks the approximation and says if it affects the estimates, with
+  a warning when they would move by a standard error or more.
   `intoverpop = 'quadrature'` then refines the fit, and
   `ctFitUncertainty(fit, 'sample')` samples the full posterior instead.
 - Random effects can be at multiple nested levels, such as people within

@@ -7012,8 +7012,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         if (verbose > 0) message("Starting values derived from the data for ",
           sum(use), " of ", npar, " parameters.")
       } else {
-        message("The objective cannot be evaluated at the starting values ",
-          "derived from the data; starting from the default values.")
+        message("The starting values derived from the data could not be ",
+          "evaluated, so the fit starts from the default values.")
       }
     }
   }
@@ -8228,9 +8228,9 @@ print.ctJuliaFit <- function(x, ...) {
   # `$optim$placement_warnings`.
   sampled <- !is.null(x$sample)
   if (!sampled) cat("  log likelihood:", format(x$estimate$loglik),
-    if (identical(x$estimate$loglik_method, "checked")) paste0("(Laplace's error ",
-      "integrated by its check, ", .ctLoglikCheckedError(x$estimate),
-      "; Laplace ", format(x$estimate$loglik_laplace), ")"), "\n")
+    if (identical(x$estimate$loglik_method, "checked")) paste0("(corrected for ",
+      "Laplace approximation error, ", .ctLoglikCheckedError(x$estimate),
+      "; uncorrected ", format(x$estimate$loglik_laplace), ")"), "\n")
   if (!is.null(x$estimate$loglik_weighted)) cat("  weighted log likelihood:",
     format(x$estimate$loglik_weighted), "(sampling weights)\n")
   if (!sampled) cat("  converged:", x$optim$converged, " iterations:",

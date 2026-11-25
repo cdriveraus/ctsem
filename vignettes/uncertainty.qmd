@@ -321,7 +321,7 @@ decides what an interval describes.
   indicators are integrated exactly, and others with a Laplace approximation.
   Every `uncertainty` method above, `is` included, then describes this
   integrated objective and its approximation. Each fit checks the Laplace
-  approximation and warns if it affects the estimates, and
+  approximation and says if it affects the estimates, and
   `intoverpop = 'quadrature'` refines the fit. The interval is still a normal
   approximation at a mode, and a population standard deviation estimated from
   few subjects usually has a skewed posterior.
