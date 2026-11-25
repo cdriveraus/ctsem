@@ -363,6 +363,14 @@ function _laplace_block_project!(blockset, laplace::CTSEMLaplaceObjective, U::In
     values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws,
     base::Vector{Float64}, ru::AbstractVector{Float64})
     blocks = laplace.units.blocks[U]
+    # A maximum whose rest stands apart from `base`'s (`_laplace_rest_shift`)
+    # is the whole unit's, a study's effects in another basin with its persons
+    # following: given the rest at `base` they fall back to their own. Solved
+    # person by person, as until 2026-11-25, that was most of a search on the
+    # affect pilot's study units (20 persons' subtree Newtons for a maximum
+    # with the study 2.8 away, every one back at its own), and the maximum was
+    # then dropped where a search reached it from a known start.
+    _laplace_rest_shift(blocks, base, ru) >= _LAPLACE_REST_SHIFT && return false
     any_ = false
     for (b, blk) in enumerate(blocks)
         isempty(blk.ancestors) && continue
@@ -380,6 +388,33 @@ function _laplace_block_project!(blockset, laplace::CTSEMLaplaceObjective, U::In
         any_ = true
     end
     return any_
+end
+
+"""
+How far, in prior units, a maximum's rest -- every block another lies under, a
+study's own coordinates -- may stand from the unit's mode for it to be read
+as persons at their other maxima (`_laplace_block_project!`): persons
+switching move the study's effects by a little (0.21 for nine of twenty on the
+affect pilot), a study's other basin by a lot (1.2-2.8 there).
+"""
+const _LAPLACE_REST_SHIFT = 0.5
+
+"""The largest difference between `v` and `base` in a nested unit's rest, every
+block another lies under (`_LAPLACE_REST_SHIFT`)."""
+function _laplace_rest_shift(blocks::Vector{CTSEMLaplaceBlock}, base::AbstractVector,
+    v::AbstractVector)
+    under = fill(false, length(blocks))
+    for block in blocks, a in block.ancestors
+        under[a] = true
+    end
+    s = 0.0
+    for (t, blk) in enumerate(blocks)
+        under[t] || continue
+        @inbounds for i in 1:blk.size
+            s = max(s, abs(v[blk.offset + i] - base[blk.offset + i]))
+        end
+    end
+    return s
 end
 
 """

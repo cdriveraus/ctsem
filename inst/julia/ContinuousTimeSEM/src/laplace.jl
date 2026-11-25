@@ -5590,26 +5590,40 @@ function _laplace_known_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     best = found
     bestterm = NaN
     d = length(found.u)
+    # Where the search's mode and each start taken, and where it ended, stand:
+    # a start near one returns what that did. A run's known modes pile up --
+    # a jump's from either side, each stage's -- and on the affect pilot's
+    # study units a search took most of them back to the same maximum, a
+    # Newton on the whole unit each (24 s for one start of unit 16).
+    seen = Vector{Float64}[collect(Float64, found.u)]
     for start in laplace.known[U]
         length(start) == d || continue
-        # A start at the mode the search found returns it.
-        _laplace_maxabsdiff(start, best.u) < 1e-4 && continue
+        (_laplace_maxabsdiff(start, best.u) < _LAPLACE_KNOWN_NEAR ||
+            any(v -> _laplace_maxabsdiff(start, v) < _LAPLACE_KNOWN_NEAR, seen)) && continue
+        push!(seen, collect(Float64, start))
         r = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start)
         (r.converged && isfinite(r.value)) || continue
+        push!(seen, collect(Float64, r.u))
         # A nested unit's blocks take what differs from the mode as their own
-        # (`_laplace_block_project!`); a unit of one block, the maximum itself.
-        if blockset !== nothing
-            _laplace_block_project!(blockset, laplace, U, values, Ls, aws,
-                collect(Float64, best.u), r.u)
-        elseif set !== nothing
+        # (`_laplace_block_project!`); what they do not take is the whole
+        # unit's, kept beside its mode as the probes' are (`_laplace_mode_join!`).
+        projected = blockset !== nothing && _laplace_block_project!(blockset, laplace,
+            U, values, Ls, aws, collect(Float64, best.u), r.u)
+        (!projected && set !== nothing) &&
             _laplace_mode_join!(set, laplace, U, values, Ls, aws, r)
-        end
         _laplace_maxabsdiff(r.u, best.u) < 1e-4 && continue
         best, bestterm, _ = _laplace_prefer_mode(laplace, U, values, Ls, aws,
             best, bestterm, r, found)
     end
     return best
 end
+
+"""
+How near, in prior units at every coordinate, a known start may lie to the
+search's mode, or to a start already taken or where it ended, to be passed
+over as returning the same maximum (`_laplace_known_modes`).
+"""
+const _LAPLACE_KNOWN_NEAR = 0.05
 
 """
 Whether an optimisation anchors each unit's solve at its mode at the last
