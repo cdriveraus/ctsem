@@ -1,6 +1,6 @@
 # The marginal route's Hessian by the hand-coded second order: each subject's
 # filter sweep carries W = 12 directions as Float64 tangents
-# (`tangent_sweep.jl`), where `ctsem_hessian`'s other route runs the adjoint
+# (`tangent_sweep.jl`, `_tan_sweep!` in `tangent_rows.jl`), where `ctsem_hessian`'s other route runs the adjoint
 # gradient at a 12-wide dual. The parameter layer -- subject values, the
 # regular transforms, the covariance constructions, their pullbacks and the
 # prior -- is the engine's own code, run once a chunk of columns at the
@@ -66,19 +66,12 @@ const _TAN_NOT_JACOBIAN = "a drift or loading that is not its Jacobian, though n
     "reads the state"
 
 """
-Whether the subjects' sweeps run by row (`tangent_rows.jl`): a cell evaluated
-by row, or stationary initial conditions the hand sweep's own do not cover --
-single elements, or beside static states -- each of which runs as the
-engine's own at the Hessian's dual.
+Whether the model has cells the filter evaluates by row (`TanModel.rows`):
+then DRIFT need not be JAx, nor LAMBDA Jy, a subject's cells change along its
+record, and its walk runs unweighted on a layer of its own.
 """
-function _tan_rows_model(sp)
-    (any(sp.predict_transforms_indices) || any(sp.update_transforms_indices) ||
-        any(sp.td_transforms_indices) ||
-        _stationary_elements_on(sp.stationary_elements)) && return true
-    sp.stationary || return false
-    ws = _init_continuous_ekf_workspace(Float64, sp)
-    return ws.affine_buffer.dim < ws.state_dim || ws.diffusion_state_indices != 1:ws.state_dim
-end
+_tan_rows_cells(sp) = any(sp.predict_transforms_indices) ||
+    any(sp.update_transforms_indices) || any(sp.td_transforms_indices)
 
 """
 The subject values and cells at `xv` into `aws`'s filter workspace; the cells.
@@ -333,13 +326,17 @@ end
 The raw gradient of `<C, matrices(xv)>`, the matrices' cotangents `C` pushed
 back through the layer: the adjoint's own pullbacks (`_sdcovsqrt2cov_pullback!`,
 `_ctsem_regular_pullback!`, `_ctsem_ti_pullback!`), at `xv`'s element type;
-with `buf`, at the cells the fill left (`_tan_layer_buffers`).
+with `buf`, at the cells the fill left (`_tan_layer_buffers`); `tb0` the
+cells' cotangents to add.
 """
 function _tan_layer_reverse(aws, sp, xv::AbstractVector{S}, C, tipreds,
-    buf=nothing) where {S}
+    buf=nothing; tb0=nothing) where {S}
     cells = buf === nothing ? _tan_layer_values!(aws, sp, xv, tipreds) : aws.ekf_ws.all_params
     pars = CTSEMPars(cells, sp.parameter_axis)
     tb = buf === nothing ? zeros(S, length(sp.mutables)) : fill!(buf.tb, zero(S))
+    # The cells' own cotangents, where a step wrote them there (the stationary
+    # moments, `_tan_block!`).
+    tb0 === nothing || (tb .+= tb0)
     _tan_bar_of!(tb, aws, sp, C, pars.DIFFUSION, pars.MANIFESTVAR, cells,
         buf === nothing ? nothing : buf.t0)
     return _tan_values_reverse(aws, sp, xv, tb, tipreds, buf)
@@ -540,19 +537,12 @@ end
 
 """
 The layer's reverse at `xw`, from the matrices' cotangents in `acc` with their
-tangents as partials: lane `w`'s result into `Hc[:, w]`, added, for the
-chunk's `nl` columns.
+tangents as partials, and the cells' in `tb0` where given: lane `w`'s result
+into `Hc[:, w]`, added, for the chunk's `nl` columns.
 """
 function _tan_layer_columns!(Hc::AbstractMatrix{Float64}, acc::TanAcc{W}, awsW, sp,
-    xw::Vector{DW}, nl::Int, tipreds, buf=nothing) where {W,DW}
-    # With `buf` (`_tan_layer_buffers`), into its matrices and on the cells the
-    # fill left there, as a subject's own layer takes it.
-    g = if buf === nothing
-        _tan_layer_reverse(awsW, sp, xw, _tan_layer_duals(acc, DW), tipreds)
-    else
-        _tan_each_layer((X, D) -> _tan_to_duals!(D, X), acc, buf.C)
-        _tan_layer_reverse(awsW, sp, xw, buf.C, tipreds, buf)
-    end
+    xw::Vector{DW}, nl::Int, tipreds; tb0=nothing) where {W,DW}
+    g = _tan_layer_reverse(awsW, sp, xw, _tan_layer_duals(acc, DW), tipreds; tb0=tb0)
     @inbounds for w in 1:nl, i in eachindex(g)
         Hc[i, w] += ForwardDiff.partials(g[i], w)
     end
@@ -561,7 +551,7 @@ end
 
 """A model with `mod`'s shape and its hybrid's factor, for a subject's own layer."""
 _tan_model_like(mod::TanModel{W}) where {W} = TanModel{W}(mod.n, mod.m,
-    mod.ct, mod.stat, mod.rows, mod.drows, TanMat{W}(mod.n, mod.n), TanMat{W}(mod.n, mod.n),
+    mod.ct, mod.rows, mod.drows, TanMat{W}(mod.n, mod.n), TanMat{W}(mod.n, mod.n),
     TanMat{W}(mod.n, mod.n), TanVec{W}(mod.n), TanMat{W}(mod.n, mod.n),
     TanMat{W}(mod.m, mod.n), TanMat{W}(mod.m, mod.n), TanVec{W}(mod.m),
     TanMat{W}(mod.m, mod.m), TanVec{W}(mod.n), TanMat{W}(mod.n, mod.n), TanVec{W}(mod.n),
@@ -572,29 +562,37 @@ _tan_model_like(mod::TanModel{W}) where {W} = TanModel{W}(mod.n, mod.m,
     mod.fold)
 
 """
-One block's subjects swept into `acc`. With a shared layer (`L === nothing`)
-their cotangents are summed there for the caller's reverse; otherwise each
-subject's layer is built into `L.mod`, its cotangents summed in `L.acc`, and
-pulled back through its own layer into `Hb`, the block's columns; the
-hybrid's factor's cotangent is summed in `acc` either way. A status code.
+One block's subjects swept on the worker's state `L`. Where they share the
+layer (`shared`), the worker's cells are filled once, the drift's factors and
+any stationary moments are taken once (`_tan_block_start!`), every subject's
+cotangents gather weighted in `acc` and the cells' in `bar`, and the
+exponential's directions are flushed and the stationary moments reversed once
+for all of them, for the caller's one reverse; otherwise each subject's layer is built into
+`L.mod` and pulled back through its own layer into `Hb`, the block's columns,
+and the hybrid's factor's cotangent summed in `acc`. A status code.
 """
-function _tan_block!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
+function _tan_block!(acc::TanAcc{W}, bar::Vector, Hb::Matrix{Float64}, sw::TanSweep{W},
     mod::TanModel{W}, L, objective::CTSEMObjective, range, xw::Vector,
-    nl::Int, weighted::Bool=true) where {W}
+    nl::Int, shared::Bool, weighted::Bool=true) where {W}
     subjects, sp = objective.subject_objectives, objective.params
     weights = weighted ? objective.subject_weights : Float64[]
+    R = L.rows
     _tan_acc_zero!(acc)
-    if L === nothing
+    if shared
+        _tan_layer_values!(L.awsW, sp, xw, subjects[first(range)].tipreds)
+        copyto!(R.allW, L.awsW.ekf_ws.all_params)
+        fill!(R.allbar, zero(eltype(R.allbar)))
         _tan_sweep_begin!(sw, mod)
+        _tan_block_start!(R, sw, mod, sp, nl) || return _TAN_INVALID
         for i in range
-            so = subjects[i]
             wt = isempty(weights) ? 1.0 : weights[i]
             wt == 0 && continue
-            st = _tan_sweep!(acc, sw, mod, so.timesteps, so.data, so.tdpreds,
-                so.max_timestep, wt)
+            st = _tan_sweep!(acc, Hb, sw, mod, R, objective, i, wt, xw, nl; shared=true)
             st == _TAN_OK || return st
         end
         _tan_flush_frechet!(acc, sw.fw, mod, sw.sT)
+        _tan_block_stationary_reverse!(acc, R, sw, sp, nl)
+        copyto!(bar, R.allbar)
         return _TAN_OK
     end
     fill!(Hb, 0.0)
@@ -603,20 +601,9 @@ function _tan_block!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
         wt = isempty(weights) ? 1.0 : weights[i]
         wt == 0 && continue
         _tan_layer_fill!(L.mod, L.awsW, sp, xw, nl, so.tipreds, L.buf) || return _TAN_REFUSED
-        if L.rows !== nothing
-            st = _tan_sweep_rows!(L.acc, Hb, sw, L.mod, L.rows, objective, i, wt, xw, nl)
-            st == _TAN_OK || return st
-            L.mod.nh > 0 && _tan_comb!(acc.Gbar, ((wt, L.acc.Gbar),), true)
-            continue
-        end
-        _tan_sweep_begin!(sw, L.mod)
-        sa = _tan_acc_zero!(L.acc)
-        st = _tan_sweep!(sa, sw, L.mod, so.timesteps, so.data, so.tdpreds,
-            so.max_timestep, wt)
+        st = _tan_sweep!(L.acc, Hb, sw, L.mod, R, objective, i, wt, xw, nl; buf=L.buf)
         st == _TAN_OK || return st
-        _tan_flush_frechet!(sa, sw.fw, L.mod, sw.sT)
-        L.mod.nh > 0 && _tan_comb!(acc.Gbar, ((1.0, sa.Gbar),), true)
-        _tan_layer_columns!(Hb, sa, L.awsW, sp, xw, nl, so.tipreds, L.buf)
+        L.mod.nh > 0 && _tan_comb!(acc.Gbar, ((1.0, L.acc.Gbar),), true)
     end
     return _TAN_OK
 end
@@ -637,7 +624,7 @@ function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
     # Without TI predictors every subject's layer is the same, and any
     # subject's predictor row gives it; with them each subject has its own,
     # and where cells change by row each subject's cells are its own too.
-    rows = _tan_rows_model(sp)
+    rows = _tan_rows_cells(sp)
     shared = !rows && isempty(sp.ti_parameter_indices) && isempty(sp.ti_tail)
     nsub = length(subjects)
     nworkers = _ctsem_nchunks(nsub)
@@ -655,7 +642,7 @@ function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
     h = sp.hybrid
     nh = _hybrid_on(h) && hybrid_mode != _HYBRID_OFF ? _hybrid_items(h) : 0
     gmask, cat = _tan_cat_masks(sp, m)
-    mod = TanModel(n, m, W; ct=sp.continuous_time, stat=sp.stationary, rows=rows,
+    mod = TanModel(n, m, W; ct=sp.continuous_time, rows=rows,
         drows=rows && _tan_drift_by_row(sp), gmask=gmask, na=na, dyn=dyn, ntd=ntd, hyb=h,
         nh=nh, wlog=hybrid_mode == _HYBRID_FULL ? 1.0 : 0.0, cat=cat)
     Lb = h.block && nh > 0 ? zeros(length(h.perm), length(h.perm)) : zeros(0, 0)
@@ -669,12 +656,15 @@ function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
     # columns read them by arithmetic.
     hd = nh > 0 && h.block ? _tan_hybrid_block_derivs(h, x, D1) : nothing
     accs = [TanAcc(n, m, ntd, nh, W, cat.nxc) for _ in 1:nblocks]
-    # Each worker's own layer and the cotangents of one subject, and each
-    # block's columns, where the layer is the subject's.
-    layers = shared ? nothing : map(1:nworkers) do _
+    # Each block's cells' cotangents, where the layer is shared.
+    bars = [zeros(DW, shared ? length(sp.mutables) : 0) for _ in 1:nblocks]
+    # Each worker's own workspace and cells, and where the layer is the
+    # subject's its matrices, the cotangents of one subject, and each block's
+    # columns.
+    layers = map(1:nworkers) do _
         awsWk = CTSEMAdjointWorkspace(DW, sp, npar, ntd)
-        (awsW=awsWk, mod=_tan_model_like(mod), acc=TanAcc(n, m, ntd, nh, W, cat.nxc),
-            rows=rows ? TanRows(awsWk, sp, n, m, ntd, Val(W), DW) : nothing,
+        (awsW=awsWk, mod=shared ? mod : _tan_model_like(mod),
+            acc=TanAcc(n, m, ntd, nh, W, cat.nxc), rows=TanRows(awsWk, sp, n, m, ntd, Val(W), DW),
             buf=_tan_layer_buffers(DW, awsWk, sp, npar, ntd))
     end
     Hbs = [zeros(shared ? 0 : npar, shared ? 0 : W) for _ in 1:nblocks]
@@ -719,9 +709,8 @@ function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
         fill!(status, _TAN_OK)
         _ctsem_pull_blocks(nblocks, nworkers) do b, wk
             sw = _tan_sweep_scratch(n, m, ntd, nh, Val(W), na, length(dyn))
-            status[b] = _tan_block!(accs[b], Hbs[b], sw, mod,
-                layers === nothing ? nothing : layers[wk], objective, ranges[b], xw, nl,
-                true)
+            status[b] = _tan_block!(accs[b], bars[b], Hbs[b], sw, mod, layers[wk], objective,
+                ranges[b], xw, nl, shared, true)
             return nothing
         end
         any(==(_TAN_REFUSED), status) && return false
@@ -740,7 +729,10 @@ function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
         Hc = view(H, :, chunk)
         fill!(Hc, 0.0)
         if shared
-            _tan_layer_columns!(Hc, tot, awsW, sp, xw, nl, subjects[1].tipreds)
+            for b in 2:nblocks
+                bars[1] .+= bars[b]
+            end
+            _tan_layer_columns!(Hc, tot, awsW, sp, xw, nl, subjects[1].tipreds; tb0=bars[1])
         else
             for b in 1:nblocks
                 Hc .+= view(Hbs[b], :, 1:nl)

@@ -118,17 +118,17 @@ end
 
 """
 The parameter matrices of a Gaussian model, with tangents, `ntd` TD
-predictors' among them; whether it is in continuous time (`ct`), starts from
-its stationary moments (`stat`), and has cells evaluated by row (`rows`,
-`tangent_rows.jl`), where DRIFT need not be the drift's Jacobian JAx, nor the
+predictors' among them; whether it is in continuous time (`ct`), and has cells
+evaluated by row (`rows`, `tangent_rows.jl`), where DRIFT need not be the
+drift's Jacobian JAx, nor the
 measurement's Jacobian Jy its loadings: the local affine model's offset
 reads `DmJ = DRIFT - JAx`, the update's gain `Jy`, and where the prediction
 is moment-matched (`momon`) the offset gains the cubature's mean correction
 `mc` (`_ekf_moment_cells!`). Whether the drift, its Jacobian or the
 diffusion can change by row (`drows`, `_tan_drift_by_row`): only then do the
 series kernels go by Horner's rule and the prediction take its own
-exponential, where a model by row for other reasons -- a measurement that
-reads the state, a stationary start -- keeps the tables and the chain. Where the filter
+exponential, where a model by row for another reason -- a measurement that
+reads the state -- keeps the tables and the chain. Where the filter
 integrates deviations, their spec, their factor `G` and the closing term's
 weight on the logdet (1 for the integral, 0 for the profile); or, `fixed`,
 the deviations held at `dfix` (`_HYBRID_FIXED`), one per item. Beside a
@@ -142,7 +142,6 @@ struct TanModel{W}
     n::Int
     m::Int
     ct::Bool
-    stat::Bool
     rows::Bool
     drows::Bool
     JAx::TanMat{W}; DRIFT::TanMat{W}; DmJ::TanMat{W}; CINT::TanVec{W}; Qc::TanMat{W}
@@ -170,11 +169,11 @@ struct TanModel{W}
     cat::TanCatPlan
     fold::Bool
 end
-TanModel(n::Int, m::Int, W::Int; ct::Bool=true, stat::Bool=false, rows::Bool=false,
-    drows::Bool=rows, gmask::Vector{Bool}=Bool[], na::Int=n, dyn::Vector{Int}=collect(1:n), ntd::Int=0,
+TanModel(n::Int, m::Int, W::Int; ct::Bool=true, rows::Bool=false, drows::Bool=rows,
+    gmask::Vector{Bool}=Bool[], na::Int=n, dyn::Vector{Int}=collect(1:n), ntd::Int=0,
     hyb::CTSEMHybrid=CTSEMHybrid(), nh::Int=0, wlog::Float64=1.0, fixed::Bool=false,
     cat::TanCatPlan=TanCatPlan()) =
-    TanModel{W}(n, m, ct, stat, rows, drows, TanMat{W}(n, n), TanMat{W}(n, n), TanMat{W}(n, n),
+    TanModel{W}(n, m, ct, rows, drows, TanMat{W}(n, n), TanMat{W}(n, n), TanMat{W}(n, n),
     TanVec{W}(n), TanMat{W}(n, n), TanMat{W}(m, n), TanMat{W}(m, n), TanVec{W}(m),
     TanMat{W}(m, m), TanVec{W}(n), TanMat{W}(n, n), TanVec{W}(n), Ref(false), gmask,
     na, dyn, na < n || dyn != 1:n, TanMat{W}(na, na), TanMat{W}(length(dyn), length(dyn)),
@@ -510,22 +509,6 @@ function _tan_predict_dt!(x::TanVec{W}, P::TanMat{W}, rec::TanPredRec{W},
         end
     end
     return true
-end
-
-"""
-The stationary moments as the first row's prior (`_ctsem_stationary!`):
-`x = -JAx^-1 CINT`, `P = lyap(JAx, Qc)`, the forward's own `X`; the mean
-recorded. `false` where they do not exist, as the filter's invalid point.
-"""
-function _tan_stationary!(x::TanVec{W}, P::TanMat{W}, sw, mod::TanModel{W}) where {W}
-    fw = sw.fw
-    _tan_copy!(x, mod.CINT)
-    _tan_scale!(x, -1.0)
-    _tan_solve!(x, fw.FJ, fw.pivJ, mod.JAx)
-    _tan_copy!(sw.x0, x)
-    _tan_copy!(P, fw.X)
-    all(isfinite, x.v) || return false
-    return _ctsem_semidefinite(fw.X.v, sw.Lsd, sw.n)
 end
 
 """
@@ -952,25 +935,6 @@ function _tan_reverse_predict_dt!(xbar::TanVec{W}, Pbar::TanMat{W}, rec::TanPred
     return xbar, Pbar
 end
 
-"""
-Undo the stationary moments: `x = -JAx^-1 CINT` gives `CINT` `-JAx^-T xbar`
-and `JAx` that times `x'`; `P = lyap(JAx, Qc)` its pullback, by the forward's
-factors. Into `acc`, times `w`.
-"""
-function _tan_reverse_stationary!(xbar::TanVec{W}, Pbar::TanMat{W}, sw,
-    mod::TanModel{W}, acc::TanAcc{W}, w::Float64) where {W}
-    rv, fw = sw.rv, sw.fw
-    _tan_copy!(rv.sbar, xbar)
-    _tan_solve!(rv.sbar, rv.FT, rv.pivT, rv.JT)
-    _tan_lincomb!(acc.CINT, true, acc.CINT, -w, rv.sbar)
-    _tan_ger!(acc.JAx, -w, rv.sbar, sw.x0, true)
-    _tan_sym!(rv.Xbar, Pbar)
-    _tan_lyap_pullback!(rv.JAxdbar, rv.Qcdbar, fw.ly, mod.JAx, fw.X, rv.Xbar)
-    _tan_comb!(acc.JAx, ((w, rv.JAxdbar),), true)
-    _tan_comb!(acc.Qc, ((w, rv.Qcdbar),), true)
-    return nothing
-end
-
 const _TAN_OK = 0
 const _TAN_INVALID = 1     # the filter's invalid point: S did not factor, or worse
 const _TAN_REFUSED = 2     # an interval the filter takes as a series
@@ -986,14 +950,11 @@ struct TanSweep{W}
     x::TanVec{W}; P::TanMat{W}; xbar::TanVec{W}; Pbar::TanMat{W}
     sT::TanMat{W}               # dt JAx', the flush's argument
     ll::Vector{Float64}         # the log likelihood, its W tangents, a jet's second part
-    first::Vector{Int}          # each row's first prediction record
     nh::Int
     hs::TanHybState{W}
     tdP::Vector{TanMat{W}}      # each row's covariance before its TD impulse
     tdv::TanVec{W}              # a row's TD predictors (no tangent)
     tdn1::TanMat{W}; tdn2::TanMat{W}
-    x0::TanVec{W}               # the stationary mean
-    Lsd::Matrix{Float64}        # the stationary covariance's check
     # Each row's log likelihood and its tangents, (1 + W) a row, for the row
     # scores (`_tan_row_scores!`), and the running total they difference.
     llrow::Vector{Float64}
@@ -1007,8 +968,8 @@ TanSweep(n::Int, m::Int, ntd::Int, nh::Int, W::Int, na::Int=n, k::Int=n) = TanSw
     TanForward(n, m, nh, W, na, k), TanPredRev(n, W),
     TanPredRec{W}[], TanUpdRec{W}[],
     TanVec{W}(n), TanMat{W}(n, n), TanVec{W}(n), TanMat{W}(n, n), TanMat{W}(n, n), zeros(2 + W),
-    Int[], nh, TanHybState(n, nh, W), TanMat{W}[], TanVec{W}(ntd), TanMat{W}(n, n),
-    TanMat{W}(n, n), TanVec{W}(n), zeros(n, n), Float64[], zeros(2 + W), TanCatRec{W}[],
+    nh, TanHybState(n, nh, W), TanMat{W}[], TanVec{W}(ntd), TanMat{W}(n, n),
+    TanMat{W}(n, n), Float64[], zeros(2 + W), TanCatRec{W}[],
     TanCatScratch(n, Val(W)))
 
 """Row `t`'s log likelihood and its tangents, what the total gained since the
@@ -1152,98 +1113,6 @@ function _tan_sweep_begin!(sw::TanSweep{W}, mod::TanModel{W}) where {W}
     copyto!(rv.FT, rv.JT.v)
     _lu_factor_generic!(rv.FT, rv.pivT, sw.n)
     return sw
-end
-
-"""
-One subject, weight `w`: `times`, the observations `Y` (m x T, NaN where
-missing), its TD predictors `TD` (ntd x T) and the filter's substep rule
-(`_ctsem_substeps`). Adds its cotangents, times `w`, into `acc` and queues its
-exponential directions there; leaves its log likelihood in `sw.ll`.
-`_tan_sweep_begin!` first, once a block. `forward` stops before the reverse,
-each row's log likelihood kept; `rec`, with it, records each row's predicted
-and updated moments (`TanTraceRecorder`).
-"""
-function _tan_sweep!(acc::TanAcc{W}, sw::TanSweep{W}, mod::TanModel{W},
-    times::AbstractVector{Float64}, Y::AbstractMatrix{Float64},
-    TD::AbstractMatrix{Float64}, rule, w::Float64; forward::Bool=false,
-    rec=nothing) where {W}
-    n, fw, rv = sw.n, sw.fw, sw.rv
-    T = length(times)
-    cat = !isempty(mod.gmask)
-    # The predictions, row by row: a row's substeps in order, then its update.
-    npred = 0
-    first = resize!(sw.first, T + 1)
-    x, P = sw.x, sw.P
-    if mod.stat
-        _tan_stationary!(x, P, sw, mod) || return _TAN_INVALID
-    else
-        _tan_copy!(x, mod.T0M)
-        _tan_copy!(P, mod.T0V)
-        # Initial means folded into the first state (`_hybrid_fold!`).
-        mod.fold && _tan_fold_start!(P, sw.hs.Xc, mod)
-    end
-    fill!(sw.ll, 0.0)
-    fill!(sw.llprev, 0.0)
-    hs = sw.hs
-    _tan_hcols(mod) && _tan_hybrid_start!(hs, mod.hyb)
-    for t in 1:T
-        first[t] = npred + 1
-        if t > 1
-            dtrow = times[t] - times[t - 1]
-            k = _ctsem_substeps(dtrow, rule, t)
-            h = dtrow / k
-            for _ in 1:k
-                npred += 1
-                npred > length(sw.preds) && push!(sw.preds, TanPredRec(n, sw.nh, W))
-                _tan_predict!(x, P, sw.preds[npred], fw, mod, h, hs) || return _TAN_REFUSED
-            end
-        end
-        mod.ntd > 0 && _tan_td!(x, P, sw, mod, view(TD, :, t), t)
-        t > length(sw.upds) && push!(sw.upds, TanUpdRec(n, sw.m, sw.nh, W))
-        sw.upds[t].relin = 0
-        rec === nothing || _tan_record!(rec, 1, t, x, P, sw)
-        # A row's categorical observations first, each an exact scalar
-        # conditioning, then its Gaussian ones from there.
-        if cat
-            st = _tan_cat_row!(x, P, sw, mod, view(Y, :, t), t)
-            st == _TAN_OK || return st
-        end
-        _tan_update!(x, P, sw.upds[t], fw, mod, view(Y, :, t), sw.ll, hs) ||
-            return _TAN_INVALID
-        forward && _tan_llrow!(sw, t)
-        rec === nothing || _tan_record!(rec, 2, t, x, P, sw)
-    end
-    first[T + 1] = npred + 1
-    # The row scores need the forward alone.
-    forward && return isfinite(sw.ll[1]) ? _TAN_OK : _TAN_INVALID
-    # The closing term, and its reverse, which starts the walk.
-    if _tan_hcols(mod)
-        (mod.fixed ? _tan_hybrid_closing!(hs, mod.G, mod.wlog, sw.ll, mod.dfix) :
-            _tan_hybrid_closing!(hs, mod.G, mod.wlog, sw.ll)) || return _TAN_INVALID
-        _tan_comb!(acc.Gbar, ((w, hs.Gbar),), true)
-    end
-    isfinite(sw.ll[1]) || return _TAN_INVALID
-
-    # The reverse walk.
-    xbar, Pbar = _tan_zero!(sw.xbar), _tan_zero!(sw.Pbar)
-    for t in T:-1:1
-        _tan_reverse_row_update!(xbar, Pbar, sw.upds[t], fw, mod, acc, w, hs) ||
-            return _TAN_INVALID
-        cat && _tan_reverse_cat_row!(xbar, Pbar, sw, mod, acc, w, t)
-        mod.ntd > 0 && _tan_reverse_td!(xbar, Pbar, sw, mod, acc, w, view(TD, :, t), t)
-        for j in (first[t + 1] - 1):-1:first[t]
-            _tan_reverse_predict!(xbar, Pbar, sw.preds[j], rv, fw, mod, acc, w, hs)
-        end
-    end
-    if mod.stat
-        _tan_reverse_stationary!(xbar, Pbar, sw, mod, acc, w)
-    else
-        _tan_lincomb!(acc.T0M, true, acc.T0M, w, xbar)
-        _tan_sym!(rv.Ps, Pbar)
-        _tan_comb!(acc.T0V, ((w, rv.Ps),), true)
-        mod.fold && _tan_fold_reverse!(acc.Gbar, hs.Tc, rv.Ps, hs.Xc, mod, w)
-    end
-    return _TAN_OK
 end
 
 """

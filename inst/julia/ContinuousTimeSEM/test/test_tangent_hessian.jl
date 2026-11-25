@@ -223,6 +223,9 @@ _tangent_dual_hessian(objective, values) = _oracle_hessian(objective, values)
         (cat=true, floor=true, censor=true, response=true),
         (stationary=true, perrow=true), (elements=true,), (elements=true, perrow=true),
         (elements=true, max_timestep=0.4),
+        # Stationary moments on each subject's own layer, weighted in its walk,
+        # beside the shared layer's once a block above.
+        (ti=true, stationary=true), (ti=true, elements=true),
         (ti=true, timiss=true))
         objective, values = _tangent_test_model(; opts...)
         n = length(values)
@@ -356,6 +359,7 @@ end
     # `ctsem_row_scores` along 15 directions, two chunks of lanes, against the
     # filter at the Hessian's dual, its oracle.
     for (make, opts) in ((_tangent_test_model, (;)), (_tangent_test_model, (ti=true,)),
+        (_tangent_test_model, (stationary=true,)), (_tangent_test_model, (elements=true,)),
         (_tangent_test_model, (rows=true, relin=true, max_timestep=0.4)),
         (_tangent_test_model, (cat=true, moment=true, rows=true)),
         (_tangent_test_model, (cat=true, count=true, asym=true)),

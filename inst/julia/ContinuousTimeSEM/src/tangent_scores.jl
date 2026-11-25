@@ -2,8 +2,8 @@
 # data row's log predictive density with its tangents along the scores'
 # directions, a chunk of directions a pass as the Hessian's sweeps carry, the
 # directions the lanes of the parameter layer at the Hessian's dual. The
-# forward of `tangent_sweep.jl` and `tangent_rows.jl`, stopped before their
-# reverse, with each row's share of the log likelihood kept (`_tan_llrow!`).
+# sweep's forward (`_tan_sweep!`), stopped before its reverse, with each row's
+# share of the log likelihood kept (`_tan_llrow!`).
 # The filter at the Hessian's dual is the tests' oracle (test/dual_oracles.jl).
 # A forward sweep, so subjects whose reverse is unstable (`_CTSEM_ADJOINT_GROWTH`)
 # take it too.
@@ -31,7 +31,7 @@ function _tan_row_scores!(out::Matrix{Float64}, objective::CTSEMObjective,
     ForwardDiff.npartials(DW) == W || return false
     subjects = objective.subject_objectives
     isempty(subjects) && return true
-    rowsmode = _tan_rows_model(sp)
+    rowsmode = _tan_rows_cells(sp)
     shared = !rowsmode && isempty(sp.ti_parameter_indices) && isempty(sp.ti_tail)
     nsub = length(subjects)
     nworkers = _ctsem_nchunks(nsub)
@@ -42,16 +42,15 @@ function _tan_row_scores!(out::Matrix{Float64}, objective::CTSEMObjective,
     n, m, ntd = size(m0.JAx, 1), size(m0.LAM, 1), size(m0.TDE, 2)
     na, dyn = aws0.affine_dim, collect(aws0.diffusion_state_indices)
     gmask, cat = _tan_cat_masks(sp, m)
-    mod = TanModel(n, m, W; ct=sp.continuous_time, stat=sp.stationary, rows=rowsmode,
+    mod = TanModel(n, m, W; ct=sp.continuous_time, rows=rowsmode,
         drows=rowsmode && _tan_drift_by_row(sp), gmask=gmask, na=na, dyn=dyn, ntd=ntd, cat=cat)
     awsW = CTSEMAdjointWorkspace(DW, sp, npar, ntd)
-    layers = shared ? nothing : map(1:nworkers) do _
+    layers = map(1:nworkers) do _
         awsWk = CTSEMAdjointWorkspace(DW, sp, npar, ntd)
-        (awsW=awsWk, mod=_tan_model_like(mod), acc=TanAcc(n, m, ntd, 0, W, cat.nxc),
-            rows=rowsmode ? TanRows(awsWk, sp, n, m, ntd, Val(W), DW) : nothing,
+        (awsW=awsWk, mod=shared ? mod : _tan_model_like(mod),
+            acc=TanAcc(n, m, ntd, 0, W, cat.nxc), rows=TanRows(awsWk, sp, n, m, ntd, Val(W), DW),
             buf=_tan_layer_buffers(DW, awsWk, sp, npar, ntd))
     end
-    accs = [TanAcc(n, m, ntd, 0, W, cat.nxc) for _ in 1:nworkers]
     offsets = cumsum(vcat(0, rows))
     status = zeros(Int, nblocks)
     K = size(directions, 2)
@@ -65,8 +64,8 @@ function _tan_row_scores!(out::Matrix{Float64}, objective::CTSEMObjective,
         fill!(status, _TAN_OK)
         _ctsem_pull_blocks(nblocks, nworkers) do b, wk
             status[b] = _tan_score_block!(out, offsets, rows, cols,
-                _tan_sweep_scratch(n, m, ntd, 0, Val(W), na, length(dyn)), mod, accs[wk],
-                layers === nothing ? nothing : layers[wk], objective, ranges[b], xw, nl)
+                _tan_sweep_scratch(n, m, ntd, 0, Val(W), na, length(dyn)), layers[wk],
+                objective, ranges[b], xw, nl, shared)
             return nothing
         end
         any(==(_TAN_REFUSED), status) && return false
@@ -74,29 +73,28 @@ function _tan_row_scores!(out::Matrix{Float64}, objective::CTSEMObjective,
     return true
 end
 
-"""One block's subjects' row scores along the chunk's directions `cols`."""
+"""One block's subjects' row scores along the chunk's directions `cols`, on the
+worker's state `L`: the layer and any stationary moments once for the block
+where it is shared (`shared`, `_tan_block_start!`), else each subject's."""
 function _tan_score_block!(out::Matrix{Float64}, offsets::Vector{Int}, rows::Vector{Int},
-    cols::UnitRange{Int}, sw::TanSweep{W}, mod::TanModel{W}, acc::TanAcc{W}, L,
-    objective::CTSEMObjective, range, xw::Vector, nl::Int) where {W}
+    cols::UnitRange{Int}, sw::TanSweep{W}, L, objective::CTSEMObjective, range,
+    xw::Vector, nl::Int, shared::Bool) where {W}
     subjects, sp = objective.subject_objectives, objective.params
-    L === nothing && _tan_sweep_begin!(sw, mod)
+    R = L.rows
+    noH = zeros(0, 0)
+    if shared
+        _tan_layer_values!(L.awsW, sp, xw, subjects[first(range)].tipreds)
+        copyto!(R.allW, L.awsW.ekf_ws.all_params)
+        _tan_sweep_begin!(sw, L.mod)
+        # Where the moments do not exist every subject's sweep says so.
+        _tan_block_start!(R, sw, L.mod, sp, nl)
+    end
     for i in range
         so = subjects[i]
-        if L === nothing
-            st = _tan_sweep!(acc, sw, mod, so.timesteps, so.data, so.tdpreds,
-                so.max_timestep, 1.0; forward=true)
-        else
-            _tan_layer_fill!(L.mod, L.awsW, sp, xw, nl, so.tipreds, L.buf) ||
-                return _TAN_REFUSED
-            st = if L.rows !== nothing
-                _tan_sweep_rows!(L.acc, zeros(0, 0), sw, L.mod, L.rows, objective, i, 1.0,
-                    xw, nl; forward=true)
-            else
-                _tan_sweep_begin!(sw, L.mod)
-                _tan_sweep!(L.acc, sw, L.mod, so.timesteps, so.data, so.tdpreds,
-                    so.max_timestep, 1.0; forward=true)
-            end
-        end
+        shared || _tan_layer_fill!(L.mod, L.awsW, sp, xw, nl, so.tipreds, L.buf) ||
+            return _TAN_REFUSED
+        st = _tan_sweep!(L.acc, noH, sw, L.mod, R, objective, i, 1.0, xw, nl;
+            forward=true, shared=shared)
         st == _TAN_REFUSED && return _TAN_REFUSED
         # A subject whose filter fails keeps its rows NaN, as the filter's.
         st == _TAN_OK || continue

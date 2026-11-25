@@ -93,17 +93,17 @@ function _tan_laplace_build(objective::CTSEMObjective, values::AbstractVector, m
     m0 = _tan_layer_mats(aws0, sp, collect(Float64, values), subjects[1].tipreds)
     n, m, ntd = size(m0.JAx, 1), size(m0.LAM, 1), size(m0.TDE, 2)
     na, dyn = aws0.affine_dim, collect(aws0.diffusion_state_indices)
-    rows = _tan_rows_model(sp)
+    rows = _tan_rows_cells(sp)
     h = sp.hybrid
     nh = _hybrid_on(h) && mode != _HYBRID_OFF ? _hybrid_items(h) : 0
     gmask, cat = _tan_cat_masks(sp, m)
-    mod = TanModel(n, m, W; ct=sp.continuous_time, stat=sp.stationary, rows=rows,
+    mod = TanModel(n, m, W; ct=sp.continuous_time, rows=rows,
         drows=rows && _tan_drift_by_row(sp), gmask=gmask, na=na, dyn=dyn, ntd=ntd, hyb=h, nh=nh,
         wlog=mode == _HYBRID_FULL ? 1.0 : 0.0, fixed=mode == _HYBRID_FIXED && nh > 0,
         cat=cat)
     awsW = CTSEMAdjointWorkspace(DC, sp, nv, ntd)
     return TanLaplaceContext(awsW, mod, TanAcc(n, m, ntd, nh, W, cat.nxc),
-        rows ? TanRows(awsW, sp, n, m, ntd, Val(W), DC) : nothing,
+        TanRows(awsW, sp, n, m, ntd, Val(W), DC),
         TanSweep(n, m, ntd, nh, W, na, length(dyn)), zeros(nv, W), zeros(DC, nv),
         DC[], h.block && nh > 0 ? zeros(length(h.perm), length(h.perm)) : zeros(0, 0),
         Float64[], !rows && nh == 0 && !mod.aug && isempty(gmask), Vector{Float64}[],
@@ -448,11 +448,11 @@ end
 
 """
 What the Kalman trace (`CTSEMKalmanTrace`) keeps of a hand-coded forward sweep
-(`_tan_sweep!`, `_tan_sweep_rows!` with `rec`): at each row's prediction (kind
-1) and update (2) the state and its covariance as duals of the lanes, recorded
-by the engine's own (`_record_row_prior!`, `_record_row_update!`) at the cells
-the row's filter holds -- the layer's, or by row `TanRows.allW` -- so the trace
-is the filter's at the dual, response scale and all, without the filter there.
+(`_tan_sweep!` with `rec`): at each row's prediction (kind 1) and update (2)
+the state and its covariance as duals of the lanes, recorded by the engine's
+own (`_record_row_prior!`, `_record_row_update!`) at the cells the row's
+filter holds (`TanRows.allW`), so the trace is the filter's at the dual,
+response scale and all, without the filter there.
 """
 struct TanTraceRecorder{TR,WS,V,SO,SP}
     trace::TR
@@ -509,16 +509,9 @@ function _tan_laplace_trace_sweep!(trace::CTSEMKalmanTrace, ctx::TanLaplaceConte
     mod, sw = ctx.mod, ctx.sw
     _tan_layer_fill!(mod, ctx.awsW, sp, xw, nl, so.tipreds, ctx.buf) || return _TAN_REFUSED
     ws = ctx.awsW.ekf_ws
-    if ctx.rows === nothing
-        rec = TanTraceRecorder(trace, ws, ws.all_params, so, sp, i,
-            Ref{AbstractVector}(_ctsem_tipred_vector(so.tipreds, xw)))
-        _tan_sweep_begin!(sw, mod)
-        return _tan_sweep!(ctx.acc, sw, mod, so.timesteps, so.data, so.tdpreds,
-            so.max_timestep, 1.0; forward=true, rec=rec)
-    end
     R = ctx.rows
     rec = TanTraceRecorder(trace, ws, R.allW, so, sp, i, R.tp)
-    return _tan_sweep_rows!(ctx.acc, zeros(0, 0), sw, mod, R, objective, i, 1.0, xw, nl;
+    return _tan_sweep!(ctx.acc, ctx.Hb, sw, mod, R, objective, i, 1.0, xw, nl;
         forward=true, rec=rec)
 end
 
@@ -603,9 +596,8 @@ function _tan_laplace_gn_member!(J::Matrix{Float64}, ctx::TanLaplaceContext{W,DC
             return _TAN_REFUSED
         _tan_gn_quadratic(mod) || return _TAN_FULL
         rec = TanGNRecorder(empty!(ctx.gnE[ch]))
-        _tan_sweep_begin!(sw, mod)
-        st = _tan_sweep!(ctx.acc, sw, mod, so.timesteps, so.data, so.tdpreds,
-            so.max_timestep, 1.0; forward=true, rec=rec)
+        st = _tan_sweep!(ctx.acc, ctx.Hb, sw, mod, ctx.rows, objective, i, 1.0, xw,
+            length(lanes); forward=true, rec=rec)
         st == _TAN_OK || return st
     end
     nr = length(ctx.gnE[1]) ÷ W
@@ -765,9 +757,8 @@ function _tan_laplace_split_member!(J::Matrix{Float64}, ctx::TanLaplaceContext{W
                 return _TAN_REFUSED
             _tan_gn_quadratic(mod) || return _TAN_FULL
             rec = TanGNRecorder(empty!(ctx.gnE[ch]))
-            _tan_sweep_begin!(sw, mod)
-            st = _tan_sweep!(ctx.acc, sw, mod, so.timesteps, so.data, so.tdpreds,
-                so.max_timestep, 1.0; forward=true, rec=rec)
+            st = _tan_sweep!(ctx.acc, ctx.Hb, sw, mod, ctx.rows, objective, i, 1.0, xw,
+                length(lanes); forward=true, rec=rec)
             st == _TAN_OK || return st
         end
         nr = length(ctx.gnE[1]) ÷ W
@@ -855,30 +846,10 @@ function _tan_laplace_member!(ctx::TanLaplaceContext{W,DC}, objective::CTSEMObje
     sp = objective.params
     so = objective.subject_objectives[i]
     mod, sw, Hb = ctx.mod, ctx.sw, ctx.Hb
-    rows = ctx.rows !== nothing
     _tan_layer_fill!(mod, ctx.awsW, sp, xw, nl, so.tipreds, ctx.buf) || return _TAN_REFUSED
     fill!(Hb, 0.0)
-    rows && return _tan_sweep_rows!(ctx.acc, Hb, sw, mod, ctx.rows, objective, i, 1.0, xw,
-        nl; g0=g0)
-    _tan_sweep_begin!(sw, mod)
-    sa = _tan_acc_zero!(ctx.acc)
-    st = _tan_sweep!(sa, sw, mod, so.timesteps, so.data, so.tdpreds, so.max_timestep, 1.0)
-    st == _TAN_OK || return st
-    _tan_flush_frechet!(sa, sw.fw, mod, sw.sT)
-    # The layer's reverse (`_tan_layer_columns!`), its values kept too, at
-    # the cells the fill left and in the context's buffers.
-    buf = ctx.buf
-    _tan_each_layer((X, D) -> _tan_to_duals!(D, X), sa, buf.C)
-    g = _tan_layer_reverse(ctx.awsW, sp, xw, buf.C, so.tipreds, buf)
-    @inbounds for w in 1:nl, j in eachindex(g)
-        Hb[j, w] = ForwardDiff.partials(g[j], w)
-    end
-    if g0 !== nothing
-        @inbounds for j in eachindex(g)
-            g0[j] = ForwardDiff.value(g[j])
-        end
-    end
-    return _TAN_OK
+    return _tan_sweep!(ctx.acc, Hb, sw, mod, ctx.rows, objective, i, 1.0, xw, nl; g0=g0,
+        buf=ctx.buf)
 end
 
 """
@@ -1219,8 +1190,8 @@ struct TanJetContext{W,J,A,B,R}
     sw::TanSweep{W}
     buf::B                      # the layer's at `J` (`_tan_layer_buffers`)
     xj::Vector{J}
-    # Cells evaluated by row (`TanRows` at `J`): the engine's own code at the
-    # jet, one chunk of the directions at a time (`_tan_jet_rows!`), on the
+    # The sweep's cells (`TanRows` at `J`): the engine's own code at the jet,
+    # one chunk of the directions at a time (`_tan_jet_member!`), on the
     # values with that chunk's alone (`xm`), and each chunk's lanes (`Hc`).
     rows::R
     xm::Vector{J}
@@ -1263,18 +1234,18 @@ function _tan_jet_build(objective::CTSEMObjective, values::AbstractVector, ::Typ
     na, dyn = aws0.affine_dim, collect(aws0.diffusion_state_indices)
     h = sp.hybrid
     nh = _hybrid_on(h) ? _hybrid_items(h) : 0
-    rows = _tan_rows_model(sp)
+    rows = _tan_rows_cells(sp)
     gmask, cat = _tan_cat_masks(sp, m)
     # The deviations at their profile (the closing term's logdet weight 0),
     # integrated exactly (weight 1), or held at fixed values.
-    mod = TanModel(n, m, W; ct=sp.continuous_time, stat=sp.stationary, rows=rows,
+    mod = TanModel(n, m, W; ct=sp.continuous_time, rows=rows,
         drows=rows && _tan_drift_by_row(sp), gmask=gmask, na=na, dyn=dyn, ntd=ntd, hyb=h, nh=nh,
         wlog=mode == _HYBRID_FULL ? 1.0 : 0.0,
         fixed=mode == _HYBRID_FIXED && nh > 0, cat=cat)
     awsJ = CTSEMAdjointWorkspace(J, sp, nv, ntd)
     return TanJetContext(awsJ, mod, TanAcc(n, m, ntd, nh, W, cat.nxc),
         TanSweep(n, m, ntd, nh, W, na, length(dyn)), _tan_layer_buffers(J, awsJ, sp, nv, ntd),
-        zeros(J, nv), rows ? TanRows(awsJ, sp, n, m, ntd, Val(W), J) : nothing, zeros(J, nv),
+        zeros(J, nv), TanRows(awsJ, sp, n, m, ntd, Val(W), J), zeros(J, nv),
         zeros(nv, W),
         h.block && nh > 0 ? zeros(length(h.perm), length(h.perm)) : zeros(0, 0), Float64[],
         zeros(nh, nh), zeros(_tan_jet_width(J), nh, nh), zeros(nh, nh))
@@ -1350,74 +1321,24 @@ end
 """
 Subject `i`'s gradient at the jets `xj` (its values, their first `nd` first
 parts the directions) and its second parts into `g0` and `gS`, and its first
-parts into `Hb`'s columns where given: the layer once at the jet type, the
-sweep a chunk of `W` directions at a time, the first carrying the layer's
-second parts, and the cotangents gathered into jets for the layer's reverse. A
+parts into `Hb`'s columns where given: a chunk of the directions at a time, the
+layer run on the values with that chunk's directions alone, so that every jet
+the engine computes -- the layer, cells by row, stationary moments -- carries
+that chunk's first parts and second parts and nothing of another's, and the
+sweep's (`_tan_sweep!`); the gradient's second parts summed over the chunks. A
 status code; a pass whose log likelihood is not finite in every part is
 invalid, as the jet's is. With deviations at fixed values, `fixed` says where
 in the joint coordinates and directions they lie (`_tan_jet_dfix!`) and takes
 their gradient's second parts (`_tan_jet_fixed_s!`).
 """
 function _tan_jet_member!(g0::AbstractVector{Float64}, gS::AbstractVector{Float64},
-    ctx::TanJetContext{W,J}, objective::CTSEMObjective, i::Int, xj::Vector{J},
-    nd::Int, Hb=nothing, values=nothing, dG=nothing, fixed=nothing) where {W,J}
-    ctx.rows === nothing || return _tan_jet_rows!(g0, gS, ctx, ctx.rows, objective, i, xj,
-        nd, Hb, values, dG, fixed)
-    sp = objective.params
-    so = objective.subject_objectives[i]
-    mod, sw, acc, buf = ctx.mod, ctx.sw, ctx.acc, ctx.buf
-    mats = _tan_mats_of!(buf.mats, ctx.awsJ, sp,
-        _tan_layer_values!(ctx.awsJ, sp, xj, so.tipreds))
-    # No cell changes by row, so the drift and the measurement must be their
-    # own Jacobians, as `_tan_layer_fill!` asks.
-    (_tan_same(mats.JAx, mats.DRIFT) && _tan_same(mats.Jy, mats.LAM)) || return _TAN_REFUSED
-    for ch in 1:max(1, cld(nd, W))
-        lane0 = (ch - 1) * W
-        nl = clamp(nd - lane0, 0, W)
-        first = ch == 1
-        _tan_each_layer((X, M) -> _tan_jet_lanes!(X, M, lane0, nl, first), mod, mats)
-        _tan_aug_refresh!(mod)
-        fixed === nothing || _tan_jet_dfix!(mod, fixed.layout, fixed.m, fixed.z, fixed.B,
-            lane0, nl, so.data)
-        _tan_sweep_begin!(sw, mod)
-        sa = _tan_acc_zero!(acc)
-        st = _tan_sweep!(sa, sw, mod, so.timesteps, so.data, so.tdpreds, so.max_timestep,
-            1.0)
-        st == _TAN_OK || return st
-        all(isfinite, sw.ll) || return _TAN_INVALID
-        fixed === nothing || _tan_jet_fixed_s!(fixed.Gzs, sw.hs, mod, fixed.layout,
-            fixed.m, so.data)
-        _tan_flush_frechet!(sa, sw.fw, mod, sw.sT)
-        _tan_each_layer((X, C) -> _tan_into_jets!(C, X, lane0, nl, first), sa, buf.C)
-        mod.nh > 0 && _tan_jet_gather_gbar!(ctx, sa.Gbar, lane0, nl, first)
-    end
-    g = _tan_layer_reverse(ctx.awsJ, sp, xj, buf.C, so.tipreds, buf)
-    @inbounds for t in eachindex(g)
-        g0[t] = g[t].v
-        gS[t] = g[t].s
-    end
-    if Hb !== nothing
-        @inbounds for j in 1:nd, t in eachindex(g)
-            Hb[t, j] = g[t].d[j]
-        end
-    end
-    mod.nh > 0 && _tan_jet_gbar!(g0, gS, Hb, ctx, objective.params.hybrid, values, dG, nd)
-    return _TAN_OK
-end
-
-"""
-`_tan_jet_member!` where cells are evaluated by row (`_tan_sweep_rows!`), on
-the engine's own code at the jet there: a chunk of the directions at a time,
-the layer run on the values with that chunk's directions alone, so that every
-jet the engine computes carries that chunk's first parts and second parts and
-nothing of another's; the gradient's second parts summed over the chunks.
-"""
-function _tan_jet_rows!(g0::AbstractVector{Float64}, gS::AbstractVector{Float64},
-    ctx::TanJetContext{W,CTSEMTraceJet{JW}}, R::TanRows, objective::CTSEMObjective,
-    i::Int, xj::Vector{CTSEMTraceJet{JW}}, nd::Int, Hb, values, dG, fixed) where {W,JW}
+    ctx::TanJetContext{W,CTSEMTraceJet{JW}}, objective::CTSEMObjective, i::Int,
+    xj::Vector{CTSEMTraceJet{JW}}, nd::Int, Hb=nothing, values=nothing, dG=nothing,
+    fixed=nothing) where {W,JW}
     J = CTSEMTraceJet{JW}
     sp = objective.params
     so = objective.subject_objectives[i]
+    R = ctx.rows
     mod, sw, acc, buf, xm, Hc = ctx.mod, ctx.sw, ctx.acc, ctx.buf, ctx.xm, ctx.Hc
     fill!(gS, 0.0)
     for ch in 1:max(1, cld(nd, W))
@@ -1429,14 +1350,19 @@ function _tan_jet_rows!(g0::AbstractVector{Float64}, gS::AbstractVector{Float64}
         end
         mats = _tan_mats_of!(buf.mats, ctx.awsJ, sp,
             _tan_layer_values!(ctx.awsJ, sp, xm, so.tipreds))
+        # Where no cell changes by row the drift and the measurement must be
+        # their own Jacobians, as `_tan_layer_fill!` asks.
+        mod.rows || (_tan_same(mats.JAx, mats.DRIFT) && _tan_same(mats.Jy, mats.LAM)) ||
+            return _TAN_REFUSED
         _tan_each_layer((X, M) -> _tan_jet_lanes!(X, M, lane0, nl, true), mod, mats)
-        _tan_comb!(mod.DmJ, ((1.0, mod.DRIFT), (-1.0, mod.JAx)))
+        mod.rows && _tan_comb!(mod.DmJ, ((1.0, mod.DRIFT), (-1.0, mod.JAx)))
         _tan_aug_refresh!(mod)
         fixed === nothing || _tan_jet_dfix!(mod, fixed.layout, fixed.m, fixed.z, fixed.B,
             lane0, nl, so.data)
         R.lane0 = lane0
         fill!(Hc, 0.0)
-        st = _tan_sweep_rows!(acc, Hc, sw, mod, R, objective, i, 1.0, xm, nl; g0=g0, gS=gS)
+        st = _tan_sweep!(acc, Hc, sw, mod, R, objective, i, 1.0, xm, nl; g0=g0, gS=gS,
+            buf=buf)
         st == _TAN_OK || return st
         all(isfinite, sw.ll) || return _TAN_INVALID
         fixed === nothing || _tan_jet_fixed_s!(fixed.Gzs, sw.hs, mod, fixed.layout,

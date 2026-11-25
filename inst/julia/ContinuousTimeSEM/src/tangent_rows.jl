@@ -1,14 +1,16 @@
-# Models whose cells read the state, a TD predictor or the time, which the
-# filter evaluates by row in three groups -- before each prediction substep,
-# before a row's TD impulse, before its update (`_record_group!`). The sweep
-# keeps the matrices' algebra by hand; the cells are the engine's own code at
-# the Hessian's dual, each lane a column: forward by
+# The sweep, for every model (`_tan_sweep!`): the matrices' algebra by hand,
+# with tangents, and whatever the model evaluates as cells on the way the
+# engine's own code at the Hessian's dual, each lane a column. Cells that read
+# the state, a TD predictor or the time the filter evaluates by row in three
+# groups -- before each prediction substep, before a row's TD impulse, before
+# its update (`_record_group!`): forward by
 # `apply_complex_transforms_at_indices!` on the subject's cells, back by
 # `_reverse_group!` on their cotangents. A group's evaluation refreshes the
 # model's matrices from the cells and keeps a copy, which each reverse step that
 # read them restores; a group's reverse first moves the matrices' cotangents
 # onto the cells, through the covariance constructions at the cells of the
-# stretch it began, then pulls them through its transforms.
+# stretch it began, then pulls them through its transforms. Stationary initial
+# conditions, of every kind, run so too.
 
 """
 The model's matrices as a group left them, and its covariances' cells; which
@@ -39,6 +41,12 @@ function _tan_snap_save!(s::TanSnap, mod::TanModel, allW::AbstractVector, sp)
     _tan_copy!(s.LAMBDA, mod.LAMBDA); _tan_copy!(s.Jy, mod.Jy); _tan_copy!(s.MM, mod.MM)
     _tan_copy!(s.R, mod.R); _tan_copy!(s.TDE, mod.TDE); _tan_copy!(s.Jtd, mod.Jtd)
     _tan_copy!(s.mc, mod.mc); s.momon[] = mod.momon[]; _tan_copy!(s.XC, mod.XC)
+    return _tan_snap_cells!(s, allW, sp)
+end
+
+"""The covariances' cells of `allW` into the snapshot, which its flush pulls
+the covariances' cotangents back at; all a model with no cell by row keeps."""
+function _tan_snap_cells!(s::TanSnap, allW::AbstractVector, sp)
     pars = CTSEMPars(allW, sp.parameter_axis)
     n, m = size(s.rawD, 1), size(s.rawR, 1)
     s.rawD .= view(pars.DIFFUSION, 1:n, 1:n)
@@ -75,19 +83,22 @@ TanRelinRec(n::Int, mo::Int, ::Val{W}) where {W} = TanRelinRec{W}(Int[], TanVec{
     TanMat{W}(mo, mo), TanVec{W}(mo), true, 1.0)
 
 """
-A worker's state for subjects whose cells change by row: its workspace at the
-Hessian's dual (whose tape holds the group records), the subject's cells and
-their cotangents, the state and its cotangent as duals, the snapshots, the
-layer's own (`base`), and the forward's program: `(kind, index, snapshot)`,
+A worker's state for the sweep's cells: its workspace at the Hessian's dual
+(whose tape holds the group and stationary records), the subject's cells and
+their cotangents (`sbar` a step's own, weighted into them), the state and its
+cotangent as duals, the snapshots, the layer's own (`base`), and the
+forward's program: `(kind, index, snapshot)`,
 kind 1 a group (its tape slot), 2 a prediction substep, 3 a TD impulse, 4 an
 update (the row), 5 a step of an iterated update, 6 a moment-matched step's
 cubature, 7 a row's categorical observations (the row), 8 and 10 the
-stationary moments or elements, each with the snapshot it read.
+stationary moments or elements, each with the snapshot it read, 9 the block's
+stationary moments (`_tan_block_start!`).
 """
 mutable struct TanRows{W,DW,A,M}
     awsW::A
     allW::Vector{DW}
     allbar::Vector{DW}
+    sbar::Vector{DW}
     xW::Vector{DW}
     xbarW::Vector{DW}
     snaps::Vector{TanSnap{W,DW}}
@@ -122,19 +133,29 @@ mutable struct TanRows{W,DW,A,M}
     # the drift's version count (`TanSnap.dv`).
     gmasks::NTuple{3,UInt16}
     dvn::Int
+    # A block's stationary moments where its subjects share the layer
+    # (`_tan_block_start!`): their kind (0 none, else the program's 8 or 10),
+    # their tape slot, the moments, and the subjects' cotangents of them,
+    # weighted, for the block's one reverse.
+    bkind::Int
+    bslot::Int
+    x0::TanVec{W}
+    P0::TanMat{W}
+    x0bar::TanVec{W}
+    P0bar::TanMat{W}
 end
 function TanRows(awsW, sp, n::Int, m::Int, ntd::Int, ::Val{W}, ::Type{DW}) where {W,DW}
     nall = length(sp.mutables)
     nxc = _tan_cat_ncells(sp)
     mats = _tan_mats_alloc(DW, n, m, ntd, nxc)
     return TanRows{W,DW,typeof(awsW),typeof(mats)}(awsW, zeros(DW, nall), zeros(DW, nall),
-        zeros(DW, n), zeros(DW, n), TanSnap{W,DW}[], TanSnap{W,DW}(n, m, ntd, nxc),
+        zeros(DW, nall), zeros(DW, n), zeros(DW, n), TanSnap{W,DW}[], TanSnap{W,DW}(n, m, ntd, nxc),
         NTuple{3,Int}[], 0, TanRelinRec{W}[], 0, TanSnap{W,DW}(n, m, ntd, nxc), TanVec{W}(n),
         TanVec{W}(n), zeros(DW, n, n), zeros(DW, n, n), TanVec{W}(n),
         Ref{AbstractVector}(Float64[]), 0, mats, _tan_mats_alloc(DW, n, m, ntd, nxc),
         zeros(DW, n, n), (_tan_layer_mask(sp, awsW.predict_indices),
             _tan_layer_mask(sp, awsW.td_indices), _tan_layer_mask(sp, awsW.update_indices)),
-        0)
+        0, 0, 0, TanVec{W}(n), TanMat{W}(n, n), TanVec{W}(n), TanMat{W}(n, n))
 end
 
 """`out` the duals of `X`'s values and tangents, lane `w` its `w`-th."""
@@ -351,6 +372,65 @@ function _tan_rows_stationary!(x::TanVec{W}, P::TanMat{W}, R::TanRows{W,DW},
 end
 
 """
+The stationary moments of a block whose subjects share the layer, taken once
+before their sweeps (`shared`), which start from them: `R.x0`, `R.P0` from
+the layer's cells in `R.allW`, recorded on the workspace's tape for the
+block's one reverse (`_tan_block_stationary_reverse!`), their cotangents
+emptied. Every subject's would be the same, and taken per subject they cost a
+three-latent stationary model's Hessian 4 per cent (dev3). None where the model has no stationary
+start, or folds initial means beside one (R folds none there), or where the
+moments do not exist (`false`; each subject's sweep then finds that itself).
+"""
+function _tan_block_start!(R::TanRows{W}, sw::TanSweep{W}, mod::TanModel{W}, sp,
+    nl::Int) where {W}
+    elements = _stationary_elements_on(sp.stationary_elements)
+    R.bkind = mod.fold ? 0 : elements ? 10 : sp.stationary ? 8 : 0
+    R.bkind == 0 && return true
+    _tan_copy!(R.x0, mod.T0M)
+    _tan_copy!(R.P0, mod.T0V)
+    _tan_zero!(R.x0bar)
+    _tan_zero!(R.P0bar)
+    R.awsW.tape.nstationaries = 0
+    empty!(R.prog)
+    if !_tan_rows_stationary!(R.x0, R.P0, R, sw, sp, 0, nl, elements)
+        R.bkind = 0
+        return false
+    end
+    R.bslot = R.awsW.tape.nstationaries
+    return true
+end
+
+"""
+The block's stationary moments' reverse (`_tan_block_start!`), once, from the
+cotangents its subjects gathered with their weights in: the cells' onto
+`R.allbar`, the diffusion covariance's onto `acc.Qc`, the initial moments'
+onto `acc.T0M` and `acc.T0V`.
+"""
+function _tan_block_stationary_reverse!(acc::TanAcc{W}, R::TanRows{W}, sw::TanSweep{W},
+    sp, nl::Int) where {W}
+    R.bkind == 0 && return acc
+    awsW = R.awsW
+    _tan_rows_to!(R.xbarW, R.x0bar, R)
+    _tan_rows_to!(R.PbarW, R.P0bar, R)
+    tc = CTSEMPars(R.allbar, sp.parameter_axis)
+    srec = awsW.tape.stationaries[R.bslot]
+    if R.bkind == 8
+        _reverse_stationary!(R.xbarW, R.PbarW, tc, srec, awsW.diffusion_state_indices,
+            sw.n, awsW)
+    else
+        _reverse_stationary_elements!(R.xbarW, R.PbarW, tc, srec,
+            awsW.diffusion_state_indices, sw.n, awsW, sp.stationary_elements)
+    end
+    _tan_take_diffusion!(acc.Qc, awsW, 1.0, nl, R)
+    _tan_rows_from!(R.x0bar, R.xbarW, nl, R)
+    _tan_rows_from!(R.P0bar, R.PbarW, nl, R)
+    _tan_lincomb!(acc.T0M, true, acc.T0M, 1.0, R.x0bar)
+    _tan_sym!(sw.rv.Ps, R.P0bar)
+    _tan_comb!(acc.T0V, ((1.0, sw.rv.Ps),), true)
+    return acc
+end
+
+"""
 The cotangents in `acc` of the matrices in `mask` (`_TAN_M_*`) moved onto
 the cells' (`R.allbar`), the covariances through their constructions at `s`'s
 cells (T0VAR's at the subject's own, which no group writes), and emptied. A
@@ -368,25 +448,47 @@ function _tan_rows_flush!(R::TanRows{W,DW}, acc::TanAcc{W}, sp, s::TanSnap,
 end
 
 """
-One subject, `i` of `objective`, weight `w`, whose cells change by row: the
-sweep in the filter's order, its groups' cells evaluated as it goes; the
-reverse walk restoring each step's matrices, and each group's reverse moving
-the cotangents onto the cells and through it; then the cells' cotangents back
-to the raw parameters, lane `w` into `Hb[:, w]`. `R.allW` holds the subject's
-cells from the layer at `xw` (`_tan_layer_fill!`), `mod` its matrices.
+One subject, `i` of `objective`, weight `w`: the sweep in the filter's order,
+with whatever steps the model has -- groups of cells evaluated by row, an
+iterated update, a moment-matched prediction, stationary initial conditions,
+each the engine's own code at the Hessian's dual -- then the reverse walk,
+restoring each step's matrices, each group's reverse moving the cotangents onto
+the cells and through it. `R.allW` holds the subject's cells
+(`_tan_layer_fill!` at `xw`, on `R.awsW`), `mod` its matrices.
+
+Where no cell is evaluated by row (`!mod.rows`) nothing sends a cotangent back
+into the state's through a cell, so the kernels weight theirs by `w` as they
+add them. A subject that shares its layer with its block (`shared`, no cell by
+row) then leaves them there, and the stationary moments' cells' in `R.allbar`,
+for the block's one reverse (`_tan_block!`): the drift's factors are the
+block's (`_tan_sweep_begin!`), and its exponential's directions and series
+cotangents are flushed once for all its subjects. Otherwise the walk runs
+unweighted where a group's pullback sends the cells' cotangents into the
+state's, and the subject's cotangents go back through its own layer to the
+raw parameters, `w` times lane `l` into `Hb[:, l]`, its gradient into `g0` and
+a jet's second parts into `gS` where given, `buf` (`_tan_layer_buffers`) on
+the subject values the fill left. The hybrid factor's cotangent, times `w`, is
+added to `acc.Gbar`. `forward` stops before the reverse, each row's log
+likelihood kept; `rec` records each row's moments (`TanTraceRecorder`,
+`TanGNRecorder`).
 """
-function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
+function _tan_sweep!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     mod::TanModel{W}, R::TanRows{W,DW}, objective::CTSEMObjective, i::Int, w::Float64,
     xw::Vector, nl::Int; forward::Bool=false, g0=nothing, gS=nothing,
-    rec=nothing) where {W,DW}
+    rec=nothing, shared::Bool=false, buf=nothing) where {W,DW}
     sp = objective.params
     so = objective.subject_objectives[i]
     awsW = R.awsW
     n, fw, rv = sw.n, sw.fw, sw.rv
     times, Y, TD, rule = so.timesteps, so.data, so.tdpreds, so.max_timestep
     T = length(times)
-    copyto!(R.allW, awsW.ekf_ws.all_params)
-    fill!(R.allbar, zero(DW))
+    rows = mod.rows
+    shared && rows && throw(ArgumentError("a subject whose cells change by row has a layer of its own"))
+    # The kernels' weight: the subject's where nothing sends a cotangent back
+    # into the state's, else 1 and the subject weighted at the end.
+    kw = rows ? 1.0 : w
+    shared || copyto!(R.allW, awsW.ekf_ws.all_params)
+    shared || fill!(R.allbar, zero(DW))
     R.tp[] = _ctsem_tipred_fill!(awsW.tipreds, so.tipreds, xw)
     _ctsem_tipred_bar_reset!(awsW, so.tipreds, _ctsem_tipred_length(so.tipreds))
     awsW.tape.ngroups = 0
@@ -396,19 +498,24 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     # The records the engine's own steps push their program entries to; this
     # sweep keeps its own program.
     empty!(awsW.tape.program)
-    mod.momon[] = false
     empty!(R.prog)
     R.ng = 0
     R.dvn = 0
-    _tan_snap_save!(R.base, mod, R.allW, sp)
-    R.base.mask[] = _TAN_M_ALL
-    R.base.dv[] = 0
-    _tan_acc_zero!(acc)
+    if rows
+        mod.momon[] = false
+        _tan_snap_save!(R.base, mod, R.allW, sp)
+        R.base.mask[] = _TAN_M_ALL
+        R.base.dv[] = 0
+    else
+        # Nothing changes the model: its covariances' cells for the flush.
+        _tan_snap_cells!(R.base, R.allW, sp)
+    end
+    shared || _tan_acc_zero!(acc)
     x, P = sw.x, sw.P
     fill!(sw.ll, 0.0)
     fill!(sw.llprev, 0.0)
     hs = sw.hs
-    _tan_sweep_begin!(sw, mod)
+    shared || _tan_sweep_begin!(sw, mod)
     snap = 0
     _tan_copy!(x, mod.T0M)
     _tan_copy!(P, mod.T0V)
@@ -417,7 +524,13 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     mod.fold && _tan_fold_start!(P, hs.Xc, mod)
     _tan_hcols(mod) && _tan_hybrid_start!(hs, mod.hyb)
     elements = _stationary_elements_on(sp.stationary_elements)
-    if mod.stat || elements
+    if shared && R.bkind != 0
+        # The block's stationary moments, taken once for the subjects that
+        # share its layer (`_tan_block_start!`).
+        _tan_copy!(x, R.x0)
+        _tan_copy!(P, R.P0)
+        push!(R.prog, (9, 0, snap))
+    elseif sp.stationary || elements
         # The predict group once ahead of the stationary moments, which read
         # what it writes (the filter's first row), then the moments as the
         # engine's own at the Hessian's dual.
@@ -482,7 +595,7 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     # The row scores need the forward alone.
     forward && return _TAN_OK
     # The deviations the filter integrates: the closing term, whose reverse
-    # starts the walk (`_tan_sweep!`'s).
+    # starts the walk.
     if _tan_hcols(mod)
         (mod.fixed ? _tan_hybrid_closing!(hs, mod.G, mod.wlog, sw.ll, mod.dfix) :
             _tan_hybrid_closing!(hs, mod.G, mod.wlog, sw.ll)) || return _TAN_INVALID
@@ -509,8 +622,19 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
             _reverse_group!(R.allbar, R.xbarW, awsW.tape.groups[idx], sp, awsW)
             _tan_rows_add!(xbar, R.xbarW, nl, R)
             continue
+        elseif kind == 9
+            # The block's stationary moments: this subject's cotangents of
+            # them, weighted, gathered for the block's one reverse; none goes
+            # further back from here.
+            _tan_lincomb!(R.x0bar, true, R.x0bar, kw, xbar)
+            _tan_comb!(R.P0bar, ((kw, Pbar),), true)
+            _tan_zero!(xbar)
+            _tan_zero!(Pbar)
+            continue
         end
-        if s != held
+        # A model with no cell by row holds the layer's matrices throughout,
+        # and the drift's factors from the start.
+        if rows && s != held
             # The exponential's directions queued on the drift held, flushed
             # before the walk moves to another.
             held >= 0 && snapof(s).dv[] != snapof(held).dv[] &&
@@ -520,26 +644,29 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
         end
         if kind == 8 || kind == 10
             # The stationary moments or elements, by the engine's own reverse
-            # at the Hessian's dual; its deferred diffusion cotangent released
-            # onto the cells.
+            # at the Hessian's dual, its cells' cotangents weighted as the
+            # kernels' are; the diffusion covariance's it deferred joins
+            # `acc.Qc`, which the flush pulls back once with the kernels'.
             _tan_rows_to!(R.xbarW, xbar, R)
             _tan_rows_to!(R.PbarW, Pbar, R)
-            tc = CTSEMPars(R.allbar, sp.parameter_axis)
-            rec = awsW.tape.stationaries[idx]
+            tbar = kw == 1 ? R.allbar : fill!(R.sbar, zero(DW))
+            tc = CTSEMPars(tbar, sp.parameter_axis)
+            srec = awsW.tape.stationaries[idx]
             if kind == 8
-                _reverse_stationary!(R.xbarW, R.PbarW, tc, rec, awsW.diffusion_state_indices,
+                _reverse_stationary!(R.xbarW, R.PbarW, tc, srec, awsW.diffusion_state_indices,
                     n, awsW)
             else
-                _reverse_stationary_elements!(R.xbarW, R.PbarW, tc, rec,
+                _reverse_stationary_elements!(R.xbarW, R.PbarW, tc, srec,
                     awsW.diffusion_state_indices, n, awsW, sp.stationary_elements)
             end
-            _flush_diffusion!(awsW, tc, n)
+            _tan_take_diffusion!(acc.Qc, awsW, kw, nl, R)
+            kw == 1 || (R.allbar .+= kw .* R.sbar)
             _tan_rows_from!(xbar, R.xbarW, nl, R)
             _tan_rows_from!(Pbar, R.PbarW, nl, R)
             continue
         elseif kind == 7
             # A row's categorical observations.
-            _tan_reverse_cat_row!(xbar, Pbar, sw, mod, acc, 1.0, idx)
+            _tan_reverse_cat_row!(xbar, Pbar, sw, mod, acc, kw, idx)
             continue
         elseif kind == 6
             # A moment-matched step's cubature: the averaged cells' cotangents
@@ -562,7 +689,7 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
                 return _TAN_INVALID
         elseif kind == 4
             upd = sw.upds[idx]
-            _tan_reverse_row_update!(xbar, Pbar, upd, fw, mod, acc, 1.0, hs) ||
+            _tan_reverse_row_update!(xbar, Pbar, upd, fw, mod, acc, kw, hs) ||
                 return _TAN_INVALID
             # An iterated update's prior mean and linearisation point.
             if upd.relin > 0
@@ -571,40 +698,61 @@ function _tan_sweep_rows!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
                     _tan_row(fw, length(upd.o)).H)
             end
         elseif kind == 3
-            _tan_reverse_td!(xbar, Pbar, sw, mod, acc, 1.0, view(TD, :, idx), idx)
+            _tan_reverse_td!(xbar, Pbar, sw, mod, acc, kw, view(TD, :, idx), idx)
         else
-            if snapof(s).dv[] != factored
+            if rows && snapof(s).dv[] != factored
                 _tan_sweep_begin!(sw, mod)
                 factored = snapof(s).dv[]
             end
             # The exponential's direction queued by interval on this drift
             # (`_tan_enqueue!`), flushed where the walk leaves it.
-            _tan_reverse_predict!(xbar, Pbar, sw.preds[idx], rv, fw, mod, acc, 1.0, hs)
+            _tan_reverse_predict!(xbar, Pbar, sw.preds[idx], rv, fw, mod, acc, kw, hs)
             # A moment-matched step's correction's cotangent, its offset's.
             mod.momon[] && _tan_copy!(R.cbar, rv.affbar)
         end
     end
-    _tan_flush_frechet!(acc, fw, mod, sw.sT)
-    _tan_lincomb!(acc.T0M, true, acc.T0M, 1.0, xbar)
+    _tan_lincomb!(acc.T0M, true, acc.T0M, kw, xbar)
     _tan_sym!(rv.Ps, Pbar)
-    _tan_comb!(acc.T0V, ((1.0, rv.Ps),), true)
-    # A fold's factor cotangent, where the closing's would be.
+    _tan_comb!(acc.T0V, ((kw, rv.Ps),), true)
+    # A fold's factor cotangent, where the closing's would be; unweighted, as
+    # the closing's is.
     if mod.fold
         _tan_zero!(hs.Gbar)
         _tan_fold_reverse!(hs.Gbar, hs.Tc, rv.Ps, hs.Xc, mod, 1.0)
     end
+    # The hybrid factor's cotangent, kept in `acc` past the flushes, which
+    # leave it.
+    mod.nh > 0 && _tan_comb!(acc.Gbar, ((w, hs.Gbar),), true)
+    # A shared layer's reverse is the block's.
+    shared && return _TAN_OK
+    _tan_flush_frechet!(acc, fw, mod, sw.sT)
     _tan_rows_flush!(R, acc, sp, R.base)
-    # The hybrid factor's cotangent, unweighted as the walk is, left in `acc`
-    # for the caller after the flushes that empty it.
-    mod.nh > 0 && _tan_comb!(acc.Gbar, ((1.0, hs.Gbar),))
-    # The cells back to the raw parameters, and the subject's weight: the walk
-    # runs unweighted, since a group's pullback sends the cells' cotangents
-    # into the state's, which the kernels carry unweighted.
-    vb = _tan_values_reverse(awsW, sp, xw, R.allbar, so.tipreds)
+    # The cells back to the raw parameters, and the subject's weight where the
+    # walk ran unweighted; on the subject values the fill left (`buf`) where no
+    # cell ran by row, and materialised again where cells did. Two calls: one
+    # handed `nothing` or the buffers boxed them, a dynamic call each subject.
+    vb = rows ? _tan_values_reverse(awsW, sp, xw, R.allbar, so.tipreds) :
+        _tan_values_reverse(awsW, sp, xw, R.allbar, so.tipreds, buf)
     # What cells reading a sampled TI predictor sent back to it.
     _ctsem_tipred_scatter!(vb, awsW, so.tipreds)
-    _tan_rows_out!(Hb, g0, gS, vb, w, nl, R)
+    _tan_rows_out!(Hb, g0, gS, vb, rows ? w : 1.0, nl, R)
     return _TAN_OK
+end
+
+"""
+The diffusion covariance's cotangent an engine reverse deferred
+(`_defer_diffusion!`), times `kw`, onto `Qbar` (`acc.Qc`), and the deferral
+cleared: the flush then pulls it back through the construction with the
+kernels' (`_tan_rows_flush!`, or a shared layer's one reverse). Released on
+its own (`_flush_diffusion!`) the pullback ran twice a subject.
+"""
+function _tan_take_diffusion!(Qbar::TanMat{W}, awsW, kw::Float64, nl::Int,
+    R::TanRows) where {W}
+    awsW.dvar_pending || return Qbar
+    awsW.dvar_pending = false
+    D = awsW.dvar_bar
+    kw == 1 || (D .*= kw)
+    return _tan_rows_add!(Qbar, D, nl, R)
 end
 
 """
