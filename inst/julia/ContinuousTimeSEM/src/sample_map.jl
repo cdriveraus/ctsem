@@ -2028,7 +2028,7 @@ end
 
 """
     _sample_report_effects(laplace, report, sampler, results, nchains, ndraws, npar,
-        save_effects, seed, verbose, point)
+        save_effects, seed, verbose, point; overwrite, sink)
 
 A joint sampler's kept draws as theta and natural deviations, the one report
 of the joint target whichever sampler drew it. `point(c, t)` gives chain `c`'s
@@ -2040,10 +2040,16 @@ integrates effects, those drawn from their exact conditional given the draw
 (`_jmap_hybrid_range!`), so a sampled fit reports every effect. Returns
 `(pooled, effects, hybrid)`: the pooled draws with theta (and the deviations,
 under `save_effects`), the effects' summary, and whether any were integrated.
+
+Drawing the integrated effects solves each member's mode at every kept draw:
+on fold models 11-20 joint gradients a draw (2026-11-25), so on a large model
+hours after the chains have ended. Under `verbose` it has a line of its own
+(`overwrite`, `sink` as the chains' line), printed only, not handed to a
+callback.
 """
 function _sample_report_effects(laplace::CTSEMLaplaceObjective, report, sampler,
     results, nchains::Int, ndraws::Int, npar::Int, save_effects::Bool, seed::Integer,
-    verbose::Bool, point)
+    verbose::Bool, point; overwrite::Bool=true, sink=nothing)
     layout = report === nothing ? laplace : report
     match = _jmap_report_match(layout, laplace)
     devstarts, ndev = _laplace_deviation_offsets(layout)
@@ -2061,6 +2067,8 @@ function _sample_report_effects(laplace::CTSEMLaplaceObjective, report, sampler,
     mblocks = hybrid ? _jmap_member_blocks(layout, devstarts) : nothing
     dev = zeros(Float64, ndev)
     failed = 0
+    line = CTSEMProgress(verbose && hybrid && ndev > 0; label="integrated effects",
+        overwrite=overwrite, sink=sink)
     for c in 1:nchains, t in 1:ndraws
         column = (c - 1) * ndraws + t
         theta, x = point(c, t)
@@ -2082,7 +2090,9 @@ function _sample_report_effects(laplace::CTSEMLaplaceObjective, report, sampler,
             save_effects && (draws[npar + j, column] = dev[j])
         end
         _effect_cross_add!(effect_cross, dev, blocks)
+        _due(line) && _progress_line(line, column, total)
     end
+    _progress_done(line, @sprintf("%d draws", total))
     failed > 0 && verbose && println(_console(), "  ", failed,
         " draw(s) had a subject whose integrated effects could not be evaluated")
     return (pooled=pooled,
@@ -2631,7 +2641,8 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     # objective's layout.
     reported = _sample_report_effects(laplace, report, sampler, results, nchains,
         ndraws, npar, save_effects, seed, verbose,
-        (c, t) -> _jmap_point(mf, view(results[c].draws, :, t)))
+        (c, t) -> _jmap_point(mf, view(results[c].draws, :, t));
+        overwrite=progress_overwrite, sink=progress_sink)
     pooled = reported.pooled
     hybrid = reported.hybrid
     ndev = length(reported.effects.mean)

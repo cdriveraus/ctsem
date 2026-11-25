@@ -1173,7 +1173,8 @@ function _ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     # as the coordinates the sampler moves, as the map reports them.
     reported = _sample_report_effects(laplace, report, sampler, results, nchains,
         ndraws, npar, save_effects, seed, verbose,
-        (c, t) -> (results[c].draws[1:npar, t], view(results[c].draws, :, t)))
+        (c, t) -> (results[c].draws[1:npar, t], view(results[c].draws, :, t));
+        overwrite=progress_overwrite, sink=progress_sink)
     pooled = reported.pooled
     ndev = length(reported.effects.mean)
     # The reported joint dimension is the parameters and the natural
