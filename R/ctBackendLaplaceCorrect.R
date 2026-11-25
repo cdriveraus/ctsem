@@ -487,14 +487,9 @@
 # posterior mean was 1.9 posterior sds away and Laplace's interval held 1 per
 # cent of the mass (review/REVIEW-fit-uncertainty-2026-10-29.md, section 6).
 #
-# Past a standard error the message says to sample the refined fit. Sampling
-# starts at the fit's estimate: on the hc-wellbeing reanalysis's
-# 1,000-subject analogue the Laplace estimate lay 20-65 posterior sds from all
-# of the joint posterior's mass, in a basin of Laplace's own; four map chains
-# started there took 57 to 212 minutes and ended in different basins
-# (R-hat 1.65-2.40), and started at the refined fit 23-26 minutes, all in the right
-# one (review/SAMPLING-map-regions-2026-11-25.md). Below a standard error the
-# estimate is near the mass and the refinement would only add its cost.
+# Past a standard error the message says to sample the refined fit, and a
+# joint sample of a fit flagged so refines it first (`.ctSampleRefined()`,
+# which says why).
 .ctLaplaceShiftMessage <- function(shift, worst) {
   refine <- "ctFitUncertainty(fit, intoverpop = 'quadrature')"
   sample <- "ctFitUncertainty(fit, 'sample', intoverpop = 'none')"
@@ -552,9 +547,12 @@
 # warning naming the corrections and the estimate left where it is. `force`
 # adds units to those the refined fit integrates whatever the screen says: a
 # correction asked for after such a fit forces the units its check named.
+# `quiet` keeps the check's advice (a flag, a jump) in the record alone, for a
+# caller that acts on it itself (`.ctSampleRefined()`); a check that could not
+# be made is still said.
 .ctLaplaceContinue <- function(fit, cores = 1L, verbose = 0L,
   control = .ctLaplaceContinueDefaults, method = NULL, uncertaintycontrol = NULL,
-  correct = TRUE, force = NULL) {
+  correct = TRUE, force = NULL, quiet = FALSE) {
   started <- proc.time()[["elapsed"]]
   seconds <- function() proc.time()[["elapsed"]] - started
   est <- as.numeric(fit$estimate$raw)
@@ -615,7 +613,7 @@
       "and ctFitUncertainty(fit, 'sample', intoverpop = 'none') intervals to ",
       "report."), if (length(named) == 1L) "unit" else "units",
       .ctNameList(named, 6L))
-    warning(msg, call. = FALSE)
+    if (!quiet) warning(msg, call. = FALSE)
     fit$laplace$correction <- list(method = "quadrature", status = "jump",
       applied = FALSE, units = named, message = msg, laplace_estimate = est,
       loglik_laplace = as.numeric(fit$estimate$loglik),
@@ -709,7 +707,9 @@
   if (!correct) {
     if (!is.null(sink)) sink("", "break")
     said <- .ctLaplaceShiftMessage(check$max_shift, checkrecord$worst)
-    if (isTRUE(check$max_shift >= 1)) warning(said, call. = FALSE) else message(said)
+    if (!quiet) {
+      if (isTRUE(check$max_shift >= 1)) warning(said, call. = FALSE) else message(said)
+    }
     fit$laplace$correction <- list(method = "quadrature", status = "flagged",
       applied = FALSE, message = said, laplace_estimate = est,
       loglik_laplace = as.numeric(fit$estimate$loglik),

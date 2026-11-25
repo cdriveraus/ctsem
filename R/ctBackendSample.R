@@ -246,6 +246,46 @@
     "random effects too, which is more accurate here and may be faster.")
 }
 
+# A joint sample of a Laplace fit starts from the refined fit wherever the
+# random-effects check finds that Laplace's error moves an estimate by a
+# standard error or more (Charles, 2026-11-25): the exception to the refined
+# fit being asked for, because sampling starts at the fit's estimate and the
+# joint posterior's mass can be far from it. On the hc-wellbeing
+# reanalysis's 1,000-subject analogue the Laplace estimate lay 20-65
+# posterior sds from all of it, in a basin only the Laplace term has; four map
+# chains started there took 57 to 212 minutes and ended in different basins
+# (R-hat 1.65-2.40), and started at the refined fit 23-26 minutes, all in the
+# one with the mass, after a refinement of 59 minutes on 8 cores
+# (review/SAMPLING-map-regions-2026-11-25.md). Below a standard error the
+# estimate is near the mass and the refinement would only add its cost. A fit
+# with no check on record (`ctFit(optimize = FALSE)`'s placement, a fit made
+# with checks off) is checked here, quietly: what its advice would be is what
+# happens next. A refinement that cannot run leaves the fit as it was. The
+# caller says whether to look (`control$randomeffectscheck`, from `checks`).
+.ctSampleRefined <- function(fit, cores, verbose) {
+  if (is.null(fit$model_spec$laplace) || .ctLaplaceIsCorrected(fit)) return(fit)
+  if (.ctLaplaceCheckMissing(fit)) {
+    fit <- .ctLaplaceContinue(fit, cores = cores, verbose = verbose,
+      correct = FALSE, quiet = TRUE)
+  }
+  correction <- fit$laplace$correction
+  if (!identical(correction$status, "flagged") ||
+      !isTRUE(correction$check$max_shift >= 1)) return(fit)
+  message("The Laplace approximation would move some estimates by a standard ",
+    "error or more (most: ", correction$check$worst, "), so the fit is refined ",
+    "by quadrature first and sampling starts from there. Leave 'randomeffects' ",
+    "out of checks to sample from the Laplace estimate.")
+  refined <- tryCatch(ctFitUncertainty(fit, intoverpop = "quadrature",
+      checks = "randomeffects", cores = cores, verbose = verbose),
+    error = function(e) e)
+  if (inherits(refined, "error")) {
+    message("The refinement stopped (", conditionMessage(refined), "), so ",
+      "sampling starts from the Laplace estimate.")
+    return(fit)
+  }
+  refined
+}
+
 # Sample a fit's posterior by MCMC: `uncertainty = 'sample'`
 # on `ctFitUncertainty()`, and what `ctFit(backend = 'julia', optimize =
 # FALSE)` calls once its placement optimisation
@@ -281,6 +321,18 @@
       " is a setting of NUTS, which tempered SMC (control$sampler = 'smc') ",
       "does not read: its chains start from its particles (control$particles), and ",
       "it has no warmup. Drop it, or use sampler = 'nuts'.", call. = FALSE)
+  }
+  # The joint target from the fit's estimate, where the random-effects check
+  # finds Laplace's error moving it a standard error or more, starts from the
+  # refined fit instead (`.ctSampleRefined()`). Before the TI values join the
+  # parameters, as the refinement climbs the fit's own objective. SAEM's
+  # kernel places its chains by its own run.
+  if (isTRUE(control$randomeffectscheck) && !isTRUE(state_explicit) &&
+      !identical(control$sampler, "saem") &&
+      identical(.ctBackendSampleRoute(.ctBackendIntOverPop(fit$model_spec),
+        requested = fit$args$input[["intoverpop"]], override = control$intoverpop,
+        exact = isTRUE(.ctBackendSpec(fit)$laplace$quadratic)), "none")) {
+    fit <- .ctSampleRefined(fit, cores = checkcores, verbose = verbose)
   }
   # Missing TI predictor values are sampled with the rest unless the fit or
   # `control$tipredMissing` says to impute them; a fit that imputed them, the
@@ -550,6 +602,11 @@
   # `optimcontrol$checks`), and whether a higher point is signalled to the
   # caller rather than warned about, which `ctFit(optimize = FALSE)` sets.
   "maximumcheck", "maximumstop",
+  # Whether a joint sample of a Laplace fit reads the random-effects check,
+  # making it where the fit has none, and starts from the refined fit where it
+  # flags a standard error or more (`.ctSampleRefined()`): `checks` says
+  # (`ctFitUncertainty()`, `optimcontrol$checks`).
+  "randomeffectscheck",
   "callback")
 
 #' Fold the deprecated sampling arguments into \code{sampleControl}
@@ -2445,11 +2502,11 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # density of the parameters and the latent states is a category error, not
   # a lesser estimate (`state-explicit-generation.md`) -- the joint mode is
   # degenerate and not a place to start a sampler from. The checks are
-  # off and `uncertainty` forced to `'hessian'`: under
-  # `intoverpop='laplace'` the fit only places the chains, from its optimum
-  # and curvature -- not the quadrature-corrected point, which answers a
-  # question the placement is not asking -- so only the Hessian is needed
-  # here, not importance draws. `finishsamples = 2` (the least
+  # off here and `uncertainty` forced to `'hessian'`: the fit only places the
+  # chains, from its optimum and curvature, so only the Hessian is needed, not
+  # importance draws. The random-effects check is made by the sampling call
+  # below, which starts from the refined fit where it flags a standard error
+  # or more (`.ctSampleRefined()`). `finishsamples = 2` (the least
   # `ctFitUncertainty()` accepts) for the same reason: it would otherwise
   # draw a thousand Gaussian pseudo-posterior samples around the placement
   # point only for `.ctBackendSampleAssemble()` to overwrite them with the
@@ -2514,12 +2571,12 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # vocabulary; folded into `control` here so the shared function reads them
   # exactly as it reads a caller's own `control` list, and `target` as
   # resolved above.
+  checks <- .ctUncertaintyChecks(.ctJuliaOr(optimcontrol$checks, TRUE))
   samplecontrol <- utils::modifyList(control,
     list(chains = chains, warmup = warmup, draws = draws, seed = seed,
       saveEffects = saveEffects, processes = processes,
-      intoverpop = intoverpop,
-      maximumcheck = "maximum" %in%
-        .ctUncertaintyChecks(.ctJuliaOr(optimcontrol$checks, TRUE))))
+      intoverpop = intoverpop, maximumcheck = "maximum" %in% checks,
+      randomeffectscheck = "randomeffects" %in% checks))
   # The maximum check (R/ctBackendMaximumCheck.R) may find, from the sampler's
   # first draws, a point above the placement's estimate. The fit is then made
   # again from that point, so that the estimate, its Hessian and the map the

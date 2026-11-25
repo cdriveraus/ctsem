@@ -90,6 +90,8 @@ with the drift as a latent process, constant or changing over the session.
   optimising from there reaches a higher log posterior,
   `ctFit(optimize = FALSE)` fits again from that point and
   `ctFitUncertainty(fit, 'sample')` gives a warning.
+- If the approximation for the random effects would move an estimate by a
+  standard error or more, sampling refines the fit first and starts there.
 
 ## Checking and improving models
 

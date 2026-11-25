@@ -3800,11 +3800,13 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' NUTS's warmup. All three are refused with \code{'saem'} and \code{'smc'},
 #' and the last two with \code{'map'}. \code{control$placement} sets where
 #' the chains start. \code{'fit'} starts them around the fit's estimate, and
-#' is the default. If the random-effects check warns that the Laplace
+#' is the default. If the random-effects check finds that the Laplace
 #' approximation moves an estimate by a standard error or more, the joint
-#' posterior can lie far from that estimate, and sampling a refined fit
-#' (\code{intoverpop = 'quadrature'}) may need much less warmup.
-#' \code{'saem'} is for \code{sampler = 'saem'}, and its
+#' posterior can lie far from that estimate, so the fit is first refined as
+#' with \code{intoverpop = 'quadrature'} and the chains start at the refined
+#' estimate. A fit with no check on record is checked first. Leaving
+#' \code{'randomeffects'} out of \code{checks} starts the chains at the
+#' Laplace estimate. \code{'saem'} is for \code{sampler = 'saem'}, and its
 #' default there: it runs SAEM from the fit's estimate and starts each chain
 #' from its estimate and its draws of the random effects.
 #'
@@ -3919,7 +3921,9 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' suggesting \code{intoverpop = 'quadrature'} where integrating the random
 #' effects more exactly would move an estimate, or a warning where it would
 #' move one by a standard error or more. A fit that has been checked
-#' already is not checked again. The interval check (julia,
+#' already is not checked again. With \code{method = 'sample'} on the joint
+#' posterior, a fit whose check finds a move of a standard error or more is
+#' refined first (see Sampling). The interval check (julia,
 #' \code{method = 'hessian'}) compares the Hessian's normal approximation
 #' with the posterior's gradients, records the result in
 #' \code{$uncertainty$details$normalcheck}, and reports in a message and in
@@ -4138,9 +4142,12 @@ ctFitUncertainty <- function(fit,
     control$check <- 'intervals' %in% checks
   }
   # The maximum check, made from the joint sampler's first draws
-  # (R/ctBackendMaximumCheck.R).
+  # (R/ctBackendMaximumCheck.R), and the random-effects check, read before a
+  # joint sample, whose chains start from the refined fit where it flags a
+  # standard error or more (`.ctSampleRefined()`).
   if(julia && identical(method, 'sample')) {
     control$maximumcheck <- 'maximum' %in% checks
+    control$randomeffectscheck <- 'randomeffects' %in% checks
   }
   out <- .ctFitUncertaintyImpl(fit, uncertainty=method, draws='auto',
     finishsamples=finishsamples, cores=cores, control=control,

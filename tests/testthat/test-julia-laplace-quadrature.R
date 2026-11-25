@@ -249,6 +249,42 @@ test_that("the default checks and warns, and the correction it names is the fit-
   expect_error(ctFitUncertainty(fits$quadrature, "is", intoverpop = "quadrature", control = list(correctEstimate = TRUE)), "already corrected")
 })
 
+test_that("a joint sample of a fit flagged a standard error or more starts from the refined fit", {
+  skip_without_julia()
+  fits <- .lc_fits("nonlinear")
+  default <- fits$development
+  expect_identical(default$laplace$correction$status, "flagged")
+  # The check's move here is resolved, at whatever size; set past a standard
+  # error, as the reading a sample acts on.
+  flagged <- default
+  flagged$laplace$correction$check$max_shift <-
+    max(1.5, default$laplace$correction$check$max_shift)
+  # The joint by name: the fixture named intoverpop = 'laplace', whose own
+  # sample is the Laplace marginal, which the refined fit does not place.
+  said <- character()
+  out <- suppressWarnings(withCallingHandlers(ctFitUncertainty(flagged, "sample",
+      intoverpop = "none", cores = 1,
+      control = list(chains = 2, draws = 20, minESS = 0)),
+    message = function(m) {
+      said <<- c(said, conditionMessage(m))
+      invokeRestart("muffleMessage")
+    }))
+  expect_true(any(grepl("refined by quadrature first", said, fixed = TRUE)))
+  # The chains start where ctFit(intoverpop = 'quadrature') ends, and the
+  # sampled fit carries the refined fit's record.
+  expect_true(.ctLaplaceIsCorrected(out))
+  expect_equal(out$estimate$placed_raw, as.numeric(fits$quadrature$estimate$raw),
+    tolerance = 1e-5)
+  expect_false(is.null(out$sample))
+  # Below a standard error, and on a fit already refined, the fit is left as
+  # it is, with no check made again.
+  below <- default
+  below$laplace$correction$check$max_shift <- 0.5
+  expect_identical(.ctSampleRefined(below, cores = 1, verbose = 0), below)
+  expect_identical(.ctSampleRefined(fits$quadrature, cores = 1, verbose = 0),
+    fits$quadrature)
+})
+
 test_that("the check integrates the units its gate passes by Laplace's expansion, within its bound", {
   skip_without_julia()
   fits <- .lc_fits("nonlinear")
