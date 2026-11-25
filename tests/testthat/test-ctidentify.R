@@ -191,7 +191,7 @@ test_that("a coordinate in the flat subspace gets no reported spread, and is sai
   # Said, rather than only computed -- in the brief register the warning uses,
   # since R truncates a warning at 1000 bytes.
   expect_warning(ctsem:::.ctBackendIdentifyWarn(NULL, data.frame(), check),
-    "No width at all for")
+    "No standard error for")
 })
 
 test_that("a genuinely redundant parameter still gets the fix-or-remove advice", {

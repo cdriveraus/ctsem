@@ -2162,7 +2162,7 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
   Zf <- matrix(stats::rnorm(fresh * ncol(A)), fresh, ncol(A))
   Zp <- rbind(Z, Zf)
   side <- rbind(Zf, -Zp)
-  say(sprintf("%d draws, %d more for the centre", drawn, nrow(side)))
+  say(sprintf("%d draws", drawn + nrow(side)))
   out <- gradients(sweep(side %*% t(A), 2, est, "+"))
   Rs <- as.matrix(out$gradient) %*% A + side
   ok <- is.finite(out$value) & out$value > -1e99 & rowSums(!is.finite(Rs)) == 0
@@ -3915,9 +3915,10 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' itself: \code{TRUE} (the default) for all, \code{FALSE} for none, or any of
 #' \code{'randomeffects'}, \code{'intervals'} and \code{'maximum'}. The
 #' random-effects check (julia, \code{intoverpop = 'laplace'}) scores the
-#' Laplace approximation for each subject or group, and gives a warning
+#' Laplace approximation for each subject or group, and gives a message
 #' suggesting \code{intoverpop = 'quadrature'} where integrating the random
-#' effects more exactly would move an estimate. A fit that has been checked
+#' effects more exactly would move an estimate, or a warning where it would
+#' move one by a standard error or more. A fit that has been checked
 #' already is not checked again. The interval check (julia,
 #' \code{method = 'hessian'}) compares the Hessian's normal approximation
 #' with the posterior's gradients, records the result in

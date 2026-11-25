@@ -1522,11 +1522,10 @@
       coords <- as.integer(attr(from, "coordinates"))
       name <- paste(.ctJuliaSaturatedNames(list(p = coords), spec, npar, "p"),
         collapse = ", ")
-      if (ok) message(name, " had run off to ", signif(as.numeric(
-        result$minimizer)[coords], 3), " (raw), where the likelihood is flat ",
-        "in it. Refitted with it held at the other side of its range, then ",
-        "freed: log likelihood ", format(value, nsmall = 2), " -> ",
-        format(as.numeric(resumed$maximum_loglik)[1L], nsmall = 2), ".")
+      if (ok) message(name, " ran off to where the data say little about it. ",
+        "Refitting from the other end of its range raised the log likelihood from ",
+        format(round(value, 2), nsmall = 2), " to ",
+        format(round(as.numeric(resumed$maximum_loglik)[1L], 2), nsmall = 2), ".")
     }
     if (!inherits(resumed, "try-error")) totals <- totals + .ctJuliaRunCounts(resumed)
     history[[length(history) + 1L]] <- list(attempt = attempt,

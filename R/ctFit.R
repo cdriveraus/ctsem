@@ -662,7 +662,13 @@ T0VARredundancies <- function(ctm) {
     (ctm$pars$row %in% ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying] |
         ctm$pars$col %in% ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying])
   if(any(whichT0VAR_T0MEANSindvarying)){
-    message('T0VAR rows/columns for latents with individually varying T0MEANS disabled: RAWPOPVAR gives their covariance.')
+    varying <- sort(unique(as.integer(ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' &
+        ctm$pars$indvarying])))
+    named <- if (length(ctm$latentNames) >= max(varying)) ctm$latentNames[varying] else varying
+    one <- length(named) == 1L
+    message('T0VAR is fixed for ', paste(named, collapse = ', '), ', since the ',
+      'random effects on ', if (one) 'its' else 'their', ' T0MEANS give ',
+      if (one) 'its' else 'their', ' initial variance.')
     ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col == ctm$pars$row ] <- 1e-3
     ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col != ctm$pars$row ] <- 0
     ctm$pars$param[whichT0VAR_T0MEANSindvarying] <- NA
