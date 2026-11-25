@@ -491,8 +491,8 @@
 # starts at the fit's estimate: on the hc-wellbeing reanalysis's
 # 1,000-subject analogue the Laplace estimate lay 20-65 posterior sds from all
 # of the joint posterior's mass, in a basin of Laplace's own; four map chains
-# started there took 57 to 150-odd minutes and ended in different basins
-# (R-hat 1.65), and started at the refined fit 23-26 minutes, all in the right
+# started there took 57 to 212 minutes and ended in different basins
+# (R-hat 1.65-2.40), and started at the refined fit 23-26 minutes, all in the right
 # one (review/SAMPLING-map-regions-2026-11-25.md). Below a standard error the
 # estimate is near the mass and the refinement would only add its cost.
 .ctLaplaceShiftMessage <- function(shift, worst) {
