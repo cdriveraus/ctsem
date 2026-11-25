@@ -80,6 +80,7 @@ reference:
   - ctPar
   - ctCov
   - ctModelSyntax
+  - ctModelDDM
   - ctModelHigherOrder
   - ctModelSlowComponent
   - ctModelPeriodicComponent
