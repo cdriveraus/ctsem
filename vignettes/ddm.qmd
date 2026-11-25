@@ -1,0 +1,180 @@
+---
+title: "Drift diffusion models"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+    self-contained-math: true
+execute:
+  message: false
+  warning: false
+vignette: >
+  %\VignetteIndexEntry{Drift diffusion models}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4,
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+```{r libs}
+library(ctsem)
+library(ggplot2)
+```
+
+The drift diffusion model describes a choice between two responses and the
+time it takes. Evidence accumulates at a mean rate, the drift, until it
+reaches one of two boundaries. The boundaries are `boundary` apart, the
+accumulation starts at `bias` times that distance from the lower boundary, and
+a nondecision time `ndt` is added for encoding and responding.
+
+In ctsem the drift is a latent process. It can be constant within a person,
+change over a session, or depend on other processes in the model, and each
+trial's likelihood is exact. Boundary, nondecision time and bias can differ
+between people and change with trial level predictors.
+
+A choice and response time variable holds the response time in seconds, made
+negative for a response at the lower boundary. For accuracy coding, where the
+upper boundary is the correct response:
+
+```{r signed, eval = FALSE}
+dat$rt <- ifelse(dat$correct == 1, dat$rt, -dat$rt)
+```
+
+# A drift diffusion model
+
+We simulate 20 people with 200 trials each. Half the trials are hard, which
+lowers the drift, and in alternate blocks of 50 trials people are told to
+respond quickly, which lowers the boundary. People differ in their drift,
+boundary and nondecision time. The time column is the trial number.
+
+```{r design1}
+set.seed(1)
+design <- do.call(rbind, lapply(1:20, function(i) data.frame(id = i,
+  time = 1:200, hard = rbinom(200, 1, 0.5), speed = rep(c(0, 1), each = 50,
+    times = 2))))
+
+model <- ctModelDDM(name = 'rt', drift = ~ hard, boundary = ~ speed)
+truth <- list(popmeans = c(drift_mean = 1.5, drift_hard = -0.8, boundary = 1.4,
+  boundary_speed = -0.4, ndt = 0.3),
+  popsd = c(drift_mean = 0.4, boundary = 0.2, ndt = 0.04))
+dat <- data.frame(ctGenerate(model, datastruct = design, backend = 'julia',
+  values = truth))
+head(dat)
+```
+
+`ctModelDDM()` builds the model from the predictors of each parameter. The
+drift's predictors shift the drift on their own trial. The boundary's and the
+nondecision time's act on the log scale, so `boundary_speed = -0.4` multiplies
+the boundary by `exp(-0.4)` under speed instructions. By default the drift,
+boundary and nondecision time vary over people. The model is an ordinary
+ctsem model:
+
+```{r model1}
+model
+```
+
+```{r fit1}
+fit <- ctFit(dat, model, cores = 4)
+s <- summary(fit)
+data.frame(estimate = s$popmeans[names(truth$popmeans), 'mode'],
+  sd = s$popmeans[names(truth$popmeans), 'sd'], generated = truth$popmeans)
+data.frame(estimate = s$popsd[names(truth$popsd), 'mode'],
+  generated = truth$popsd)
+```
+
+The estimates are close to the values the data were generated from. Each
+person's own values come from `ctSubjectPars(fit)`.
+
+To let the drift change over the session, use `dynamic = TRUE`. The drift
+then follows a mean reverting process around each person's level, with an
+auto effect `drift_auto` and a diffusion `drift_diffusion` on the scale of the
+time column. `sv = TRUE` adds trial to trial variability of the drift, and
+`bias = ~ 1` estimates the start point.
+
+# A drift diffusion model related to another process
+
+Here a person's alertness drifts over a ten minute session, and the drift of
+their decisions rises and falls with it. Alertness is also rated now and then.
+Both measures load on the same latent process. The rating loads on it
+directly, and the drift through a loading `drift_alert`. A model with more than one kind of
+indicator is written with `ctModel()`, which takes the choice and response
+time indicator as `manifesttype = 5`, with its boundary, nondecision time and
+bias in `WIENER`.
+
+```{r model2}
+model2 <- ctModel(type = 'ct', manifestNames = c('rating', 'rt'),
+  manifesttype = c(0, 5), latentNames = 'alert',
+  LAMBDA = matrix(c(1, 'drift_alert'), 2, 1),
+  MANIFESTMEANS = matrix(c('rating_mean||FALSE', 'drift_mean||TRUE'), 2, 1),
+  MANIFESTVAR = matrix(c('rating_sd', 0, 0, 0), 2, 2),
+  DRIFT = matrix('alert_auto'), DIFFUSION = matrix('alert_diffusion'),
+  CINT = matrix(0), T0MEANS = matrix('stationary'), T0VAR = matrix('stationary'),
+  WIENER = c('boundary||TRUE', 'ndt||TRUE', 0.5))
+```
+
+The drift of the rt indicator is its linear predictor,
+`drift_mean + drift_alert * alert`. Alertness has mean zero, and its scale
+is set by the rating's loading of one. The time column is in minutes, with a
+trial every two to four seconds and a rating after every 20th trial.
+
+```{r design2}
+set.seed(2)
+design2 <- do.call(rbind, lapply(1:20, function(i) {
+  time <- cumsum(runif(200, 2, 4)) / 60
+  data.frame(id = i, time = time, rating = ifelse(1:200 %% 20 == 0, 0, NA),
+    rt = 0)
+}))
+truth2 <- list(popmeans = c(alert_auto = -0.4, alert_diffusion = 0.6,
+  rating_mean = 0, rating_sd = 0.3, drift_mean = 1.2, drift_alert = 0.8,
+  boundary = 1.3, ndt = 0.3),
+  popsd = c(drift_mean = 0.3, boundary = 0.2, ndt = 0.04))
+gen2 <- ctGenerate(model2, datastruct = design2, backend = 'julia',
+  values = truth2)
+dat2 <- data.frame(gen2)
+```
+
+```{r fit2}
+fit2 <- ctFit(dat2, model2, cores = 4)
+s2 <- summary(fit2)
+data.frame(estimate = s2$popmeans[names(truth2$popmeans), 'mode'],
+  sd = s2$popmeans[names(truth2$popmeans), 'sd'], generated = truth2$popmeans)
+```
+
+The loading `drift_alert` says how much the drift changes per unit of
+alertness. Because the drift is filtered together with the ratings, every
+trial also informs the estimate of alertness, between ratings as well as at
+them. The smoothed alertness of the first person, against the alertness the
+data were generated from and the ratings:
+
+```{r plot2, fig.height = 3.5}
+k <- ctKalmanArray(fit2, timestep = 'asdata', subjects = 1)
+states <- attr(gen2, 'states')
+one <- data.frame(time = k$time[, 1], smooth = k$etasmooth[1, , 1],
+  sd = sqrt(k$etasmoothcov[1, , 1, 1]),
+  generated = states$alert[states$id == 1], rating = dat2$rating[dat2$id == 1])
+ggplot(one, aes(time)) +
+  geom_ribbon(aes(ymin = smooth - 1.96 * sd, ymax = smooth + 1.96 * sd),
+    fill = 'steelblue', alpha = 0.25) +
+  geom_line(aes(y = smooth), colour = 'steelblue') +
+  geom_line(aes(y = generated), colour = 'grey30', linetype = 'dashed') +
+  geom_point(aes(y = rating), colour = 'firebrick') +
+  theme_bw() + labs(x = 'minutes', y = 'alertness')
+```
+
+The band is the 95% interval of the smoothed alertness, the dashed line the
+generating alertness and the points the ratings.
+
+The same structure links decisions to any process ctsem can model, such as a
+mood or stress rating, a physiological signal, a process with its own
+predictors, or several drift diffusion tasks loading on shared latent
+processes.
