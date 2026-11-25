@@ -3800,7 +3800,11 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' NUTS's warmup. All three are refused with \code{'saem'} and \code{'smc'},
 #' and the last two with \code{'map'}. \code{control$placement} sets where
 #' the chains start. \code{'fit'} starts them around the fit's estimate, and
-#' is the default. \code{'saem'} is for \code{sampler = 'saem'}, and its
+#' is the default. If the random-effects check warns that the Laplace
+#' approximation moves an estimate by a standard error or more, the joint
+#' posterior can lie far from that estimate, and sampling a refined fit
+#' (\code{intoverpop = 'quadrature'}) may need much less warmup.
+#' \code{'saem'} is for \code{sampler = 'saem'}, and its
 #' default there: it runs SAEM from the fit's estimate and starts each chain
 #' from its estimate and its draws of the random effects.
 #'
