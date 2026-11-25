@@ -45,11 +45,35 @@
 # `matrix` is NULL.
 .ctCorBoundSpec <- function(spec,
     table = as.data.frame(spec$parameter_table, stringsAsFactors = FALSE)) {
+  # A score test's extended model carries its fit's blocks (`.ctCorBoundCarry()`).
+  carried <- spec[["corbound_blocks"]]
+  if (!is.null(carried)) return(if (length(carried)) carried else NULL)
   code <- if (is.null(spec$covmatcode)) 0L else as.integer(spec$covmatcode)[1L]
   if (!code %in% c(0L, 2L)) return(NULL)
   blocks <- c(.ctCorBoundPopulation(spec, table, code),
     .ctCorBoundMatrices(table, code))
   if (length(blocks)) blocks else NULL
+}
+
+# A fit's blocks read on another specification's raw coordinates, by name
+# (`from` the fit's raw parameter names, `to` the other's), for the model a
+# score test extends the fit to (`.ctScoreExtendedSpec()`). The wall is the
+# fit's prior on the fit's parameters, and the new terms are tested on the
+# likelihood, so the extension keeps it as it was. Read off the extension's
+# own table it can vanish: the level terms write every DIFFUSION and
+# MANIFESTVAR parameter as an expression (`qc + t * level`), which is no free
+# correlation, and on a fit whose shocks sat on the wall (the hc-wellbeing
+# depressiveness model D, correlation -1.00) the extension read 0.31 nats
+# above the fit at zero and the level family was refused. An empty list where
+# the fit has no blocks.
+.ctCorBoundCarry <- function(spec, from, to) {
+  lapply(.ctCorBoundSpec(spec), function(b) {
+    read <- b$index > 0L
+    b$index[read] <- match(from[b$index[read]], to)
+    if (anyNA(b$index)) stop("A bounded correlation's parameter is missing from ",
+      "the extended model.", call. = FALSE)
+    b
+  })
 }
 
 # A k x k matrix's cells below the diagonal in column-major order, as the

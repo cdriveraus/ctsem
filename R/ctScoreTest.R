@@ -2270,6 +2270,9 @@ ctScoreTest <- function(fit, covariates = NULL,
   if (!setequal(setdiff(nm2, nm1), names_new)) refuse("The extended model added ",
     "parameters other than its terms: ", paste(setdiff(setdiff(nm2, nm1), names_new),
       collapse = ', '))
+  # The fit's correlation wall on the fit's parameters (`.ctCorBoundCarry()`),
+  # set before any objective is built from the extension.
+  spec2$corbound_blocks <- .ctCorBoundCarry(spec, nm1, nm2)
   x2 <- setNames(numeric(length(nm2)), nm2)
   x2[nm1] <- est
   # New coordinates at zero, or where `at` says: a stated mean freed sits at

@@ -208,7 +208,7 @@ test_that("a derived start the optimiser cannot take gives way to the default", 
   derived <- abs(kept$start - fallen$start) > 1e-12
   expect_true(any(derived))
   expect_gt(min(abs(kept$start[derived])), 0.1)
-  expect_true(any(grepl("cannot be evaluated at the starting values derived",
+  expect_true(any(grepl("derived from the data could not be evaluated",
     fallen$said)))
-  expect_false(any(grepl("cannot be evaluated", kept$said)))
+  expect_false(any(grepl("could not be evaluated", kept$said)))
 })

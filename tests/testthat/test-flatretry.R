@@ -134,7 +134,7 @@ test_that("a run-off escape that wins is kept, and one that loses leaves the sta
   expect_identical(attr(run$calls[[1]], 'kind'), 'runoff')
   expect_equal(as.numeric(run$out$result$maximum_loglik), -80)
   expect_identical(run$out$escapes, 1L)
-  expect_true(any(grepl('trend_drift had run off', run$said)))
+  expect_true(any(grepl('trend_drift ran off', run$said)))
   expect_identical(run$out$corrections[[1]]$status, 'runoff')
 
   tried <- integer()

@@ -156,3 +156,62 @@ test_that("effects with no block in common are uncorrelated, fitted and reported
     optimcontrol = list(saem = TRUE)))
   expect_equal(saem$estimate$loglik, fit$estimate$loglik, tolerance = 1e-3)
 })
+
+test_that("a fit as inits carries the loadings by effect, at every level", {
+  skip_without_julia()
+  # The drift starts to vary. It comes first among the effects, its block
+  # gains a dimension, and the items' block's dimension is numbered after it
+  # (poploading_mm2_dim2 becomes poploading_mm2_dim3), as in the hc-wellbeing
+  # reanalysis's models C and D. The second case is the same at the outer of
+  # two levels, with the subject level's intercept at full rank beside it.
+  data <- .blocks_data(nsub = 40L, nt = 5L)
+  items <- list(rank = 1, effects = c("mm2", "mm3"))
+  cases <- list(
+    list(level = 1L,
+      small = .blocks_prep(.blocks_model(dr = "dr"), data, popunique = c("mm2", "mm3"),
+        popblocks = list(dynamics = list(rank = 1, effects = "lev"), items = items)),
+      big = .blocks_prep(.blocks_model(), data, popunique = c("mm2", "mm3"),
+        popblocks = list(dynamics = list(rank = 2, effects = c("lev", "dr")),
+          items = items))),
+    list(level = 2L,
+      small = .blocks_prep(.blocks_model(ids = c("id", "id2"), lev = "lev||id",
+        dr = "dr", mm2 = "mm2||id2", mm3 = "mm3||id2"), data,
+        popblocks = list(id2 = list(items = items))),
+      big = .blocks_prep(.blocks_model(ids = c("id", "id2"), lev = "lev||id",
+        dr = "dr||id2", mm2 = "mm2||id2", mm3 = "mm3||id2"), data,
+        popblocks = list(id2 = list(dynamics = list(rank = 1, effects = "dr"),
+          items = items)))))
+  for (case in cases) {
+    small <- case$small; big <- case$big; l <- case$level
+    n1 <- ctsem:::.ctBackendNpar(small); n2 <- ctsem:::.ctBackendNpar(big)
+    names1 <- ctsem:::.ctBackendRawParameterNames(list(model_spec = small), n1)
+    names2 <- ctsem:::.ctBackendRawParameterNames(list(model_spec = big), n2)
+    set.seed(4)
+    theta <- stats::rnorm(n1, 0, 0.5)
+    old <- structure(list(model_spec = small, estimate = list(raw = theta)),
+      class = c("ctJuliaFit", "ctFit"))
+    # Every parameter is carried but the drift's loading.
+    start <- expect_message(ctsem:::.ctJuliaInitsFromFit(old, big, n2),
+      paste0("for ", n2 - 1L, " of ", n2))
+    popcov <- function(spec, x) {
+      lv <- spec$laplace$levels[[l]]
+      S <- as.matrix(ctsem:::.ctBackendJuliaValue(
+        ctsem:::.ctJuliaModule(spec$project)$ctsem_laplace_popcov(
+          ctsem:::.ctJuliaObjective(spec), ctsem:::.ctJuliaNumericVector(x), l)))
+      dimnames(S) <- list(lv$param, lv$param)
+      S
+    }
+    P1 <- popcov(small, theta)
+    P2 <- popcov(big, start)
+    k <- rownames(P1)
+    expect_equal(P2[k, k], P1, tolerance = 1e-10)
+    # The new effect starts with some variance, so its dimension has a gradient.
+    expect_gt(P2["dr", "dr"], 0)
+    other <- !grepl("^poploading_", names2)
+    expect_equal(start[other], theta[match(names2[other], names1)])
+    # A match by name, as before, loses the items' shared dimension.
+    byname <- theta[match(names2, names1)]
+    byname[is.na(byname)] <- 0
+    expect_gt(max(abs(P1 - popcov(big, byname)[k, k])), 0.05)
+  }
+})

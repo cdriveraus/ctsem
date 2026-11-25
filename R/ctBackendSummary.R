@@ -2331,19 +2331,22 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   if (!identical(u$settings$method, "hessian")) return(NULL)
   if (!is.null(fit$laplace$jump) &&
       !identical(fit$laplace$correction$draws, "redrawn")) return(paste0(
-    "Intervals are from the curvature at a point where the Laplace term ",
-    "jumped: ctFitUncertainty(fit, 'sample') samples the posterior for ",
-    "intervals to report."))
+    "Intervals are approximate, from the curvature where the Laplace ",
+    "approximation jumps. ctFitUncertainty(fit, 'sample') gives intervals to report."))
   check <- u$details$normalcheck
   if (is.null(check)) return(NULL)
-  if (!is.null(check$failed)) return(paste0("Intervals are from the curvature at ",
-    "the estimate; the interval check could not be made (", check$failed, ")."))
+  if (!is.null(check$failed)) return(paste0("The interval check could not be ",
+    "made (", check$failed, "), so intervals are from the curvature at the ",
+    "estimate alone."))
   named <- if (is.matrix(check$directions)) ncol(check$directions) else 0L
   if (!named) return(NULL)
-  sprintf(paste0("Intervals are from the curvature at the estimate, and the ",
-    "posterior departs from that normal in %d direction%s (the interval ",
-    "check, fit$uncertainty$details$normalcheck): ctFitUncertainty(fit, 'sample') ",
-    "samples it for intervals to report."), named, if (named > 1L) "s" else "")
+  # Out of how many: 7 directions of 300 and 7 of 9 read differently.
+  of <- length(fit$estimate$raw)
+  sprintf(paste0("The posterior is not normal in %d%s direction%s, so intervals ",
+    "from the curvature at the estimate are approximate. ",
+    "ctFitUncertainty(fit, 'sample') gives intervals to report."), named,
+    if (of >= named) sprintf(" of %d", of) else "",
+    if (max(named, of) > 1L) "s" else "")
 }
 
 .ctBackendSummary <- function(object, timeinterval = 1, digits = 3, parmatrices = TRUE,
