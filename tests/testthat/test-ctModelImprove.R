@@ -244,6 +244,42 @@ test_that("a covariate the model lacks is added, an unrelated one is not, and th
     list(model = fixed, data = x$data, args = list()), 1L, 'LR', 0.05))
 })
 
+test_that("a change that Laplace's error decides is taken on neither value", {
+  x <- .improve_fit(0)
+  checked <- function(laplace, integrated, se = 1, extra = 0) {
+    f <- x$fit
+    f$estimate$raw <- c(f$estimate$raw, numeric(extra))
+    f$estimate$loglik_laplace <- laplace
+    f$estimate$loglik <- integrated
+    f$estimate$loglik_se <- se
+    f$estimate$loglik_bound <- 0
+    f$estimate$loglik_method <- 'checked'
+    f
+  }
+  current <- checked(-1000, -700)
+  # 50 better on Laplace and 270 worse on the check's integrals: undecided,
+  # so a search does not take the change ...
+  v <- ctsem:::.ctImproveCompare(current, checked(-950, -970, extra = 1), 'LR', 0.05)
+  expect_false(v$accept)
+  expect_match(v$note, 'no evidence either way')
+  expect_equal(v$dloglik, 50)
+  # ... and pruning, which keeps a change only where the fuller model wins,
+  # drops it.
+  expect_false(ctsem:::.ctImproveCompare(checked(-950, -970), checked(-900, -1220,
+    extra = 1), 'LR', 0.05)$accept)
+  # Where the two readings agree, or the checks' errors cover the difference,
+  # Laplace's comparison stands.
+  expect_true(ctsem:::.ctImproveCompare(current, checked(-950, -660, extra = 1),
+    'LR', 0.05)$accept)
+  expect_true(ctsem:::.ctImproveCompare(current, checked(-950, -970, se = 300,
+    extra = 1), 'LR', 0.05)$accept)
+  # A fit without the check's integral is compared on Laplace's value alone.
+  unchecked <- checked(-950, -970, extra = 1)
+  unchecked$estimate$loglik_method <- NULL
+  unchecked$estimate$loglik <- -950
+  expect_true(ctsem:::.ctImproveCompare(current, unchecked, 'LR', 0.05)$accept)
+})
+
 test_that("a correct model stops at once", {
   # Its own draw: with seed 5, a correct model's data are one of the five per
   # cent of draws where the search keeps something at alpha = 0.05 (a random

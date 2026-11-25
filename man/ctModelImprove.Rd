@@ -298,7 +298,9 @@ not reached an optimum, and is recorded as such.
   refitted the same way. To compare the models with their random effects
   integrated more exactly, start the search from a fit with
   \code{intoverpop = 'quadrature'}, so that every refit is refined in the
-  same way.
+  same way. A change is not taken, and pruning drops it, when the
+  random-effects check shows that the Laplace approximation's error differs
+  between the current fit and the refit by enough to reverse the decision.
 }
 
 \examples{
