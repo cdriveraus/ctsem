@@ -392,6 +392,25 @@ test_that("a PARS parameter the dynamics read through an expression has level te
     'a_eta(1)', NA), 'a_eta'), c(TRUE, FALSE, FALSE, FALSE, FALSE, FALSE))
 })
 
+test_that("the extended model keeps the fit's correlation wall", {
+  # The level terms write every DIFFUSION parameter as an expression, which
+  # left the extension no free correlation to bound: a fit whose shocks sat on
+  # the wall read above itself at zero, and the family was refused (0.31 nats
+  # on a 7,141-person ordinal model). Here the shock correlation is put past
+  # the wall instead.
+  fit <- ctsemtestfit
+  est <- stats::setNames(ctsem:::.ctFitRawEstimate(fit), ctsem:::.ctFitRawParNames(fit))
+  est[['diff_eta2_eta1']] <- 5
+  lev <- ctsem:::.ctScoreLevelModel(ctsem:::.ctFitBaseModel(fit))
+  expect_true('diff_eta2_eta1' %in% lev$terms$parameter)
+  ext <- ctsem:::.ctScoreExtendedSpec(fit, est, lev$model, lev$terms$name, 'level',
+    cores = 1)
+  blocks <- ctsem:::.ctCorBoundSpec(ext$spec)
+  diffusion <- Filter(function(b) identical(b$matrix, 'DIFFUSION'), blocks)
+  expect_length(diffusion, 1L)
+  expect_identical(names(ext$x2)[diffusion[[1]]$index], 'diff_eta2_eta1')
+})
+
 test_that("the level in the latent is the same linear model as the level in the indicator", {
   # With linear dynamics and the same initial distribution -- the deviation
   # from 0, the level from its stationary mean, each with its stationary
