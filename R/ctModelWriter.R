@@ -707,7 +707,7 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
   # `base` because the stan programs are generated from `base`
   # (dev/regenerate-stan.R), and would otherwise declare and compute matrices
   # no stan fit can have.
-  julia <- c(THRESHOLDS=11, ASYMPTOTES=12, RESPONSE=13)
+  julia <- c(THRESHOLDS=11, ASYMPTOTES=12, RESPONSE=13, WIENER=14)
   all <- c(base,jacobian,asymptotic, extra, julia)
   mn <- list(base=base, jacobian=jacobian, asymptotic=asymptotic, extra=extra,
     julia=julia, all=all)

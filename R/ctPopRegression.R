@@ -74,7 +74,7 @@
 # `T0VARredundancies()` on the augmented route.
 .ctPopMeanMatrices <- function() {
   c('T0MEANS', 'LAMBDA', 'DRIFT', 'MANIFESTMEANS', 'CINT', 'TDPREDEFFECT',
-    'THRESHOLDS', 'ASYMPTOTES', 'RESPONSE')
+    'THRESHOLDS', 'ASYMPTOTES', 'RESPONSE', 'WIENER')
 }
 
 # Labels sitting in T0MEANS. Read before `.ctModelIntOverPop()` runs, while the

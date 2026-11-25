@@ -1693,7 +1693,7 @@ ctModelFormula <- function(..., type = 'ct', id = 'id', time = 'time',
     paste(out, collapse = ';')
   }, '')
   # Matrices the syntax has no statements for go back as arguments.
-  asargs <- c('PARS', 'ASYMPTOTES', 'RESPONSE')
+  asargs <- c('PARS', 'ASYMPTOTES', 'RESPONSE', 'WIENER')
   extra <- setdiff(unique(pars$matrix), c(unique(cells$matrix), asargs,
     'THRESHOLDS', 'TDPREDEFFECT'))
   if (length(extra)) warning(paste(extra, collapse = ', '), ' is not written ',

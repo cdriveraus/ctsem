@@ -1342,6 +1342,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   if(any(ctm$manifesttype %in% 2)) .ctDataCategories(datalong, ctm)
   if(any(ctm$manifesttype %in% 3)) .ctDataCounts(datalong, ctm)
   if(any(ctm$manifesttype %in% 4)) .ctDataCensored(datalong, ctm)
+  if(any(ctm$manifesttype %in% 5)) .ctDataWiener(datalong, ctm)
 
 
 

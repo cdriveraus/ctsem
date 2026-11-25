@@ -876,8 +876,17 @@
       'in its binary measurement, so it would fit the two parameter logistic.',
       call.=FALSE)
   }
+  # Stan has no Wiener measurement: it would read a signed response time as a
+  # Gaussian observation of the drift.
+  if(any(ctm$manifesttype %in% 5) && !identical(backend, 'julia')){
+    stop('Choice and response time indicators (manifesttype 5) need ',
+      'backend="julia". Indicator(s): ',
+      paste(ctm$manifestNames[ctm$manifesttype %in% 5], collapse=', '), '.',
+      call.=FALSE)
+  }
   .ctCheckAsymptotePars(ctm$pars, ctm$manifesttype)
   .ctCheckResponsePars(ctm$pars, ctm$manifesttype)
+  .ctCheckWienerPars(ctm$pars, ctm$manifesttype)
 
   if(any(ctm$manifesttype > 0)){ #if any non continuous variables, (with free parameters)...
     # Binary and ordinal only. For those two a normal term on the linear
@@ -921,7 +930,7 @@
     # a message before, and censored items not at all, so a free residual
     # covariance between two of them was a parameter the likelihood never
     # read).
-    rowwise <- which(ctm$manifesttype %in% c(3L, 4L))
+    rowwise <- which(ctm$manifesttype %in% c(3L, 4L, 5L))
     offbad <- which(ctm$pars$matrix %in% 'MANIFESTVAR' &
         ctm$pars$row != ctm$pars$col &
         (ctm$pars$row %in% rowwise | ctm$pars$col %in% rowwise) &

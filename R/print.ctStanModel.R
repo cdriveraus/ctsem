@@ -129,6 +129,10 @@ print.ctStanModel <- function(x, matrices = NULL, ...) {
           paste0("max ", signif(x$censormax[censored], 4)), "no max"),
         ifelse(censored %in% .ctResponseRows(x$pars), ", with RESPONSE", ""),
         ")"))
+    wiener <- x$manifestNames[x$manifesttype == 5]
+    if (length(wiener)) described <- c(described,
+      paste0(paste(wiener, collapse = ", "), " (choice and response time, ",
+        "drift diffusion)"))
     cat("  non-Gaussian indicators: ", paste(described, collapse = ", "),
       "\n", sep = "")
   }

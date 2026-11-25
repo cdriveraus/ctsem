@@ -1,5 +1,5 @@
 ctModelUnlist<-function(ctmodelobj,
-  matnames=c('T0MEANS','LAMBDA','DRIFT','DIFFUSION','MANIFESTVAR','MANIFESTMEANS', 'CINT', 'TDPREDEFFECT', 'T0VAR','PARS','THRESHOLDS','ASYMPTOTES','RESPONSE')){
+  matnames=c('T0MEANS','LAMBDA','DRIFT','DIFFUSION','MANIFESTVAR','MANIFESTMEANS', 'CINT', 'TDPREDEFFECT', 'T0VAR','PARS','THRESHOLDS','ASYMPTOTES','RESPONSE','WIENER')){
   # Each matrix's cells by row, gathered and written a column at a time:
   # written a row at a time, a 20-latent model's took a quarter of a second.
   #
@@ -81,6 +81,19 @@ ctModelUnlist<-function(ctmodelobj,
       meanscale <- 2
     }
     if(col == 2) offset <- 1
+  }
+  # A choice and response time indicator's boundary separation (column 1) and
+  # nondecision time (column 2), positive, a raw zero at 1 and at 0.1 s: below
+  # nearly every response time, where the likelihood has a finite
+  # continuation (wiener_measurement.jl). Its relative start (column 3) is a
+  # probability, a raw zero at 0.5.
+  if(matrix %in% c('WIENER')) {
+    if(col == 1) transform <- 2
+    if(col == 2) {
+      transform <- 2
+      inneroffset <- log(0.1)
+    }
+    if(col == 3) transform <- 3
   }
 
   if(matrix %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR')) {
