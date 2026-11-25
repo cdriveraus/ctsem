@@ -177,7 +177,9 @@
 #'   refitted the same way. To compare the models with their random effects
 #'   integrated more exactly, start the search from a fit with
 #'   \code{intoverpop = 'quadrature'}, so that every refit is refined in the
-#'   same way.
+#'   same way. A change is not taken, and pruning drops it, when the
+#'   random-effects check shows that the Laplace approximation's error differs
+#'   between the current fit and the refit by enough to reverse the decision.
 #'
 #' @param fit A fit from \code{\link{ctFit}} with \code{backend = 'julia'}.
 #' @param covariates Optional subject level covariates the model may add, as
@@ -2324,6 +2326,37 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
     return(out)
   }
   n <- .ctFitNsubjects(current)
+  verdict <- .ctImproveVerdict(dll, dk, n, criterion, alpha)
+  # Laplace's error is signed unit by unit, by the shape of each unit's
+  # likelihood in its effects, so over thousands of units it can differ
+  # between two models by more than the change: on the hc-wellbeing
+  # reanalysis a second process whose noise cancelled the first's gained 264
+  # on Laplace and lost 39 on the check's integrals, and a one-process life
+  # satisfaction model lost 127 on Laplace and gained 45 on the integrals
+  # (review/LAPLACE-plateau-credit-2026-11-25.md in CT-SEM). Where both fits
+  # carry the check's integral and the change in Laplace's error, resolved past
+  # both checks' errors, gives the other verdict, neither value is evidence:
+  # the integrals are read at estimates Laplace placed. Undecided keeps the
+  # simpler model, in a search and in pruning alike.
+  e0 <- .ctLaplaceCheckedGap(current); e1 <- .ctLaplaceCheckedGap(refit)
+  if (!is.null(e0) && !is.null(e1)) {
+    dgap <- e1$gap - e0$gap
+    err <- 2 * sqrt(e0$se^2 + e1$se^2) + e0$bound + e1$bound
+    integrated <- .ctImproveVerdict(dll + dgap, dk, n, criterion, alpha)
+    if (abs(dgap) > err && !identical(integrated$accept, verdict$accept)) {
+      out <- bad(sprintf(paste("%.3g on Laplace and %.3g on the check's integrals:",
+        "Laplace's error differs by %.3g between the two and decides it, so no",
+        "evidence either way"), dll, dll + dgap, dgap))
+      out$dloglik <- dll; out$dpar <- dk
+      return(out)
+    }
+  }
+  verdict
+}
+
+# A comparison's verdict on a change of `dll` in log likelihood and `dk` in
+# parameters, by `criterion`.
+.ctImproveVerdict <- function(dll, dk, n, criterion, alpha) {
   if (criterion == 'LR' && dk > 0) {
     p <- stats::pchisq(2 * dll, dk, lower.tail = FALSE)
     return(list(accept = p < alpha, dloglik = dll, dpar = dk, value = p,
@@ -2333,6 +2366,21 @@ print.ctModelProposals <- function(x, digits = 3, ...) {
   delta <- -2 * dll + penalty * dk
   list(accept = delta < 0, dloglik = dll, dpar = dk, value = delta, score = -delta,
     note = sprintf('%s change %.3g', if (criterion == 'BIC') 'BIC' else 'AIC', delta))
+}
+
+# The random-effects check's measure of Laplace's error on a fit that reports
+# its integral (`.ctLaplaceCheckedLoglik()`): the integral less Laplace's
+# value, the draws' standard error and the expansion's bound. NULL otherwise.
+.ctLaplaceCheckedGap <- function(fit) {
+  e <- fit$estimate
+  if (!identical(e$loglik_method, "checked") || is.null(e$loglik_laplace)) return(NULL)
+  gap <- as.numeric(e$loglik) - as.numeric(e$loglik_laplace)
+  if (length(gap) != 1L || !is.finite(gap)) return(NULL)
+  num <- function(x) {
+    x <- suppressWarnings(as.numeric(x))
+    if (length(x) == 1L && is.finite(x)) x else 0
+  }
+  list(gap = gap, se = num(e$loglik_se), bound = num(e$loglik_bound))
 }
 
 #' Plot a model improvement search
