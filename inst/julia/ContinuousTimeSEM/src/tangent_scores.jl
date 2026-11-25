@@ -43,7 +43,7 @@ function _tan_row_scores!(out::Matrix{Float64}, objective::CTSEMObjective,
     na, dyn = aws0.affine_dim, collect(aws0.diffusion_state_indices)
     gmask, cat = _tan_cat_masks(sp, m)
     mod = TanModel(n, m, W; ct=sp.continuous_time, stat=sp.stationary, rows=rowsmode,
-        gmask=gmask, na=na, dyn=dyn, ntd=ntd, cat=cat)
+        drows=rowsmode && _tan_drift_by_row(sp), gmask=gmask, na=na, dyn=dyn, ntd=ntd, cat=cat)
     awsW = CTSEMAdjointWorkspace(DW, sp, npar, ntd)
     layers = shared ? nothing : map(1:nworkers) do _
         awsWk = CTSEMAdjointWorkspace(DW, sp, npar, ntd)

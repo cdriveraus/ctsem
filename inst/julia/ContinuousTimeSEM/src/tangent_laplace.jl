@@ -98,7 +98,7 @@ function _tan_laplace_build(objective::CTSEMObjective, values::AbstractVector, m
     nh = _hybrid_on(h) && mode != _HYBRID_OFF ? _hybrid_items(h) : 0
     gmask, cat = _tan_cat_masks(sp, m)
     mod = TanModel(n, m, W; ct=sp.continuous_time, stat=sp.stationary, rows=rows,
-        gmask=gmask, na=na, dyn=dyn, ntd=ntd, hyb=h, nh=nh,
+        drows=rows && _tan_drift_by_row(sp), gmask=gmask, na=na, dyn=dyn, ntd=ntd, hyb=h, nh=nh,
         wlog=mode == _HYBRID_FULL ? 1.0 : 0.0, fixed=mode == _HYBRID_FIXED && nh > 0,
         cat=cat)
     awsW = CTSEMAdjointWorkspace(DC, sp, nv, ntd)
@@ -1268,7 +1268,7 @@ function _tan_jet_build(objective::CTSEMObjective, values::AbstractVector, ::Typ
     # The deviations at their profile (the closing term's logdet weight 0),
     # integrated exactly (weight 1), or held at fixed values.
     mod = TanModel(n, m, W; ct=sp.continuous_time, stat=sp.stationary, rows=rows,
-        gmask=gmask, na=na, dyn=dyn, ntd=ntd, hyb=h, nh=nh,
+        drows=rows && _tan_drift_by_row(sp), gmask=gmask, na=na, dyn=dyn, ntd=ntd, hyb=h, nh=nh,
         wlog=mode == _HYBRID_FULL ? 1.0 : 0.0,
         fixed=mode == _HYBRID_FIXED && nh > 0, cat=cat)
     awsJ = CTSEMAdjointWorkspace(J, sp, nv, ntd)

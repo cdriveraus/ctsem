@@ -121,6 +121,26 @@ const _TAN_M_JTD = 0x0800
 const _TAN_M_XC = 0x1000
 const _TAN_M_ALL = 0xffff
 
+"""
+Whether the drift, its Jacobian or the diffusion can change from row to row:
+a group evaluated by row writes a JAx, DRIFT or DIFFUSION cell (a
+moment-matched prediction's cells are among them). Only then must the series
+kernels go by Horner's rule and each prediction take its own exponential
+(`TanModel.drows`); a model by row for other reasons -- a measurement that
+reads the state, a stationary start -- keeps the series tables, their
+patterns and the exponential off the intercept chain, which on the affect
+pilot with a stationary start were most of a value and gradient's cost (372 s
+against 113 s with them, dev1, 5 cores).
+"""
+function _tan_drift_by_row(sp)
+    mask = 0x0000
+    for flags in (sp.predict_transforms_indices, sp.td_transforms_indices,
+        sp.update_transforms_indices)
+        mask |= _tan_layer_mask(sp, findall(flags))
+    end
+    return (mask & (_TAN_M_JAX | _TAN_M_DRIFT | _TAN_M_QC)) != 0x0000
+end
+
 """The layer's matrices (`_TAN_M_*`) that the cells `indices` belong to."""
 function _tan_layer_mask(sp, indices)
     l = sp.parameter_axis
@@ -541,7 +561,7 @@ end
 
 """A model with `mod`'s shape and its hybrid's factor, for a subject's own layer."""
 _tan_model_like(mod::TanModel{W}) where {W} = TanModel{W}(mod.n, mod.m,
-    mod.ct, mod.stat, mod.rows, TanMat{W}(mod.n, mod.n), TanMat{W}(mod.n, mod.n),
+    mod.ct, mod.stat, mod.rows, mod.drows, TanMat{W}(mod.n, mod.n), TanMat{W}(mod.n, mod.n),
     TanMat{W}(mod.n, mod.n), TanVec{W}(mod.n), TanMat{W}(mod.n, mod.n),
     TanMat{W}(mod.m, mod.n), TanMat{W}(mod.m, mod.n), TanVec{W}(mod.m),
     TanMat{W}(mod.m, mod.m), TanVec{W}(mod.n), TanMat{W}(mod.n, mod.n), TanVec{W}(mod.n),
@@ -636,8 +656,8 @@ function _tan_hessian_columns!(H::Matrix{Float64}, objective::CTSEMObjective,
     nh = _hybrid_on(h) && hybrid_mode != _HYBRID_OFF ? _hybrid_items(h) : 0
     gmask, cat = _tan_cat_masks(sp, m)
     mod = TanModel(n, m, W; ct=sp.continuous_time, stat=sp.stationary, rows=rows,
-        gmask=gmask, na=na, dyn=dyn, ntd=ntd, hyb=h, nh=nh,
-        wlog=hybrid_mode == _HYBRID_FULL ? 1.0 : 0.0, cat=cat)
+        drows=rows && _tan_drift_by_row(sp), gmask=gmask, na=na, dyn=dyn, ntd=ntd, hyb=h,
+        nh=nh, wlog=hybrid_mode == _HYBRID_FULL ? 1.0 : 0.0, cat=cat)
     Lb = h.block && nh > 0 ? zeros(length(h.perm), length(h.perm)) : zeros(0, 0)
     if nh > 0 && h.block
         if !_hybrid_block_factor!(Lb, h, x)
