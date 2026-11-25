@@ -663,6 +663,60 @@ test_that("a stalled chain in a learning window finds its step size again", {
   expect_equal(lr$logp, -9)
   expect_equal(lr$div, 3)
   expect_equal(lr$n, 2L)
+
+  # The kept draws' line follows every chain too (`_ChainsReport`): chain 1
+  # alone reported, and `sampling done` printed when it ended while a second
+  # chain of the affect pilot sampled for 14 more hours. The line is the chain
+  # the run waits on, the others' counts beside it, and it closes once, when
+  # every chain has ended.
+  ctsem:::.ctJuliaEval(paste(
+    "function __chains_report()",
+    "  CT = ContinuousTimeSEM",
+    "  lines = String[]; kinds = String[]; seen = []",
+    "  r = CT._ChainsReport(true, 2, 10, 20; overwrite=false,",
+    "    sink=(t, k) -> (push!(lines, t); push!(kinds, k)),",
+    "    callback=(a...) -> push!(seen, a))",
+    "  r.reporter.every = 0.0; r.callback.every = 0.0",
+    "  h1 = CT._chain_handle(r, 1); h2 = CT._chain_handle(r, 2)",
+    "  CT._chain_begin!(h1, true); CT._chain_begin!(h2, true)",
+    "  for i in 1:10; CT._chain_report!(h1, true, i, -1.0; eps=0.1, depth=3.0); end",
+    "  CT._chain_begin!(h1, false)",
+    "  for i in 1:20; CT._chain_report!(h1, false, i, -1.0; depth=3.0, divergent=1); end",
+    "  CT._chain_end!(h1)",
+    "  CT._chain_report!(h2, true, 5, -7.0; eps=0.01, depth=9.0, divergent=2)",
+    "  mid = lines[end]; midcb = collect(seen[end])",
+    "  CT._chain_begin!(h2, false)",
+    "  CT._chain_report!(h2, false, 4, -6.0; depth=8.0)",
+    "  late = lines[end]; latecb = collect(seen[end])",
+    "  for i in 5:20; CT._chain_report!(h2, false, i, -6.0; depth=8.0); end",
+    "  CT._chain_end!(h2)",
+    "  before = count(==(\"done\"), kinds)",
+    "  CT._chains_done!(r, CT._chains_closing(2, 10, 20))",
+    "  return (mid=mid, midcb=midcb, late=late, latecb=latecb, done=lines[end],",
+    "    kind=kinds[end], ndone=count(==(\"done\"), kinds), before=before,",
+    "    last=collect(seen[end]))",
+    "end", sep = "\n"))
+  cr <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall("Main.__chains_report"))
+  # Chain 1 has ended and chain 2 is in its warm-up: the line is chain 2's.
+  expect_match(cr$mid, "warmup +5/10")
+  expect_match(cr$mid, "logp +-7.00")
+  expect_match(cr$mid, "depth +9.0")
+  expect_match(cr$mid, "chains 10+20 5", fixed = TRUE)
+  expect_equal(cr$midcb[[1]], "warmup")
+  expect_equal(cr$midcb[[2]], 5L)
+  expect_equal(cr$midcb[[5]], 2L)
+  # In its draws, divergences are both chains' (chain 1's one, chain 2's none).
+  expect_match(cr$late, "sampling +4/20")
+  expect_match(cr$late, "div 1 ")
+  expect_match(cr$late, "chains 20 4", fixed = TRUE)
+  expect_equal(cr$latecb[[1]], "sampling")
+  # Closed once, after both chains, with the run's size.
+  expect_equal(cr$before, 0L)
+  expect_equal(cr$ndone, 1L)
+  expect_identical(cr$kind, "done")
+  expect_match(cr$done, "sampling done in .* 2 chains of 10 warmup \\+ 20 draws")
+  expect_equal(cr$last[[1]], "sampling")
+  expect_equal(cr$last[[2]], 20L)
 })
 
 test_that("theta's triangular map is the same fitted on the pool, and says how far it is", {

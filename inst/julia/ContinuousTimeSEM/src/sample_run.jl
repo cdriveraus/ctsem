@@ -297,11 +297,10 @@ caller's forced final callback has already been made here.
 function _sample_draws!(logdensity!, ws::_NUTSWorkspace, rng::AbstractRNG,
     x::Vector{Float64}, g::Vector{Float64}, logp::Float64, eps::Float64,
     metric::CTSEMMetric, ndraws::Int, maxdepth::Int, maxdelta::Float64,
-    progress::CTSEMProgress, callback::CTSEMCallback;
+    progress::_ChainReport, callback::CTSEMCallback;
     retune::Union{Nothing,_ChainRetune}=nothing)
 
-    progress.label = "sampling"
-    progress.started = time()
+    _chain_begin!(progress, false)
     ndim = length(x)
     draws = Matrix{Float64}(undef, ndim, ndraws)
     accept = Vector{Float64}(undef, ndraws)
@@ -312,6 +311,8 @@ function _sample_draws!(logdensity!, ws::_NUTSWorkspace, rng::AbstractRNG,
     # Transitions in a row that moved nothing, and the retune under way.
     stalled = 0
     tuning = 0
+    depths = 0
+    ndiv = 0
     da = _DualAverage(eps, retune === nothing ? 0.8 : retune.target)
     for iteration in 1:ndraws
         # On a coreset, the transition's end is tested against the full density
@@ -328,6 +329,8 @@ function _sample_draws!(logdensity!, ws::_NUTSWorkspace, rng::AbstractRNG,
         bound[iteration] = step.bound
         depth[iteration] = step.depth
         energy[iteration] = step.energy
+        depths += step.depth
+        ndiv += step.divergent
         if retune !== nothing
             if tuning > 0
                 eps = _dual_update!(da, step.accept)
@@ -344,14 +347,9 @@ function _sample_draws!(logdensity!, ws::_NUTSWorkspace, rng::AbstractRNG,
                 end
             end
         end
-        if _due(progress)
-            _progress_line(progress, iteration, ndraws,
-                @sprintf("logp %11.2f", logp),
-                @sprintf("depth %4.1f", sum(view(depth, 1:iteration)) / iteration),
-                @sprintf("div %d", count(view(divergent, 1:iteration))))
-        end
-        _invoke_callback(callback, "sampling", iteration, ndraws, logp,
-            count(view(divergent, 1:iteration)))
+        _chain_report!(progress, false, iteration, logp; depth=depths / iteration,
+            divergent=ndiv)
+        _invoke_callback(callback, "sampling", iteration, ndraws, logp, ndiv)
     end
     # Forced: a rate-limited callback on a chain that finishes inside one
     # interval would otherwise never report the finished state at all.
@@ -371,7 +369,7 @@ function _run_chain(logdensity!, centre::Vector{Float64},
     adapt::Union{Nothing,Vector{Bool}}; settle_tol::Float64=0.0,
     init_eps::Float64=0.0,
     resume::Union{Nothing,_ChainResult}=nothing,
-    progress::CTSEMProgress=CTSEMProgress(false),
+    progress::_ChainReport=_ChainReport(),
     callback::CTSEMCallback=CTSEMCallback(nothing),
     retune::Union{Nothing,_ChainRetune}=nothing)
 
@@ -442,6 +440,7 @@ function _run_chain(logdensity!, centre::Vector{Float64},
 
     iteration = 0
     depths = 0
+    nwarmup > 0 && _chain_begin!(progress, true)
     while iteration < nwarmup
         iteration += 1
         _surrogate_begin!(logdensity!, x, g)
@@ -492,15 +491,11 @@ function _run_chain(logdensity!, centre::Vector{Float64},
             check_divergent = 0
             check_start = iteration
         end
-        if _due(progress)
-            _progress_line(progress, iteration, nwarmup,
-                @sprintf("logp %11.2f", logp), @sprintf("eps %8.2e", eps),
-                @sprintf("depth %4.1f", depths / iteration),
-                @sprintf("div %d", warmup_divergent),
-                # Shown only once it has moved, so the ordinary run reads as it
-                # always did.
-                raises > 0 ? @sprintf("accept %.2f", da.target) : "")
-        end
+        # The raised target is shown only once it has moved, so the ordinary
+        # run reads as it always did.
+        _chain_report!(progress, true, iteration, logp; eps=eps,
+            depth=depths / iteration, divergent=warmup_divergent,
+            accept=raises > 0 ? da.target : NaN)
         # Its own cadence; see `ctsem_optimize`. Unconditional -- the callback
         # rate-limits itself -- so a GUI watching a chain sees warmup progress
         # even when nothing is being printed.
@@ -603,7 +598,7 @@ already produced.
 function _continue_chain(logdensity!, ws::_NUTSWorkspace, rng::AbstractRNG,
     x::Vector{Float64}, g::Vector{Float64}, logp::Float64, eps::Float64,
     metric::CTSEMMetric, ndraws::Int, maxdepth::Int, maxdelta::Float64,
-    progress::CTSEMProgress=CTSEMProgress(false),
+    progress::_ChainReport=_ChainReport(),
     callback::CTSEMCallback=CTSEMCallback(nothing))
     sampled = _sample_draws!(logdensity!, ws, rng, x, g, logp, eps, metric,
         ndraws, maxdepth, maxdelta, progress, callback)
@@ -925,54 +920,54 @@ function _with_sample_roots(f, laplace::CTSEMLaplaceObjective, values::AbstractV
 end
 
 """
-    _run_chains(nchains, parallel, seed, label, closing, chain; kwargs...)
+    _run_chains(nchains, parallel, seed, nwarmup, ndraws, chain; kwargs...)
 
-Run `nchains` chains and collect their results: concurrently when `parallel`
-says the density allows it and there are threads for them, one after another
-otherwise.
+Run `nchains` chains of `nwarmup` warm-up and `ndraws` draws and collect their
+results: concurrently when `parallel` says the density allows it and there are
+threads for them, one after another otherwise.
 
 `chain(c, rng, reporter, watcher)` runs chain `c` and returns its
 `_ChainResult`. Everything around that is the same whether the chains are
 starting or continuing, and was written out twice: the results vector, the
-per-chain RNG, the restriction of reporting to chain 1, and the spawn-or-serial
-dispatch.
+per-chain RNG, the report and the spawn-or-serial dispatch.
 
-Only the first chain reports. Four threads writing lines interleave into
-something unreadable, and a lock to prevent that would serialise the work being
-reported on; one chain is representative when they are all doing the same thing.
-The same restriction applies to the callback for a sharper reason than
-readability: several `Threads.@spawn`ed chains calling back into R at once is a
-concurrency hazard, not just noise. One representative chain is what a GUI gets,
-exactly as one representative chain is what the console gets.
-
-`closing` is the text the progress line is closed with. Closing it matters:
-nothing did, once, and the last in-place update was left open with no newline
-on it, so whatever R printed next landed inside it -- "div 0Laplace fit:
-trajectories are conditional...".
+Every chain reports into one line, `reporter` its handle on it
+(`_ChainsReport`), which hands the caller's `progress_callback` the same
+fields, one chain at a time. The line is closed once every chain has ended.
+Closing it matters: nothing did, once, and the last in-place update was left
+open with no newline on it, so whatever R printed next landed inside it --
+"div 0Laplace fit: trajectories are conditional...".
 
 The RNG is constructed here rather than by the caller so that both routes seed
 the same way -- `Xoshiro(seed + c)`, per chain, from the same base -- which is
 the property a run has to keep to be reproducible from its seed.
 """
 function _run_chains(nchains::Int, parallel::Bool, seed::Integer,
-    label::String, closing::String, chain; progress::Bool=false,
+    nwarmup::Int, ndraws::Int, chain; progress::Bool=false,
     overwrite::Bool=true, progress_callback=nothing, progress_sink=nothing,
     chain_callback=nothing)
     results = Vector{_ChainResult}(undef, nchains)
+    # `chain_callback(c)`, where given, is every chain's own callback, and
+    # the caller's progress callback is not used: a caller that follows every
+    # chain itself (the map's learning report, over several runs).
+    report = _ChainsReport(progress, nchains, nwarmup, ndraws; overwrite=overwrite,
+        sink=progress_sink, callback=chain_callback === nothing ? progress_callback : nothing)
     runner = function (c)
-        reporter = CTSEMProgress(progress && c == 1; label=label,
-            overwrite=overwrite, sink=progress_sink)
-        # `chain_callback(c)`, where given, is every chain's own callback: a
-        # caller that serialises them itself (the map's learning report) and
-        # so can follow every chain, where chain 1 alone fell silent once it
-        # finished a window ahead of the others.
-        watcher = CTSEMCallback(chain_callback !== nothing ? chain_callback(c) :
-            (c == 1 ? progress_callback : nothing))
+        reporter = _chain_handle(report, c)
+        watcher = CTSEMCallback(chain_callback !== nothing ? chain_callback(c) : nothing)
         results[c] = chain(c, Random.Xoshiro(UInt64(seed) + UInt64(c)),
             reporter, watcher)
-        _progress_done(reporter, closing)
+        _chain_end!(reporter)
         return nothing
     end
+    return _chains_reporting(report, _chains_closing(nchains, nwarmup, ndraws)) do
+        _run_chains_on(runner, nchains, parallel)
+        return results
+    end
+end
+
+"""`runner(c)` for every chain, as `_run_chains` runs them."""
+function _run_chains_on(runner, nchains::Int, parallel::Bool)
     # `parallel = false` is a statement about the density, not a preference:
     # `ctsem_sample_marginal` passes it because every chain evaluates one shared
     # objective, whose workspaces are per chunk -- safe for one caller, a race
@@ -987,7 +982,7 @@ function _run_chains(nchains::Int, parallel::Bool, seed::Integer,
         for c in 1:nchains
             runner(c)
         end
-        return results
+        return nothing
     end
     # No objective here -- see the two-argument method. The store is sized by
     # `ctsem_sample`, the caller that passes `parallel = true`, before any
@@ -996,7 +991,7 @@ function _run_chains(nchains::Int, parallel::Bool, seed::Integer,
         runner(c)
         return true
     end
-    return results
+    return nothing
 end
 
 """Continue every chain from its own state.
@@ -1009,8 +1004,7 @@ function _continue_chains(nchains::Int, parallel::Bool, seed::Integer,
     ndraws::Int, maxdepth::Int, maxdelta::Float64, density_for,
     previous::Vector{_ChainResult}; progress::Bool=false,
     overwrite::Bool=true, progress_callback=nothing, progress_sink=nothing)
-    return _run_chains(nchains, parallel, seed, "sampling",
-        @sprintf("%d draws", ndraws),
+    return _run_chains(nchains, parallel, seed, 0, ndraws,
         (c, rng, reporter, watcher) -> _run_chain(density_for(c),
             previous[c].x, previous[c].metric, rng,
             0, ndraws, maxdepth, 0.8, maxdelta, 0.0, false, nothing;
@@ -1073,11 +1067,7 @@ function _sample_chains(nchains::Int, parallel::Bool, seed::Integer,
     progress::Bool=false, overwrite::Bool=true, progress_callback=nothing,
     progress_sink=nothing, starts=nothing,
     retune::Union{Nothing,_ChainRetune}=nothing, chain_callback=nothing)
-    # One reporter spans both phases -- `_run_chain` relabels it from "warmup"
-    # to "sampling" partway -- so it opens on "warmup" and the closing line
-    # names both rather than whichever phase it ended in.
-    return _run_chains(nchains, parallel, seed, "warmup",
-        @sprintf("%d warmup + %d draws", nwarmup, ndraws),
+    return _run_chains(nchains, parallel, seed, nwarmup, ndraws,
         # Given starts, chain `c` begins exactly at its own (cycling), rather
         # than at a draw around `centre`.
         (c, rng, reporter, watcher) -> _run_chain(density_for(c),
@@ -1183,7 +1173,8 @@ function _ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     # as the coordinates the sampler moves, as the map reports them.
     reported = _sample_report_effects(laplace, report, sampler, results, nchains,
         ndraws, npar, save_effects, seed, verbose,
-        (c, t) -> (results[c].draws[1:npar, t], view(results[c].draws, :, t)))
+        (c, t) -> (results[c].draws[1:npar, t], view(results[c].draws, :, t));
+        overwrite=progress_overwrite, sink=progress_sink)
     pooled = reported.pooled
     ndev = length(reported.effects.mean)
     # The reported joint dimension is the parameters and the natural
@@ -1218,26 +1209,36 @@ has one, is pointed at whichever copy runs it, since a later call may hand the
 chain to another worker. Before this the chains ran one after another in the
 session, so a filter objective with one subject -- a time series -- sampled on
 one core, and worker processes were the only way to run chains at once.
+Every chain reports into one line (`_ChainsReport`), as `_run_chains`' do.
 """
 function _marginal_chains_points(objective, densities, gradient_method::Symbol,
     mode::Symbol, centre::Vector{Float64}, metric::CTSEMMetric, nchains::Int,
     seed::Integer, nwarmup::Int, ndraws::Int, maxdepth::Int, target_accept::Float64,
     maxdelta::Float64, init_scale::Float64, adapt_metric::Bool, min_ess::Float64,
     mean_ess::Float64, max_draws::Int, rhat_target::Float64, npar::Int, verbose::Bool,
-    starts, init_eps::Float64, t0::Float64)
+    starts, init_eps::Float64, t0::Float64; overwrite::Bool=true,
+    progress_callback=nothing, progress_sink=nothing)
     held = Ref(Vector{_ChainResult}(undef, nchains))
     first = held[]
-    _each_point!(objective, nchains, mode) do c, obj, _
-        _marginal_chain_first!(first, c, obj, densities, gradient_method, centre,
-            metric, seed, nwarmup, ndraws, maxdepth, target_accept, maxdelta,
-            init_scale, adapt_metric, starts, init_eps)
+    report = _ChainsReport(verbose, nchains, nwarmup, ndraws; overwrite=overwrite,
+        sink=progress_sink, callback=progress_callback)
+    _chains_reporting(report, _chains_closing(nchains, nwarmup, ndraws)) do
+        _each_point!(objective, nchains, mode) do c, obj, _
+            _marginal_chain_first!(first, c, obj, densities, gradient_method, centre,
+                metric, seed, nwarmup, ndraws, maxdepth, target_accept, maxdelta,
+                init_scale, adapt_metric, starts, init_eps, _chain_handle(report, c))
+        end
     end
     extend! = function (wanted, attempt)
         previous = held[]
         more = Vector{_ChainResult}(undef, nchains)
-        _each_point!(objective, nchains, mode) do c, obj, _
-            _marginal_chain_more!(more, previous, c, obj, densities, gradient_method,
-                wanted, attempt, seed, maxdepth, maxdelta)
+        again = _ChainsReport(verbose, nchains, 0, wanted; overwrite=overwrite,
+            sink=progress_sink, callback=progress_callback)
+        _chains_reporting(again, _chains_closing(nchains, 0, wanted)) do
+            _each_point!(objective, nchains, mode) do c, obj, _
+                _marginal_chain_more!(more, previous, c, obj, densities, gradient_method,
+                    wanted, attempt, seed, maxdepth, maxdelta, _chain_handle(again, c))
+            end
         end
         held[] = _merge_chains(previous, more)
         return nothing
@@ -1256,25 +1257,29 @@ function _marginal_chain_density(obj, densities, gradient_method::Symbol, c::Int
 end
 
 """Chain `c`'s warm-up and first draws, into `out[c]`, on the stream
-`_run_chains` gives chain `c`."""
+`_run_chains` gives chain `c`, reporting through `reporter`."""
 function _marginal_chain_first!(out, c::Int, obj, densities, gradient_method::Symbol,
     centre, metric, seed, nwarmup, ndraws, maxdepth, target_accept, maxdelta,
-    init_scale, adapt_metric, starts, init_eps)
+    init_scale, adapt_metric, starts, init_eps, reporter::_ChainReport)
     ld = _marginal_chain_density(obj, densities, gradient_method, c)
     start = starts === nothing ? centre : starts[mod1(c, length(starts))]
     out[c] = _run_chain(ld, start, metric, Random.Xoshiro(UInt64(seed) + UInt64(c)),
         nwarmup, ndraws, maxdepth, target_accept, maxdelta,
-        starts === nothing ? init_scale : 0.0, adapt_metric, nothing; init_eps=init_eps)
+        starts === nothing ? init_scale : 0.0, adapt_metric, nothing; init_eps=init_eps,
+        progress=reporter)
+    _chain_end!(reporter)
     return nothing
 end
 
 """Chain `c` continued by `wanted` draws, into `more[c]`."""
 function _marginal_chain_more!(more, previous, c::Int, obj, densities,
-    gradient_method::Symbol, wanted, attempt, seed, maxdepth, maxdelta)
+    gradient_method::Symbol, wanted, attempt, seed, maxdepth, maxdelta,
+    reporter::_ChainReport)
     ld = _marginal_chain_density(obj, densities, gradient_method, c)
     more[c] = _run_chain(ld, previous[c].x, previous[c].metric,
         Random.Xoshiro(UInt64(seed + 1000 * attempt) + UInt64(c)), 0, wanted, maxdepth,
-        0.8, maxdelta, 0.0, false, nothing; resume=previous[c])
+        0.8, maxdelta, 0.0, false, nothing; resume=previous[c], progress=reporter)
+    _chain_end!(reporter)
     return nothing
 end
 
@@ -1454,7 +1459,8 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
             Float64(target_accept), Float64(maxdelta), Float64(init_scale),
             adapt_metric, Float64(min_ess), Float64(mean_ess),
             max(Int(max_draws), ndraws), Float64(rhat_target), npar, verbose,
-            chainstarts, Float64(stepsize), t0)
+            chainstarts, Float64(stepsize), t0; overwrite=progress_overwrite,
+            progress_callback=progress_callback, progress_sink=progress_sink)
     else
         _sample_to_target(density_for, centre, metric, nchains, false,
             seed, nwarmup, ndraws, Int(maxdepth), Float64(target_accept),

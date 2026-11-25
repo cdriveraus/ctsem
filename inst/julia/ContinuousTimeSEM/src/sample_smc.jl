@@ -748,15 +748,17 @@ function _smc_move(td!, geo, x, s, rng, step, metric, nmoves, maxdepth, maxdelta
 end
 
 """
-    _smc_final_chain(ld, geo, Xf, k, np, s, rng, step, metric, ndraws, maxdepth, maxdelta)
+    _smc_final_chain(ld, geo, Xf, k, np, s, rng, step, metric, ndraws, maxdepth, maxdelta,
+        reporter)
 
 A final chain of `ndraws` draws of `ld` in the latent coordinates of `geo` from
 particle `k` of the cloud `Xf`, or from the next particle where its density is
 not finite there (a particle cannot have moved to such a point): the particle
-it started from, and the chain. A function of its own, as `_smc_move` is.
+it started from, and the chain, reported through `reporter` (`_ChainReport`).
+A function of its own, as `_smc_move` is.
 """
 function _smc_final_chain(ld, geo, Xf, k, np, s, rng, step, metric, ndraws, maxdepth,
-    maxdelta)
+    maxdelta, reporter::_ChainReport)
     w = _jmap_theta_inverse(geo, Xf[:, k])
     logp = ld(s.g, w)
     if !isfinite(logp)
@@ -764,8 +766,20 @@ function _smc_final_chain(ld, geo, Xf, k, np, s, rng, step, metric, ndraws, maxd
         w = _jmap_theta_inverse(geo, Xf[:, k])
         logp = ld(s.g, w)
     end
-    return k, _continue_chain(ld, s.ws, rng, w, s.g, logp, step, metric, ndraws,
-        maxdepth, maxdelta)
+    out = _continue_chain(ld, s.ws, rng, w, s.g, logp, step, metric, ndraws,
+        maxdepth, maxdelta, reporter)
+    _chain_end!(reporter)
+    return k, out
+end
+
+"""A final chain continued by `wanted` draws from `previous`, reporting
+through `reporter`; a function of its own for the reason `_smc_move` gives."""
+function _smc_final_more(ld, previous::_ChainResult, rng, wanted, maxdepth, maxdelta,
+    reporter::_ChainReport)
+    out = _run_chain(ld, previous.x, previous.metric, rng, 0, wanted, maxdepth, 0.8,
+        maxdelta, 0.0, false, nothing; resume=previous, progress=reporter)
+    _chain_end!(reporter)
+    return out
 end
 
 """The chains' draws and states in theta, from the latent coordinates of
@@ -1121,18 +1135,25 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     # The final chains run in the last stage's coordinates; every reader of
     # their draws reads them in theta (`_smc_theta_chains`).
     final_geo = geo
+    # Each batch of chains, started or extended, reports into one line
+    # (`_ChainsReport`).
     start_chains! = function (ks)
         off = length(start)
         res = Vector{_ChainResult}(undef, length(ks))
         from = copy(ks)
-        _each_point!(objective, length(ks), mode; coreset=cs_final,
-            scratch=nuts_scratch) do i, obj, s
-            from[i], res[i] = _smc_final_chain(
-                _smc_through(_smc_logdensity(obj, cs_final, gradient_method), final_geo),
-                final_geo, Xf, ks[i], size(Xf, 2), s,
-                Random.Xoshiro(hash((UInt64(seed), 0, off + i))),
-                final_step, final_metric, nfirst, mdepth, mdelta)
-            return nothing
+        line = _ChainsReport(verbose, length(ks), 0, nfirst;
+            overwrite=progress_overwrite, sink=progress_sink, callback=progress_callback)
+        _chains_reporting(line, _chains_closing(length(ks), 0, nfirst)) do
+            _each_point!(objective, length(ks), mode; coreset=cs_final,
+                scratch=nuts_scratch) do i, obj, s
+                from[i], res[i] = _smc_final_chain(
+                    _smc_through(_smc_logdensity(obj, cs_final, gradient_method), final_geo),
+                    final_geo, Xf, ks[i], size(Xf, 2), s,
+                    Random.Xoshiro(hash((UInt64(seed), 0, off + i))),
+                    final_step, final_metric, nfirst, mdepth, mdelta,
+                    _chain_handle(line, i))
+                return nothing
+            end
         end
         append!(start, from)
         held[] = vcat(held[], res)
@@ -1167,15 +1188,17 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     extend! = function (wanted, attempt)
         previous = held[]
         more = Vector{_ChainResult}(undef, length(previous))
-        _each_point!(objective, length(previous), mode; coreset=cs_final,
-            scratch=nuts_scratch) do i, obj, s
-            more[i] = _run_chain(
-                _smc_through(_smc_logdensity(obj, cs_final, gradient_method), final_geo),
-                previous[i].x, previous[i].metric,
-                Random.Xoshiro(UInt64(seed + 1000 * attempt) + UInt64(i)),
-                0, wanted, mdepth, 0.8, mdelta, 0.0, false, nothing;
-                resume=previous[i])
-            return nothing
+        moreline = _ChainsReport(verbose, length(previous), 0, wanted;
+            overwrite=progress_overwrite, sink=progress_sink, callback=progress_callback)
+        _chains_reporting(moreline, _chains_closing(length(previous), 0, wanted)) do
+            _each_point!(objective, length(previous), mode; coreset=cs_final,
+                scratch=nuts_scratch) do i, obj, s
+                more[i] = _smc_final_more(
+                    _smc_through(_smc_logdensity(obj, cs_final, gradient_method), final_geo),
+                    previous[i], Random.Xoshiro(UInt64(seed + 1000 * attempt) + UInt64(i)),
+                    wanted, mdepth, mdelta, _chain_handle(moreline, i))
+                return nothing
+            end
         end
         held[] = _merge_chains(previous, more)
         return nothing
