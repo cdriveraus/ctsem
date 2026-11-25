@@ -2158,7 +2158,7 @@ end
     _JMapLearnReport(reporter, callback, offset, nwarmup, total, logp, retuned)
 
 The learning windows' progress, reported as one phase counted over the whole
-schedule (`total` iterations a chain). It is the callback chain 1 of each
+schedule (`total` iterations a chain). It is the callback every chain of each
 window calls (`_run_chains`, rate-limited there), and maps that window's own
 counts -- warm-up from one, then draws from one -- onto the schedule:
 `offset` is the iterations a chain before this window, `nwarmup` this
@@ -2219,7 +2219,8 @@ function (r::_JMapLearnReport)(c::Int, phase, iteration, total, logp, divergent)
         div = sum(r.divs)
         n = r.retuned[]
         lag = maximum(r.at) > minimum(r.at)
-        _due(r.reporter) && _progress_line(r.reporter, at, r.total,
+        # Printed once the chain shown has finished a transition.
+        !isnan(r.logp) && _due(r.reporter) && _progress_line(r.reporter, at, r.total,
             @sprintf("logp %11.2f", r.logp), @sprintf("div %d", div),
             lag ? "chains " * join(r.at .- r.offset, " ") : "",
             n > 0 ? @sprintf("retuned %d", n) : "")
@@ -2243,7 +2244,8 @@ end
 A window-end refit stage's progress, `(done, total)` at a time: its rows
 (`"scoring"`, `_jmap_refit`) or theta's triangular fit (`"mapping"`,
 `_jmap_learn_tri`), printed as its own line and handed to the caller's
-callback under that phase with chain 1's last log density, which is what the
+callback under that phase with the learning line's last log density (the
+furthest-behind chain's), which is what the
 line and a worker process report until the chains run again. After window 2
 on the reanalysis the two ran 13 hours with nothing printed.
 """

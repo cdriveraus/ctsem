@@ -2071,19 +2071,21 @@ end
 
 """
     _saem_chain_run!(ch, laplace, sampler, setup, niter, nwarm, progress,
-        callback, save_effects)
+        save_effects)
 
 `niter` iterations of one chain, the first `nwarm` of them adapting and
-discarded. At each of Stan's warmup windows' ends (`_adapt_windows`) theta's
+discarded, reported through `progress` (`_ChainReport`). At each of Stan's warmup windows' ends (`_adapt_windows`) theta's
 metric is re-estimated from the information averaged over the window and the
 step size's averaging restarts around it; the averaged step size takes over
 when warmup ends.
 """
 function _saem_chain_run!(ch::_SAEMChain, laplace::CTSEMLaplaceObjective,
     sampler::CTSEMSampler, setup, niter::Int, nwarm::Int,
-    progress::CTSEMProgress, callback::CTSEMCallback, save_effects::Bool)
+    progress::_ChainReport, save_effects::Bool)
     ndiv = 0
+    depths = 0
     windows = nwarm > 0 ? _adapt_windows(nwarm) : Int[]
+    _chain_begin!(progress, nwarm > 0)
     for k in 1:niter
         warm = k <= nwarm
         step = _saem_chain_iterate!(ch, laplace, setup, k, warm)
@@ -2099,16 +2101,15 @@ function _saem_chain_run!(ch::_SAEMChain, laplace::CTSEMLaplaceObjective,
             _saem_chain_record!(ch, sampler, step, save_effects)
             ndiv += step.divergent
         end
-        phase = warm ? "warmup" : "sampling"
-        done, total = warm ? (k, nwarm) : (k - nwarm, niter - nwarm)
-        # The rate is per phase, as `_sample_draws!` reports it.
-        (nwarm > 0 && k == nwarm + 1) && (progress.started = time())
-        if _due(progress)
-            progress.label = phase
-            _progress_line(progress, done, total, @sprintf("logp|u %11.2f", step.logp),
-                @sprintf("depth %d", step.depth), @sprintf("div %d", ndiv))
+        done = warm ? k : k - nwarm
+        # The rate and depth are per phase, as `_sample_draws!` reports them.
+        if nwarm > 0 && k == nwarm + 1
+            depths = 0
+            _chain_begin!(progress, false)
         end
-        _invoke_callback(callback, phase, done, total, step.logp, ndiv)
+        depths += step.depth
+        _chain_report!(progress, warm, done, step.logp; depth=depths / done,
+            divergent=warm ? ch.warmup_divergent : ndiv)
     end
     return ch
 end
@@ -2228,24 +2229,26 @@ function _ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVect
     verbose && println(_console(), "Sampling (SAEM kernel): ", nchains, " chain(s), ",
         sampler.npar, " population parameters by NUTS given ", sampler.ndim - sampler.npar,
         " effects, ", width, " worker(s) shared")
+    # Every chain reports into one line (`_ChainsReport`), its log density
+    # that of the parameters given the effects.
     run_all = function (niter, nwarm)
+        report = _ChainsReport(verbose, nchains, nwarm, niter - nwarm;
+            overwrite=progress_overwrite, sink=progress_sink, callback=progress_callback,
+            logp_label="logp|u")
         body = function (c)
-            reporter = CTSEMProgress(verbose && c == 1;
-                label=nwarm > 0 ? "warmup" : "sampling", overwrite=progress_overwrite,
-                sink=progress_sink)
-            watcher = CTSEMCallback(c == 1 ? progress_callback : nothing)
+            reporter = _chain_handle(report, c)
             _saem_chain_run!(chains[c], laplace, sampler, setup, niter, nwarm,
-                reporter, watcher, save_effects)
-            _progress_done(reporter, nwarm > 0 ?
-                @sprintf("%d warmup + %d draws", nwarm, niter - nwarm) :
-                @sprintf("%d draws", niter))
+                reporter, save_effects)
+            _chain_end!(reporter)
             return true
         end
-        if parallel
-            _laplace_parallel(body, laplace, collect(1:nchains))
-        else
-            for c in 1:nchains
-                body(c)
+        _chains_reporting(report, _chains_closing(nchains, nwarm, niter - nwarm)) do
+            if parallel
+                _laplace_parallel(body, laplace, collect(1:nchains))
+            else
+                for c in 1:nchains
+                    body(c)
+                end
             end
         end
         return nothing

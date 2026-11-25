@@ -1365,10 +1365,9 @@
   if (!is.null(coordinate)) arguments$coordinate <- coordinate
   # A live callback into R while the chains run, mirroring
   # `optimcontrol$callback` on `.ctJuliaOptimise()`: a front end that wants to
-  # draw sampling progress rather than read it afterwards. Only chain 1 of an
-  # in-process multi-chain run ever calls it -- see `sample_run.jl` -- so this
-  # is the same "one representative chain" contract the printed line already
-  # has, not a second one invented for the callback.
+  # draw sampling progress rather than read it afterwards. It is handed what
+  # the printed line shows, the chain the run waits on, one call at a time
+  # however many chains run (`_ChainsReport`, progress.jl).
   callback_failure <- NULL
   if (!is.null(callback)) {
     if (!is.function(callback)) {
