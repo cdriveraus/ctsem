@@ -828,6 +828,10 @@ test_that("draws' defaults reach the engine, and a flag names both corrections",
   expect_match(wide, "by a standard error or more here (popsd_mm_Y5: 2.3 by",
     fixed = TRUE)
   expect_no_match(plain, "or more", fixed = TRUE)
+  # Past a standard error, sampling the refined fit is suggested: the sampler
+  # starts at the fit's estimate, which may then be far from the mass.
+  expect_match(wide, "from the refined fit it may need much less warmup", fixed = TRUE)
+  expect_no_match(plain, "refined fit", fixed = TRUE)
   # The log likelihood's error where the check resolves it, with its sign;
   # nothing where it is within its noise.
   expect_no_match(plain, "nats", fixed = TRUE)
