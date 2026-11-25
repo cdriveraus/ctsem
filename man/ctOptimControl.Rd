@@ -270,7 +270,11 @@ is a misspelled name. Settings left unset take the backend's default.
  \code{loglik_method} \code{'checked'}. Models whose random effects enter
  linearly pass at once. If the optimiser stopped where the Laplace
  approximation for some subjects jumps, the fit warns instead and names
- them. \code{fit$laplace$correction} records the check. The interval check
+ them. \code{fit$laplace$correction} records the check. With
+ \code{optimize = FALSE}, sampling the joint posterior, the check is made
+ on the fit that places the chains, and where it finds a move of a
+ standard error or more that fit is refined by quadrature and the chains
+ start at the refined estimate. The interval check
  (with \code{uncertainty = 'hessian'}) tests whether the normal
  approximation from the Hessian matches the posterior, and says so in a
  message and in \code{summary()} where it does not. With
