@@ -51,13 +51,17 @@
 #' (the default) for continuous Gaussian variables, 1 for binary (coded 0/1), 2
 #' for ordinal (consecutive integers from 1), 3 for counts (non-negative
 #' integers, Poisson with a log link, so the latent process gives the log rate)
-#' and 4 for censored (Gaussian, observed between \code{censormin} and
-#' \code{censormax}). For a count the \code{MANIFESTVAR} diagonal stays free
+#' 4 for censored (Gaussian, observed between \code{censormin} and
+#' \code{censormax}) and 5 for choice and response time. For a count the \code{MANIFESTVAR} diagonal stays free
 #' and is a log-scale dispersion, giving a Poisson-lognormal observation with
 #' variance \eqn{\mu + \mu^2(e^{\sigma^2}-1)}. Fix it to zero for a plain
 #' Poisson. A censored value at a limit contributes the probability of being
-#' at or beyond that limit. Types other than 0 need the julia backend, except
-#' binary, which stan also fits.
+#' at or beyond that limit. A choice and response time variable holds the
+#' response time in seconds, negative for a response at the lower boundary,
+#' and follows the drift diffusion model: its linear predictor is the drift,
+#' its \code{MANIFESTVAR} diagonal the trial to trial standard deviation of the
+#' drift, and \code{WIENER} sets the rest. Types other than 0 need the julia
+#' backend, except binary, which stan also fits.
 #' @param censormin,censormax n.manifest length numeric vectors giving the lower
 #' and upper censoring limits of each \code{manifesttype = 4} variable, ignored
 #' for other types. The defaults are \code{-Inf} and \code{Inf}, so a variable
@@ -141,6 +145,16 @@
 #' \code{NA} keeps the default, and a length 2 vector fills every censored
 #' row, so \code{c(0.5, 'power')} suits integer data with one estimated
 #' transform. Julia backend only.
+#' @param WIENER Matrix with one row per manifest variable and three columns,
+#' the boundary separation, nondecision time (seconds) and relative start
+#' point (as a proportion of the boundary separation, from the lower boundary)
+#' of choice and response time indicators (manifesttype 5). Rows for other
+#' indicators are not used. The default estimates the boundary and nondecision
+#' time and fixes the start at 0.5. Cells take parameter names, values, random
+#' effects and time dependent predictors as other matrices do, so
+#' \code{'a * exp(b_speed * speed)'} lets the boundary change with a speed
+#' instruction. \code{NA} keeps a default, and a length 3 vector fills every
+#' choice and response time row. Julia backend only.
 #'
 #' @param DRIFT n.latent*n.latent matrix of drift coefficients: auto effects on
 #' the diagonal and cross effects off it. The cell in row i and column j is the
@@ -353,7 +367,7 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
   censormin=NULL, censormax=NULL,
   latentNames='auto', id='id',time='time', silent=FALSE,
   T0VAR="auto", T0MEANS="auto", MANIFESTMEANS="auto", MANIFESTVAR="diag",
-  ASYMPTOTES=NA, RESPONSE=NA,
+  ASYMPTOTES=NA, RESPONSE=NA, WIENER=NA,
   DRIFT="auto", CINT=0, DIFFUSION="auto",
   n.TDpred='auto', TDpredNames='auto', TDPREDEFFECT="auto", TDPREDMEANS="auto", TDPREDVAR="auto",
   n.TIpred='auto', TIpredNames='auto', tipredDefault=TRUE,
@@ -671,7 +685,7 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
   # the advice was true is ordinal, and `.ctThresholdMatrix()` now settles that
   # by construction rather than by asking the user to.
 
-  if(any(!manifesttype %in% 0:4)) stop('manifesttype must be 0 (continuous), 1 (binary), 2 (ordinal), 3 (count) or 4 (censored)')
+  if(any(!manifesttype %in% 0:5)) stop('manifesttype must be 0 (continuous), 1 (binary), 2 (ordinal), 3 (count), 4 (censored) or 5 (choice and response time)')
   censorlimits <- .ctCheckCensorLimits(censormin, censormax, manifesttype,
     manifestNames)
   censormin <- censorlimits$min
@@ -687,6 +701,7 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
   ASYMPTOTES <- .ctCheckAsymptoteMatrix(ASYMPTOTES, manifesttype,
     manifestNames)
   RESPONSE <- .ctCheckResponseMatrix(RESPONSE, manifesttype, manifestNames)
+  WIENER <- .ctCheckWienerMatrix(WIENER, manifesttype, manifestNames)
   
   
   
@@ -700,7 +715,8 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
      `id`=id, `time`=time, `manifesttype`=manifesttype,
      `censormin`=censormin, `censormax`=censormax,
      `ncategories`=ncategories,
-     `THRESHOLDS`=THRESHOLDS, `ASYMPTOTES`=ASYMPTOTES, `RESPONSE`=RESPONSE)
+     `THRESHOLDS`=THRESHOLDS, `ASYMPTOTES`=ASYMPTOTES, `RESPONSE`=RESPONSE,
+     `WIENER`=WIENER)
   if(length(TIsmooths)) completemodel$TIsmooths <- TIsmooths
   
   

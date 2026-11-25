@@ -941,6 +941,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     dimnames(out$ASYMPTOTES) <- list(binaryNames, c('lower', 'upper'))
   if (!is.null(out$RESPONSE) && length(mn) == nrow(out$RESPONSE))
     dimnames(out$RESPONSE) <- list(mn, c('halfwidth', 'power'))
+  if (!is.null(out$WIENER) && length(mn) == nrow(out$WIENER))
+    dimnames(out$WIENER) <- list(mn, .ctWienerColumns)
 
   out$MANIFESTVAR <- NULL
   out

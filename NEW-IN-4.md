@@ -44,8 +44,9 @@ while the engine compiles.
 
 ## Measurement models
 
-Observed variables can be continuous, binary, ordinal, counts or censored, in
-any mix, set for each variable with `manifesttype`.
+Observed variables can be continuous, binary, ordinal, counts, censored or a
+choice with its response time, in any mix, set for each variable with
+`manifesttype`.
 
 | `manifesttype` | type | also needed |
 |---|---|---|
@@ -54,12 +55,16 @@ any mix, set for each variable with `manifesttype`.
 | 2 | ordinal | `ncategories` |
 | 3 | count | |
 | 4 | censored | `censormin`, `censormax` |
+| 5 | choice and response time (drift diffusion model) | optional `WIENER` for boundary, nondecision time and bias |
 
 Nonlinear measurement and dynamics are filtered more accurately than in version
 3. See the vignettes on
 [measurement models](https://cdriveraus.github.io/ctsem/articles/measurement-models.html),
 [item response models](https://cdriveraus.github.io/ctsem/articles/irt-items.html)
 and [ordinal or continuous data](https://cdriveraus.github.io/ctsem/articles/ordinal-or-continuous.html).
+
+`ctModelDDM()` builds a drift diffusion model of choices and response times
+with the drift as a latent process, constant or changing over the session.
 
 ## Covariates and weights
 

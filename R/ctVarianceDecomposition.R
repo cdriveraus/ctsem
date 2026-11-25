@@ -739,7 +739,7 @@
 # needs the measurement model in R to turn each drawn state into an expected
 # observation.
 .ctVarDecompMeasurementMatrices <- c('LAMBDA', 'MANIFESTMEANS', 'MANIFESTVAR',
-  'MANIFESTcov', 'Jy', 'THRESHOLDS', 'ASYMPTOTES', 'RESPONSE')
+  'MANIFESTcov', 'Jy', 'THRESHOLDS', 'ASYMPTOTES', 'RESPONSE', 'WIENER')
 
 .ctVarDecompStateDependent <- function(fit, measurementonly = FALSE) {
   cells <- .ctFitConditionalCells(fit)

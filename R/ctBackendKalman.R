@@ -601,6 +601,11 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   Y <- t(if (is.null(reported)) spec$manifest_data else reported)
   Y[!is.finite(Y)] <- NA
   colnames(Y) <- model$manifestNames
+  # A choice and response time indicator is predicted as its choice, the
+  # probability of the upper boundary, so its observed value is reported as
+  # the choice too.
+  wiener <- which(model$manifesttype %in% 5L)
+  if (length(wiener)) Y[, wiener] <- as.numeric(Y[, wiener] > 0)
 
   out <- .ctKalmanArrayAssemble(
     list(etaa = etaa, etacova = etacova, ya = ya, ycova = ycova, llrow = llrow),

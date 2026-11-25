@@ -1475,8 +1475,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # integrates the observation rather than linearising it, which is why it is
   # worth having here at all. See
   # inst/julia/ContinuousTimeSEM/src/binary_measurement.jl.
-  if (any(!model$manifesttype %in% 0:4)) {
-    failures <- c(failures, "manifest types beyond censored (manifesttype > 4)")
+  if (any(!model$manifesttype %in% 0:5)) {
+    failures <- c(failures, "manifest types beyond choice and response time (manifesttype > 5)")
   }
   # `covmattransform` reaches the engine at every construction site, including
   # the population covariance and the laplace route, and 'rawcorr', 'cholesky'
@@ -2054,7 +2054,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 
   dynamic <- !is.na(p$param) & grepl("[", p$param, fixed = TRUE)
   predict_matrices <- c("PARS", "DRIFT", "CINT", "DIFFUSION", "JAx")
-  update_matrices <- c("LAMBDA", "MANIFESTMEANS", "MANIFESTVAR", "Jy", "RESPONSE")
+  update_matrices <- c("LAMBDA", "MANIFESTMEANS", "MANIFESTVAR", "Jy", "RESPONSE",
+    "WIENER")
   td_matrices <- c("TDPREDEFFECT", "Jtd")
   # A cell written as an expression is evaluated per row only where it reads a
   # latent state or a time dependent predictor, directly or through the cells
@@ -3059,7 +3060,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 
   nm <- length(model$manifestNames)
   binary <- which(model$manifesttype %in% 1L)
-  rowlocal <- c("LAMBDA", "MANIFESTMEANS", "Jy", "THRESHOLDS", "RESPONSE")
+  rowlocal <- c("LAMBDA", "MANIFESTMEANS", "Jy", "THRESHOLDS", "RESPONSE", "WIENER")
   # The states a dynamics cell moves, NULL for a cell that is not one.
   moves <- function(at) {
     if (at$matrix %in% c("DRIFT", "CINT", "JAx", "TDPREDEFFECT", "Jtd", "T0MEANS")) {

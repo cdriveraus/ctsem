@@ -314,7 +314,7 @@ axis used to view the flattened parameter vector as named model matrices.
 
 const _CTSEM_MATRIX_SLOTS = (:PARS, :T0MEANS, :LAMBDA, :DRIFT, :DIFFUSION,
     :MANIFESTVAR, :MANIFESTMEANS, :CINT, :T0VAR, :TDPREDEFFECT, :JAx, :Jy, :Jtd,
-    :THRESHOLDS, :ASYMPTOTES, :RESPONSE, :RAWPOPVAR)
+    :THRESHOLDS, :ASYMPTOTES, :RESPONSE, :RAWPOPVAR, :WIENER)
 
 @eval @inline function _matrix_slot(s::Symbol)
     $([:(s === $(QuoteNode(n)) && return $i) for (i, n) in enumerate(_CTSEM_MATRIX_SLOTS)]...)

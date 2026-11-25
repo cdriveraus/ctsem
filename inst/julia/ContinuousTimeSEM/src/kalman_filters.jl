@@ -598,6 +598,17 @@ function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ, μ,
         half, power = _censor_response(thresholds, T)
         draw = ηbar + sqrt(s2 + sd * sd) * T(gen.base[row, r])
         y = T(_censored_record(draw, lower, upper, half, power))
+    elseif kind == CTSEM_OBS_WIENER
+        # The drift, its variability included, then a first passage at it
+        # (`_wiener_draw`), whose boundary and time take two uniforms from
+        # `gen.rng`. The value is the signed response time.
+        sv, a, tau, w = _wiener_extras(thresholds)
+        v = ηbar + sqrt(s2 + sv * sv) * T(gen.base[row, r])
+        u1 = rand(gen.rng)
+        u2 = rand(gen.rng)
+        up, t = _wiener_draw(Float64(_primal(v)), Float64(_primal(a)),
+            Float64(_primal(w)), u1, u2)
+        y = T((t + _primal(tau)) * (up ? 1 : -1))
     elseif kind == CTSEM_OBS_COUNT
         # A count's marginal `∫ Poisson(y | e^η) φ(η; ηbar, s²) dη` has no closed
         # form, so it is drawn in the two stages that define it -- the linear

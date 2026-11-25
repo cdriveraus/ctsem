@@ -121,6 +121,16 @@ mode.
         end
         return nothing
     end
+    # A Wiener row's boundary, nondecision time and start are WIENER's three
+    # cells; its drift variability's cotangent rides `b` (`_reverse_binary!`).
+    if kind == CTSEM_OBS_WIENER
+        @inbounds begin
+            θ̄ca.WIENER[row, 1] += cot(2)
+            θ̄ca.WIENER[row, 2] += cot(3)
+            θ̄ca.WIENER[row, 3] += cot(4)
+        end
+        return nothing
+    end
     if kind == CTSEM_OBS_BINARY
         @inbounds begin
             θ̄ca.ASYMPTOTES[asymrow, 1] += cot(1)
@@ -368,7 +378,8 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         # `bbar` times `d b/d σ = 2σ` and nothing else moves: `b`'s own flow to
         # LAMBDA and to P below is unaltered, because the term `b` gained
         # depends on neither.
-        if record.kinds[j] == CTSEM_OBS_COUNT && !isempty(τ)
+        if (record.kinds[j] == CTSEM_OBS_COUNT ||
+                record.kinds[j] == CTSEM_OBS_WIENER) && !isempty(τ)
             @inbounds θ̄ca.MANIFESTVAR[row, row] += bbar * T(2) * τ[1]
         end
 

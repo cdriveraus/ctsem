@@ -165,7 +165,8 @@ happens to catch it.
     i <= length(types) || return false
     kind = types[i]
     return kind == CTSEM_OBS_BINARY || kind == CTSEM_OBS_ORDINAL ||
-        kind == CTSEM_OBS_COUNT || kind == CTSEM_OBS_CENSORED
+        kind == CTSEM_OBS_COUNT || kind == CTSEM_OBS_CENSORED ||
+        kind == CTSEM_OBS_WIENER
 end
 
 """
@@ -177,6 +178,9 @@ admits.
 """
 @inline function _response_moments(ηbar::T, s2::T, kind::Int, thresholds) where {T}
     s2 = max(s2, zero(T))
+    # A Wiener item is reported as its choice: the probability of the upper
+    # boundary.
+    kind == CTSEM_OBS_WIENER && return _wiener_choice_moments(ηbar, s2, thresholds)
     if kind == CTSEM_OBS_COUNT
         # The dispersion is part of the log rate's spread, so it belongs here
         # exactly as it does in the filter's update: what is reported has to be
