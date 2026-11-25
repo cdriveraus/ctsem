@@ -890,7 +890,7 @@
 # names them and why), the rest filled by symmetry. Those columns alone are
 # differenced here from the fit's gradient, as the finite-difference Hessian
 # would difference every column, and the exact entries are kept: one failed
-# column cost the whole matrix and twelve hours of differencing all 600
+# column cost the whole matrix and four hours of differencing all 600
 # parameters on the SWB timescales fits. NULL where every column failed, or a
 # point here could not be evaluated, for the full finite-difference Hessian.
 .ctBackendHessianComplete <- function(fit, est, hessian, step = 1e-3) {

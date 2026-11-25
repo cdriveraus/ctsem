@@ -12326,8 +12326,9 @@ some unit cannot be taken for at all, because it failed at the centre too, is
 symmetry (`_laplace_hessian_symmetric_fill!`), leaving `NaN` only among such
 columns. What was done, and why, is said once (`_laplace_hessian_report`).
 Until 2026-11-25 one failed point made the whole column `NaN` and blamed the
-inner solve, and R then differenced every parameter: twelve hours after a
-four-hour Hessian on a 600-parameter fit of 23,000 people, for one column.
+inner solve, and R then differenced every parameter: four more hours, about
+1,200 gradients, after a four-hour Hessian on a 600-parameter fit of 23,000
+people, for one column.
 
 Before writing that `NaN`, the inner budget is raised and the point evaluated
 again -- see `_laplace_hessian_point`. A whole Hessian of `NaN` columns is not
