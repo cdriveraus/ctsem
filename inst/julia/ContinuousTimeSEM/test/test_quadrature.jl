@@ -439,7 +439,10 @@ end
     end
     # A mildly convex unit inside a band placed around it: flagged, its
     # smallest eigenvalue placed by inverse iteration, and the blend is what it
-    # says it is.
+    # says it is. The unit's two eigenvalues (0.96 and 1.17) are within the
+    # pair hand-off's gap, which would blend the term towards the floored
+    # Laplace term, so the hand-off is held off here (no gap is below zero);
+    # test_laplace.jl tests the hand-off.
     laplace = ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE, [1, 2], [5, 6],
         [7], [1.0, 1.0])
     values = [0.1, -2.0, -0.2, 0.05, -0.25, 2.0, 0.0]
@@ -449,7 +452,7 @@ end
         U, values, Ls, laplace.modes[U]), laplace.units.blocks[U], 2))) for U in 1:5]
     U = argmin(lams)
     g = C._laplace_soft_quadrature_unit_reference(laplace, values, U; lo=lams[U] - 0.1,
-        hi=lams[U] + 0.1, nodes=3, newton_steps=1)
+        hi=lams[U] + 0.1, pair_lo=-1.0, pair_hi=-0.5, nodes=3, newton_steps=1)
     @test g.flagged
     @test isapprox(g.lambda_min, lams[U]; rtol=1e-10)
     @test 0 < g.weight < 1
