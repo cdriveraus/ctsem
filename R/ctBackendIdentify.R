@@ -978,7 +978,12 @@
       paste(advice, collapse = " "),
       if (!length(partition$partial) && !length(partition$structural))
         paste0("Parameters involved: ", .ctNameList(identify$parameters), ".") else "",
-      nowidth, " See fit$identifiability.", call. = FALSE)
+      nowidth,
+      # The lists above stop at four names (`.ctNameList()`); the call that
+      # gives the rest is said wherever there are more.
+      if (length(identify$parameters) > 4L) paste0(
+        " fit$identifiability$parameters lists all ", length(identify$parameters),
+        ".") else " See fit$identifiability.", call. = FALSE)
     # Carried by the warning above rather than repeated under it: the two are
     # about one finding and a reader who has to be told twice stops reading.
     nowidth <- ""
