@@ -378,3 +378,58 @@ test_that("ctModelLatex shows every level of a nested model", {
   expect_false(grepl("raw\\_0", tex, fixed = TRUE))
   expect_match(tex, "A level's random effects are shared")
 })
+
+# A T0VAR of fixed numbers is shown as the covariance the model's covmattransform
+# makes of them. It was shown through the version 3 partial correlation
+# construction under every one of them, which differs from the model's under
+# 'z' (0.40 for a covariance of 0.37 between two of three variables). ctCov()
+# writes the cells that give a covariance under each construction, so the
+# covariance is what must come back.
+test_that("the T0 covariance shown is the one the model's covmattransform gives", {
+  C <- matrix(c(1, 0.371, 0, 0.371, 1.5, 0.613, 0, 0.613, 2), 3, 3)
+  for (tf in c('z', 'cholesky', 'rawcorr')) {
+    shown <- ctsem:::ctModelLatexT0DisplayCov(ctCov(C, tf), digits = 6,
+      covmattransform = tf)
+    expect_equal(shown, C, ignore_attr = TRUE, tolerance = 1e-5, info = tf)
+  }
+
+  # Through the equation: the covariance appears in the subject distribution
+  # of a model with a random effect and the initial state not varying.
+  m <- suppressMessages(ctModel(type = 'ct', n.latent = 3, n.manifest = 3,
+    LAMBDA = diag(3), latentNames = c('a', 'b', 'c'),
+    manifestNames = c('A', 'B', 'C'), T0VAR = ctCov(C),
+    T0MEANS = matrix(c('m1', 'm2', 'm3'), 3, 1),
+    CINT = matrix(c('k1', 'k2', 'k3'), 3, 1)))
+  m$pars$indvarying <- FALSE
+  m$pars$indvarying[m$pars$matrix %in% 'CINT'] <- TRUE
+  tex <- paste(as.character(suppressMessages(ctModelLatex(m, equationonly = TRUE,
+    compile = FALSE, open = FALSE, tex = FALSE))), collapse = '\n')
+  expect_match(tex, '1 & 0.371 & 0', fixed = TRUE)
+  expect_match(tex, '0.371 & 1.5 & 0.613', fixed = TRUE)
+})
+
+# Where some cells are parameters, a covariance is shown as 0 only where the
+# construction makes it zero whatever the parameters are. A fixed 0 below the
+# diagonal is a zero covariance under 'z', and under 'cholesky' where it is in
+# the first column; under 'rawcorr' it is not, since the other cells connect
+# the two variables.
+test_that("a T0 covariance is shown as zero only where the construction makes it zero", {
+  t0 <- matrix(c('s1', '0', '0',
+                 'c21', 's2', '0',
+                 '0', 'c32', 's3'), 3, 3, byrow = TRUE)
+  zeroat <- function(tf) {
+    shown <- ctsem:::ctModelLatexT0DisplayCov(t0, covmattransform = tf)
+    which(shown == '0', arr.ind = TRUE)
+  }
+  expect_equal(unname(zeroat('z')), unname(rbind(c(3, 1), c(1, 3))))
+  expect_equal(unname(zeroat('cholesky')), unname(rbind(c(3, 1), c(1, 3))))
+  expect_equal(nrow(zeroat('rawcorr')), 0L)
+
+  # A standard deviation fixed at 0 leaves no covariance with the variable.
+  t0[1, 1] <- '0'
+  t0[2, 1] <- 'c21'
+  t0[3, 1] <- 'c31'
+  shown <- ctsem:::ctModelLatexT0DisplayCov(t0, covmattransform = 'z')
+  expect_true(all(shown[1, ] == '0') && all(shown[, 1] == '0'))
+  expect_false(any(shown[-1, -1] == '0'))
+})
