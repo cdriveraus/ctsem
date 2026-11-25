@@ -1271,6 +1271,20 @@ test_that("the hessian raises the inner budget rather than returning NaN", {
   # escalation is undone whether or not the column succeeded.
   expect_equal(getbudget(), 2L)
   setbudget(200L)
+
+  # What the engine leaves NaN -- the entries among columns whose units failed
+  # at the estimate itself -- is differenced here for those columns alone, and
+  # the exact entries are kept; with every column NaN there is nothing to keep,
+  # and the caller takes the full finite-difference Hessian.
+  expect_null(ctsem:::.ctBackendHessianComplete(fit, raw, bare))
+  holes <- full
+  holes[c(2, 5), c(2, 5)] <- NaN
+  expect_warning(completed <- ctsem:::.ctBackendHessianComplete(fit, raw, holes),
+    "entries among 2 parameters")
+  expect_true(all(is.finite(completed)))
+  expect_identical(completed[-c(2, 5), ], full[-c(2, 5), ])
+  expect_equal(completed[c(2, 5), c(2, 5)], full[c(2, 5), c(2, 5)],
+    tolerance = 1e-3)
 })
 
 test_that("gradient = 'forward' still gives a Laplace fit's certification its curvature", {

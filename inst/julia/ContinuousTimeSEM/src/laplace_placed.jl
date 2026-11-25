@@ -1646,7 +1646,7 @@ function ctsem_subject_gradients(P::CTSEMLaplacePlaced, values::AbstractVector;
 end
 
 """
-    ctsem_laplace_placed_hessian(P, values; step=1e-4)
+    ctsem_laplace_placed_hessian(P, values; step=1e-4, progress=nothing)
 
 The placed objective's Hessian at `values`: the Laplace part's and the prior's
 (`ctsem_laplace_hessian` on `P.cont.rest`, localised to the units that read
@@ -1656,9 +1656,12 @@ gradients, each column over the terms that read it -- a nonzero gradient at
 be exactly zero at a point of symmetry (`_laplace_hessian_readers`) -- and
 columns whose readers do not overlap moved together
 (`_ctsem_local_colours`). Every unit's Newton starts from its mode at `values`.
+`progress` is the Laplace part's, called as `ctsem_laplace_hessian` calls it:
+that part is the dear one, two gradients a column over the units outside the
+rules, and without it a refined fit's Hessian printed nothing for hours.
 """
 function ctsem_laplace_placed_hessian(P::CTSEMLaplacePlaced, values::AbstractVector;
-    step::Real=1e-4)
+    step::Real=1e-4, progress=nothing)
     started = time_ns()
     o = P.cont
     laplace = o.laplace
@@ -1666,7 +1669,7 @@ function ctsem_laplace_placed_hessian(P::CTSEMLaplacePlaced, values::AbstractVec
     x = collect(Float64, values)
     n = length(x)
     ctsem_laplace_placed_evaluate(P, x; gradient=false)
-    H = Matrix{Float64}(ctsem_laplace_hessian(o.rest, x; step=step))
+    H = Matrix{Float64}(ctsem_laplace_hessian(o.rest, x; step=step, progress=progress))
     theta = _laplace_extend(laplace, x)
     npar = length(theta)
     positions = [_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
@@ -2390,7 +2393,7 @@ _ctsem_lbfgs_held(P::CTSEMLaplacePlaced) =
 _ctsem_lbfgs_hold!(P::CTSEMLaplacePlaced, memory::CTSEMLBFGSMemory) =
     (P.lbfgs = memory; nothing)
 ctsem_hessian(P::CTSEMLaplacePlaced, values::AbstractVector; chunk::Integer=0,
-    progress=nothing) = ctsem_laplace_placed_hessian(P, values)
+    progress=nothing) = ctsem_laplace_placed_hessian(P, values; progress=progress)
 _ctsem_params(P::CTSEMLaplacePlaced) = _ctsem_params(P.cont.laplace)
 _ctsem_saturated_for(P::CTSEMLaplacePlaced, minimizer) =
     _laplace_saturated_parameters(P.cont.laplace, minimizer)

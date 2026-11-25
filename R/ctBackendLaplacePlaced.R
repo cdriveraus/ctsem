@@ -153,8 +153,17 @@
   if (is.null(hc)) {
     if (!is.null(sink)) sink("Refined fit, rules placed: hessian", "update")
     hessian_started <- proc.time()[["elapsed"]]
+    # Through the engine's progress line, as a fit's own Hessian reports:
+    # this one is two gradients a parameter and ran for hours on a
+    # 600-parameter fit of 23,000 people with nothing printed.
+    hessian_sink <- if (is.null(sink)) NULL else function(text, kind = "update")
+      sink(text, if (identical(kind, "done")) "update" else kind)
     hc <- try(matrix(as.numeric(.ctBackendJuliaValue(
-      module$ctsem_laplace_placed_hessian(placed, num(x)))), npar, npar), silent = TRUE)
+      module$ctsem_hessian_progress(placed, num(x),
+        progress = !is.null(hessian_sink), progress_sink = hessian_sink,
+        progress_overwrite = .ctProgressOverwrite(verbose),
+        progress_label = "Refined fit, rules placed: hessian"))), npar, npar),
+      silent = TRUE)
     if (inherits(hc, "try-error")) hc <- NULL
     stages["hessian"] <- since(hessian_started)
   }

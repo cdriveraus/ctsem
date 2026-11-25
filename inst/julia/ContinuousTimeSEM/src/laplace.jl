@@ -9064,12 +9064,14 @@ function _laplace_store_unit_primal!(laplace::CTSEMLaplaceObjective, U::Integer,
         end
     end
     top === nothing || (combo[U] = top)
+    # Written either way, so a caller can name the unit whose term failed
+    # (`_laplace_point_failure`) rather than read the 0 it started at.
+    unit_loglik[U] = term
     if !isfinite(term)
         chunk_ok[_laplace_slot()] = false
         chunk_bad[_laplace_slot()] = term
         return false
     end
-    unit_loglik[U] = term
     return true
 end
 
@@ -12312,11 +12314,20 @@ more would be a fourth derivative of the process model; that is left until
 there is evidence the difference matters, and this route is the one whose
 error is at least bounded and reportable.
 
-A column whose two evaluations did not both solve their inner modes is `NaN`,
-for the reason `ctsem_laplace_optimize`'s `fg!` gives for rejecting such a
-point: a unit that has not reached its mode gives whatever its iteration
-stopped on, not the objective, so the difference is not a derivative of the
-objective either. The caller sees a non-finite Hessian and falls back.
+A unit that did not solve at a column's point -- short of its mode, for the
+reason `ctsem_laplace_optimize`'s `fg!` gives for rejecting such a point (its
+iteration stopped somewhere that is not the objective), or with a term or
+score that is not finite -- gives no difference there. A column is a sum of
+the units' score differences, so the units that solved keep theirs and those
+that failed are taken one-sided against the centre or at an eighth of the
+step (`_laplace_column_rescue`), at the cost of those units alone. A column
+some unit cannot be taken for at all, because it failed at the centre too, is
+`NaN`, and the square matrix takes its entries from the other columns by
+symmetry (`_laplace_hessian_symmetric_fill!`), leaving `NaN` only among such
+columns. What was done, and why, is said once (`_laplace_hessian_report`).
+Until 2026-11-25 one failed point made the whole column `NaN` and blamed the
+inner solve, and R then differenced every parameter: twelve hours after a
+four-hour Hessian on a 600-parameter fit of 23,000 people, for one column.
 
 Before writing that `NaN`, the inner budget is raised and the point evaluated
 again -- see `_laplace_hessian_point`. A whole Hessian of `NaN` columns is not
@@ -12376,7 +12387,32 @@ function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractV
     localised::Bool=true)
     H = _laplace_hessian_columns(laplace, values, 1:length(values); step=step,
         retries=retries, warm=warm, progress=progress, localised=localised)
+    _laplace_hessian_symmetric_fill!(H)
     return (H .+ transpose(H)) ./ 2
+end
+
+"""
+    _laplace_hessian_symmetric_fill!(H)
+
+A square Hessian whose failed columns (`NaN`, `_laplace_hessian_columns`) are
+filled where symmetry allows: column `j`'s entry in row `i` is column `i`'s in
+row `j`, wherever column `i` was differenced. What stays `NaN` is the failed
+columns' entries among themselves, the diagonal included, so a single failed
+column leaves its diagonal alone unknown, and the caller still sees that the
+matrix is not finite.
+"""
+function _laplace_hessian_symmetric_fill!(H::AbstractMatrix)
+    n = size(H, 1)
+    n == size(H, 2) || return H
+    good = [all(isfinite, view(H, :, j)) for j in 1:n]
+    all(good) && return H
+    for j in 1:n
+        good[j] && continue
+        for i in 1:n
+            good[i] && (H[i, j] = H[j, i])
+        end
+    end
+    return H
 end
 
 """
@@ -12385,8 +12421,9 @@ end
 
 `ctsem_laplace_hessian`'s columns `columns` alone, unsymmetrised, as an `n` by
 `length(columns)` matrix: each differenced from the gradient at two points as
-there, with the same inner-budget escalation and `NaN` for a column whose
-points did not both solve their modes. With `localised`, a column whose
+there, with the same inner-budget escalation and the units that did not solve
+at a point taken another way (`_laplace_column_rescue`), `NaN` for a column
+some unit cannot be taken for. With `localised`, a column whose
 parameter some units do not read is differenced over the units that do
 (`_laplace_hessian_readers`), as a coreset of the objective (`CTSEMCoreset`),
 its modes started where the full objective's were. Parameters whose readers do
@@ -12415,8 +12452,11 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
     NU = length(laplace.units.members)
     # The modes at `x`, from the origin, which every differencing point then
     # starts from; and, for `localised`, each unit's score there, which says
-    # which parameters it reads.
+    # which parameters it reads. Its gradient, and what failed there, are what
+    # a column whose one point failed is differenced against instead
+    # (`_laplace_column_rescue`).
     scores = localised ? zeros(Float64, NU, n) : nothing
+    centre = nothing
     if warm || localised
         previous = ctsem_set_warm_start!(false)
         try
@@ -12425,16 +12465,16 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
             # short of sent them along other paths than the full budget's, to
             # other ends within the inner tolerance -- columns 3e-8 apart
             # relative where the escalation should have changed nothing.
-            out = ctsem_laplace_evaluate(laplace, x; gradient=localised,
-                scores=scores)
+            out = ctsem_laplace_evaluate(laplace, x; gradient=true, scores=scores)
             tries = 0
             while !out.converged && tries < retries &&
                     any(>=(laplace.inner_maxiter), laplace.inner_iterations)
                 tries += 1
                 laplace.inner_maxiter = budget * 4^tries
-                out = ctsem_laplace_evaluate(laplace, x; gradient=localised,
-                    scores=scores)
+                out = ctsem_laplace_evaluate(laplace, x; gradient=true, scores=scores)
             end
+            centre = (out=out, fail=_laplace_point_failure(laplace, out, 1:NU, scores),
+                scores=scores)
         finally
             laplace.inner_maxiter = budget
             ctsem_set_warm_start!(previous)
@@ -12458,10 +12498,10 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
     differenced = [c for c in eachindex(work) if !(c <= k && haskey(derived, c))]
     targetscores = Dict{Int,Matrix{Float64}}()
     previous = ctsem_set_warm_start!(warm)
-    unconverged = Int[]
     escalated = Int[]
-    worst = 0.0
-    units = 0
+    # What happened to each column that the central difference did not give:
+    # parameter => (how, ...) from `_laplace_column_rescue`.
+    rescued = Dict{Int,Any}()
     # Progress, in gradients' worth of unit evaluations: two a column
     # differenced over every unit, and two a colour over its units' share of
     # them. Counted as two a column whatever it was differenced over, the
@@ -12495,15 +12535,16 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
         for group in pending
             total += 2.0 * sum(length, view(reads, group); init=0) / NU
         end
-        # The units' scores at a colour's two points, rewritten at each.
-        splus = isempty(partial) && isempty(targets) ? nothing : zeros(Float64, NU, n)
-        sminus = splus === nothing ? nothing : zeros(Float64, NU, n)
+        # The units' scores at a colour's two points, rewritten at each: kept
+        # for every column, so a unit whose score is not finite there is named
+        # (`_laplace_point_failure`).
+        splus = zeros(Float64, NU, n)
+        sminus = zeros(Float64, NU, n)
         for c in full
             j = work[c]
             h = step * max(1.0, abs(x[j]))
-            target = j in targets
             p = _laplace_column_points(laplace, x, [j], [h], budget, retries, base,
-                nothing, target ? splus : nothing, target ? sminus : nothing)
+                nothing, splus, sminus)
             (p.plus.tries + p.minus.tries) > 0 && push!(escalated, j)
             # Two gradients just finished, converged or not: a column this
             # function gives up on (NaN, below) still cost the same two inner
@@ -12512,22 +12553,27 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
             done += 2.0
             progress !== nothing &&
                 progress(round(Int, done), max(1, round(Int, total)))
-            if !p.solved
-                # The same predicate `fg!` applies to a trial point, applied
-                # to the two points this column is differenced from. A
-                # gradient at a not-quite-mode is a gradient of a different
-                # function, and one that converged to 1e-9 instead of 1e-10
-                # is finite, so nothing downstream would notice. NaN makes the
-                # column visible to the non-finite fallback callers already
-                # have.
-                push!(unconverged, j)
-                worst = max(worst, p.plus.worst, p.minus.worst)
-                units = max(units, p.plus.units, p.minus.units)
+            if p.solved
+                j in targets && (targetscores[j] = (splus .- sminus) ./ (2h))
+                c <= k && (H[:, c] = (p.plus.out.gradient .- p.minus.out.gradient) ./ (2h))
+                continue
+            end
+            # The same predicate `fg!` applies to a trial point, applied to the
+            # two points this column is differenced from. A gradient at a
+            # not-quite-mode is a gradient of a different function, and one
+            # that converged to 1e-9 instead of 1e-10 is finite, so nothing
+            # downstream would notice. So the units that failed are taken
+            # another way, and where none is left the column is NaN, visible to
+            # the non-finite fallback callers already have.
+            r = _laplace_column_rescue(laplace, x, p, j, h, budget, retries, base,
+                nothing, splus, sminus, centre; scores=j in targets)
+            rescued[j] = r
+            if r.how === :failed
                 c <= k && (H[:, c] .= NaN)
                 continue
             end
-            target && (targetscores[j] = (splus .- sminus) ./ (2h))
-            c <= k && (H[:, c] = (p.plus.out.gradient .- p.minus.out.gradient) ./ (2h))
+            j in targets && (targetscores[j] = r.scores)
+            c <= k && (H[:, c] = r.column)
         end
         while !isempty(pending)
             group = pop!(pending)
@@ -12552,10 +12598,17 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
             progress !== nothing &&
                 progress(round(Int, done), max(1, round(Int, total)))
             if !p.solved
-                push!(unconverged, js[1])
-                worst = max(worst, p.plus.worst, p.minus.worst)
-                units = max(units, p.plus.units, p.minus.units)
-                cs[1] <= k && (H[:, cs[1]] .= NaN)
+                # A colour of one: its units that failed taken another way.
+                r = _laplace_column_rescue(laplace, x, p, js[1], hs[1], budget,
+                    retries, base, core, splus, sminus, centre;
+                    scores=js[1] in targets)
+                rescued[js[1]] = r
+                if r.how === :failed
+                    cs[1] <= k && (H[:, cs[1]] .= NaN)
+                    continue
+                end
+                js[1] in targets && (targetscores[js[1]] = r.scores)
+                cs[1] <= k && (H[:, cs[1]] .= r.column)
                 continue
             end
             for (i, g) in enumerate(group)
@@ -12596,11 +12649,7 @@ function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
     unique!(escalated)
     isempty(escalated) || @info string("Laplace inner budget raised above ",
         budget, " for ", length(escalated), " of ", k, " Hessian columns.")
-    isempty(unconverged) || @warn string("Laplace inner solve did not converge ",
-        "at the Hessian step for parameter ", join(unconverged, ", "),
-        "; those columns are NaN. ", units, " unit(s) short, worst inner ",
-        "gradient ", worst, " against a budget of ", budget * 4^retries,
-        " iterations.")
+    _laplace_hessian_report(laplace, rescued, centre, budget * 4^retries, base)
     return n == nin ? H : H[1:nin, :]
 end
 
@@ -12664,8 +12713,9 @@ The two points a colour of Hessian columns is differenced from: `x` with each
 parameter `js[i]` moved by `hs[i]`, and by `-hs[i]` (`_laplace_hessian_point`),
 over `coreset`'s units (`nothing`: every unit). Where `splus` and `sminus` are
 matrices, units by parameters, the evaluated units' scores at the two points
-are written to their rows. `solved` where both points solved their modes and
-every evaluated unit's scores are finite.
+are written to their rows. `solved` where both points solved (`fail.ok`,
+`_laplace_point_failure`): every evaluated unit at its mode, and the value, the
+gradient and those units' terms and scores finite.
 """
 function _laplace_column_points(laplace::CTSEMLaplaceObjective, x::Vector{Float64},
     js::AbstractVector{Int}, hs::AbstractVector{Float64}, budget::Integer,
@@ -12683,10 +12733,310 @@ function _laplace_column_points(laplace::CTSEMLaplaceObjective, x::Vector{Float6
         scores=splus, coreset=coreset)
     pm = _laplace_hessian_point(laplace, minus, budget, retries; from=base,
         scores=sminus, coreset=coreset)
-    rows = coreset === nothing ? (1:length(laplace.units.members)) : coreset.units
-    solved = pp.out.converged && pm.out.converged && (splus === nothing ||
-        (all(isfinite, view(splus, rows, :)) && all(isfinite, view(sminus, rows, :))))
-    return (plus=pp, minus=pm, solved=solved)
+    return (plus=pp, minus=pm, solved=pp.fail.ok && pm.fail.ok)
+end
+
+"""
+    _laplace_point_failure(laplace, out, rows, scores)
+
+What failed at one evaluation a Hessian column is differenced from, over the
+units `rows` it evaluated: `short`, the units whose inner solve did not reach
+its mode, and `bad`, the units whose term or score came back non-finite
+(`out.unit_loglik`, the rows of `scores`), which can happen at a mode reached:
+a unit's gradient route failing, its fallback too
+(`_laplace_unit_gradient_route!`). `ok` where neither has a unit and the value
+and gradient are finite; `worst` is the largest inner gradient over `rows`.
+`notes` says of each `bad` unit what failed and on which route
+(`_laplace_unit_route_words`), which is what tells a defect in one route from
+a model the unit cannot be evaluated in there.
+"""
+function _laplace_point_failure(laplace::CTSEMLaplaceObjective, out, rows,
+    scores::Union{Nothing,Matrix{Float64}})
+    short = Int[]
+    bad = Int[]
+    notes = Dict{Int,String}()
+    worst = 0.0
+    for U in rows
+        laplace.inner_converged[U] || push!(short, U)
+        worst = max(worst, laplace.inner_gradient[U])
+        term = !isfinite(out.unit_loglik[U])
+        if term || (scores !== nothing && !all(isfinite, view(scores, U, :)))
+            push!(bad, U)
+            route = _laplace_unit_route_words(laplace, U)
+            notes[U] = string(term ? "term" : "score",
+                isempty(route) ? "" : string(", ", route))
+        end
+    end
+    finite = isfinite(out.value) && out.gradient !== nothing &&
+        all(isfinite, out.gradient)
+    return (ok=isempty(short) && isempty(bad) && finite, short=short, bad=bad,
+        notes=notes, worst=worst, finite=finite)
+end
+
+"""What a unit's records say about the route its term and gradient took at
+the last evaluation: other maxima summed with its mode (`_laplace_mode_sum`,
+whose gradient has no fallback), its blocks' own maxima, a floored log
+determinant, a curvature repaired at the mode. Empty for the plain route."""
+function _laplace_unit_route_words(laplace::CTSEMLaplaceObjective, U::Integer)
+    words = String[]
+    nalt = length(laplace.alt_modes[U])
+    nalt > 0 && push!(words, string(nalt + 1, " maxima"))
+    isempty(laplace.block_modes[U]) || push!(words, "blocks with their own maxima")
+    laplace.logdet_floored[U] && push!(words, "log determinant floored")
+    laplace.mode_repaired[U] && push!(words, "curvature repaired at the mode")
+    return join(words, ", ")
+end
+
+"""
+    _laplace_column_rescue(laplace, x, p, j, h, budget, retries, base, coreset,
+        splus, sminus, centre; scores=false)
+
+A Hessian column, parameter `j` at step `h`, whose two points `p`
+(`_laplace_column_points`) did not both solve, completed unit by unit. A
+column is the prior's column and a sum of the units' score differences, each
+unit's its own: so every unit that solved at both points keeps its central
+difference, and only the units that failed are taken another way:
+
+- one-sided, from the point where the unit solved and the centre `x`, where it
+  solved too (`centre`, its scores). It costs nothing: both rows are in hand.
+  Its error is first order in the step, about `h` times the third derivative,
+  well inside what a standard error allows;
+- otherwise at an eighth of the step, both sides, over those units alone (a
+  coreset of them): a point nearer the centre's modes, which every point
+  starts from, takes fewer iterations to its own; and one-sided from that.
+
+So a column a few units failed costs a few units' evaluations, not the
+column's again: on the SWB timescales fit with random diffusion, ten to
+seventeen units of 3,461 failed 231-243 of 345 columns. A unit that failed at
+the centre too fails at any step, and its column is left `:failed`, as is a
+point that failed with no unit to blame. Where a point's value was not finite
+(a unit's term failed), no unit's score was taken there and every unit is
+redone.
+
+Returns `how` (`:units` or `:failed`), `column` (the prior's included),
+`scores` (the units' score differences, units by parameters, with `scores`),
+the units taken `onesided` and at the `smaller` step, those `left`, the first
+attempt `first` and the retry's points (`retry`, or `nothing`).
+`splus` and `sminus` are the retry's scratch afterwards.
+"""
+function _laplace_column_rescue(laplace::CTSEMLaplaceObjective, x::Vector{Float64},
+    p, j::Integer, h::Float64, budget::Integer, retries::Integer, base,
+    coreset::Union{Nothing,CTSEMCoreset}, splus::Matrix{Float64},
+    sminus::Matrix{Float64}, centre; scores::Bool=false)
+    NU, n = size(splus)
+    rows = coreset === nothing ? collect(1:NU) : collect(coreset.units)
+    acc = zeros(Float64, n)
+    D = scores ? zeros(Float64, NU, n) : nothing
+    onesided = Int[]
+    smaller = Int[]
+    # A point that failed with no unit named -- the prior, say -- is no unit's
+    # to redo.
+    named = all(pt -> pt.fail.ok || !isempty(pt.fail.short) || !isempty(pt.fail.bad),
+        (p.plus, p.minus))
+    left = named ? _laplace_units_central!(acc, D, rows, p, splus, sminus, h, NU) : rows
+    named && (left = _laplace_units_one_sided!(acc, D, left, p, splus, sminus, centre,
+        h, onesided, NU))
+    q = nothing
+    sick = _laplace_failed_mask(centre, NU, left)
+    if named && !isempty(left) && (centre === nothing || any(U -> !sick[U], left))
+        hs = h / 8
+        core = _laplace_coreset(laplace, left,
+            [_laplace_unit_weight(laplace, U) for U in left])
+        q = _laplace_column_points(laplace, x, [j], [hs], budget, retries, base, core,
+            splus, sminus)
+        stillleft = _laplace_units_central!(acc, D, left, q, splus, sminus, hs, NU)
+        rest = fill(false, NU)
+        for U in stillleft
+            rest[U] = true
+        end
+        append!(smaller, [U for U in left if !rest[U]])
+        left = _laplace_units_one_sided!(acc, D, stillleft, q, splus, sminus, centre,
+            hs, smaller, NU)
+    end
+    isempty(left) || return (how=:failed, column=fill(NaN, n), scores=D,
+        onesided=onesided, smaller=smaller, left=left, first=p, retry=q, h=h)
+    acc .+= _laplace_prior_column(laplace.objective, x, j, h)
+    return (how=:units, column=acc, scores=D, onesided=onesided, smaller=smaller,
+        left=left, first=p, retry=q, h=h)
+end
+
+"""Units by whether they failed at the point `pt` (short or bad), or `nothing`'s
+all failed where it is `nothing` or none of its rows was scored (a value that
+is not finite: the gradient phase never ran)."""
+function _laplace_failed_mask(pt, NU::Integer, rows)
+    mask = fill(false, NU)
+    if pt === nothing || !isfinite(pt.out.value)
+        for U in rows
+            mask[U] = true
+        end
+        return mask
+    end
+    for U in pt.fail.short
+        mask[U] = true
+    end
+    for U in pt.fail.bad
+        mask[U] = true
+    end
+    return mask
+end
+
+"""The units of `rows` that solved at both of `q`'s points, their central
+score differences at step `h` added to `acc` (and their rows of `D`); returns
+the rest."""
+function _laplace_units_central!(acc::Vector{Float64}, D, rows, q,
+    splus::Matrix{Float64}, sminus::Matrix{Float64}, h::Float64, NU::Integer)
+    fp = _laplace_failed_mask(q.plus, NU, rows)
+    fm = _laplace_failed_mask(q.minus, NU, rows)
+    left = Int[]
+    for U in rows
+        if fp[U] || fm[U]
+            push!(left, U)
+            continue
+        end
+        @inbounds for m in eachindex(acc)
+            d = (splus[U, m] - sminus[U, m]) / (2h)
+            acc[m] += d
+            D === nothing || (D[U, m] = d)
+        end
+    end
+    return left
+end
+
+"""The units of `left` that solved at the centre and at one of `q`'s points,
+their one-sided score differences at step `h` against the centre's added to
+`acc` (and `D`) and pushed to `taken`; returns the rest. Nothing where the
+centre kept no scores."""
+function _laplace_units_one_sided!(acc::Vector{Float64}, D, left, q,
+    splus::Matrix{Float64}, sminus::Matrix{Float64}, centre, h::Float64,
+    taken::Vector{Int}, NU::Integer)
+    (centre === nothing || centre.scores === nothing) && return left
+    fc = _laplace_failed_mask(centre, NU, left)
+    fp = _laplace_failed_mask(q.plus, NU, left)
+    fm = _laplace_failed_mask(q.minus, NU, left)
+    S0 = centre.scores
+    still = Int[]
+    for U in left
+        if fc[U] || (fp[U] && fm[U])
+            push!(still, U)
+            continue
+        end
+        @inbounds for m in eachindex(acc)
+            d = fp[U] ? (S0[U, m] - sminus[U, m]) / h : (splus[U, m] - S0[U, m]) / h
+            acc[m] += d
+            D === nothing || (D[U, m] = d)
+        end
+        push!(taken, U)
+    end
+    return still
+end
+
+"""
+    _laplace_hessian_report(laplace, rescued, centre, maxbudget, base)
+
+Says what happened to the Hessian columns the central difference did not give
+(`_laplace_column_rescue`): those completed unit by unit, as information, and
+those left `NaN`, as a warning that says why -- units that did not reach
+their modes within `maxbudget` iterations, or units whose term or score was
+not finite where they had, and on which route -- which units, and whether
+they failed at the centre as well. A unit short of its mode is said to have
+had other maxima at the centre where it had (`base`, the snapshot every point
+started from): a point past such a maximum's fold starts where no maximum is
+any more. Units are numbered as the objective's units are: in the data's
+order of ids, one a subject where ids are not nested.
+"""
+function _laplace_hessian_report(laplace::CTSEMLaplaceObjective, rescued::Dict,
+    centre, maxbudget::Integer, base=nothing)
+    isempty(rescued) && return nothing
+    taken = sort!([j for (j, r) in rescued if r.how !== :failed])
+    failed = sort!([j for (j, r) in rescued if r.how === :failed])
+    if !isempty(taken)
+        onesided = sort!(unique(reduce(vcat, (rescued[j].onesided for j in taken);
+            init=Int[])))
+        smaller = sort!(unique(reduce(vcat, (rescued[j].smaller for j in taken);
+            init=Int[])))
+        how = String[]
+        isempty(onesided) || push!(how, string(_laplace_count_words(length(onesided),
+            "unit's share", "units' shares"), " one-sided"))
+        isempty(smaller) || push!(how, string(_laplace_count_words(length(smaller),
+            "unit's share", "units' shares"), " at an eighth of the step"))
+        @info string("Laplace Hessian: ", _laplace_count_words(length(taken),
+            "column", "columns"), " (parameter", length(taken) == 1 ? " " : "s ",
+            _laplace_listed(taken), ") completed with ", join(how, " and "),
+            ", where a point had ", _laplace_failure_words(
+                _laplace_failure_causes(rescued, taken; base=base), maxbudget), ".")
+    end
+    if !isempty(failed)
+        c = _laplace_failure_causes(rescued, failed; base=base)
+        sick = _laplace_failed_mask(centre, length(laplace.units.members), Int[])
+        atcentre = sort!(unique!([U for U in vcat(c.short, c.bad) if sick[U]]))
+        @warn string("Laplace Hessian: ", _laplace_count_words(length(failed),
+            "column", "columns"), " (parameter", length(failed) == 1 ? " " : "s ",
+            _laplace_listed(failed), ") could not be differenced: ",
+            _laplace_failure_words(c, maxbudget), ".",
+            isempty(atcentre) ? "" : string(" ", _laplace_count_words(length(atcentre),
+                "unit", "units"), " (", _laplace_listed(atcentre),
+                ") failed at the estimate itself."))
+    end
+    return nothing
+end
+
+_laplace_listed(v; most::Integer=10, sep::AbstractString=", ") =
+    length(v) <= most ? join(v, sep) :
+    string(join(v[1:most], sep), " and ", length(v) - most, " more")
+_laplace_count_words(m::Integer, one, many) = string(m, " ", m == 1 ? one : many)
+
+"""The units that failed at any point the columns `js` of `rescued` tried, and
+the worst inner gradient among those short of their modes."""
+function _laplace_failure_causes(rescued::Dict, js; base=nothing)
+    short = Int[]
+    bad = Int[]
+    notes = Dict{Int,String}()
+    shortnotes = Dict{Int,String}()
+    worst = 0.0
+    for j in js
+        r = rescued[j]
+        for q in (r.first, r.retry)
+            q === nothing && continue
+            for pt in (q.plus, q.minus)
+                append!(short, pt.fail.short)
+                append!(bad, pt.fail.bad)
+                for (U, note) in pt.fail.notes
+                    haskey(notes, U) || (notes[U] = note)
+                end
+                isempty(pt.fail.short) || (worst = max(worst, pt.fail.worst))
+            end
+        end
+    end
+    if base isa _LaplaceModeSnapshot
+        for U in short
+            words = String[]
+            isempty(base.alt[U]) ||
+                push!(words, string(length(base.alt[U]) + 1, " maxima at the estimate"))
+            isempty(base.blocks[U]) ||
+                push!(words, "blocks with their own maxima at the estimate")
+            isempty(words) || (shortnotes[U] = join(words, ", "))
+        end
+    end
+    return (short=sort!(unique!(short)), bad=sort!(unique!(bad)), notes=notes,
+        shortnotes=shortnotes, worst=worst)
+end
+
+function _laplace_failure_words(c, maxbudget::Integer)
+    parts = String[]
+    isempty(c.short) || push!(parts, string(_laplace_count_words(length(c.short),
+        "unit", "units"), " short of ", length(c.short) == 1 ? "its mode" :
+        "their modes", " (", _laplace_listed([haskey(c.shortnotes, U) ?
+            string(U, ": ", c.shortnotes[U]) : string(U) for U in c.short]; sep="; "),
+        "; worst inner gradient ",
+        round(c.worst; sigdigits=2), " after up to ", maxbudget, " iterations)"))
+    isempty(c.bad) || push!(parts, string(_laplace_count_words(length(c.bad),
+        "unit", "units"), " with a non-finite term or score at ",
+        length(c.bad) == 1 ? "its mode" : "their modes", " (",
+        _laplace_listed([haskey(c.notes, U) ? string(U, ": ", c.notes[U]) : string(U)
+            for U in c.bad]; most=5, sep="; "), ")"))
+    isempty(parts) &&
+        push!(parts, "a non-finite value or gradient with every unit at its mode")
+    return join(parts, "; ")
 end
 
 """
@@ -12839,9 +13189,10 @@ points and stops the same way -- and the retry would buy nothing but the cost
 of another pass. A unit that ran out of iterations is the one case where a
 larger budget changes the answer.
 
-Reports what it reached as well as whether it got there: `worst` is the largest
-inner gradient over units and `units` how many are still short, which is what
-tells a caller whether raising `inner_maxiter` would help. (R spells that
+Reports what it reached as well as whether it got there (`fail`,
+`_laplace_point_failure`): which units are still short and the largest inner
+gradient, which is what tells a caller whether raising `inner_maxiter` would
+help, and which units' terms or scores were not finite, which it would not. (R spells that
 optimcontrol name `laplace_inner_maxiter`; a bare dollar sign interpolates in a
 Julia docstring, which is why it is not written out here.)
 """
@@ -12852,8 +13203,6 @@ function _laplace_hessian_point(laplace::CTSEMLaplaceObjective,
     # A unit off the coreset keeps whatever an earlier evaluation left.
     which = coreset === nothing ? eachindex(laplace.inner_iterations) : coreset.units
     capped() = any(U -> laplace.inner_iterations[U] >= laplace.inner_maxiter, which)
-    reached() = isempty(which) ? 0.0 : maximum(U -> laplace.inner_gradient[U], which)
-    short() = count(U -> !laplace.inner_converged[U], which)
     laplace.inner_maxiter = budget
     _laplace_restore_modes!(laplace, from)
     out = ctsem_laplace_evaluate(laplace, x; gradient=true, scores=scores,
@@ -12866,7 +13215,8 @@ function _laplace_hessian_point(laplace::CTSEMLaplaceObjective,
         out = ctsem_laplace_evaluate(laplace, x; gradient=true, scores=scores,
             coreset=coreset)
     end
-    result = (out=out, tries=tries, worst=reached(), units=short())
+    result = (out=out, tries=tries,
+        fail=_laplace_point_failure(laplace, out, which, scores))
     laplace.inner_maxiter = budget
     return result
 end

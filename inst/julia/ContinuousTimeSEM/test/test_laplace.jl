@@ -1477,6 +1477,107 @@ end
     @test all(isapprox.(near, -full[:, [6, 8]]; rtol=1e-2, atol=1e-6))
     blind = ContinuousTimeSEM._ctsem_local_columns(laplace, values, [6, 8], S)
     @test !isapprox(blind[8, 2], -full[8, 8]; rtol=0.05)
+
+    # A column whose point failed is completed unit by unit
+    # (`_laplace_column_rescue`): the units that solved at both points keep
+    # their central differences, and those that failed are taken another way.
+    # The failures are written into the points' records as the evaluation
+    # would have left them: a unit with a non-finite score at a mode it
+    # reached (`bad`), or one short of its mode (`short`).
+    L = ContinuousTimeSEM
+    x = collect(Float64, values)
+    NU, n = size(scores)
+    S0 = zeros(NU, n)
+    out0 = ctsem_laplace_evaluate(laplace, x; gradient=true, scores=S0)
+    centre = (out=out0, fail=L._laplace_point_failure(laplace, out0, 1:NU, S0),
+        scores=S0)
+    @test centre.fail.ok
+    base = L._laplace_mode_snapshot(laplace)
+    splus = zeros(NU, n)
+    sminus = zeros(NU, n)
+    budget = laplace.inner_maxiter
+    failing(pt; kw...) = merge(pt, (fail=merge(pt.fail, (; ok=false, kw...)),))
+    close(a, b; rtol) = all(isapprox.(a, b; rtol=rtol, atol=1e-8))
+    # A one-sided share errs by about the step times the third derivative:
+    # against the column's scale, not each entry's.
+    near(a, b; rtol) = maximum(abs, a .- b) <= rtol * maximum(abs, b)
+    rescue(p, j, h, core, at; kw...) = L._laplace_column_rescue(laplace, x, p, j, h,
+        budget, 2, base, core, splus, sminus, at; kw...)
+    previous = L.ctsem_set_warm_start!(true)
+    try
+        # Read by every unit: the column is the prior's and the units' shares.
+        j = 5
+        h = 1e-4 * max(1.0, abs(x[j]))
+        points() = L._laplace_column_points(laplace, x, [j], [h], budget, 2, base,
+            nothing, splus, sminus)
+        p = points()
+        @test p.solved
+        central = (p.plus.out.gradient .- p.minus.out.gradient) ./ (2h)
+        @test close(central, full[:, j]; rtol=1e-8)
+        # Unit 3's score at the plus point not finite: its share one-sided.
+        r = rescue(merge(p, (plus=failing(p.plus; bad=[3]), solved=false)), j, h,
+            nothing, centre; scores=true)
+        @test r.how === :units && r.onesided == [3] && isempty(r.smaller)
+        @test r.retry === nothing
+        @test near(r.column, central; rtol=1e-4)
+        @test close(vec(sum(r.scores; dims=1)) .+
+            L._laplace_prior_column(laplace.objective, x, j, h), r.column; rtol=1e-12)
+        # A point whose value was not finite scored no unit: every share
+        # one-sided from the other.
+        p = points()
+        nan = merge(p.plus, (out=merge(p.plus.out, (value=NaN,)),))
+        r = rescue(merge(p, (plus=failing(nan; bad=[3]), solved=false)), j, h, nothing,
+            centre)
+        @test r.how === :units && sort(r.onesided) == 1:NU
+        @test near(r.column, central; rtol=1e-4)
+        @test !near(r.column, central; rtol=1e-8)
+        # Unit 3 failed at both points, the centre did not: unit 3 alone
+        # again at an eighth of the step.
+        p = points()
+        both = merge(p, (plus=failing(p.plus; bad=[3]),
+            minus=failing(p.minus; short=[3]), solved=false))
+        r = rescue(both, j, h, nothing, centre)
+        @test r.how === :units && r.smaller == [3] && isempty(r.onesided)
+        @test r.retry !== nothing && r.retry.plus.out.converged
+        @test close(r.column, central; rtol=1e-6)
+        # Unit 3 failed at the centre too: no step mends that, and none is
+        # tried.
+        sick = merge(centre, (fail=merge(centre.fail, (ok=false, short=[3])),))
+        p = points()
+        both = merge(p, (plus=failing(p.plus; bad=[3]),
+            minus=failing(p.minus; short=[3]), solved=false))
+        r = rescue(both, j, h, nothing, sick)
+        @test r.how === :failed && r.left == [3] && r.retry === nothing
+        @test all(isnan, r.column)
+        @test_logs (:warn, r"1 column \(parameter 5\) could not be differenced: 1 unit short of its mode \(3; .*; 1 unit with a non-finite term or score at its mode \(3\)\. 1 unit \(3\) failed at the estimate itself") L._laplace_hessian_report(laplace,
+            Dict{Int,Any}(j => r), sick, 800)
+        # A column over the units that read it.
+        j = 6
+        h = 1e-4 * max(1.0, abs(x[j]))
+        reads = findall(view(readers, :, j))
+        core = L._laplace_coreset(laplace, reads,
+            [L._laplace_unit_weight(laplace, U) for U in reads])
+        p = L._laplace_column_points(laplace, x, [j], [h], budget, 2, base, core,
+            splus, sminus)
+        @test p.solved
+        r = rescue(merge(p, (minus=failing(p.minus; bad=reads[1:1]), solved=false)),
+            j, h, core, centre)
+        @test r.how === :units && r.onesided == reads[1:1]
+        @test near(r.column, full[:, j]; rtol=1e-4)
+        @test_logs (:info, r"1 column \(parameter 6\) completed with 1 unit's share one-sided, where a point had 1 unit with a non-finite term or score at its mode") L._laplace_hessian_report(laplace,
+            Dict{Int,Any}(j => r), centre, 800)
+    finally
+        L.ctsem_set_warm_start!(previous)
+        L._laplace_restore_modes!(laplace, base)
+    end
+    # What is left NaN is filled by symmetry wherever the other column was
+    # differenced: all but the failed columns' entries among themselves.
+    Hf = Matrix(full)
+    Hf[:, [7, 9]] .= NaN
+    L._laplace_hessian_symmetric_fill!(Hf)
+    @test Hf[:, 8] == full[:, 8]
+    @test Hf[[1:6; 8; 10:12], 7] == full[7, [1:6; 8; 10:12]]
+    @test all(isnan, Hf[[7, 9], [7, 9]])
 end
 
 @testset "an unusable inner curvature is reported, not hidden" begin
