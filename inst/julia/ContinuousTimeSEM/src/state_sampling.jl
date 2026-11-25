@@ -731,6 +731,12 @@ function _ctsem_draw_categorical(gen::CTSEMStateGenerate, eta::T, row::Int,
         lower, upper, sd = _censor_limits(thresholds, T)
         half, power = _censor_response(thresholds, T)
         return _censored_record(eta + sd * z, lower, upper, half, power)
+    elseif kind == CTSEM_OBS_WIENER
+        # The trial's drift, then a first passage at it (`_wiener_draw`).
+        sv, a, tau, w = _wiener_extras(thresholds)
+        up, t = _wiener_draw(Float64(_primal(eta + sv * z)), Float64(_primal(a)),
+            Float64(_primal(w)), rand(gen.rng), rand(gen.rng))
+        return T((t + _primal(tau)) * (up ? 1 : -1))
     elseif kind == CTSEM_OBS_BINARY || isempty(thresholds)
         # `(0, 1)` when the item has no asymptotes, so this is the plain
         # Bernoulli draw; with them it is the three or four parameter response

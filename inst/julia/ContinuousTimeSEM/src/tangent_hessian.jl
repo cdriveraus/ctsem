@@ -128,7 +128,8 @@ function _tan_layer_mask(sp, indices)
         (:DIFFUSION, _TAN_M_QC), (:LAMBDA, _TAN_M_LAM), (:Jy, _TAN_M_JY),
         (:MANIFESTMEANS, _TAN_M_MM), (:MANIFESTVAR, _TAN_M_R), (:T0MEANS, _TAN_M_T0M),
         (:T0VAR, _TAN_M_T0V), (:TDPREDEFFECT, _TAN_M_TDE), (:Jtd, _TAN_M_JTD),
-        (:THRESHOLDS, _TAN_M_XC), (:ASYMPTOTES, _TAN_M_XC), (:RESPONSE, _TAN_M_XC))
+        (:THRESHOLDS, _TAN_M_XC), (:ASYMPTOTES, _TAN_M_XC), (:RESPONSE, _TAN_M_XC),
+        (:WIENER, _TAN_M_XC))
     mask = 0x0000
     for k in indices
         for (name, bit) in owners

@@ -143,6 +143,7 @@ include("laplace_placed.jl")
 # After quadrature.jl: the binary measurement update integrates the
 # observation with the Gauss-Hermite rule defined there.
 include("binary_measurement.jl")
+include("wiener_measurement.jl")
 # After binary_measurement.jl and kalman_trace.jl: the predictive distribution
 # function of a non-Gaussian observation, taken in the update for the trace.
 include("item_pit.jl")

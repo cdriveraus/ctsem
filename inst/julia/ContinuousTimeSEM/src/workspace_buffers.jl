@@ -633,7 +633,8 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
     thresholds = zeros(T, max(hasproperty(pars, :THRESHOLDS) ?
         size(pars.THRESHOLDS, 2) : 0,
         any(==(4), manifesttype) ? (hasproperty(pars, :RESPONSE) ? 5 : 3) : 0,
-        any(==(3), manifesttype) ? 1 : 0, any(>(0), sp.asymptoterow) ? 2 : 0))
+        any(==(3), manifesttype) ? 1 : 0, any(>(0), sp.asymptoterow) ? 2 : 0,
+        any(==(5), manifesttype) ? 4 : 0))
     relinearise = _ctsem_measurement_nonlinear(sp, update_param_indices, n)
     moment = _ctsem_dynamics_nonlinear(sp, predict_param_indices, n)
     moment_avg, moment_oth = moment ? _ctsem_moment_cells(sp, predict_param_indices) :

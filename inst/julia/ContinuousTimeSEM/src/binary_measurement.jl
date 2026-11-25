@@ -235,7 +235,8 @@ const _CTSEM_MIN_VARIANCE = Ref(1e-100)
 
 """
 The observation kinds the scalar quadrature path handles, matching ctsem's
-`manifesttype`: 1 binary, 2 ordinal, 3 count.
+`manifesttype`: 1 binary, 2 ordinal, 3 count, 4 censored, 5 choice and
+response time (the Wiener first-passage density, `wiener_measurement.jl`).
 
 The kind travels as an integer beside the thresholds rather than being inferred
 from them. Inferring worked while there were two kinds -- no thresholds meant
@@ -248,6 +249,7 @@ const CTSEM_OBS_BINARY = 1
 const CTSEM_OBS_ORDINAL = 2
 const CTSEM_OBS_COUNT = 3
 const CTSEM_OBS_CENSORED = 4
+const CTSEM_OBS_WIENER = 5
 
 """
     _norm_logcdf(z)
@@ -538,6 +540,7 @@ identically, not just numerically, which is why the fast path can stay.
 """
 @inline function _category_score(η::T, y::Real, thresholds,
     kind::Int) where {T}
+    kind == CTSEM_OBS_WIENER && return _wiener_score(η, y, thresholds)
     if kind == CTSEM_OBS_COUNT
         # `y - λ` and `λ`. Log-concave in η like the others, so the Newton
         # solve above it is unchanged; the clamp is what keeps λ finite.
@@ -1368,6 +1371,7 @@ stops being representable. The product form has neither problem -- see
 """
 @inline function _category_loglikelihood(η::T, y::Real, thresholds,
     kind::Int) where {T}
+    kind == CTSEM_OBS_WIENER && return _wiener_loglikelihood(η, y, thresholds)
     if kind == CTSEM_OBS_COUNT
         # `y η - λ - log y!`. The clamp matches `_category_score`: the two have
         # to describe the same function or the mode solve chases a likelihood
@@ -1565,6 +1569,8 @@ re-centring turns that into `∫h(η)dη ≈ √2σ̂ Σ wᵢ exp(tᵢ²) h(η̂
     # for what is left.
     kind == CTSEM_OBS_CENSORED &&
         return _censored_moments(ηbar, s, y, thresholds)
+    kind == CTSEM_OBS_WIENER &&
+        return _wiener_moments(ηbar, s, y, thresholds)
     kind == CTSEM_OBS_BINARY && length(thresholds) >= 2 &&
         return _asymptote_moments(ηbar, s, y, nodes, weights, thresholds)
     return _binary_quadrature(ηbar, s, y, nodes, weights, thresholds, kind)
@@ -2433,6 +2439,21 @@ sum here costs a handful of additions on a vector of length `K-1`.
         end
         return view(ws.thresholds, 1:3)
     end
+    # A Wiener row carries its drift variability, MANIFESTVAR's diagonal entry
+    # as a standard deviation (which rides the predictor's variance as a
+    # count's dispersion does), and its boundary separation, nondecision time
+    # and relative start, its row of WIENER (`wiener_measurement.jl`).
+    if row <= length(types) && types[row] == CTSEM_OBS_WIENER
+        (hasproperty(pars, :WIENER) && length(ws.thresholds) >= 4) ||
+            return view(ws.thresholds, 1:0)
+        @inbounds begin
+            ws.thresholds[1] = pars.MANIFESTVAR[row, row]
+            ws.thresholds[2] = pars.WIENER[row, 1]
+            ws.thresholds[3] = pars.WIENER[row, 2]
+            ws.thresholds[4] = pars.WIENER[row, 3]
+        end
+        return view(ws.thresholds, 1:4)
+    end
     # A count row carries its dispersion in the same slot and for the same
     # reason: it is MANIFESTVAR's diagonal entry as a standard deviation, taken
     # before `sdcovsqrt2cov` assembles the matrix so that the reverse pass can
@@ -2514,7 +2535,8 @@ function _ekf_binary_update!(ws, λ, μ, y::Real, n::Int, thresholds,
     # Everything below is unchanged by it: `c` is still the covariance between
     # the state and the linear predictor and `s2` is still that predictor's
     # variance, which is all the projection below uses.
-    if kind == CTSEM_OBS_COUNT
+    # A Wiener row's drift variability is the same kind of term.
+    if kind == CTSEM_OBS_COUNT || (kind == CTSEM_OBS_WIENER && !isempty(thresholds))
         σ = _count_dispersion(thresholds, T)
         s2 += σ * σ
     end
@@ -2641,6 +2663,7 @@ At the variance floor, `_category_floor_partials!`.
     s * s > T(_CTSEM_MIN_VARIANCE[]) ||
         return _category_floor_partials!(J, a, y, thresholds, kind)
     kind == CTSEM_OBS_CENSORED && return _censored_partials!(J, a, s, y, thresholds)
+    kind == CTSEM_OBS_WIENER && return _wiener_partials!(J, a, s, y, thresholds)
     kind == CTSEM_OBS_BINARY && length(thresholds) >= 2 &&
         return _asymptote_partials!(J, a, s, y, nodes, weights, thresholds)
     return _binary_quadrature(a, s, y, nodes, weights, thresholds, kind, J)
@@ -2663,8 +2686,9 @@ function _category_floor_partials!(J::Matrix{T}, a::T, y::Real, thresholds,
     kind::Int) where {T}
     logZ = _category_loglikelihood(a, y, thresholds, kind)
     isfinite(logZ) || return (logZ, zero(T), zero(T), true)
-    if kind == CTSEM_OBS_CENSORED
-        _censored_partials!(J, a, zero(T), y, thresholds)
+    if kind == CTSEM_OBS_CENSORED || kind == CTSEM_OBS_WIENER
+        kind == CTSEM_OBS_CENSORED ? _censored_partials!(J, a, zero(T), y, thresholds) :
+            _wiener_partials!(J, a, zero(T), y, thresholds)
         @inbounds for cc in axes(J, 2)
             J[2, cc] = zero(T)
             J[3, cc] = zero(T)
@@ -2782,6 +2806,8 @@ standard deviation (its limits are constants), and none for a count.
     n = length(thresholds)
     kind == CTSEM_OBS_COUNT && return 1:0
     kind == CTSEM_OBS_CENSORED && return n >= 5 ? (3:5) : n >= 3 ? (3:3) : (1:0)
+    # A Wiener row's sv rides `b`, as a count's dispersion does.
+    kind == CTSEM_OBS_WIENER && return n >= 4 ? (2:4) : (1:0)
     if kind == CTSEM_OBS_ORDINAL && n > 0
         k = Int(y)
         return clamp(k - 1, 1, n):clamp(k, 1, n)

@@ -168,10 +168,20 @@ function _tan_cat_each(f::F, sp) where {F}
                 k += 1
                 f(k, l.first[s] + (r - 1) + nr * (j - 1), i)
             end
-        elseif t == CTSEM_OBS_COUNT || t == CTSEM_OBS_CENSORED
+        elseif t == CTSEM_OBS_COUNT || t == CTSEM_OBS_CENSORED || t == CTSEM_OBS_WIENER
             s = _layout_index(l, :MANIFESTVAR)
             k += 1
             f(k, l.first[s] + (i - 1) + l.nrows[s] * (i - 1), i)
+            if t == CTSEM_OBS_WIENER
+                s = _layout_index(l, :WIENER)
+                s == 0 && continue
+                nr = l.nrows[s]
+                for j in 1:3
+                    k += 1
+                    f(k, l.first[s] + (i - 1) + nr * (j - 1), i)
+                end
+                continue
+            end
             t == CTSEM_OBS_CENSORED || continue
             s = _layout_index(l, :RESPONSE)
             s == 0 && continue
@@ -590,9 +600,9 @@ function _tan_cat_obs!(x::TanVec{W}, P::TanMat{W}, rec::TanCatRec{W},
     a = _ts_dot(lam, x, mu)
     b.v < 0 && (b = TanS{W}(0.0))
     e = _tan_cat_tau!(cs.tau, mod.XC, plan, i)
-    if kind == CTSEM_OBS_COUNT
+    if kind == CTSEM_OBS_COUNT || (kind == CTSEM_OBS_WIENER && e >= 1)
         # A count's dispersion joins the predictor's variance
-        # (`_count_dispersion`).
+        # (`_count_dispersion`), as a Wiener row's drift variability does.
         sig = _ts_get(cs.tau, 1)
         b = _ts_add(b, _ts_mul(sig, sig))
     end
@@ -691,11 +701,12 @@ function _tan_reverse_cat_obs!(xbar::TanVec{W}, Pbar::TanMat{W}, o::TanCatObs{W}
     bbar = _ts_add(bbar,
         _ts_add(_ts_add(Jg(1, 2), _ts_mul(mbar, Jg(2, 2))), _ts_mul(vbar, Jg(3, 2))))
     f = plan.first[i]
-    if o.kind == CTSEM_OBS_COUNT
+    if o.kind == CTSEM_OBS_COUNT || (o.kind == CTSEM_OBS_WIENER && plan.ne[i] >= 1)
         # The dispersion enters through `b` alone: `db/dσ = 2σ`.
         sig = _ts_get(mod.XC, f + 1)
         _ts_addat!(acc.XC, f + 1, _ts_scale(_ts_mul(bbar, sig), 2.0 * w))
-    elseif o.nr > 0
+    end
+    if o.kind != CTSEM_OBS_COUNT && o.nr > 0
         e = plan.ne[i]
         tb = cs.taub
         @inbounds for t in 1:e
