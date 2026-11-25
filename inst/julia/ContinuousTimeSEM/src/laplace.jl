@@ -7867,15 +7867,26 @@ function _laplace_soft_quadrature_term(laplace::CTSEMLaplaceObjective, U::Intege
     # The other directions as an orthonormal basis of v1's complement, by
     # Gram-Schmidt from the primal eigenvectors. Everything below depends on
     # that subspace only, not on the basis, so a degenerate pair among the
-    # stiff directions costs nothing here.
+    # stiff directions costs nothing here. In place, in the arithmetic it took
+    # when every step allocated three vectors, `d^2` of them a unit.
     Vh = Matrix{T}(undef, d, d - 1)
+    c = Vector{T}(undef, d)
+    tmp = Vector{T}(undef, d)
     for k in 2:d
-        c = convert(Vector{T}, E.primal.vectors[:, k])
-        c = c .- v1 .* sum(v1 .* c)
-        for j in 1:(k - 2)
-            c = c .- Vh[:, j] .* sum(Vh[:, j] .* c)
+        @inbounds for i in 1:d
+            c[i] = E.primal.vectors[i, k]
         end
-        Vh[:, k - 1] = c ./ sqrt(sum(c .* c))
+        tmp .= v1 .* c
+        s = sum(tmp)
+        c .= c .- v1 .* s
+        for j in 1:(k - 2)
+            vj = view(Vh, :, j)
+            tmp .= vj .* c
+            s = sum(tmp)
+            c .= c .- vj .* s
+        end
+        tmp .= c .* c
+        Vh[:, k - 1] .= c ./ sqrt(sum(tmp))
     end
     lam1c = max(lam1, one(lam1))
     xs, ws = _gauss_hermite(3)
@@ -9125,12 +9136,21 @@ function _laplace_unit_primal(laplace::CTSEMLaplaceObjective, U::Integer,
     end
     # A nested unit's leaves integrate their own soft directions
     # (laplace_blocksoft.jl); the whole unit's rule below where a piece cannot
-    # be scored.
-    if soft_quadrature_on && ok && !fac.repaired && !isempty(u) && isfinite(inner.value) &&
+    # be scored. Where its curvature does not factor, its pivots are floored
+    # instead (`_laplace_pivot_floor_term`): the whole unit's rule would take
+    # it densely, at its width cubed.
+    if soft_quadrature_on && !isempty(u) && isfinite(inner.value) &&
             _laplace_block_soft_on(laplace, U)
-        bs = _laplace_block_soft_term(laplace, U, values, Ls, u, aws, M, logdetM, inner)
-        bs === nothing ||
-            return (term=bs.term, M=M, fac=fac, soft_quadrature=bs.active, floored=false)
+        fac.repaired &&
+            return (term=_laplace_pivot_floor_term(laplace, U, values, Ls, u, aws, inner),
+                M=M, fac=fac, soft_quadrature=true, floored=false)
+        if ok
+            bs = _laplace_block_soft_term(laplace, U, values, Ls, u, aws, M, logdetM,
+                inner)
+            bs === nothing ||
+                return (term=bs.term, M=M, fac=fac, soft_quadrature=bs.active,
+                    floored=false)
+        end
     end
     if soft_quadrature_on && ok && !isempty(u) && isfinite(inner.value)
         # The factorization shifted a repaired `M` in place, so the soft-quadrature term
@@ -10700,11 +10720,15 @@ function _laplace_unit_gradient_route!(row::Vector{Float64}, laplace::CTSEMLapla
     U::Integer, theta::Vector{Float64}, Ls, dLlevels, dLsolved, soft_quadrature::Bool, M,
     curvature)
     fill!(row, 0.0)
-    if soft_quadrature && _laplace_block_soft_on(laplace, U) && !laplace.mode_repaired[U]
-        # Scored leaf by leaf (`_laplace_block_soft_term`); differences of that
-        # term where a piece fails.
-        _laplace_block_soft_gradient!(row, laplace, U, theta, Ls, dLlevels, dLsolved, M,
-            curvature) && return (true, false)
+    if soft_quadrature && _laplace_block_soft_on(laplace, U)
+        # Scored leaf by leaf (`_laplace_block_soft_term`), or with its pivots
+        # floored where its curvature did not factor (`_laplace_pivot_floor_term`);
+        # differences of that term where a piece fails.
+        good = laplace.mode_repaired[U] ?
+            _laplace_pivot_floor_gradient!(row, laplace, U, theta, Ls, dLlevels) :
+            _laplace_block_soft_gradient!(row, laplace, U, theta, Ls, dLlevels, dLsolved,
+                M, curvature)
+        good && return (true, false)
         return (_laplace_unit_term_difference!(row, laplace, U, theta), true)
     end
     if soft_quadrature

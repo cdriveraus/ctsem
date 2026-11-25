@@ -703,8 +703,20 @@ function _ctsem_symeig!(w::CTSEMSymEigWork, A::AbstractMatrix{Float64};
     return (values=w.values, vectors=w.vectors)
 end
 
+"""Entries a Jacobi decomposition updates between garbage-collection safepoints
+(`_ctsem_jacobi!`): a rotation updates `3n`."""
+const _CTSEM_JACOBI_SAFEPOINT_WORK = 1 << 16
+
 # The cyclic Jacobi sweeps both forms run: `a` receives A's symmetric part and
 # is diagonalised in place, `V` (the identity on entry) accumulates the rotations.
+#
+# The loop allocates nothing, so without a safepoint of its own it never
+# yields to a collection another thread asks for, and every thread of the
+# session waits until it ends: on the affect pilot one decomposition of a study
+# unit's dense curvature held eleven threads in `jl_safepoint_wait_gc` for over
+# an hour (review/PILOT-stalls-read-by-gdb-2026-11-25.md). So it passes one
+# every `_CTSEM_JACOBI_SAFEPOINT_WORK` entries updated: about a tenth of a
+# millisecond's work, and on a matrix of a block's size never.
 function _ctsem_jacobi!(a::AbstractMatrix{Float64}, V::AbstractMatrix{Float64},
     A::AbstractMatrix{Float64}, n::Int, maxsweeps::Integer)
     @inbounds for j in 1:n, i in 1:n
@@ -715,6 +727,7 @@ function _ctsem_jacobi!(a::AbstractMatrix{Float64}, V::AbstractMatrix{Float64},
         scale += a[i, j]^2
     end
     tol = (eps(Float64) * sqrt(scale))^2
+    work = 0
     @inbounds for _ in 1:maxsweeps
         off = 0.0
         for q in 2:n, p in 1:(q - 1)
@@ -724,6 +737,11 @@ function _ctsem_jacobi!(a::AbstractMatrix{Float64}, V::AbstractMatrix{Float64},
         for q in 2:n, p in 1:(q - 1)
             apq = a[p, q]
             iszero(apq) && continue
+            work += 3 * n
+            if work >= _CTSEM_JACOBI_SAFEPOINT_WORK
+                GC.safepoint()
+                work = 0
+            end
             theta = (a[q, q] - a[p, p]) / (2 * apq)
             t = (theta >= 0 ? 1.0 : -1.0) / (abs(theta) + sqrt(theta^2 + 1))
             c = 1 / sqrt(t^2 + 1)
