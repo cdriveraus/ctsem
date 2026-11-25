@@ -221,7 +221,7 @@ test_that("a flat direction that still gains says what the probe measured", {
     table = data.frame(param = "drift", ratio = 40))
   said <- warned(certified)
   expect_length(said, 1L)
-  expect_match(said, "No width at all for drift")
+  expect_match(said, "No standard error for drift")
 })
 
 test_that("a direction is described by its largest loadings, in one rule", {

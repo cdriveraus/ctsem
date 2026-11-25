@@ -75,8 +75,12 @@ expmGetSubsets <- function(m){
   
   
   if(ctm$priors){
-    if(ctm$n.TIpred > 1 && any(abs(colMeans(datalong[,c(ctm$TIpredNames),drop=FALSE],na.rm=TRUE)) > .3)){
-      message('Uncentered TI predictors noted -- interpretability may be hindered and default priors may not be appropriate')
+    timeans <- if (ctm$n.TIpred > 1)
+      abs(colMeans(datalong[,c(ctm$TIpredNames),drop=FALSE],na.rm=TRUE)) else numeric(0)
+    if(any(timeans > .3)){
+      message('TI predictors ', paste(ctm$TIpredNames[timeans > .3], collapse = ', '),
+        ' are not centred. Centring them at zero makes their effects easier to ',
+        'interpret and suits the default priors.')
     }
     
     # #scale check

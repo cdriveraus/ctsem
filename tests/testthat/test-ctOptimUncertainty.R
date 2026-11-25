@@ -245,7 +245,7 @@ test_that("checked centres its normal on the mean, not the mode", {
   expect_equal(check$centre, m, tolerance = 1e-10)
   # Each batch on the progress line, and the line ended once.
   expect_true(any(grepl("^update Interval check, 8 of up to 120 draws", said)))
-  expect_true(any(grepl("more for the centre", said)))
+  expect_true(any(grepl("^update Interval check, [0-9]+ draws [|]", said)))
   expect_identical(said[length(said)], "break ")
   expect_equal(sum(startsWith(said, "break")), 1L)
 

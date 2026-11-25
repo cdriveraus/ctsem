@@ -565,7 +565,7 @@
   }
   if (length(partition$structural)) {
     lines <- c(lines, if (brief) paste0("Not estimable as the model stands: ",
-      paste(partition$structural, collapse = ", "),
+      .ctNameList(partition$structural),
       ". Fix one of each set, or remove it.") else paste0(
       "Parameters involved: ",
       paste(partition$structural, collapse = ", "),
@@ -589,6 +589,16 @@
         "same model without the flat direction."))
   }
   lines
+}
+
+# Names for a message: the first `n`, then how many more. A fit's warnings
+# named every parameter of an unidentified direction, which on a model with
+# correlated random effects at two levels ran past R's 1000-byte warning limit
+# and was cut off before the advice (2026-11-25); the full list is on the fit.
+.ctNameList <- function(x, n = 4L) {
+  x <- as.character(x)
+  if (length(x) <= n) return(paste(x, collapse = ", "))
+  paste0(paste(utils::head(x, n), collapse = ", "), " and ", length(x) - n, " more")
 }
 
 # Is each reported interval as wide as the curvature at the estimate supports?
@@ -847,8 +857,8 @@
   named <- utils::head(intervals$unidentified, 6)
   more <- if (length(intervals$unidentified) > 6) ", ..." else ""
   many <- length(intervals$unidentified) > 1L
-  if (brief) return(paste0(" No width at all for ",
-    paste(named, collapse = ", "), more, ", so summary() reports ",
+  if (brief) return(paste0(" No standard error for ",
+    .ctNameList(intervals$unidentified), ", so summary() reports ",
     if (many) "those sds, intervals and zs" else "that sd, interval and z",
     " as NA."))
   paste0(" The reported spread for ", paste(named, collapse = ", "), more,
@@ -953,21 +963,27 @@
         `[[`, "parameters"))
       advice <- c(advice[!startsWith(advice, "Not estimable as the model stands")],
         if (length(other)) paste0("Also not estimable as the model stands: ",
-          paste(utils::head(other, 4), collapse = ", "), "."), reduce)
+          .ctNameList(other), "."), reduce)
     }
+    # The no-width sentence names coordinates the advice has named already
+    # wherever they lie in the unidentified directions, which is the usual
+    # case: said twice, the same list filled most of the warning. Kept where
+    # it names others.
+    if (nzchar(nowidth) && all(intervals$unidentified %in% identify$parameters))
+      nowidth <- " summary() reports NA for their standard errors."
     warning("The data do not identify ", identify$nweak, " direction",
-      if (identify$nweak > 1L) "s" else "", " of this model; the estimates ",
-      "stand but the standard error",
-      if (identify$nweak > 1L) "s along them do" else " along it does",
-      " not. ",
+      if (identify$nweak > 1L) "s" else "", " of this model, so standard errors ",
+      if (identify$nweak > 1L) "along them" else "along it",
+      " are not meaningful. ",
       paste(advice, collapse = " "),
       if (!length(partition$partial) && !length(partition$structural))
-        paste0("Parameters involved: ",
-          paste(utils::head(identify$parameters, 6), collapse = ", "),
-          if (length(identify$parameters) > 6) ", ..." else "", ".") else "",
+        paste0("Parameters involved: ", .ctNameList(identify$parameters), ".") else "",
       nowidth,
-      " See fit$identifiability, or ctIdentify(data, model) before the next ",
-      "fit.", call. = FALSE)
+      # The lists above stop at four names (`.ctNameList()`); the call that
+      # gives the rest is said wherever there are more.
+      if (length(identify$parameters) > 4L) paste0(
+        " fit$identifiability$parameters lists all ", length(identify$parameters),
+        ".") else " See fit$identifiability.", call. = FALSE)
     # Carried by the warning above rather than repeated under it: the two are
     # about one finding and a reader who has to be told twice stops reading.
     nowidth <- ""
@@ -993,10 +1009,11 @@
       if (nrow(collapsed) > 1L) "s were" else " was",
       " estimated at zero (level ",
       paste(unique(collapsed$level), collapse = ", "),
-      "). That is a finding -- no detectable individual differences -- but the ",
-      "parameter sits at the edge of its transform, where the curvature is ",
-      "zero, so its reported interval is not a confidence statement. See ",
-      "fit$collapsedScales.")
+      "), so no individual differences were detected there. ",
+      if (nrow(collapsed) > 1L) "Their reported intervals are" else
+        "Its reported interval is", " not meaningful, and indvarying = FALSE ",
+      "fits the same model without ", if (nrow(collapsed) > 1L) "them" else "it",
+      ". See fit$collapsedScales.")
   }
   # Said even when no direction is flat enough to count as unidentified, which
   # is the case this exists for: a parameter can be separable in principle and

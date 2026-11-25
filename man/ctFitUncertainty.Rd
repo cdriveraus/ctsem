@@ -62,9 +62,10 @@ Laplace (see Methods).}
 itself: \code{TRUE} (the default) for all, \code{FALSE} for none, or any of
 \code{'randomeffects'}, \code{'intervals'} and \code{'maximum'}. The
 random-effects check (julia, \code{intoverpop = 'laplace'}) scores the
-Laplace approximation for each subject or group, and gives a warning
+Laplace approximation for each subject or group, and gives a message
 suggesting \code{intoverpop = 'quadrature'} where integrating the random
-effects more exactly would move an estimate. A fit that has been checked
+effects more exactly would move an estimate, or a warning where it would
+move one by a standard error or more. A fit that has been checked
 already is not checked again. The interval check (julia,
 \code{method = 'hessian'}) compares the Hessian's normal approximation
 with the posterior's gradients, records the result in
