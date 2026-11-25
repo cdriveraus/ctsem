@@ -46,10 +46,12 @@ rate whatever the model costs.
 
 # Threads
 
-With several chains running at once only the first reports, and says so. Lines
-from four threads interleave into something unreadable, and a lock to prevent
-that would serialise the very thing being reported on. One chain's progress is
-representative when the chains are doing the same work.
+Chains running at once share one line (`_ChainsReport`): each writes its own
+state under a lock, and the line is printed from all of them, describing the
+chain the run waits on. Lines from four threads printed separately interleave
+into something unreadable. Until 2026-11-25 only the first chain reported, so
+`sampling done` meant chain 1 had ended, and the affect pilot's second chain
+sampled for 14 hours after it with nothing printed.
 """
 
 using Printf
@@ -330,10 +332,12 @@ this rate" at draw 188 and finished 0.2s later.
 
 An optimiser is the opposite case and uses `_progress_optimise` instead. The
 note there records what extrapolating against `maxiter` actually produced.
+
+`elapsed`, the seconds `done` took, is the reporter's age unless the caller
+times the work itself (`_ChainsReport`, one chain's phase).
 """
 function _progress_line(p::CTSEMProgress, done::Integer, total::Integer,
-    fields::AbstractString...)
-    elapsed = _elapsed(p)
+    fields::AbstractString...; elapsed::Real=_elapsed(p))
     rate = done <= 0 ? 0.0 : done / elapsed
     remaining = (rate <= 0 || total <= done) ? 0.0 : (total - done) / rate
     p.lines += 1
@@ -795,6 +799,240 @@ function _invoke_callback(cb::CTSEMCallback, values...; force::Bool=false)
     end
     return nothing
 end
+
+"""
+    _ChainsReport(enabled, nchains, nwarmup, ndraws; overwrite, sink, callback,
+        logp_label)
+
+Every chain of a sampling run on one line, and the caller's callback handed
+the same fields. A chain reports through its handle (`_ChainReport`,
+`_chain_begin!`, `_chain_report!`, `_chain_end!`), writing only its own slots,
+under `lock`; the line is printed and the callback called under the same lock,
+so R is called one chain at a time. `_chains_done!` closes the line once every
+chain has ended.
+
+The line is the chain the run waits on: the one furthest behind of those
+running (started and not ended). Its phase, its count in that phase, its rate
+and the time left at it, its log density (`logp_label`: SAEM's is given the
+effects), step size in warm-up and mean tree depth. Divergences are every
+chain's in that phase. Where the chains stand at different points, `chains`
+gives each one's count: past the phase shown as `warmup+draws`, not yet started
+as `-`; past eight chains, how many have ended, are running and wait. The
+callback gets `(phase, count, total, logp, divergences)` of the same chain.
+
+Until 2026-11-25 chain 1 alone reported, and `sampling done` meant that chain
+1 had ended. On the affect pilot the second chain of fit L's probe sampled for
+14 hours after it with nothing printed, and the run was read as stuck in the
+effect report and nearly stopped, which would have lost both chains' draws
+(review/PILOT-stalls-read-by-gdb-2026-11-25.md).
+"""
+mutable struct _ChainsReport
+    reporter::CTSEMProgress
+    callback::CTSEMCallback
+    nwarmup::Int
+    ndraws::Int
+    logp_label::String
+    # Per chain: phase (0 not started, 1 warm-up, 2 draws, 3 ended), count in
+    # that phase, when the phase began, and what the line shows of it.
+    phase::Vector{Int}
+    at::Vector{Int}
+    since::Vector{Float64}
+    logp::Vector{Float64}
+    eps::Vector{Float64}
+    depth::Vector{Float64}
+    accept::Vector{Float64}
+    wdiv::Vector{Int}
+    sdiv::Vector{Int}
+    # The phase last shown, so the callback is told when warm-up ends, and the
+    # chain that ended last, whose state the closing callback carries.
+    shown::Int
+    last::Int
+    lock::ReentrantLock
+end
+
+function _ChainsReport(enabled::Bool, nchains::Integer, nwarmup::Integer,
+    ndraws::Integer; overwrite::Bool=true, sink=nothing, callback=nothing,
+    logp_label::String="logp")
+    n = Int(nchains)
+    return _ChainsReport(CTSEMProgress(enabled; label="sampling", overwrite=overwrite,
+            sink=sink),
+        CTSEMCallback(callback), Int(nwarmup), Int(ndraws), logp_label,
+        zeros(Int, n), zeros(Int, n), zeros(n), fill(NaN, n), fill(NaN, n),
+        fill(NaN, n), fill(NaN, n), zeros(Int, n), zeros(Int, n), 0, 0,
+        ReentrantLock())
+end
+
+"""Chain `c`'s handle on a `_ChainsReport`; `_ChainReport()` reports nothing
+and only checks for an interrupt."""
+struct _ChainReport
+    report::Union{Nothing,_ChainsReport}
+    chain::Int
+end
+
+_ChainReport() = _ChainReport(nothing, 0)
+
+"""Chain `c`'s handle, or none where the report has nowhere to go."""
+_chain_handle(r::_ChainsReport, c::Integer) =
+    (r.reporter.enabled || r.callback.alive) ? _ChainReport(r, Int(c)) : _ChainReport()
+
+"""Chain `h` starts its warm-up (`warm`) or its draws: the phase's clock."""
+function _chain_begin!(h::_ChainReport, warm::Bool)
+    r = h.report
+    r === nothing && return nothing
+    Base.@lock r.lock begin
+        r.phase[h.chain] = warm ? 1 : 2
+        r.at[h.chain] = 0
+        r.since[h.chain] = time()
+    end
+    return nothing
+end
+
+"""
+    _chain_report!(h, warm, iteration, logp; eps, depth, divergent, accept)
+
+Chain `h` after its `iteration`-th transition of warm-up (`warm`) or draws:
+its log density, step size, mean tree depth, divergences in the phase so far
+and acceptance target where raised (NaN where a field does not apply). Every
+transition comes through here, so it checks for an interrupt.
+"""
+function _chain_report!(h::_ChainReport, warm::Bool, iteration::Integer, logp::Real;
+    eps::Real=NaN, depth::Real=NaN, divergent::Integer=0, accept::Real=NaN)
+    r = h.report
+    r === nothing && return _ctsem_interrupt_check()
+    c = h.chain
+    Base.@lock r.lock begin
+        phase = warm ? 1 : 2
+        if r.phase[c] != phase
+            r.phase[c] = phase
+            r.since[c] = time()
+        end
+        r.at[c] = Int(iteration)
+        r.logp[c] = Float64(logp)
+        r.eps[c] = Float64(eps)
+        r.depth[c] = Float64(depth)
+        r.accept[c] = Float64(accept)
+        warm ? (r.wdiv[c] = Int(divergent)) : (r.sdiv[c] = Int(divergent))
+        _chains_show!(r)
+    end
+    return nothing
+end
+
+"""Chain `h` has ended."""
+function _chain_end!(h::_ChainReport)
+    r = h.report
+    r === nothing && return nothing
+    Base.@lock r.lock begin
+        r.phase[h.chain] = 3
+        r.last = h.chain
+    end
+    return nothing
+end
+
+"""Chain `c`'s place on the run's schedule: warm-up, then draws."""
+_chain_position(r::_ChainsReport, c::Int) =
+    r.phase[c] == 1 ? r.at[c] : r.nwarmup + r.at[c]
+
+"""The running chain furthest behind, or 0 where none is running."""
+function _chains_behind(r::_ChainsReport)
+    k = 0
+    for c in eachindex(r.phase)
+        r.phase[c] in (1, 2) || continue
+        (k == 0 || _chain_position(r, c) < _chain_position(r, k)) && (k = c)
+    end
+    return k
+end
+
+"""The `chains` field: each chain's count where they differ (`""` where every
+chain runs in step), or past eight chains how many have ended, run and wait."""
+function _chains_field(r::_ChainsReport, warm::Bool)
+    n = length(r.phase)
+    if n > 8
+        ended = count(==(3), r.phase)
+        waiting = count(==(0), r.phase)
+        (ended == 0 && waiting == 0) && return ""
+        parts = String[]
+        ended > 0 && push!(parts, "$ended ended")
+        push!(parts, "$(n - ended - waiting) running")
+        waiting > 0 && push!(parts, "$waiting waiting")
+        return "chains " * join(parts, ", ")
+    end
+    shown = map(1:n) do c
+        r.phase[c] == 0 && return "-"
+        r.phase[c] == 1 && return string(r.at[c])
+        return (warm && r.nwarmup > 0) ? string(r.nwarmup, "+", r.at[c]) : string(r.at[c])
+    end
+    return allequal(shown) ? "" : "chains " * join(shown, " ")
+end
+
+"""The line and the callback from every chain's slots; under `r.lock`."""
+function _chains_show!(r::_ChainsReport)
+    k = _chains_behind(r)
+    # Nothing to show of a chain that has not finished a transition yet.
+    (k == 0 || isnan(r.logp[k])) && return _ctsem_interrupt_check()
+    warm = r.phase[k] == 1
+    done = r.at[k]
+    total = warm ? r.nwarmup : r.ndraws
+    div = warm ? sum(r.wdiv) : sum(r.sdiv)
+    if _due(r.reporter)
+        fields = [@sprintf("%s %11.2f", r.logp_label, r.logp[k])]
+        (warm && isfinite(r.eps[k])) && push!(fields, @sprintf("eps %8.2e", r.eps[k]))
+        isfinite(r.depth[k]) && push!(fields, @sprintf("depth %4.1f", r.depth[k]))
+        push!(fields, @sprintf("div %d", div))
+        (warm && isfinite(r.accept[k])) &&
+            push!(fields, @sprintf("accept %.2f", r.accept[k]))
+        push!(fields, _chains_field(r, warm))
+        r.reporter.label = warm ? "warmup" : "sampling"
+        _progress_line(r.reporter, done, total, fields...;
+            elapsed=time() - r.since[k])
+    end
+    # Warm-up's end is told whatever the callback's clock says, as each chain
+    # told it before.
+    (r.shown == 1 && !warm) && _invoke_callback(r.callback, "warmup", r.nwarmup,
+        r.nwarmup, r.logp[k], sum(r.wdiv); force=true)
+    r.shown = warm ? 1 : 2
+    _invoke_callback(r.callback, warm ? "warmup" : "sampling", done, total, r.logp[k], div)
+    return nothing
+end
+
+"""
+    _chains_done!(r, closing)
+
+Once every chain has ended: the callback told the last state whatever its
+clock says, and the line closed with the run's time and `closing`.
+"""
+function _chains_done!(r::_ChainsReport, closing::AbstractString)
+    Base.@lock r.lock begin
+        k = r.last
+        k > 0 && _invoke_callback(r.callback, "sampling", r.at[k], r.ndraws, r.logp[k],
+            sum(r.sdiv); force=true)
+        r.reporter.label = "sampling"
+        _progress_done(r.reporter, closing)
+    end
+    return nothing
+end
+
+"""
+    _chains_reporting(f, r, closing)
+
+`f()`, which runs the chains, and then `r` closed with `closing`
+(`_chains_done!`). Where `f` throws, the line is ended instead, so that what R
+prints next does not land inside it.
+"""
+function _chains_reporting(f, r::_ChainsReport, closing::AbstractString)
+    out = try
+        f()
+    catch
+        _progress_break(r.reporter)
+        rethrow()
+    end
+    _chains_done!(r, closing)
+    return out
+end
+
+"""`4 chains of 500 warmup + 500 draws`, or `of 500 draws` without warm-up."""
+_chains_closing(nchains::Integer, nwarmup::Integer, ndraws::Integer) =
+    string(nchains, nchains == 1 ? " chain of " : " chains of ",
+        nwarmup > 0 ? string(nwarmup, " warmup + ") : "", ndraws, " draws")
 
 """
     _ctsem_call_hook(f, args...)
