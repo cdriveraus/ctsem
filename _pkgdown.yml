@@ -59,6 +59,7 @@ articles:
   - measurement-models
   - laplace-multilevel
   - irt-items
+  - ddm
   - ordinal-or-continuous
 - title: Fitting and uncertainty
   navbar: Fitting and uncertainty
