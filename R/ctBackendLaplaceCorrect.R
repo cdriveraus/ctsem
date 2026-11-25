@@ -483,6 +483,16 @@
 # The gap is not the trigger -- its level does not predict a move -- but a
 # large one says Laplace is off throughout, which is why the fit reports the
 # integrated log likelihood (`.ctLaplaceCheckedLoglik()`).
+#
+# Past a standard error the message adds that sampling starts at the fit's
+# estimate, and that from the refined fit it may need far less warmup. On the
+# hc-wellbeing reanalysis's 1,000-subject analogue the Laplace estimate lay
+# 20-65 posterior sds from all of the joint posterior's mass, in a basin of
+# Laplace's own; four map chains started there took 57 to 150-odd minutes and
+# ended in different basins (R-hat 1.65), and started at the refined fit 23-26
+# minutes, all in the right one (review/SAMPLING-map-regions-2026-11-25.md).
+# Below a standard error the estimate is near the mass and the sentence would
+# only add the refinement's cost.
 .ctLaplaceShiftMessage <- function(shift, worst, carrying, units,
   gap = NA_real_, gap_se = NA_real_) {
   sample <- "ctFitUncertainty(fit, 'sample', intoverpop = 'none')"
@@ -504,6 +514,8 @@
     "estimates with those units integrated by quadrature; ",
     sample,
     " samples the joint posterior, which has no Laplace error, for intervals to report.",
+    if (shift >= 1) paste0(" Sampling starts at the fit's estimate, and from the ",
+      "refined fit it may need much less warmup."),
     " See fit$laplace$correction$check.")
 }
 

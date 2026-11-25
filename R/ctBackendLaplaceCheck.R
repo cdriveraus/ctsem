@@ -88,7 +88,9 @@
 #' @seealso \code{\link{ctFitUncertainty}} with \code{method = 'sample'} and
 #'   \code{intoverpop = 'none'} samples the joint posterior of parameters and
 #'   random effects, which avoids the approximation. It is much slower, and
-#'   the better choice when \code{delta_se} is large.
+#'   the better choice when \code{delta_se} is large. Sampling starts at the
+#'   fit's estimate, so when \code{delta_se} is large it may need much less
+#'   warmup from a refined fit.
 #'
 #' @examples
 #' \dontrun{
