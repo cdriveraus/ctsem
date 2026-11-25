@@ -332,6 +332,19 @@ function _SoftGamma(c::Float64, F, blocks::Vector{CTSEMLaplaceBlock},
         ([zeros(Float64, k.size, k.size) for k in blocks],
             [[zeros(Float64, k.size, blocks[s].size) for s in k.ancestors] for k in blocks]) :
         _laplace_selected_inverse(F.factors, F.coupling, blocks)
+    return _soft_gamma_entries(c, Cdiag, Ccoup, blocks, w, a, b)
+end
+
+"""
+`_SoftGamma` from `c` and the entries `Cdiag`, `Ccoup` of a symmetric matrix in
+`M`'s own block pattern, shaped as `_laplace_selected_inverse` returns `M^-1`'s:
+`c` times that matrix, plus the low-rank terms. A trace term's adjoint that is
+not an inverse, such as the pivot floor's (`_laplace_pivot_floor_adjoint`).
+"""
+function _soft_gamma_entries(c::Float64, Cdiag::Vector{Matrix{Float64}},
+    Ccoup::Vector{Vector{Matrix{Float64}}}, blocks::Vector{CTSEMLaplaceBlock},
+    w::Vector{Float64}=Float64[], a::Vector{Vector{Float64}}=Vector{Float64}[],
+    b::Vector{Vector{Float64}}=Vector{Float64}[])
     D = sum(k.size for k in blocks; init=0)
     block_of, place = zeros(Int, D), zeros(Int, D)
     for (bi, k) in enumerate(blocks), i in 1:k.size

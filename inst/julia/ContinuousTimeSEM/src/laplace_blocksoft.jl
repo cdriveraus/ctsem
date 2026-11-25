@@ -595,3 +595,279 @@ function _laplace_rest_lambda_gradient(laplace::CTSEMLaplaceObjective, U::Intege
         zeros(Float64, length(z)), F, blocks) === nothing && return nothing
     return out
 end
+
+################################################################################
+# A nested unit whose curvature does not factor
+################################################################################
+#
+# Where the inner solve ends at a point that is not a strict maximum -- in a
+# fit, a line search's long trial where some members' dynamics grow a
+# hundredfold over a gap -- a unit's curvature `M` does not factor: it is
+# indefinite, or a pivot's condition is past what `_laplace_block_factor`
+# accepts. The whole unit's soft rule took such a unit densely: four Jacobi
+# decompositions of `d x d` and a Gram-Schmidt basis. On the affect pilot's
+# study units, `d` over a thousand, one evaluation took one to two hours on one
+# thread while the session's other threads waited on it
+# (CT-SEM/review/PILOT-stalls-read-by-gdb-2026-11-25.md).
+#
+# The line search rejects such points, so their term must be finite, cheap and
+# continuous, not accurate. A nested unit takes the Laplace term with each pivot
+# of its block elimination floored as the soft rule's nodes floor eigenvalues
+# (`_laplace_soft_node_curvature_floor`, `f`):
+#
+#     T = g - (1/2) sum_b logdet f(P_b),
+#
+# the blocks eliminated innermost first, as `_laplace_block_factor` takes them,
+# each pivot `P_b` replaced by `f(P_b)` in the elimination as well
+# (`_laplace_pivot_floor_elimination`). Where every pivot's eigenvalues are at
+# or above the floor's top this is Laplace's own `g - logdet M / 2`, however
+# badly conditioned `M` is; elsewhere a soft or negative pivot direction is
+# credited what the floor credits a node's. Its cost is the elimination's,
+# linear in the members, and it is smooth in `M` (`f` is C2). Its gradient is
+# the elimination's reverse (`_laplace_pivot_floor_adjoint`) through the soft
+# rule's trace passes and closing solve (`_soft_factored_close!`).
+
+"""
+One pivot of `_laplace_pivot_floor_elimination`: `logdet f(P)` and `f(P)^-1`,
+exact to first order in `P`'s dual parts (Daleckii-Krein, as
+`_laplace_soft_node_floored_curvature`), and the primal eigenpairs `Q, mu` and
+floored values `f` its reverse reads.
+"""
+struct _PivotFloor{T}
+    logdet::T
+    inverse::Matrix{T}
+    Q::Matrix{Float64}
+    mu::Vector{Float64}
+    f::Vector{Float64}
+end
+
+# `h = 1 / f`'s divided difference between two eigenvalues of a pivot, its
+# slope where they coincide (the floor's own coincidence rule,
+# `_soft_node_floored_curvature_adjoint`).
+function _pivot_floor_inverse_divided(a::Float64, b::Float64)
+    f = _laplace_soft_node_curvature_floor
+    if abs(a - b) <= 1e-12 * max(1.0, abs(a))
+        return -_laplace_soft_node_curvature_floor_slope(a) / f(a)^2
+    end
+    return (1 / f(a) - 1 / f(b)) / (a - b)
+end
+
+"""
+    _laplace_pivot_floor(P)
+
+Pivot `P` with each eigenvalue floored (`_laplace_soft_node_curvature_floor`), as
+a `_PivotFloor`: read as symmetric through both triangles averaged.
+"""
+function _laplace_pivot_floor(P::AbstractMatrix{T}) where {T}
+    n = size(P, 1)
+    P0 = Matrix{Float64}(undef, n, n)
+    @inbounds for j in 1:n, i in 1:n
+        P0[i, j] = (Float64(_laplace_deepvalue(P[i, j])) +
+            Float64(_laplace_deepvalue(P[j, i]))) / 2
+    end
+    E = _ctsem_symeig(P0)
+    Q, mu = E.vectors, E.values
+    f = Float64[_laplace_soft_node_curvature_floor(x) for x in mu]
+    # The middle factor `C` of `f(P)^-1 = Q C Q'`: `diag(1 / f)`, plus at a
+    # dual `P` its first-order part.
+    C = zeros(T, n, n)
+    logdet = zero(T)
+    @inbounds for i in 1:n
+        C[i, i] = 1 / f[i]
+        logdet += log(f[i])
+    end
+    if T !== Float64
+        D = Matrix{T}(undef, n, n)
+        @inbounds for j in 1:n, i in 1:n
+            D[i, j] = (P[i, j] + P[j, i]) / 2 - P0[i, j]
+        end
+        Dt = transpose(Q) * D * Q
+        @inbounds for j in 1:n, i in 1:n
+            C[i, j] += _pivot_floor_inverse_divided(mu[i], mu[j]) * Dt[i, j]
+        end
+        @inbounds for i in 1:n
+            logdet += _laplace_soft_node_curvature_floor_slope(mu[i]) / f[i] * Dt[i, i]
+        end
+    end
+    inverse = zeros(T, n, n)
+    @inbounds for j in 1:n, k in 1:n, l in 1:n
+        c = C[l, k]
+        iszero(c) && continue
+        qjk = Q[j, k]
+        for i in 1:n
+            inverse[i, j] += Q[i, l] * c * qjk
+        end
+    end
+    return _PivotFloor{T}(logdet, inverse, Q, mu, f)
+end
+
+# `A * B` and `A' * B` by loops, generic in the element types: never BLAS,
+# which takes a process-wide lock (small_linalg.jl).
+function _pivot_floor_mul(A::AbstractMatrix, B::AbstractMatrix)
+    C = zeros(promote_type(eltype(A), eltype(B)), size(A, 1), size(B, 2))
+    @inbounds for j in axes(B, 2), k in axes(A, 2)
+        b = B[k, j]
+        iszero(b) && continue
+        for i in axes(A, 1)
+            C[i, j] += A[i, k] * b
+        end
+    end
+    return C
+end
+function _pivot_floor_mulTN(A::AbstractMatrix, B::AbstractMatrix)
+    C = zeros(promote_type(eltype(A), eltype(B)), size(A, 2), size(B, 2))
+    @inbounds for j in axes(B, 2), i in axes(A, 2)
+        acc = zero(eltype(C))
+        for k in axes(A, 1)
+            acc += A[k, i] * B[k, j]
+        end
+        C[i, j] = acc
+    end
+    return C
+end
+
+"""
+    _laplace_pivot_floor_elimination(M, blocks)
+
+`M` eliminated as `_laplace_block_factor` eliminates it, innermost block first,
+with each pivot replaced by its floored form (`_laplace_pivot_floor`) both in
+the log determinant and in the Schur updates it makes to its ancestors:
+`(logdet, pivots, coupling)`, `logdet` the sum of `logdet f(P_b)`, `pivots`
+the `_PivotFloor`s and `coupling` the couplings as the elimination used them.
+Generic in the element type. `nothing` where a pivot's eigenvalues are not
+finite.
+"""
+function _laplace_pivot_floor_elimination(M::CTSEMBlockMatrix{T},
+    blocks::Vector{CTSEMLaplaceBlock}) where {T}
+    nb = length(blocks)
+    diag = [Matrix{T}(d) for d in M.diag]
+    coupling = [[Matrix{T}(c) for c in row] for row in M.coupling]
+    pivots = Vector{_PivotFloor{T}}(undef, nb)
+    logdet = zero(T)
+    for b in 1:nb
+        p = _laplace_pivot_floor(diag[b])
+        all(isfinite, p.mu) || return nothing
+        pivots[b] = p
+        logdet += p.logdet
+        ancestors = blocks[b].ancestors
+        isempty(ancestors) && continue
+        W = [_pivot_floor_mul(p.inverse, coupling[b][t]) for t in eachindex(ancestors)]
+        for t in eachindex(ancestors)
+            a = ancestors[t]
+            diag[a] .-= _laplace_symmetrise(_pivot_floor_mulTN(coupling[b][t], W[t]))
+            for s in eachindex(ancestors)
+                s == t && continue
+                slot = findfirst(==(ancestors[s]), blocks[a].ancestors)
+                slot === nothing && continue
+                coupling[a][slot] .-= _pivot_floor_mulTN(coupling[b][t], W[s])
+            end
+        end
+    end
+    return (logdet=logdet, pivots=pivots, coupling=coupling)
+end
+
+"""
+    _laplace_pivot_floor_adjoint(F, blocks)
+
+The gradient of `_laplace_pivot_floor_elimination`'s `logdet` with respect to
+the curvature it eliminated, `F` its Float64 result: `(diag, coupling)` in the
+curvature's own block pattern, the derivative in each stored block, a coupling
+block standing for both its entries and their transposes. The elimination
+reversed, outermost block first: a pivot's share is `Q diag(f'/f) Q'` and,
+through its inverse `h(P) = f(P)^-1` in the Schur updates, the Daleckii-Krein
+pullback of what those updates' adjoints ask of it; the couplings' shares are
+the updates' own.
+"""
+function _laplace_pivot_floor_adjoint(F, blocks::Vector{CTSEMLaplaceBlock})
+    nb = length(blocks)
+    Dbar = [zeros(Float64, k.size, k.size) for k in blocks]
+    Cbar = [[zeros(Float64, k.size, blocks[a].size) for a in k.ancestors] for k in blocks]
+    for b in nb:-1:1
+        p = F.pivots[b]
+        Q, mu, f = p.Q, p.mu, p.f
+        n = length(mu)
+        # `logdet f(P)`'s own share.
+        ct = zeros(Float64, n, n)
+        @inbounds for i in 1:n
+            ct[i, i] = _laplace_soft_node_curvature_floor_slope(mu[i]) / f[i]
+        end
+        ancestors = blocks[b].ancestors
+        if !isempty(ancestors)
+            C = F.coupling[b]
+            G = p.inverse
+            Gbar = zeros(Float64, n, n)
+            for t in eachindex(ancestors)
+                a = ancestors[t]
+                # diag[a] -= C_t' G C_t
+                Gbar .-= _pivot_floor_mul(_pivot_floor_mul(C[t], Dbar[a]), transpose(C[t]))
+                Cbar[b][t] .-= 2 .* _pivot_floor_mul(_pivot_floor_mul(G, C[t]), Dbar[a])
+                for s in eachindex(ancestors)
+                    s == t && continue
+                    slot = findfirst(==(ancestors[s]), blocks[a].ancestors)
+                    slot === nothing && continue
+                    # coupling[a][slot] -= C_t' G C_s
+                    X = Cbar[a][slot]
+                    Gbar .-= _pivot_floor_mul(_pivot_floor_mul(C[t], X), transpose(C[s]))
+                    Cbar[b][t] .-= _pivot_floor_mul(_pivot_floor_mul(G, C[s]), transpose(X))
+                    Cbar[b][s] .-= _pivot_floor_mul(_pivot_floor_mul(G, C[t]), X)
+                end
+            end
+            # Through `G = h(P)`: Daleckii-Krein on the symmetric part.
+            Gt = _pivot_floor_mulTN(Q, _pivot_floor_mul(_laplace_symmetrise(Gbar), Q))
+            @inbounds for j in 1:n, i in 1:n
+                ct[i, j] += _pivot_floor_inverse_divided(mu[i], mu[j]) * Gt[i, j]
+            end
+        end
+        Dbar[b] = _laplace_symmetrise(_pivot_floor_mul(_pivot_floor_mul(Q, ct), transpose(Q)))
+    end
+    return (diag=Dbar, coupling=Cbar)
+end
+
+"""
+    _laplace_pivot_floor_term(laplace, U, values, Ls, u, aws, inner)
+
+Nested unit `U`'s term at `u`, where its curvature does not factor: `g - (1/2)
+sum_b logdet f(P_b)` (the section's header), from the curvature at `u` formed
+afresh, `inner` the unit objective there. `NaN` where the elimination cannot
+be made.
+"""
+function _laplace_pivot_floor_term(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{T}, Ls, u::AbstractVector{T}, aws, inner) where {T}
+    M = _laplace_unit_curvature(laplace, U, values, Ls, u)::CTSEMBlockMatrix{T}
+    F = _laplace_pivot_floor_elimination(M, laplace.units.blocks[U])
+    F === nothing && return _ctsem_nan(T)
+    return inner.value - inner.hlogdet - F.logdet / 2
+end
+
+"""
+    _laplace_pivot_floor_gradient!(row, laplace, U, theta, Ls, dLlevels)
+
+`_laplace_pivot_floor_term`'s gradient at unit `U`'s mode into `row`: `g`'s own,
+and `logdet`'s through `M`'s trace passes, `-Gamma / 2` with `Gamma` the
+elimination's adjoint (`_laplace_pivot_floor_adjoint`), closed through the
+mode's movement by the implicit function theorem (`_soft_factored_close!`), on
+`M`'s own elimination where it is not singular (`_soft_node_factor`) and on
+the floored one's otherwise. `false` where a pass fails.
+"""
+function _laplace_pivot_floor_gradient!(row::Vector{Float64},
+    laplace::CTSEMLaplaceObjective, U::Integer, theta::Vector{Float64},
+    Ls::Vector{Matrix{Float64}}, dLlevels)
+    spec = laplace.spec
+    blocks = laplace.units.blocks[U]
+    z = laplace.modes[U]
+    M = _laplace_copy_blockmatrix(_laplace_unit_curvature(laplace, U, theta, Ls, z))
+    F = _laplace_pivot_floor_elimination(M, blocks)
+    F === nothing && return false
+    bar = _laplace_pivot_floor_adjoint(F, blocks)
+    Gamma = _soft_gamma_entries(-0.5, bar.diag,
+        [[c ./ 2 for c in row_] for row_ in bar.coupling], blocks)
+    F0 = _soft_node_factor(M, blocks)
+    F0 === nothing && (F0 = (logdet=F.logdet,
+        factors=[_LDLPivot(p.f, p.Q) for p in F.pivots], coupling=F.coupling))
+    positions = [_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
+    G = _SoftQuadratureThetaGradient(laplace, U, theta, Ls, dLlevels, positions, nothing)
+    fill!(row, 0.0)
+    _soft_factored_close!(row, G, z, 1.0, Gamma, zeros(Float64, length(z)), F0,
+        blocks) === nothing && return false
+    return all(isfinite, row)
+end
