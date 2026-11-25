@@ -81,29 +81,35 @@ ctModelLatexT0Labels <- function(ctm){
   labels
 }
 
-ctModelLatexT0DisplayCov <- function(t0var, digits=3){
+ctModelLatexT0DisplayCov <- function(t0var, digits=3, covmattransform=NULL){
   t0var <- as.matrix(t0var)
   d <- nrow(t0var)
   if(d < 1) return(matrix(numeric(0), 0, 0))
+  tf <- if(is.null(covmattransform)) 'rawcorr' else as.character(covmattransform)[1]
   num <- suppressWarnings(matrix(as.numeric(t0var), nrow=d, ncol=d))
-  if(!any(is.na(num))) return(round(sdpcor2cov(num), digits))
-  
-  out <- matrix(0, d, d)
-  dimnames(out) <- dimnames(t0var)
-  for(ri in seq_len(d)){
-    for(ci in seq_len(d)){
-      if(ri == ci){
-        out[ri,ci] <- if(!is.na(num[ri,ri]) && num[ri,ri] == 0) 0 else
-          paste0('T0cov_', ri, '_', ci)
-      } else {
-        lr <- max(ri, ci)
-        lc <- min(ri, ci)
-        out[ri,ci] <- if(!is.na(num[lr,lc]) && num[lr,lc] == 0) 0 else
-          paste0('T0cov_', ri, '_', ci)
-      }
-    }
+  # Only the diagonal and below are read by the model's construction.
+  num[upper.tri(num)] <- 0
+  fixedzero <- .ctCovZeroCells(num)
+
+  # Every cell a number: the covariance the model's construction gives them.
+  if(!anyNA(num)) return(round(.ctCovForward(num, tf, fixedzero), digits))
+
+  # Some cells are parameters: a covariance is shown as zero only where the
+  # construction makes it zero whatever the parameters are, found by building
+  # the covariance at two arbitrary sets of positive values for them.
+  free <- is.na(num)
+  zero <- matrix(TRUE, d, d)
+  for(k in c(1.3, 2.9)){
+    cells <- num
+    cells[free] <- 0.4 + 0.5 * abs(sin(k * seq_len(sum(free))))
+    cov <- .ctCovForward(cells, tf, fixedzero)
+    sdprod <- sqrt(outer(diag(cov), diag(cov)))
+    zero <- zero & is.finite(cov) & abs(cov) <= 1e-8 * sdprod
   }
-  out[upper.tri(out)] <- t(out)[upper.tri(out)]
+
+  out <- matrix(paste0('T0cov_', row(zero), '_', col(zero)), d, d)
+  out[zero] <- 0
+  dimnames(out) <- dimnames(t0var)
   out
 }
 
@@ -116,7 +122,7 @@ ctModelLatexAugmentT0 <- function(popmeans, popcov, timat, ctm, digits=3,
   if(is.null(t0means)) t0means <- as.matrix(ctm$T0MEANS)[seq_len(nlatent),1]
   if(is.null(t0cov)) t0cov <- ctModelLatexT0DisplayCov(
     as.matrix(ctm$T0VAR)[seq_len(nlatent), seq_len(nlatent), drop=FALSE],
-    digits=digits)
+    digits=digits, covmattransform=ctm$covmattransform)
   t0cov <- as.matrix(t0cov)
   
   labelsInPopcov <- labels %in% rownames(popcov)
@@ -939,7 +945,7 @@ pars <- unique(c(rownames(popcov),unlist(lapply(extracov,rownames)),
       if(exists('t0cov') && is.null(t0cov) && exists('ctmodel')) {
         t0cov <- ctModelLatexT0DisplayCov(
           as.matrix(ctmodel$T0VAR)[seq_len(ctmodel$n.latent), seq_len(ctmodel$n.latent), drop=FALSE],
-          digits=digits)
+          digits=digits, covmattransform=ctmodel$covmattransform)
       }
       if(exists('t0means') && !is.null(t0means)) {
         t0means <- as.matrix(t0means)[seq_len(ctmodel$n.latent),1]
