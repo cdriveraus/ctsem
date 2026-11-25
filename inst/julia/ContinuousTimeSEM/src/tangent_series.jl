@@ -724,13 +724,13 @@ end
 
 """The intercept's series over `dt` for `J` into `sb.out`: from `tab` where the
 drift holds over the rows, by Horner's rule where it may change by row
-(`rows`)."""
+(`drows`, `TanModel.drows`)."""
 @inline _tan_intercept_series!(sb::TanSeries{W}, tab::TanSeriesTable{W}, J::TanMat{W},
-    dt::Float64, rows::Bool) where {W} = rows ? _tan_series_intercept!(sb, J, dt) :
+    dt::Float64, drows::Bool) where {W} = drows ? _tan_series_intercept!(sb, J, dt) :
     _tan_series_intercept_table!(sb, _tan_table_for!(tab, J, nothing), dt)
 
 """The noise's series over `dt` for `J` and `Q` into `sb.out`, as
 `_tan_intercept_series!`."""
 @inline _tan_noise_series!(sb::TanSeries{W}, tab::TanSeriesTable{W}, J::TanMat{W},
-    Q::TanMat{W}, dt::Float64, rows::Bool) where {W} = rows ?
+    Q::TanMat{W}, dt::Float64, drows::Bool) where {W} = drows ?
     _tan_series_noise!(sb, J, Q, dt) : _tan_series_noise_table!(sb, _tan_table_for!(tab, J, Q), dt)

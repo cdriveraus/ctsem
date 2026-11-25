@@ -222,6 +222,10 @@ _tangent_dual_hessian(objective, values) = _oracle_hessian(objective, values)
         (cat=true, floor=true, count=true, asym=true),
         (cat=true, floor=true, censor=true, response=true),
         (stationary=true, perrow=true), (elements=true,), (elements=true, perrow=true),
+        (elements=true, max_timestep=0.4),
+        # Stationary moments on each subject's own layer, weighted in its walk,
+        # beside the shared layer's once a block above.
+        (ti=true, stationary=true), (ti=true, elements=true),
         (ti=true, timiss=true))
         objective, values = _tangent_test_model(; opts...)
         n = length(values)
@@ -326,15 +330,26 @@ function _tangent_aug_model(; continuous=true, max_timestep=Inf, driftscale=1.0,
 end
 
 @testset "the augmented route's static carriers and population block" begin
+    # A stationary start beside the static carrier, on substeps short enough
+    # that the intervals are taken as series, from their tables where the drift
+    # holds over the rows (`TanModel.drows`). (A drift scaled to 0.02 here is
+    # unstable, with no stationary moments.)
     for opts in ((;), (max_timestep=0.4,), (continuous=false,), (driftscale=0.02,),
-        (stationary=true,))
+        (stationary=true,), (stationary=true, max_timestep=0.005))
         objective, values = _tangent_aug_model(; opts...)
         n = length(values)
         @test ContinuousTimeSEM._tan_refusal(objective) === nothing
         H = zeros(n, n)
         @test ContinuousTimeSEM._tan_hessian_columns!(H, objective, values, collect(1:n),
             nothing)
+        counts = ContinuousTimeSEM._CTSEM_OPCOUNT
+        before = (counts.series_intercept[], counts.series_noise[])
         reference = _tangent_dual_hessian(objective, values)
+        if get(opts, :max_timestep, Inf) < 0.1
+            # The filter took both series somewhere.
+            @test counts.series_intercept[] > before[1]
+            @test counts.series_noise[] > before[2]
+        end
         @test all(isfinite, reference)
         @test (H .+ H') ./ 2 ≈ reference rtol = 1e-10
     end
@@ -344,6 +359,7 @@ end
     # `ctsem_row_scores` along 15 directions, two chunks of lanes, against the
     # filter at the Hessian's dual, its oracle.
     for (make, opts) in ((_tangent_test_model, (;)), (_tangent_test_model, (ti=true,)),
+        (_tangent_test_model, (stationary=true,)), (_tangent_test_model, (elements=true,)),
         (_tangent_test_model, (rows=true, relin=true, max_timestep=0.4)),
         (_tangent_test_model, (cat=true, moment=true, rows=true)),
         (_tangent_test_model, (cat=true, count=true, asym=true)),
@@ -367,8 +383,11 @@ end
 @testset "intervals taken as series" begin
     # A drift close to zero against the intervals: the filter integrates every
     # interval's intercept and noise as series. At 0.02, with substeps, some
-    # intervals take them and some the closed forms.
-    for opts in ((driftscale=1e-5,), (driftscale=0.02, max_timestep=0.4))
+    # intervals take them and some the closed forms. With stationary elements
+    # the sweep is by row while the drift holds over the rows, so it keeps the
+    # series tables (`TanModel.drows`).
+    for opts in ((driftscale=1e-5,), (driftscale=0.02, max_timestep=0.4),
+        (driftscale=1e-5, elements=true), (driftscale=0.02, max_timestep=0.4, elements=true))
         objective, values = _tangent_test_model(; opts...)
         n = length(values)
         counts = ContinuousTimeSEM._CTSEM_OPCOUNT
