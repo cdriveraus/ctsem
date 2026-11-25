@@ -1418,7 +1418,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # extended by a covariate or a smooth starts where the old one stopped, and its
 # new coordinates at zero, no effect. A level's correlation coordinates are
 # carried only where the level varies the same parameters, since they mean
-# something else in a block of another size.
+# something else in a block of another size. A reduced-rank level's loadings
+# are carried effect by effect (`.ctImproveBlockStart()`), never by name: a
+# dimension's number depends on the effects and blocks before it, so once a
+# block gains an effect, the dimensions of every block after it are numbered
+# anew, and a loading matched by name lands on another block's dimension or
+# on none.
 .ctJuliaInitsFromFit <- function(old, spec, npar) {
   if (is.null(spec)) stop("Internal: starting values from a fit need the ",
     "prepared specification.", call. = FALSE)
@@ -1430,10 +1435,27 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (!identical(spread(oldnames), spread(newnames))) {
     values[grepl("^rawcor_", newnames)] <- NA
   }
-  carried <- sum(!is.na(values))
+  carried <- !is.na(values)
+  levels <- spec$laplace$levels
+  loading <- unlist(lapply(levels, function(lv) lv$load_index))
+  if (length(loading)) {
+    values[loading] <- 0
+    start <- .ctImproveBlockStart(old, spec, newnames)
+    values[match(names(start), newnames)] <- start
+    # An effect's loadings are carried where the fit's level of that name
+    # loads it too.
+    carried[loading] <- FALSE
+    for (lv in levels) {
+      lv1 <- Find(function(x) identical(as.character(x$name), as.character(lv$name)) &&
+        length(x$load_index) > 0L, old$model_spec$laplace$levels)
+      if (is.null(lv1) || !length(lv$load_index)) next
+      rows <- .ctJuliaLoadingEntries(lv)$row
+      carried[lv$load_index] <- as.character(lv$param)[rows] %in% as.character(lv1$param)
+    }
+  }
   values[is.na(values)] <- 0
-  message("Starting values from the fit for ", carried, " of ", npar,
-    " parameters; the rest start at zero.")
+  message("Starting values from the fit for ", sum(carried), " of ", npar,
+    " parameters; the rest start at or near zero.")
   values
 }
 

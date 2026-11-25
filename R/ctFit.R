@@ -883,8 +883,9 @@ T0VARredundancies <- function(ctm) {
 #' parameter, such as \code{fit$estimate$raw} from a julia fit or
 #' \code{fit$stanfit$rawest} from a stan fit. With \code{backend='julia'} it
 #' may also be a fit, whose estimates are matched to this model's parameters
-#' by name, so that a model extended by a predictor or a smooth starts from
-#' the earlier estimates with the new coefficients at zero. With
+#' by name, and its population loadings to this model's by effect, so that a
+#' model extended by a predictor, a smooth or a random effect starts from the
+#' earlier estimates with the new parameters at or near zero. With
 #' \code{backend='stan'} and \code{optimize=FALSE}, \code{'optimize'}
 #' optimises first and starts the chains there.
 #' @param priors \code{FALSE} (the default), \code{TRUE} or \code{'randomCorr'}.
