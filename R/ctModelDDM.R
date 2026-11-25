@@ -14,12 +14,12 @@
 #' @param drift,boundary,ndt One sided formulas of trial level predictors of
 #'   the drift, the log boundary separation and the log nondecision time, such
 #'   as \code{~ speed + difficulty}. \code{~ 1} for none. Predictors are numeric
-#'   columns of the data, entered as time dependent predictors; code a factor
-#'   as dummy columns. The drift's predictors shift the drift on their trial
+#'   columns of the data, entered as time dependent predictors. A factor needs
+#'   dummy columns. The drift's predictors shift the drift on their trial
 #'   only.
 #' @param bias The relative start point, as a proportion of the boundary
-#'   separation from the lower boundary: a number to fix it, or a one sided
-#'   formula to estimate it, with predictors on the logit scale.
+#'   separation from the lower boundary. A number fixes it, and a one sided
+#'   formula estimates it, with predictors on the logit scale.
 #' @param random Which of \code{'drift'}, \code{'boundary'}, \code{'ndt'} and
 #'   \code{'bias'} vary over subjects.
 #' @param dynamic Whether the drift changes over the session. \code{FALSE}
