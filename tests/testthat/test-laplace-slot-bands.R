@@ -194,3 +194,144 @@ test_that("a nested unit's leaves integrate their own soft directions", {
   # The whole unit's rule is the oracle switch's, and another integral.
   expect_gt(abs(r$value - r$whole), 1e-3)
 })
+
+# A nested unit whose curvature does not factor at its mode floors the pivots
+# of its block elimination (`_laplace_pivot_floor_term`) rather than taking the
+# whole unit's rule densely, which on the affect pilot's study units took hours
+# an evaluation. Here each person's drift varies freely and the gaps are 10 to
+# 30 time units, so at a positive mean drift the study's members explode over
+# them and its curvature is indefinite. Checked: the route is taken there and
+# its value and gradient are finite; the elimination's adjoint against its own
+# dual on the unit's block pattern, and against the Cholesky logdet and
+# selected inverse where no pivot is floored; the term's gradient against
+# differences at a converged mode, and at fixed coordinates where the
+# curvature is indefinite.
+test_that("a nested unit whose curvature does not factor floors its pivots", {
+  skip_without_julia()
+  m <- .nested_panel_model("drift")
+  m$pars$transform[m$pars$matrix == "DRIFT" & m$pars$row == m$pars$col] <- "param"
+  d <- .nested_panel_data(1, 40, 6)
+  d$time <- d$time * 20
+  spec <- suppressMessages(ctFit(d, m, backend = "julia", intoverpop = "laplace",
+    fit = FALSE, cores = 1))
+  obj <- ctsem:::.ctJuliaObjective(spec, layer = TRUE)
+  np <- ctsem:::.ctBackendNpar(spec)
+  pt <- spec$parameter_table
+  diagp <- unique(pt$parnumber[pt$matrix == "DRIFT" & pt$row == pt$col &
+    !is.na(pt$parnumber)])
+  sdi <- unlist(lapply(spec$laplace$levels, function(lv) lv$sd_index[lv$sd_index > 0]))
+  good <- bad <- rep(0, np)
+  good[sdi] <- bad[sdi] <- 1
+  good[diagp] <- 0.3
+  bad[diagp] <- 1.5
+  r <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaEval(paste(
+    "(o, good, bad) -> begin",
+    "  C = ContinuousTimeSEM",
+    "  good = collect(Float64, good); bad = collect(Float64, bad)",
+    "  U = 1; blocks = o.units.blocks[U]",
+    "  aws = C._laplace_workspace!(o, Float64, length(good))",
+    "  dif(f, v, h) = [(f(setindex!(copy(v), v[i] + h, i)) - f(setindex!(copy(v), v[i] - h, i))) /",
+    "    (2h) for i in eachindex(v)]",
+    "  # The route, where the curvature does not factor.",
+    "  ev = C.ctsem_laplace_evaluate(o, bad; gradient = true)",
+    "  repaired = count(o.mode_repaired)",
+    "  theta = C._laplace_extend(o, bad); Ls = C._laplace_popchols(theta, o.spec)",
+    "  inner = C._laplace_unit_objective_gradient(o, U, theta, Ls, o.modes[U], aws)",
+    "  F = C._laplace_pivot_floor_elimination(C._laplace_unit_curvature(o, U, theta, Ls,",
+    "    o.modes[U]), blocks)",
+    "  floored = sum(count(<(C._laplace_soft_node_curvature_floor_top()), p.mu) for p in F.pivots)",
+    "  route = ev.unit_loglik[U] - (inner.value - F.logdet / 2)",
+    "  # The elimination's adjoint, on the unit's pattern with random entries.",
+    "  rng = C.Random.Xoshiro(7)",
+    "  function randm(shift, scale)",
+    "    A = C.CTSEMBlockMatrix(Float64, blocks)",
+    "    for D in A.diag; R = randn(rng, size(D)); D .= (R .+ R') ./ 2; for i in axes(D, 1); D[i, i] += shift; end; end",
+    "    for row in A.coupling, c in row; c .= scale .* randn(rng, size(c)); end",
+    "    A",
+    "  end",
+    "  adj = Float64[]; chol = Float64[]",
+    "  for (shift, scale) in ((0.2, 0.3), (1.0, 0.2), (8.0, 0.3))",
+    "    A = randm(shift, scale); E = randm(0.0, 1.0)",
+    "    Fa = C._laplace_pivot_floor_elimination(A, blocks)",
+    "    bar = C._laplace_pivot_floor_adjoint(Fa, blocks)",
+    "    ip = sum(sum(bar.diag[b] .* E.diag[b]) +",
+    "      sum((sum(bar.coupling[b][t] .* E.coupling[b][t]) for t in eachindex(E.coupling[b])); init = 0.0)",
+    "      for b in eachindex(blocks))",
+    "    Dl = C.ForwardDiff.Dual{Nothing,Float64,1}",
+    "    dual = C.ForwardDiff.Dual{Nothing}",
+    "    Ad = C.CTSEMBlockMatrix{Dl}([dual.(A.diag[b], E.diag[b]) for b in eachindex(blocks)],",
+    "      [[dual.(A.coupling[b][t], E.coupling[b][t]) for t in eachindex(A.coupling[b])]",
+    "        for b in eachindex(blocks)])",
+    "    push!(adj, minimum(minimum(p.mu) for p in Fa.pivots), ip,",
+    "      C.ForwardDiff.partials(C._laplace_pivot_floor_elimination(Ad, blocks).logdet)[1])",
+    "    if shift > 1",
+    "      ok, ld, fs, cp = C._laplace_block_factor(C._laplace_copy_blockmatrix(A), blocks)",
+    "      S = C._laplace_selected_inverse(fs, cp, blocks)",
+    "      push!(chol, Fa.logdet - ld, maximum(maximum(abs, bar.diag[b] .- S[1][b]) +",
+    "        maximum((maximum(abs, bar.coupling[b][t] ./ 2 .- S[2][b][t])",
+    "          for t in eachindex(S[2][b])); init = 0.0) for b in eachindex(blocks)))",
+    "    end",
+    "  end",
+    "  # The term's gradient at a converged mode, the mode solved again either side.",
+    "  C.ctsem_laplace_evaluate(o, good; gradient = false)",
+    "  converged = all(C._laplace_converged(o, nothing))",
+    "  theta = C._laplace_extend(o, good); Ls = C._laplace_popchols(theta, o.spec)",
+    "  start = copy(o.modes[U])",
+    "  row = zeros(length(theta))",
+    "  ok = C._laplace_pivot_floor_gradient!(row, o, U, theta, Ls,",
+    "    C._laplace_level_chol_derivatives(theta, o.spec))",
+    "  term = function (x)",
+    "    Lx = C._laplace_popchols(x, o.spec)",
+    "    s = C._laplace_newton_unit_mode(o, U, x, Lx, aws, start)",
+    "    s.converged || return NaN",
+    "    C._laplace_pivot_floor_term(o, U, x, Lx, s.u, aws,",
+    "      C._laplace_unit_objective_gradient(o, U, x, Lx, s.u, aws))",
+    "  end",
+    "  fd = dif(term, theta, 1e-6)",
+    "  # At fixed coordinates where the curvature is indefinite: the trace passes",
+    "  # with an indefinite adjoint.",
+    "  z = start .+ randn(C.Random.Xoshiro(11), length(start))",
+    "  Mz = C._laplace_copy_blockmatrix(C._laplace_unit_curvature(o, U, theta, Ls, z))",
+    "  Fz = C._laplace_pivot_floor_elimination(Mz, blocks)",
+    "  zfloored = sum(count(<(0.0), p.mu) for p in Fz.pivots)",
+    "  bz = C._laplace_pivot_floor_adjoint(Fz, blocks)",
+    "  Gamma = C._soft_gamma_entries(-0.5, bz.diag, [[c ./ 2 for c in r] for r in bz.coupling],",
+    "    blocks)",
+    "  G = C._SoftQuadratureThetaGradient(o, U, theta, Ls, C._laplace_level_chol_derivatives(theta,",
+    "    o.spec), [C._laplace_level_positions(o.spec, l) for l in eachindex(o.spec.levels)], nothing)",
+    "  tz = zeros(length(theta))",
+    "  C._laplace_soft_quadrature_vjp!(tz, G, z, 1.0, nothing, Gamma)",
+    "  fixed = function (x)",
+    "    Lx = C._laplace_popchols(x, o.spec)",
+    "    C._laplace_unit_objective_gradient(o, U, x, Lx, z, aws).value -",
+    "      C._laplace_pivot_floor_elimination(C._laplace_unit_curvature(o, U, x, Lx, z),",
+    "        blocks).logdet / 2",
+    "  end",
+    "  fz = dif(fixed, theta, 1e-6)",
+    "  (repaired = repaired, value = ev.value, gfinite = all(isfinite, ev.gradient),",
+    "   floored = floored, route = route, adj = adj, chol = chol, converged = converged,",
+    "   ok = ok, g = row, fd = fd, zfloored = zfloored, tz = tz, fz = fz)",
+    "end", sep = "\n"))(obj, ctsem:::.ctJuliaNumericVector(good),
+      ctsem:::.ctJuliaNumericVector(bad)))
+  # The route: the curvature does not factor, some pivots are floored, and the
+  # unit's term is the floored elimination's.
+  expect_gte(r$repaired, 1)
+  expect_true(is.finite(r$value))
+  expect_true(r$gfinite)
+  expect_gt(r$floored, 0)
+  expect_equal(r$route, 0, tolerance = 1e-9)
+  # The adjoint: indefinite and floored pivots in the first two, none in the
+  # third, where it is the selected inverse and the logdet Cholesky's.
+  adj <- matrix(r$adj, ncol = 3, byrow = TRUE)
+  expect_lt(adj[1, 1], 0)
+  expect_gt(adj[3, 1], 0.3)
+  expect_equal(adj[, 2], adj[, 3], tolerance = 1e-9)
+  expect_equal(r$chol, c(0, 0), tolerance = 1e-9)
+  # The term's gradient, through the mode's movement and with an indefinite
+  # trace adjoint.
+  expect_true(r$converged)
+  expect_true(r$ok)
+  expect_equal(as.numeric(r$g), as.numeric(r$fd), tolerance = 1e-5)
+  expect_gt(r$zfloored, 0)
+  expect_equal(as.numeric(r$tz), as.numeric(r$fz), tolerance = 1e-5)
+})
