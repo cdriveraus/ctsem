@@ -11,9 +11,11 @@ stay integrated exactly), `u = m + L x(z)`, and its bound is
 
 less a weak prior on the family's shape (`kappa`). Each member's term is an
 integral over its own chain of the unit's coordinates alone -- its own
-block's and its ancestors' -- on nodes over that chain; the other two terms
-involve no model and are taken in closed form or on fine one-dimensional
-rules. The approximation maximises `B_U`, so the bound's gradient in the
+block's and its ancestors' -- on nodes over that chain. The other two terms
+involve no model: for the Gaussian family both are in closed form; for the
+shaped family the entropy is on fine one-dimensional rules, so the family
+cannot gain by stretching its map between the nodes, and `-E|u|^2 / 2` on the
+unit's own nodes, whose points and Jacobians are there already. The approximation maximises `B_U`, so the bound's gradient in the
 parameters is the partial with the nodes held: first derivatives of the
 members' likelihoods at their nodes.
 
@@ -356,58 +358,10 @@ function _vf_entropy(f::CTSEMVFamily, lam::AbstractVector)
     return out
 end
 
-"""The shaped family's prior and entropy terms, `-E|u|^2 / 2 + E[log |du/dz|]
-+ d / 2 - kappa |shape|^2 / 2`, at any element type: the skewed family's
-second moments from each axis's on the fine one-dimensional rule, the bending
-family's on a fine product rule (`fine`)."""
-function _vf_shaped_pe(f::CTSEMVFamily, lam::AbstractVector, kappa::Float64, fine)
-    T = eltype(lam)
-    d = f.d
-    out = T(d / 2) + _vf_entropy(f, lam)
-    for j in f.shape
-        out -= kappa * lam[j]^2 / 2
-    end
-    if f.bend
-        Zf, wf = fine
-        acc = zero(T)
-        for k in eachindex(wf)
-            acc += wf[k] * sum(abs2, _vf_map_generic(f, lam, view(Zf, :, k))[1])
-        end
-        return out - acc / 2
-    end
-    z1, w1 = _vf_gh(96)
-    mu = zeros(T, d)
-    v = ones(T, d)
-    for j in 1:d
-        f.skew[j] || continue
-        a1 = zero(T)
-        a2 = zero(T)
-        for k in eachindex(z1)
-            y = sinh((asinh(z1[k]) + lam[f.ie[j]]) / exp(lam[f.idl[j]]))
-            a1 += w1[k] * y
-            a2 += w1[k] * y^2
-        end
-        mu[j] = a1
-        v[j] = a2 - a1^2
-    end
-    for i in 1:d
-        mean = lam[f.im[i]] + exp(lam[f.ild[i]]) * mu[i]
-        var = exp(2 * lam[f.ild[i]]) * v[i]
-        for j in 1:(i - 1)
-            mean += lam[f.ilo[i, j]] * mu[j]
-            var += lam[f.ilo[i, j]]^2 * v[j]
-        end
-        out -= (mean^2 + var) / 2
-    end
-    return out
-end
-
-struct _VFShapedPEAt
+struct _VFEntropyAt
     f::CTSEMVFamily
-    kappa::Float64
-    fine::Tuple{Matrix{Float64},Vector{Float64}}
 end
-(m::_VFShapedPEAt)(lam) = _vf_shaped_pe(m.f, lam, m.kappa, m.fine)
+(m::_VFEntropyAt)(lam) = _vf_entropy(m.f, lam)
 
 # ---- rules --------------------------------------------------------------------------
 
@@ -485,7 +439,6 @@ struct CTSEMVLayout
     rowp::Vector{Vector{Int}}
     members::Vector{_VFMember}
     rule::Symbol
-    fine::Tuple{Matrix{Float64},Vector{Float64}}
 end
 
 # Each member's chain of coordinates, outermost level first.
@@ -567,7 +520,7 @@ function _vf_tree_layout(laplace::CTSEMLaplaceObjective, U::Int, rule::Symbol, s
             [local_of(ild[i]) for i in chain], jrow, Z, w))
     end
     return CTSEMVLayout(nothing, d, at, pblocks, pblock, plocal, im, ild, rowp, members,
-        rule, (zeros(0, 0), Float64[]))
+        rule)
 end
 
 """The shaped family on unit `U`, one block of `f.d` coordinates: every
@@ -582,9 +535,8 @@ function _vf_shaped_layout(laplace::CTSEMLaplaceObjective, U::Int, f::CTSEMVFami
     members = [_VFMember(mm, collect(1:f.d), all1, Int[], Int[], Vector{Tuple{Int,Int}}[],
         Z, w) for mm in eachindex(laplace.units.members[U])]
     pblocks = [CTSEMLaplaceBlock(0, f.p, blocks[1].members, blocks[1].level, Int[])]
-    fine = f.bend ? _vf_rule_product(f.d, 12) : (zeros(0, 0), Float64[])
     return CTSEMVLayout(f, f.d, f.p, pblocks, fill(1, f.p), collect(1:f.p), Int[], Int[],
-        Vector{Int}[], members, :product, fine)
+        Vector{Int}[], members, :product)
 end
 
 # ---- a unit's terms --------------------------------------------------------------------
@@ -604,17 +556,44 @@ function _vf_ctx(laplace::CTSEMLaplaceObjective, values::AbstractVector)
         [_laplace_level_positions(spec, l) for l in eachindex(spec.levels)])
 end
 
-"""The prior and entropy terms: value, gradient, and the negated Hessian --
-a vector (its diagonal) for the Gaussian tree family, where `-E|u|^2 / 2 =
--sum_i (m_i^2 + exp(2 l_i) + sum_j L_ij^2) / 2` and the entropy is `sum_i
-l_i`, a matrix for the shaped family (ForwardDiff on `_vf_shaped_pe`)."""
+"""The prior and entropy terms, `-E|u|^2 / 2 + E[log |du/dz|] + d / 2`: value,
+gradient, and the negated Hessian. For the Gaussian tree family a vector, its
+diagonal: `-E|u|^2 / 2 = -sum_i (m_i^2 + exp(2 l_i) + sum_j L_ij^2) / 2`
+and the entropy `sum_i l_i`. For the shaped family a matrix: `-|u|^2 / 2` on
+the unit's own nodes (`nd`, whose points and Jacobians the members' terms
+use), the entropy on its fine one-dimensional rule (`_vf_entropy`) and the
+shape prior; the Hessian only where `hessian`."""
 function _vf_prior_entropy(lay::CTSEMVLayout, lam::Vector{Float64}, kappa::Float64,
-    hessian::Bool)
+    hessian::Bool, nd=nothing)
     if lay.shaped !== nothing
-        f = _VFShapedPEAt(lay.shaped, kappa, lay.fine)
-        g = ForwardDiff.gradient(f, lam)
-        return (B=f(lam), g=g, Hneg=hessian ? -ForwardDiff.hessian(f, lam) :
-            zeros(0, 0))
+        f = lay.shaped
+        ent = _VFEntropyAt(f)
+        B = f.d / 2 + ent(lam)
+        g = ForwardDiff.gradient(ent, lam)
+        Hneg = hessian ? -ForwardDiff.hessian(ent, lam) : zeros(0, 0)
+        for j in f.shape
+            B -= kappa * lam[j]^2 / 2
+            g[j] -= kappa * lam[j]
+            hessian && (Hneg[j, j] += kappa)
+        end
+        Z = lay.members[1].Z
+        w = lay.members[1].w
+        L = hessian ? _vf_L(f, lam) : zeros(0, 0)
+        for k in eachindex(w)
+            u = view(nd.U, :, k)
+            Ju = view(nd.J[k], 1:f.d, :)
+            B -= w[k] * sum(abs2, u) / 2
+            mul!(g, transpose(Ju), u, -w[k], 1.0)
+            hessian || continue
+            _ctsem_mulTN!(Hneg, Ju, Ju, w[k], true)
+            if f.bend
+                Hneg .+= w[k] .* ForwardDiff.hessian(_VFUAt(f, Z[:, k], Vector(u)), lam)
+            else
+                _vf_second!(Hneg, w[k], f, lam, L, view(Z, :, k), u)
+            end
+        end
+        hessian && (Hneg .= (Hneg .+ transpose(Hneg)) ./ 2)
+        return (B=B, g=g, Hneg=Hneg)
     end
     B = lay.d / 2
     g = zeros(lay.p)
@@ -671,7 +650,12 @@ function _vf_unit_terms(V, U::Int, ctx::_VCtx, lam::Vector{Float64}, curvature::
     nx = length(ctx.theta)
     aws = _laplace_workspace!(laplace, Float64, nx)
     scratch = _continuation_scratch(laplace, nx)
-    pe = _vf_prior_entropy(lay, lam, V.kappa, true)
+    f = lay.shaped
+    nd = f === nothing ? nothing : _vf_nodes(f, lam, lay.members[1].Z)
+    # The shaped family's prior-and-entropy Hessian is formed with the members'
+    # curvature and held with their shares (`_vf_solve_held`); the Gaussian
+    # family's is a diagonal in closed form.
+    pe = _vf_prior_entropy(lay, lam, V.kappa, curvature || f === nothing, nd)
     B = pe.B
     g = copy(pe.g)
     GE = zeros(nx)
@@ -681,13 +665,12 @@ function _vf_unit_terms(V, U::Int, ctx::_VCtx, lam::Vector{Float64}, curvature::
     gm = [zeros(length(mem.plist)) for mem in lay.members]
     Hm = curvature ? [zeros(length(mem.plist), length(mem.plist)) for mem in lay.members] :
         Matrix{Float64}[]
-    f = lay.shaped
-    nd = f === nothing ? nothing : _vf_nodes(f, lam, lay.members[1].Z)
     Lsh = f === nothing ? zeros(0, 0) : _vf_L(f, lam)
     mode = _laplace_hmode(laplace)
     gp = 0
     hp = 0
-    invalid = (B=-Inf, g=g, gm=gm, Hm=Hm, Hneg=pe.Hneg, GE=GE, gpasses=gp, hpasses=hp)
+    invalid = (B=-Inf, g=g, gpe=pe.g, gm=gm, Hm=Hm, Hneg=pe.Hneg, GE=GE, gpasses=gp,
+        hpasses=hp)
     for (mi, mem) in enumerate(lay.members)
         k = length(mem.chain)
         np = length(mem.plist)
@@ -762,7 +745,8 @@ function _vf_unit_terms(V, U::Int, ctx::_VCtx, lam::Vector{Float64}, curvature::
         curvature && (Hm[mi] .= (Hm[mi] .+ transpose(Hm[mi])) ./ 2)
     end
     (isfinite(B) && all(isfinite, g)) || return invalid
-    return (B=B, g=g, gm=gm, Hm=Hm, Hneg=pe.Hneg, GE=GE, gpasses=gp, hpasses=hp)
+    return (B=B, g=g, gpe=pe.g, gm=gm, Hm=Hm, Hneg=pe.Hneg, GE=GE, gpasses=gp,
+        hpasses=hp)
 end
 
 """The negated Hessian in the family's parameters on the unit's tree
@@ -819,6 +803,17 @@ function _vf_block_step(M::CTSEMBlockMatrix{Float64}, pblocks, g::Vector{Float64
         shifted = true
     end
     return (_laplace_block_solve(F[3], F[4], pblocks, g), shifted)
+end
+
+# A held share's SR1 update from a step `s` and its term's gradient's change
+# `y` (negated: the share is the negated Hessian), skipped where the update's
+# denominator is small against the step and the residual.
+function _vf_sr1!(S::Matrix{Float64}, s::Vector{Float64}, y::Vector{Float64})
+    rr = y .- S * s
+    den = dot(rr, s)
+    abs(den) > 1e-8 * norm(s) * norm(rr) || return S
+    S .+= (rr * transpose(rr)) ./ den
+    return S
 end
 
 """Where the shaped family's Newton matrix is not definite and its step has
@@ -939,13 +934,21 @@ function _vf_solve(V, U::Int, ctx::_VCtx, lam0::Vector{Float64})
         lam, e = lam1, e1
     end
     return (lam=lam, e=e, converged=converged, gpasses=gp, hpasses=hp,
-        shares=[-H for H in e.Hm])
+        shares=_vf_shares(lay, e))
 end
+
+# The shares a solve hands to the held one: each member's negated curvature,
+# and for the shaped family the prior-and-entropy term's last.
+_vf_shares(lay::CTSEMVLayout, e) = lay.shaped === nothing ? [-H for H in e.Hm] :
+    vcat([-H for H in e.Hm], isempty(e.Hneg) ? Matrix{Float64}[] : [copy(e.Hneg)])
 
 """The inner solve with the members' shares of the curvature held: from where
 they were last formed, stepping on gradient passes alone, each share updated
-by SR1 from its member's gradient's change; the prior and entropy terms
-exact. The curvature is formed afresh (`_vf_solve`) where the start's
+by SR1 from its member's gradient's change (as `_LaplacePSR1` holds the
+Laplace route's; damped BFGS on shares made definite formed the curvature
+more often on gD3, 67% of unit-evaluations against 48%); the prior and
+entropy terms exact for the Gaussian family, and for the shaped family a
+share of their own, held and updated alike. The curvature is formed afresh (`_vf_solve`) where the start's
 decrement is above `refresh`, a step had to be cut below a quarter, or
 `quasi` steps did not converge."""
 function _vf_solve_held(V, U::Int, ctx::_VCtx, lam0::Vector{Float64},
@@ -959,7 +962,9 @@ function _vf_solve_held(V, U::Int, ctx::_VCtx, lam0::Vector{Float64},
     if isfinite(e.B)
         it = 0
         while true
-            M = _vf_assemble(lay, shares, e.Hneg)
+            shaped = lay.shaped !== nothing
+            shaped && length(shares) != length(lay.members) + 1 && break
+            M = _vf_assemble(lay, shares, shaped ? shares[end] : e.Hneg)
             D, shifted = _vf_block_step(M, lay.pblocks, e.g)
             D === nothing && break
             dec = dot(e.g, D)
@@ -989,12 +994,9 @@ function _vf_solve_held(V, U::Int, ctx::_VCtx, lam0::Vector{Float64},
             end
             (accepted && alpha >= 0.25) || break
             for (mi, mem) in enumerate(lay.members)
-                s = lam1[mem.plist] .- lam[mem.plist]
-                y = e.gm[mi] .- e1.gm[mi]
-                rr = y .- shares[mi] * s
-                den = dot(rr, s)
-                abs(den) > 1e-8 * norm(s) * norm(rr) && (shares[mi] .+= (rr * transpose(rr)) ./ den)
+                _vf_sr1!(shares[mi], lam1[mem.plist] .- lam[mem.plist], e.gm[mi] .- e1.gm[mi])
             end
+            shaped && _vf_sr1!(shares[end], lam1 .- lam, e.gpe .- e1.gpe)
             lam, e = lam1, e1
         end
     end
@@ -1190,14 +1192,17 @@ end
     _ctsem_take_search_modes!(V::CTSEMVariational, x, found)
 
 Where a run stops by its own rule at `x`: each unit whose family is chosen by
-need and not yet tried fits the bending family there from its Gaussian
+need and still Gaussian fits the bending family there from its Gaussian
 approximation (whose parameters are the bending family's first ones, so the
 bound starts where the Gaussian's is), and keeps it where its bound gains
-more than `V.need` nats; every such unit is tried once. The change to the
-objective at `x` sends the run on from there with its curvature pairs, as the
-Laplace route's search for other maxima does. On gD3 every unit gained
-(median 0.05 nats); on gD1 none did (at most 0.005), and its fit stays at the
-Gaussian family's cost.
+more than `V.need` nats. The change to the objective at `x` sends the run on
+from there with its curvature pairs, as the Laplace route's search for other
+maxima does, up to the run's mode rounds. A unit that does not gain stays a
+candidate at the run's later stops: tried once only, gD3's units were tried
+where L-BFGS first stopped, far from the optimum, and 25 of 60 that bend at
+the optimum stayed Gaussian (0.94 nats). On gD3 every unit gained at the
+optimum (median 0.05 nats); on gD1 none did (at most 0.005), and its fit
+stays at the Gaussian family's cost.
 """
 function _ctsem_take_search_modes!(V::CTSEMVariational, x::AbstractVector, found)
     todo = findall(V.pending)
@@ -1225,8 +1230,8 @@ function _ctsem_take_search_modes!(V::CTSEMVariational, x::AbstractVector, found
     change = 0.0
     units = 0
     for U in todo
-        V.pending[U] = false
         gains[U] > V.need || continue
+        V.pending[U] = false
         c = cand[U]
         V.layouts[U] = c.lay
         V.lam[U] = copy(c.lam)
@@ -1239,6 +1244,10 @@ function _ctsem_take_search_modes!(V::CTSEMVariational, x::AbstractVector, found
     units == 0 && return (change=0.0, units=0, joined=0)
     return (change=change, units=units, joined=units)
 end
+
+_ctsem_search_note(::CTSEMVariational, taken) = @sprintf(
+    "%d unit(s) took the bending family where the run stopped, moving the objective by %+.3g; the run goes on",
+    taken.units, taken.change)
 
 # A view of the objective with one unit's layout replaced, for solving a
 # candidate family without touching the unit's own (`_vf_unit_terms` and the

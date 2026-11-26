@@ -150,14 +150,15 @@ _vf_threelevel_gauss() = (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE;
 
     @testset "the family chosen by need" begin
         # One block of two coordinates: started Gaussian, tried with the
-        # bending family once. On a Gaussian integrand bending gains nothing,
-        # so no unit switches; on a non-Gaussian one the bound cannot fall.
+        # bending family where a run stops. On a Gaussian integrand bending
+        # gains nothing, so no unit switches and each stays a candidate; on a
+        # non-Gaussian one the bound cannot fall.
         laplace, values = _fresh_linear()
         V = ctsem_variational(laplace)
         @test all(V.pending) && all(l -> l.shaped === nothing, V.layouts)
         _VF.ctsem_variational_evaluate(V, values)
         c = ctsem_variational_choose!(V, values)
-        @test c.units == 0 && !any(V.pending)
+        @test c.units == 0 && all(V.pending)
         # The nonlinear fixture with effects on T0MEANS and MANIFESTMEANS:
         # raw 1-4 the model, 5-6 the scales, 7 their correlation.
         laplace2 = ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE, [1, 4], [5, 6], [7],
