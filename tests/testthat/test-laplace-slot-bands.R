@@ -101,6 +101,53 @@ test_that("a fit's pool width leaves the other routes working", {
   expect_true(all(is.finite(unlist(chk[vapply(chk, is.numeric, logical(1))]))))
 })
 
+# A region that starts while every slot is busy runs alone, and slots handed
+# back while it runs join it before its next item (`_laplace_pull!`). Taking
+# slots only at its start, the refined fit's last few units ran their points
+# on one thread each while the rest of the pool waited.
+test_that("slots that come free join a region already running", {
+  skip_without_julia()
+  skip_if(as.integer(ctsem:::.ctJuliaEval("Threads.nthreads()")) < 4L,
+    "needs a session of four threads, which the first test starts")
+  spec <- suppressMessages(ctFit(.band_data(), .band_model(), backend = "julia",
+    intoverpop = "laplace", fit = FALSE, cores = 4))
+  obj <- ctsem:::.ctJuliaObjective(spec, layer = TRUE)
+  r <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaEval(paste(
+    "o -> ContinuousTimeSEM._ctsem_with_max_chunks(4) do",
+    "  C = ContinuousTimeSEM",
+    "  C._laplace_ensure_pool!(o)",
+    "  held = Int[]",
+    "  while true",
+    "    s = C._laplace_slot_try_acquire()",
+    "    s === nothing && break",
+    "    push!(held, s)",
+    "  end",
+    "  started = Threads.Atomic{Bool}(false)",
+    "  giver = Threads.@spawn begin",
+    "    while !started[]; yield(); end",
+    "    sleep(0.05)",
+    "    foreach(C._laplace_slot_release, held)",
+    "  end",
+    "  slots = fill(0, 40)",
+    "  ok = C._laplace_parallel(o, 1:40) do i",
+    "    started[] = true",
+    "    slots[i] = C._laplace_slot()",
+    "    sleep(0.01)",
+    "    true",
+    "  end",
+    "  wait(giver)",
+    "  (ok = ok, held = length(held), slots = length(unique(slots)),",
+    "   done = all(>(0), slots), free = length(C._LAPLACE_FREE))",
+    "end", sep = "\n"))(obj))
+  expect_true(isTRUE(r$ok))
+  expect_true(isTRUE(r$done))
+  expect_equal(r$held, 3)
+  # The region's own slot and the three handed back.
+  expect_equal(r$slots, 4)
+  # Every helper handed its slot back once the items ran out.
+  expect_equal(r$free, r$held)
+})
+
 # A member under nested blocks takes its trace terms over its whole chain of
 # blocks in one factor (`_laplace_member_chain_trace!`): here a person's four
 # intercepts and their study's four drift effects, one jet a person, where the

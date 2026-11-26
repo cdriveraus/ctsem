@@ -413,17 +413,20 @@ end
 ################################################################################
 
 """
-    _hybrid_member_modes(laplace, U, theta, Ls, u, aws)
+    _hybrid_member_modes(laplace, U, theta, Ls, u, aws; previous)
 
 Unit `U`'s members' filter-integrated deviations at their conditional modes
 given `u` and the members' whole records, in `N(0, 1)` units, with the hybrid
 items each covers: the `_HybridModeHook` of one profile pass at `u`, or
 `nothing` if a member cannot be evaluated. Initial means folded into the
-first state have no profile (`_hybrid_fold_member_modes`).
+first state have no profile (`_hybrid_fold_member_modes`), and their solve
+starts from `previous`, the unit's modes at nearby parameters, where given.
 """
 function _hybrid_member_modes(laplace::CTSEMLaplaceObjective, U::Integer,
-    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64}, aws)
-    _hybrid_folds(laplace) && return _hybrid_fold_member_modes(laplace, U, theta, Ls, u, aws)
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64}, aws;
+    previous::Union{Nothing,_HybridModeHook{Float64}}=nothing)
+    _hybrid_folds(laplace) && return _hybrid_fold_member_modes(laplace, U, theta, Ls, u,
+        aws; previous=previous)
     members = laplace.units.members[U]
     hook = _HybridModeHook{Float64}(length(members))
     r = _laplace_unit_loglik_gradient(laplace, U, theta, Ls, u, aws,
@@ -448,9 +451,21 @@ is the pass's raw gradient at the initial means' positions through the
 deviation map (`_hybrid_dev_map`), since each such cell is affine in its own
 raw value alone (`.ctJuliaLaplaceHybrid()`); the curvature is by differences
 of it, one pass a deviation.
+
+Newton stops after a full step under `_FOLD_LAST_STEP` on the curvature at
+its start. Newton's error squares, so that step leaves the point at the mode
+about as closely as the move under 1e-8 the solve once stopped on, and the
+curvature, formed within the step of it, is `A`: the step and the curvature
+at its end, a pass and one a deviation, are saved. `previous`, the same
+unit's modes at nearby parameters (the report's last kept draw,
+`_jmap_hybrid_range!`), starts each member at its mode there and steps on
+its curvature there, held, at one pass a step, until a step is under
+`_FOLD_LAST_STEP`; that last step is Newton's. A held step that does not
+halve the last one, or finds no gain, leaves the held curvature for Newton.
 """
 function _hybrid_fold_member_modes(laplace::CTSEMLaplaceObjective, U::Integer,
-    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64}, aws)
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64}, aws;
+    previous::Union{Nothing,_HybridModeHook{Float64}}=nothing)
     members = laplace.units.members[U]
     spec = laplace.spec
     h = laplace.objective.params.hybrid
@@ -463,27 +478,40 @@ function _hybrid_fold_member_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     grad = zeros(length(theta))
     shift = zeros(length(theta))
     hb = aws.ekf_ws.hyb
-    step_fd = 1e-5
+    dir = zeros(rd)
     for (m, i) in enumerate(members)
         x = _laplace_member_values!(shift, theta, spec, Ls, u, laplace.units.offsets[U][m])
         so = laplace.objective.subject_objectives[i]
-        d = zeros(rd)
+        held = previous !== nothing && length(previous.dhat[m]) == rd &&
+            size(previous.A[m]) == (rd, rd)
+        d = held ? copy(previous.dhat[m]) : zeros(rd)
         v, g = _hybrid_fold_score!(grad, hb, so, aws, x, d, B, pos)
+        if !isfinite(v) && held
+            # The last mode is outside the support here: from the origin.
+            held = false
+            d = zeros(rd)
+            v, g = _hybrid_fold_score!(grad, hb, so, aws, x, d, B, pos)
+        end
         isfinite(v) || return nothing
-        H = zeros(rd, rd)
+        H = held ? copy(previous.A[m]) : zeros(rd, rd)
+        # Whether `H` is the curvature formed at `d`, or within a last step of it.
+        exact = false
+        last = Inf
         for _ in 1:50
-            for a in 1:rd
-                da = copy(d)
-                da[a] += step_fd
-                va, ga = _hybrid_fold_score!(grad, hb, so, aws, x, da, B, pos)
-                isfinite(va) || return nothing
-                for b in 1:rd
-                    H[b, a] = -(ga[b] - g[b]) / step_fd
-                end
+            if !held && !exact
+                _hybrid_fold_curvature!(H, grad, hb, so, aws, x, d, g, B, pos) ||
+                    return nothing
+                exact = true
             end
-            Hs = Symmetric((H .+ H') ./ 2)
-            F = cholesky(Hs; check = false)
-            dir = issuccess(F) ? F \ g : g
+            F = _ctsem_cholesky((H .+ H') ./ 2, rd)
+            issuccess(F) ? ldiv!(dir, F, g) : copyto!(dir, g)
+            s = maximum(abs, dir; init=0.0)
+            if held && (s < _FOLD_LAST_STEP || s > last / 2)
+                held = false
+                continue
+            end
+            (exact && s < 1e-8) && break
+            last = s
             t = 1.0
             accepted = false
             for _ in 1:30
@@ -496,19 +524,18 @@ function _hybrid_fold_member_modes(laplace::CTSEMLaplaceObjective, U::Integer,
                 end
                 t /= 2
             end
-            accepted || break
-            maximum(abs, t .* dir) < 1e-8 && break
-        end
-        # The curvature at the mode the solve ended at.
-        for a in 1:rd
-            da = copy(d)
-            da[a] += step_fd
-            va, ga = _hybrid_fold_score!(grad, hb, so, aws, x, da, B, pos)
-            isfinite(va) || return nothing
-            for b in 1:rd
-                H[b, a] = -(ga[b] - g[b]) / step_fd
+            if !accepted
+                exact && break
+                held = false
+                continue
             end
+            (exact && t == 1.0 && s < _FOLD_LAST_STEP) && break
+            exact = false
+            t * s < 1e-8 && break
         end
+        # The curvature where the solve ended, unless it ended a last step on.
+        exact || _hybrid_fold_curvature!(H, grad, hb, so, aws, x, d, g, B, pos) ||
+            return nothing
         hook.q[m] = rd
         hook.dhat[m] = d
         hook.items[m] = collect(1:rd)
@@ -517,11 +544,35 @@ function _hybrid_fold_member_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     return hook
 end
 
+"""A full Newton step of a folded deviations' mode solve under this, in prior
+sds, is its last (`_hybrid_fold_member_modes`)."""
+const _FOLD_LAST_STEP = 1e-4
+
+"""The folded deviations' curvature at `d` into `H`, by forward differences of
+the score `g` there (`_hybrid_fold_score!`), one pass a deviation; false where
+a pass cannot be evaluated."""
+function _hybrid_fold_curvature!(H::Matrix{Float64}, grad::Vector{Float64}, hb, so, aws,
+    x::AbstractVector, d::Vector{Float64}, g::Vector{Float64}, B::AbstractMatrix,
+    pos::Vector{Int})
+    step = 1e-5
+    for a in eachindex(d)
+        da = copy(d)
+        da[a] += step
+        va, ga = _hybrid_fold_score!(grad, hb, so, aws, x, da, B, pos)
+        isfinite(va) || return false
+        for b in eachindex(d)
+            H[b, a] = -(ga[b] - g[b]) / step
+        end
+    end
+    return true
+end
+
 """One member's log likelihood at fixed folded deviations `d` plus their
 `N(0, I)` log prior, and its gradient in `d` (`_hybrid_fold_member_modes`)."""
 function _hybrid_fold_score!(grad::Vector{Float64}, hb, so, aws, x::AbstractVector,
     d::Vector{Float64}, B::AbstractMatrix, pos::Vector{Int})
     rd = length(d)
+    Threads.atomic_add!(_CTSEM_OPCOUNT.fold_passes, 1)
     length(hb.dfix) >= rd || (hb.dfix = zeros(Float64, rd))
     copyto!(hb.dfix, 1, d, 1, rd)
     v = _laplace_subject_value_gradient!(grad, so, aws, x, nothing, _HYBRID_FIXED)

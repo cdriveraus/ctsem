@@ -2065,6 +2065,10 @@ function _sample_report_effects(laplace::CTSEMLaplaceObjective, report, sampler,
     hybrid = _hybrid_on(hyb)
     lv = laplace.spec.levels[1]
     mblocks = hybrid ? _jmap_member_blocks(layout, devstarts) : nothing
+    # Each unit's modes at the last draw, where the next draw's solve starts
+    # (`_hybrid_member_modes`' `previous`).
+    held = Vector{Union{Nothing,_HybridModeHook{Float64}}}(nothing,
+        length(laplace.units.members))
     dev = zeros(Float64, ndev)
     failed = 0
     line = CTSEMProgress(verbose && hybrid && ndev > 0; label="integrated effects",
@@ -2078,7 +2082,8 @@ function _sample_report_effects(laplace::CTSEMLaplaceObjective, report, sampler,
         if hybrid && ndev > 0
             B = _hybrid_dev_map(hyb, lv, th)
             ok = _laplace_partition((mine, _w) -> _jmap_hybrid_range!(dev, laplace, th,
-                Ls, x, sampler, B, mblocks, seed, column, mine), laplace, sampler.nunits)
+                Ls, x, sampler, B, mblocks, seed, column, mine, held), laplace,
+                sampler.nunits)
             ok || (failed += 1)
         end
         @inbounds for j in 1:npar
@@ -2111,21 +2116,24 @@ function _jmap_member_blocks(laplace::CTSEMLaplaceObjective, devstarts)
 end
 
 # Units `mine`: the filter-integrated deviations of every member, drawn from
-# their conditional given the draw (`_hybrid_member_modes`), added through `B`
+# their conditional given the draw (`_hybrid_member_modes`, started from the
+# unit's modes at the last draw, `held`, which it replaces), added through `B`
 # into `dev`. Items a member's pass did not integrate take their prior. False
 # where a member could not be evaluated.
-function _jmap_hybrid_range!(dev, laplace, th, Ls, x, sampler, B, mblocks, seed, column, mine)
+function _jmap_hybrid_range!(dev, laplace, th, Ls, x, sampler, B, mblocks, seed, column, mine,
+    held)
     aws = _laplace_workspace!(laplace, Float64, length(th))
     nh = size(B, 2)
     re = laplace.spec.levels[1].re_index
     ok = true
     for U in mine
         hook = _hybrid_member_modes(laplace, U, th, Ls,
-            Vector{Float64}(view(x, _sample_urange(sampler, U))), aws)
+            Vector{Float64}(view(x, _sample_urange(sampler, U))), aws; previous=held[U])
         if hook === nothing
             ok = false
             continue
         end
+        held[U] = hook
         rng = Random.Xoshiro(hash((seed, column, U)))
         for mm in eachindex(laplace.units.members[U])
             start = mblocks[U][mm]

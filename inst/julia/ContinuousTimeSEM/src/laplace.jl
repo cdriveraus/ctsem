@@ -2042,11 +2042,13 @@ Run `f(item)` for every item, on the pool, and report whether all succeeded.
 `f` returning `false` stops that worker and fails the whole region, which is
 how the failure paths here already report. Items are taken from a shared
 counter rather than dealt out in advance, so one slow item cannot leave the
-rest of the pool idle.
+rest of the pool idle, and a slot another region hands back joins this one
+before its next item (`_laplace_pull!`), so a region that started alone does
+not stay alone.
 
 A budget of one runs serially, and so does a single item -- which is what makes
 nesting free: the innermost regions of a saturated pool cost nothing but a
-branch.
+branch and a peek at the free slots before each item.
 """
 function _laplace_parallel(f, laplace::CTSEMLaplaceObjective, items)
     _laplace_ensure_pool!(laplace)      # see `_laplace_partition`
@@ -2075,67 +2077,87 @@ function _laplace_parallel(f, items)
     n == 0 && return true
     n == 1 && return f(@inbounds items[1]) !== false
 
-    # Ask for one helper before building anything a lone worker would not need.
+    # Alone, a plain loop, until the pool has a slot to give: asked before each
+    # item while two are left, one for a helper and one for this task.
     #
-    # The shared counter, the failure flag and the task vector are three heap
-    # allocations and two atomic operations *per item*, and a region with no
-    # helper needs none of them -- it is a plain loop. That distinction was
-    # missing in the first version of this, which routed the alone case through
-    # the same machinery: measured on a thirteen-study model it cost 6% at one
-    # worker and 32% at five, which is the whole of this design's overhead and
-    # none of its purpose.
-    first_slot = _laplace_slot_try_acquire()
-    if first_slot === nothing
-        @inbounds for i in 1:n
-            f(items[i]) === false && return false
+    # The shared counter, the failure flag and the task vector are heap
+    # allocations and atomic operations *per item*, and a region with no
+    # helper needs none of them. That distinction was missing in the first
+    # version of this, which routed the alone case through the same machinery:
+    # measured on a thirteen-study model it cost 6% at one worker and 32% at
+    # five, which is the whole of this design's overhead and none of its
+    # purpose. The unlocked peek costs a load.
+    #
+    # Asked before each item, not once at the start. Asked once, a region that
+    # started while the pool was busy ran alone to its end, whatever came free:
+    # the refined fit's flagged units each start their points while every slot
+    # is busy with other units, and the last few to finish ran their points on
+    # one thread each while the rest of the pool waited: 10.8 of 16 cores busy
+    # on the map-spread analogue with ten dear units, 14.9 with this, and 3 of
+    # 16 on the hc-wellbeing refinement (dev2, 2026-11).
+    done = 0
+    while done < n
+        if done <= n - 2 && !isempty(_LAPLACE_FREE)
+            slot = _laplace_slot_try_acquire()
+            slot === nothing || return _laplace_parallel_from(f, items, n, done, slot)
         end
-        return true
+        done += 1
+        ok = @inbounds f(items[done])
+        ok === false && return false
     end
+    return true
+end
 
-    next = Threads.Atomic{Int}(0)
+"""
+A parallel region's shared state (`_laplace_parallel`): its items, the counter
+they are taken from, the failure flag, and every helper spawned so far, which
+any of its workers may add to (`_laplace_recruit!`) and the region's own task
+waits for (`_laplace_join!`).
+"""
+struct _LaplaceRegion{F,I}
+    f::F
+    items::I
+    n::Int
+    next::Threads.Atomic{Int}
     # `Atomic`, not a plain `Bool`: several workers may set it, and a shared
     # `Bool` written by several tasks is a race even when they all write the
     # same value.
-    failed = Threads.Atomic{Bool}(false)
-    helpers = Task[]
+    failed::Threads.Atomic{Bool}
+    helpers::Vector{Task}
+    lock::Threads.SpinLock
+end
+
+"""
+    _laplace_parallel_from(f, items, n, done, slot)
+
+`_laplace_parallel`'s items after the first `done`, which its task ran alone,
+on the pool: a helper on `slot`, one on every other slot idle now, and any
+that comes free later (`_laplace_pull!`), the region's own task working too.
+"""
+function _laplace_parallel_from(f, items, n::Int, done::Int, slot::Int)
+    r = _LaplaceRegion(f, items, n, Threads.Atomic{Int}(done),
+        Threads.Atomic{Bool}(false), Task[], Threads.SpinLock())
     # Whatever is idle right now, and never wait for it.
     #
     # This is the whole change from a computed band. Nothing here predicts how
     # much work an item is, because nothing needs to: a worker that draws a
     # cheap item runs out of items, releases its slot, and the workers still
-    # inside an expensive one pick it up at their next region. A study that
+    # inside an expensive one pick it up before their next item. A study that
     # turns out to sit in an awkward part of the parameter space ends up with
     # more of the pool for exactly as long as it deserves it, and the cost
     # model that used to decide this in advance -- and was wrong by about a
     # factor of two on the thirteen-study affect model -- is gone.
     #
-    # `n - 1` because this task is a worker too. Leaving the rest of the pool
-    # alone matters: regions nested inside these items need slots, and a loop
-    # that grabbed everything would starve them.
-    # The slot goes in as an *argument*, so each task captures its own value.
-    # A `while` loop reassigning one `slot` variable and closing over it would
-    # give every task the same binding -- the last one written -- which is the
-    # closure-rebinding trap this file has been caught by twice before, and
-    # here it would hand one workspace to several workers.
-    start_worker = function (mine::Int)
-        Threads.@spawn _ctsem_with_scratch() do
-            task_local_storage(:ctsem_pool_worker, true)
-            task_local_storage(:ctsem_slot, mine)
-            try
-                _laplace_pull!(f, items, n, next, failed)
-            finally
-                # As soon as the queue is empty, not at the end of the region.
-                # That timing is what lets a finished worker's slot reach the
-                # unit that is still going.
-                _laplace_slot_release(mine)
-            end
-        end
-    end
-    push!(helpers, start_worker(first_slot))
-    while length(helpers) < n - 1
-        slot = _laplace_slot_try_acquire()
-        slot === nothing && break
-        push!(helpers, start_worker(slot))
+    # One fewer than the items left, because this task is a worker too.
+    # Leaving the rest of the pool alone matters: regions nested inside these
+    # items need slots, and a loop that grabbed everything would starve them.
+    _laplace_recruit!(r, slot)
+    taken = 1
+    while taken < n - done - 1
+        more = _laplace_slot_try_acquire()
+        more === nothing && break
+        _laplace_recruit!(r, more)
+        taken += 1
     end
     # The caller works too, on the slot it already holds, so the region always
     # completes even when the pool is empty.
@@ -2147,28 +2169,94 @@ function _laplace_parallel(f, items)
     # the file they would have stopped at, and they sample on in the background
     # alongside whatever R asks for next.
     try
-        _laplace_pull!(f, items, n, next, failed)
+        _laplace_pull!(r)
     catch
-        failed[] = true
-        for helper in helpers
-            try
-                wait(helper)
-            catch
-            end
-        end
+        r.failed[] = true
+        _laplace_join!(r)
         rethrow()
     end
-    foreach(wait, helpers)
-    return !failed[]
+    err = _laplace_join!(r)
+    err === nothing || throw(err)
+    return !r.failed[]
 end
 
-"""Pull items off the shared counter until they run out or one fails."""
-@inline function _laplace_pull!(f, items, n::Int, next, failed)
-    while !failed[]
-        i = Threads.atomic_add!(next, 1) + 1
-        i > n && break
-        if f(@inbounds items[i]) === false
-            failed[] = true
+"""
+    _laplace_recruit!(r, slot)
+
+A helper for region `r` on `slot`, which it hands back once the region's
+items run out. The slot goes in as an *argument*, so each task captures its
+own value: a loop reassigning one `slot` variable and closing over it would
+give every task the same binding -- the closure-rebinding trap this file has
+been caught by twice before -- and hand one workspace to several workers.
+"""
+function _laplace_recruit!(r::_LaplaceRegion, slot::Int)
+    helper = Threads.@spawn _ctsem_with_scratch() do
+        task_local_storage(:ctsem_pool_worker, true)
+        task_local_storage(:ctsem_slot, slot)
+        try
+            _laplace_pull!(r)
+        catch
+            # The others stop at their next item rather than run the region
+            # out; the region's own task rethrows this once all have ended.
+            r.failed[] = true
+            rethrow()
+        finally
+            # As soon as the queue is empty, not at the end of the region.
+            # That timing is what lets a finished worker's slot reach the
+            # unit that is still going.
+            _laplace_slot_release(slot)
+        end
+    end
+    lock(r.lock)
+    try
+        push!(r.helpers, helper)
+    finally
+        unlock(r.lock)
+    end
+    return nothing
+end
+
+"""
+    _laplace_join!(r)
+
+Wait for every helper of region `r`, including those helpers spawned while
+it waited, and return the first one's failure, or `nothing`. A helper is
+listed by the worker that spawns it before that worker can end, so once every
+listed helper has ended no more can come.
+"""
+function _laplace_join!(r::_LaplaceRegion)
+    err = nothing
+    k = 0
+    while true
+        lock(r.lock)
+        helper = k < length(r.helpers) ? r.helpers[k + 1] : nothing
+        unlock(r.lock)
+        helper === nothing && break
+        k += 1
+        try
+            wait(helper)
+        catch e
+            err === nothing && (err = e)
+        end
+    end
+    return err
+end
+
+"""
+Pull items off region `r`'s counter until they run out or one fails, taking
+on a helper first wherever a slot is free and two items are left, so slots
+other regions hand back reach this one while it runs.
+"""
+function _laplace_pull!(r::_LaplaceRegion)
+    while !r.failed[]
+        if !isempty(_LAPLACE_FREE) && r.n - r.next[] >= 2
+            slot = _laplace_slot_try_acquire()
+            slot === nothing || _laplace_recruit!(r, slot)
+        end
+        i = Threads.atomic_add!(r.next, 1) + 1
+        i > r.n && break
+        if r.f(@inbounds r.items[i]) === false
+            r.failed[] = true
             break
         end
     end

@@ -50,6 +50,11 @@ evaluation. A full evaluation costs every unit, so `overshoot_values * N +
 overshoot_units` is the trials' cost in unit evaluations. The probe runs them
 one after another, so these are exact at any thread count.
 
+`fold_passes` is the member passes the folded initial means' mode solves take
+(`_hybrid_fold_score!`, called by `_hybrid_fold_member_modes`): a pass is a
+member's value and gradient at fixed deviations. It is atomic, so exact at any
+thread count.
+
 A threaded subject loop increments the others racily, so the counts are then
 lower bounds. Read them from a single-threaded run when the exact number
 matters.
@@ -86,6 +91,7 @@ const _CTSEM_OPCOUNT = (
     overshoot_samples = Ref(0),
     overshoot_units = Ref(0),
     overshoot_screened = Ref(0),
+    fold_passes = Threads.Atomic{Int}(0),
 )
 
 """Zero every operation counter."""
