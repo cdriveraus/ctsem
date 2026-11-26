@@ -1146,14 +1146,23 @@ function ctsem_variational_reset!(V::CTSEMVariational)
     return nothing
 end
 
-# The readers of the effects take the Laplace objective the bound is built on:
-# a variational fit reports each unit's effects at their conditional modes
-# there, at the fit's estimate. `ctsem_laplace_evaluate` on the fit's
-# objective is its value.
+# The readers of the effects, the plans made before a fit (substeps,
+# relinearisation) and generation take the Laplace objective the bound is
+# built on: a variational fit reports each unit's effects at their conditional
+# modes there, at the fit's estimate. `ctsem_laplace_evaluate` on the fit's
+# objective is its value. What reads the objective's value per unit or per
+# row -- LOO's unit terms, the score tests' Hessian columns and row scores,
+# the samplers -- has no method here yet and fails by name.
 for f in (:ctsem_laplace_subject_values, :ctsem_laplace_sequential,
     :ctsem_laplace_sequential_mixture, :ctsem_laplace_population_deviations,
     :ctsem_laplace_deviation_layout, :ctsem_parameter_layout,
-    :ctsem_state_dependent_cells, :ctsem_laplace_conditioning)
+    :ctsem_state_dependent_cells, :ctsem_laplace_conditioning,
+    :ctsem_auto_substeps, :ctsem_relin_plan, :ctsem_effect_information,
+    :ctsem_generate, :ctsem_generate_draws, :ctsem_generate_states, :ctsem_kalman,
+    :ctsem_laplace_coordinate_dimension, :ctsem_laplace_effect_draws,
+    :ctsem_laplace_popcov, :ctsem_laplace_posterior_nodes, :ctsem_laplace_unit_dims,
+    :ctsem_parameter_matrices, :ctsem_state_dimension, :ctsem_state_layout,
+    :ctsem_state_trajectories)
     @eval $f(V::CTSEMVariational, args...; kwargs...) = $f(V.laplace, args...; kwargs...)
 end
 
