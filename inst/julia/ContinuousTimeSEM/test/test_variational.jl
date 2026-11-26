@@ -55,12 +55,17 @@ const _VF = ContinuousTimeSEM
                 @test nd.U[:, k] ≈ u atol = 1e-12
                 @test nd.J[k] ≈ ForwardDiff.jacobian(_VF._VFMapAt(f, z), lam) atol = 1e-10
             end
+            # The entropy on its fine rule against the nodes' log Jacobians
+            # on a product rule fine enough to settle it.
+            Zf, wf = _VF._vf_rule_product(d, d == 1 ? 200 : d == 2 ? 100 : 30)
+            @test _VF._vf_entropy(f, lam) ≈
+                  dot(wf, _VF._vf_nodes(f, lam, Zf; jacobian=false).lj) atol = 2e-5
             if skew && !bend
                 r = randn(rng, d)
                 H = zeros(f.p, f.p)
                 _VF._vf_second!(H, 1.0, f, lam, _VF._vf_L(f, lam), Z[:, 1], r)
                 @test (H .+ transpose(H)) ./ 2 ≈
-                      ForwardDiff.hessian(_VF._VFPhiAt(f, Z[:, 1], r), lam) atol = 1e-8
+                      ForwardDiff.hessian(_VF._VFUAt(f, Z[:, 1], r), lam) atol = 1e-8
             end
         end
     end

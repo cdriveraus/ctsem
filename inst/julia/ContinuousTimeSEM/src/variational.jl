@@ -12,9 +12,14 @@ stay integrated exactly):
 
 and on fixed nodes `z_k` with weights `w_k` the bound is
 
-    B_U = sum_k w_k [h(u_k) + log |du/dz|_k] + dim / 2 - kappa |shape|^2 / 2
+    B_U = sum_k w_k h(u_k) + E[log |du/dz|] + dim / 2 - kappa |shape|^2 / 2
 
-with `h = log L_U - |u|^2 / 2`. The approximation maximises `B_U`, so the
+with `h = log L_U - |u|^2 / 2`. The second term, the approximation's entropy
+less a constant, does not involve the model, and for these families is a sum
+of functions of one coordinate each; it is integrated on a fine
+one-dimensional rule (`_vf_entropy`), so the family cannot gain by
+stretching its map between the nodes, and the rule's error enters through
+the likelihood term alone. The approximation maximises `B_U`, so the
 bound's gradient in the parameters is the partial with the nodes held: first
 derivatives of the members' likelihoods at the nodes. Any approximation gives
 a lower bound up to the rule's error; the shape prior (`kappa`, on the skew
@@ -35,14 +40,17 @@ the accepted ones, as the Laplace route moves its anchors. Outside one, an
 evaluation starts from the accepted approximations and keeps nothing, so a
 value is the parameters' given the held state.
 
-Rules: product Gauss-Hermite at one coordinate (7 nodes for the skewed
-family); the cut rule (each axis by 7-node Gauss-Hermite, the rest by the
-degree-5 symmetric rule's off-axis points, exact to degree 5) for the skewed
-family at two or three; the rotated `2d + 1` rule for the Gaussian family
-beyond (unbiased over rotations, not a guaranteed bound unit by unit). The
-skewed family on any rule that misses the transform's higher terms exploits
-it: on 3 nodes a dimension, the rotated rule or the symmetric degree-5 rule
-its "bound" came out above the integral.
+Rules: product Gauss-Hermite for the skewed and bending families (7 nodes at
+one coordinate, 5 a coordinate at two or three); the rotated `2d + 1` rule
+for the Gaussian family beyond (unbiased over rotations, not a guaranteed
+bound unit by unit). The skewed family on any rule that misses the
+transform's higher terms exploits it: on 3 nodes a dimension, the rotated
+rule or the symmetric degree-5 rule its "bound" came out above the integral.
+A rule with negative weights is no bound at all: on the cut rule (each axis
+by Gauss-Hermite, the rest by the degree-5 rule's off-axis points), one of
+gA1's three-coordinate units moved its approximation's mean 100 prior sds
+out, where the negative-weight nodes' likelihood was -2e7, for a "bound" of
++1e6.
 """
 
 export ctsem_variational, ctsem_variational_info, ctsem_variational_value,
@@ -167,6 +175,17 @@ struct _VFPhiAt
 end
 (m::_VFPhiAt)(lam) = (q = _vf_map_generic(m.f, lam, m.z); dot(m.r, q[1]) + q[2])
 
+# r'u alone, for the likelihood term's second derivatives through the map.
+struct _VFUAt
+    f::CTSEMVFamily
+    z::Vector{Float64}
+    r::Vector{Float64}
+end
+(m::_VFUAt)(lam) = dot(m.r, _vf_map_generic(m.f, lam, m.z)[1])
+
+# log cosh, smooth at any element type.
+_vf_lcosh(a) = abs(a) > 20 ? abs(a) - log(2.0) + log1p(exp(-2 * abs(a))) : log(cosh(a))
+
 @inline _vf_logcosh(a::Float64) = abs(a) + log1p(exp(-2 * abs(a))) - log(2.0)
 
 # One axis's transform at node value z: y and its derivatives in (e, log d),
@@ -266,7 +285,8 @@ function _vf_nodes_bend(f::CTSEMVFamily, lam::Vector{Float64}, Z::Matrix{Float64
     return (U=U, lj=lj, J=J)
 end
 
-# The Hessian in the family's parameters of r'u + log |du/dz| at one node.
+# The Hessian in the family's parameters of r'u at one node, the skewed
+# family by hand (the bending family's is ForwardDiff's, `_VFUAt`).
 function _vf_second!(H::Matrix{Float64}, wk::Float64, f::CTSEMVFamily,
     lam::Vector{Float64}, L::Matrix{Float64}, z::AbstractVector, r::AbstractVector)
     d = f.d
@@ -293,10 +313,10 @@ function _vf_second!(H::Matrix{Float64}, wk::Float64, f::CTSEMVFamily,
         for i in j:d
             rl += r[i] * L[i, j]
         end
-        H[e, e] += wk * (rl * ax.yee + ax.lee)
-        H[e, g] += wk * (rl * ax.yed + ax.led)
-        H[g, e] += wk * (rl * ax.yed + ax.led)
-        H[g, g] += wk * (rl * ax.ydd + ax.ldd)
+        H[e, e] += wk * rl * ax.yee
+        H[e, g] += wk * rl * ax.yed
+        H[g, e] += wk * rl * ax.yed
+        H[g, g] += wk * rl * ax.ydd
     end
     return H
 end
@@ -321,15 +341,23 @@ function _vf_parts(f::CTSEMVFamily, lam::Vector{Float64}, Z::Matrix{Float64},
         want && (H[j, j] -= kappa)
     end
     L = want ? _vf_L(f, lam) : zeros(0, 0)
+    ent = _VFEntropyAt(f)
+    B += ent(lam)
+    if any(f.skew) || f.bend
+        g .+= ForwardDiff.gradient(ent, lam)
+        want && (H .+= ForwardDiff.hessian(ent, lam))
+    else
+        g[f.ild] .+= 1.0
+    end
     r = zeros(d)
     for k in 1:K
-        B += w[k] * (h[k] + nd.lj[k])
+        B += w[k] * h[k]
         Jk = nd.J[k]
         for i in 1:d
             r[i] = hg[i, k]
         end
         for a in 1:p
-            s = Jk[d + 1, a]
+            s = 0.0
             for i in 1:d
                 s += Jk[i, a] * r[i]
             end
@@ -339,7 +367,7 @@ function _vf_parts(f::CTSEMVFamily, lam::Vector{Float64}, Z::Matrix{Float64},
             Ju = view(Jk, 1:d, :)
             H .+= w[k] .* (transpose(Ju) * hH[k] * Ju)
             if f.bend
-                H .+= w[k] .* ForwardDiff.hessian(_VFPhiAt(f, Z[:, k], copy(r)), lam)
+                H .+= w[k] .* ForwardDiff.hessian(_VFUAt(f, Z[:, k], copy(r)), lam)
             else
                 _vf_second!(H, w[k], f, lam, L, view(Z, :, k), r)
             end
@@ -369,6 +397,46 @@ function _vf_gh(n::Integer)
     E = eigen(Symmetric(J))
     return E.values, E.vectors[1, :] .^ 2
 end
+
+const _VF_FINE = _vf_gh(96)
+
+"""E[log |du/dz|] under the standard normal, at any element type: log |L|,
+each skewed axis's term, and each bending coefficient times the mean of
+`s(y_i)`, every one an integral over one coordinate, on 96-node
+Gauss-Hermite."""
+function _vf_entropy(f::CTSEMVFamily, lam::AbstractVector)
+    z1, w1 = _VF_FINE
+    T = eltype(lam)
+    out = zero(T)
+    for i in 1:f.d
+        out += lam[f.ild[i]]
+    end
+    (any(f.skew) || f.bend) || return out
+    for i in 1:f.d
+        sy = zero(T)
+        for k in eachindex(z1)
+            if f.skew[i]
+                dl = lam[f.idl[i]]
+                a = (asinh(z1[k]) + lam[f.ie[i]]) / exp(dl)
+                out += w1[k] * (_vf_lcosh(a) - dl - log1p(z1[k]^2) / 2)
+                f.bend && (sy += w1[k] * 5 * tanh(sinh(a) / 5))
+            elseif f.bend
+                sy += w1[k] * 5 * tanh(z1[k] / 5)
+            end
+        end
+        if f.bend
+            for j in (i + 1):f.d
+                out += lam[f.ic[j, i]] * sy
+            end
+        end
+    end
+    return out
+end
+
+struct _VFEntropyAt
+    f::CTSEMVFamily
+end
+(m::_VFEntropyAt)(lam) = _vf_entropy(m.f, lam)
 
 function _vf_rule_product(d::Integer, n::Integer)
     d == 0 && return zeros(0, 1), [1.0]
@@ -727,12 +795,17 @@ end
 
 The variational objective over `laplace`'s units. `family = "auto"`: the
 skewed family at one coordinate on product Gauss-Hermite (7 nodes), the
-bending family at two or three on the cut rule, the Gaussian family on the
-rotated `2d + 1` rule beyond; "bend", "skew" or "gauss" for every unit. `rule` = "auto", "product", "cut" or "rot" overrides the rule.
+bending family at two or three on product Gauss-Hermite (5 nodes a
+coordinate), the Gaussian family on the rotated `2d + 1` rule beyond; "bend",
+"skew" or "gauss" for every unit; `nodes` sets the product rule's nodes a
+coordinate. Every default rule has positive weights:
+on a rule with negative weights (the cut rule, by name) the bound is not a
+bound, and an approximation can climb it without limit by moving the
+negative-weight nodes to where the likelihood is very low. `rule` = "auto", "product", "cut" or "rot" overrides the rule.
 """
 function ctsem_variational(laplace::CTSEMLaplaceObjective; family::AbstractString="auto",
     rule::AbstractString="auto", seed::Integer=1, tol::Real=1e-8, kappa::Real=1e-3,
-    quasi::Integer=10, refresh::Real=5.0, maxit::Integer=50)
+    quasi::Integer=10, refresh::Real=5.0, maxit::Integer=50, nodes::Integer=0)
     _laplace_ensure_pool!(laplace)
     dims = laplace.units.dims
     n = length(dims)
@@ -745,9 +818,9 @@ function ctsem_variational(laplace::CTSEMLaplaceObjective; family::AbstractStrin
         skew = family in ("skew", "bend") ? true : family == "gauss" ? false : d <= 3
         bend = family == "bend" || (family == "auto" && 2 <= d <= 3)
         push!(fams, CTSEMVFamily(d, skew; bend=bend))
-        r = rule != "auto" ? Symbol(rule) :
-            d <= 1 ? :product : skew ? :cut : :rot
-        Z, w = r === :product ? _vf_rule_product(d, skew ? 7 : 3) :
+        r = rule != "auto" ? Symbol(rule) : (d <= 1 || skew) ? :product : :rot
+        n1 = nodes > 0 ? Int(nodes) : !skew ? 3 : d == 1 ? 7 : 5
+        Z, w = r === :product ? _vf_rule_product(d, n1) :
             r === :cut ? _vf_rule_cut(d; n1=skew ? 7 : 3) :
             r === :rot ? _vf_rule_rot(d, 1, Int(seed) * 100003 + U) :
             throw(ArgumentError("rule: auto, product, cut or rot"))
