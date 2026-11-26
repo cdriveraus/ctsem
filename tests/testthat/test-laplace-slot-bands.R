@@ -334,4 +334,24 @@ test_that("a nested unit whose curvature does not factor floors its pivots", {
   expect_equal(as.numeric(r$g), as.numeric(r$fd), tolerance = 1e-5)
   expect_gt(r$zfloored, 0)
   expect_equal(as.numeric(r$tz), as.numeric(r$fz), tolerance = 1e-5)
+  # Further out the members explode: the unit's value at the origin is about
+  # -3e37. A mode is called found only where it was measured, and a solve
+  # that cannot move stops, so no probe starts from a point that is no mode
+  # and no solve runs to its cap (a value took 114 s and every probe ran to
+  # the cap before).
+  worse <- bad
+  worse[diagp] <- 2
+  s <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaEval(paste(
+    "(o, x) -> begin",
+    "  C = ContinuousTimeSEM",
+    "  C.ctsem_reset_opcounts!()",
+    "  C.ctsem_laplace_evaluate(o, collect(Float64, x); gradient = false)",
+    "  oc = C.ctsem_opcounts()",
+    "  (newtons = oc.probe_newtons, iterations = oc.inner_iterations,",
+    "   solves = oc.inner_solves, cap = o.inner_maxiter, converged = o.inner_converged[1],",
+    "   reach = maximum(abs, o.modes[1]))",
+    "end", sep = "\n"))(obj, ctsem:::.ctJuliaNumericVector(worse)))
+  expect_equal(s$newtons, 0)
+  expect_lt(s$iterations, s$cap)
+  expect_true(!s$converged || s$reach < 1e3)
 })

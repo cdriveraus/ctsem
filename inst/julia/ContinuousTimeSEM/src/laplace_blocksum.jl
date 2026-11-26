@@ -19,8 +19,9 @@
 #
 # `pi` the shares `_laplace_mode_shares(f, a)`, `f_c` each configuration's fade
 # (its subtree curvature's eigenvalues under `_LAPLACE_MODE_FADE`, its valleys
-# towards the block's other configurations under `_LAPLACE_MODE_DEPTH`, along
-# the subtree's segments), and `a_c` the configuration's value against `z*`'s
+# towards the block's other configurations under `_LAPLACE_MODE_DEPTH` where it
+# is on their shallow side, `_laplace_valley_weight`, along the subtree's
+# segments), and `a_c` the configuration's value against `z*`'s
 # (zero for the own one). Everything a block reads is its own members': a
 # block whose own maximum is the best at full weight adds nothing, and costs a
 # Newton step and a valley among its own members.
@@ -216,6 +217,23 @@ function _laplace_block_newton(laplace::CTSEMLaplaceObjective, U::Integer,
                 continue
             end
             return (y=u[idx], value=cur.value, converged=true, M=M, F=F)
+        end
+        # A step too short to move the point moves it at no scale, and the
+        # next iteration takes the same step: stuck, as in
+        # `_laplace_newton_unit_mode`, where the line search accepted such a
+        # step at every iteration to the cap. A loop, not `all` over a
+        # closure: `u` is assigned again below, and a closure reading it
+        # would box it.
+        still = true
+        for k in eachindex(idx)
+            if u[idx[k]] + step[k] != u[idx[k]]
+                still = false
+                break
+            end
+        end
+        if still
+            exact && return (y=u[idx], value=cur.value, converged=true, M=M, F=F)
+            return fail
         end
         t = 1.0
         moved = false
@@ -663,7 +681,8 @@ function _laplace_block_sum(laplace::CTSEMLaplaceObjective, U::Integer,
     yv = Vector{Float64}[Float64[j == c ? Inf :
         max(configs[c].h - valley[c, j], 0.0) / dscale for j in 1:K] for c in 1:K]
     f = Float64[prod(_laplace_fade_weight, x[c]; init=1.0) *
-        prod(_laplace_fade_weight, yv[c]; init=1.0) for c in 1:K]
+        prod((_laplace_valley_weight(yv[c][j], yv[j][c]).phi for j in 1:K if j != c);
+            init=1.0) for c in 1:K]
     H = prod(f)
     q = Float64[c == 1 ? 0.0 : _laplace_fade_weight((abs(dtau[c]) - dscale) / dscale)
         for c in 1:K]
@@ -732,13 +751,18 @@ function _laplace_block_sum(laplace::CTSEMLaplaceObjective, U::Integer,
             push!(lw[c], cf * sx / (_laplace_fade_weight(x[c][i]) * fade))
             push!(lv[c], low[c].vectors[:, i])
         end
+        # A valley's factor reads its depth below both ends
+        # (`_laplace_valley_weight`), at the one point.
         for j in 1:K
-            sy = _laplace_fade_slope(yv[c][j])
-            sy == 0 && continue
-            e = cf * sy / (_laplace_fade_weight(yv[c][j]) * dscale)
-            alpha[c] += e
+            j == c && continue
+            vw = _laplace_valley_weight(yv[c][j], yv[j][c])
+            (vw.da == 0 && vw.db == 0) && continue
+            ea = cf * vw.da / (vw.phi * dscale)
+            eb = cf * vw.db / (vw.phi * dscale)
+            alpha[c] += ea
+            alpha[j] += eb
             t = vt[c, j]
-            push!(pts, (e=e, c=c, j=j, t=t,
+            push!(pts, (e=ea + eb, c=c, j=j, t=t,
                 y=configs[c].y .+ t .* (configs[j].y .- configs[c].y)))
         end
     end
