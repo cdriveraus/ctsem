@@ -61,9 +61,10 @@ Within an optimisation (`running`) each evaluation starts every unit from the
 approximation the last accepted point left, and the optimiser's per-step
 callback (`_ctsem_anchor_here!`) makes the last evaluation's approximations
 the accepted ones, as the Laplace route moves its anchors. Outside one, an
-evaluation starts from the accepted approximations, or from their prediction
-where a Hessian left one (`V.pred`), and keeps nothing, so a value is the
-parameters' given the held state.
+evaluation starts from the accepted approximations and keeps nothing, so a
+value is the parameters' given the held state. Once a Hessian has given each
+approximation's derivative in the parameters (`V.dlam`), every evaluation, in
+an optimisation or not, starts from the accepted approximation moved by it.
 
 The Hessian differentiates each unit's approximation through its optimum
 (`ctsem_hessian`): `B_tt + B_tl M^-1 B_lt` from passes at the approximation
@@ -1069,11 +1070,14 @@ mutable struct CTSEMVariational{L} <: CTSEMOptimisable
     need::Float64
     # The layouts and choices a new fit starts from (`ctsem_variational_reset!`).
     start::Tuple{Vector{CTSEMVLayout},Vector{Bool}}
-    # Each unit's approximation as a linear function of the parameters about
-    # the point its Hessian was formed at (`ctsem_hessian`), which starts its
-    # solves outside an optimisation (`_vf_unit!`): `(x, lam, D)`, `D[U]` the
-    # derivative of unit `U`'s approximation in the free parameters.
-    pred::Any
+    # Each unit's approximation's derivative in the free parameters, from the
+    # last Hessian (`ctsem_hessian`), `nothing` before one or once a unit's
+    # family changes; and the free parameters at the accepted approximations
+    # and at the trial's. A unit's solves start from its accepted
+    # approximation moved by the derivative (`_vf_unit!`).
+    dlam::Any
+    theta_acc::Vector{Float64}
+    theta_trial::Vector{Float64}
 end
 
 """
@@ -1120,7 +1124,8 @@ function ctsem_variational(laplace::CTSEMLaplaceObjective; family::AbstractStrin
         [Matrix{Float64}[] for _ in layouts], [zeros(l.p) for l in layouts],
         [Matrix{Float64}[] for _ in layouts], false, false, false, Float64(tol),
         Float64(kappa), Int(quasi), Float64(refresh), Int(maxit), fill(NaN, n), 0, 0, 0, 0,
-        0, 0, nothing, pending, Float64(need), (copy(layouts), copy(pending)), nothing)
+        0, 0, nothing, pending, Float64(need), (copy(layouts), copy(pending)), nothing,
+        Float64[], Float64[])
 end
 
 function _vf_unit!(V::CTSEMVariational, ctx::_VCtx, U::Int, unit::Vector{Float64},
@@ -1130,15 +1135,15 @@ function _vf_unit!(V::CTSEMVariational, ctx::_VCtx, U::Int, unit::Vector{Float64
         s = _vf_solve(V, U, ctx, V.lam[U])
         (lam=s.lam, e=s.e, gpasses=s.gpasses, hpasses=s.hpasses, shares=s.shares,
             formed=true, iterations=s.iterations, capped=s.capped)
-    elseif V.pred !== nothing && !V.running
-        # Outside an optimisation -- the interval check's draws, a profile,
-        # the overshoot probe's trials -- from the approximation predicted
-        # linearly from where the Hessian was formed: off the solved one by the
-        # move's square, so its bound is off by the fourth power, and many
-        # units need no step. The accepted approximation is the fallback.
-        p = V.pred
-        n = length(p.x)
-        start = p.lam[U] .+ p.D[U] * (view(ctx.theta, 1:n) .- p.x)
+    elseif V.dlam !== nothing && _VF_PREDICT[] && length(V.theta_acc) == size(V.dlam[U], 2)
+        # The accepted approximation moved by its derivative from the last
+        # Hessian: near where that was formed, off the solved one by the
+        # move's square, so its bound is off by the fourth power and many
+        # units take no step -- the interval check's draws, a profile, the
+        # probe's trials, the finish's steps. The accepted approximation is
+        # the fallback where the start cannot be evaluated.
+        n = length(V.theta_acc)
+        start = V.lam[U] .+ V.dlam[U] * (view(ctx.theta, 1:n) .- V.theta_acc)
         _vf_solve_held(V, U, ctx, start, V.shares[U]; fallback=V.lam[U])
     else
         _vf_solve_held(V, U, ctx, V.lam[U], V.shares[U])
@@ -1162,8 +1167,7 @@ function _vf_commit!(V::CTSEMVariational)
         V.lam[U] = copy(V.lam_trial[U])
         V.shares[U] = V.shares_trial[U]
     end
-    # A run's accepted point moves on from where a prediction was made.
-    V.running && (V.pred = nothing)
+    V.theta_acc = copy(V.theta_trial)
     V.accepted = true
     return nothing
 end
@@ -1212,6 +1216,7 @@ function ctsem_variational_evaluate(V::CTSEMVariational, values::AbstractVector;
     (ok && all(isfinite, unit)) || return bad
     V.has_trial = true
     V.unit_value = unit
+    V.theta_trial = collect(Float64, values)
     (!V.running && !V.accepted) && _vf_commit!(V)
     wts = [_laplace_unit_weight(laplace, U) for U in 1:nunits]
     prior = _ctsem_log_prior(laplace.objective, ctx.theta)
@@ -1299,7 +1304,7 @@ function _ctsem_take_search_modes!(V::CTSEMVariational, x::AbstractVector, found
         units += 1
     end
     units == 0 && return (change=0.0, units=0, joined=0)
-    V.pred = nothing
+    V.dlam = nothing
     return (change=change, units=units, joined=units)
 end
 
@@ -1343,7 +1348,9 @@ function ctsem_variational_reset!(V::CTSEMVariational)
     V.has_trial = false
     V.running = false
     V.lbfgs = nothing
-    V.pred = nothing
+    V.dlam = nothing
+    V.theta_acc = Float64[]
+    V.theta_trial = Float64[]
     V.evaluations = V.gradient_passes = V.curvature_passes = V.curvature_formed = 0
     V.exact_iterations = V.exact_capped = 0
     return nothing
@@ -1401,8 +1408,8 @@ the fixed approximation's curvature, which is stiffer. A column visits only
 the units that read its parameter: a nonzero envelope gradient at `values`
 or at a point moved in every coordinate (`_laplace_reader_point`). Leaves
 each unit's approximation as a linear function of the parameters, `D_U =
-M_U^-1 B_lt`, to start the solves that follow outside an optimisation
-(`V.pred`, `_vf_unit!`). Falls back to the oracle where a unit cannot be
+M_U^-1 B_lt`, to start the solves that follow (`V.dlam`, `_vf_unit!`).
+Falls back to the oracle where a unit cannot be
 evaluated beside `values` or its curvature does not factor.
 """
 function ctsem_hessian(V::CTSEMVariational, values::AbstractVector; chunk::Integer=0,
@@ -1414,10 +1421,11 @@ function ctsem_hessian(V::CTSEMVariational, values::AbstractVector; chunk::Integ
     h = Float64(step)
     laplace = V.laplace
     nunits = length(V.layouts)
-    kept = (copy(V.lam_trial), copy(V.shares_trial), V.has_trial, copy(V.unit_value))
+    kept = (copy(V.lam_trial), copy(V.shares_trial), V.has_trial, copy(V.unit_value),
+        copy(V.theta_trial))
     r0 = ctsem_variational_evaluate(V, x; gradient=false)
     lam = [copy(l) for l in V.lam_trial]
-    V.lam_trial, V.shares_trial, V.has_trial, V.unit_value = kept
+    V.lam_trial, V.shares_trial, V.has_trial, V.unit_value, V.theta_trial = kept
     isfinite(r0.value) || return _vf_hessian_differenced(V, x; step=step)
     ctx = _vf_ctx(laplace, x)
     nx = length(ctx.theta)
@@ -1490,7 +1498,7 @@ function ctsem_hessian(V::CTSEMVariational, values::AbstractVector; chunk::Integ
         end
         H[js, js] .+= wts[U] .* (transpose(Blt[U][:, js]) * D[U][:, js])
     end
-    V.pred = _VF_PREDICT[] ? (x=x, lam=lam, D=D) : nothing
+    V.dlam = D
     return (H .+ transpose(H)) ./ 2
 end
 
@@ -1499,10 +1507,10 @@ const _VF_PREDICT = Ref(true)
 """
     ctsem_set_variational_predict!(on)
 
-Whether the Hessian leaves each unit's approximation predicted linearly in the
-parameters to start the solves that follow outside an optimisation
-(`ctsem_hessian`, `_vf_unit!`); off, they start from the accepted
-approximations. The oracle for the predicted starts.
+Whether a unit's solves start from its accepted approximation moved by its
+derivative in the parameters from the last Hessian (`ctsem_hessian`,
+`_vf_unit!`); off, from the accepted approximation. The oracle for the
+predicted starts.
 """
 ctsem_set_variational_predict!(on::Bool) = (_VF_PREDICT[] = on; nothing)
 
@@ -1516,7 +1524,8 @@ function _vf_hessian_differenced(V::CTSEMVariational, values::AbstractVector;
     H = zeros(n, n)
     # The differences leave the trial where it was: the optimiser's next
     # accepted point is not one of them.
-    kept = (copy(V.lam_trial), copy(V.shares_trial), V.has_trial, copy(V.unit_value))
+    kept = (copy(V.lam_trial), copy(V.shares_trial), V.has_trial, copy(V.unit_value),
+        copy(V.theta_trial))
     for j in 1:n
         xp = copy(x)
         xp[j] += step
@@ -1526,7 +1535,7 @@ function _vf_hessian_differenced(V::CTSEMVariational, values::AbstractVector;
         gmi = ctsem_variational_evaluate(V, xm).gradient
         H[:, j] .= (gpl .- gmi) ./ (2 * step)
     end
-    V.lam_trial, V.shares_trial, V.has_trial, V.unit_value = kept
+    V.lam_trial, V.shares_trial, V.has_trial, V.unit_value, V.theta_trial = kept
     return (H .+ transpose(H)) ./ 2
 end
 
@@ -1632,9 +1641,10 @@ estimate within 0.2 of the refined fit.
 function ctsem_laplace_check(V::CTSEMVariational, values::AbstractVector;
     unit_scores::Bool=true, kwargs...)
     x = collect(Float64, values)
-    kept = (copy(V.lam_trial), copy(V.shares_trial), V.has_trial, copy(V.unit_value))
+    kept = (copy(V.lam_trial), copy(V.shares_trial), V.has_trial, copy(V.unit_value),
+        copy(V.theta_trial))
     b = ctsem_variational_evaluate(V, x; units=unit_scores)
-    V.lam_trial, V.shares_trial, V.has_trial, V.unit_value = kept
+    V.lam_trial, V.shares_trial, V.has_trial, V.unit_value, V.theta_trial = kept
     isfinite(b.value) || throw(ErrorException(
         "the variational bound cannot be evaluated where the check was asked for"))
     against = (gradient=b.gradient,

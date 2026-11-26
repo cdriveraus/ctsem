@@ -182,9 +182,9 @@ _vf_threelevel_gauss() = (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE;
         # The implicit Hessian against differences of gradients solved to the
         # last bit, where no unit's approximation stays fixed at the points; at
         # the fixtures' values, since the formula holds wherever each unit's
-        # approximation is at its optimum. Then the solves its prediction
-        # starts reach the same optimum as solves from the accepted
-        # approximation.
+        # approximation is at its optimum. Then the solves started from the
+        # accepted approximation moved by the Hessian's derivative reach the
+        # same optimum as solves from the accepted approximation alone.
         laplace2 = ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE, [1, 4], [5, 6], [7],
             [1.0, 1.0])
         values2 = [0.1, 0.4, -0.2, 0.05, -0.25, -0.4, 0.2]
@@ -196,7 +196,7 @@ _vf_threelevel_gauss() = (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE;
             Hd = _VF.ctsem_hessian(V, values; method=:differenced)
             Hi = _VF.ctsem_hessian(V, values)
             @test Hi ≈ Hd rtol = 1e-4 atol = 1e-5
-            @test V.pred !== nothing
+            @test V.dlam !== nothing
             moved = values .+ 0.05 .* (-1) .^ (1:length(values))
             rp = _VF.ctsem_variational_evaluate(V, moved; gradient=false)
             W = ctsem_variational(laplace; family=family, tol=1e-14)
