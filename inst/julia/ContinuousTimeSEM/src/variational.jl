@@ -880,13 +880,13 @@ function _vf_solve(V, U::Int, ctx::_VCtx, lam0::Vector{Float64})
     if !isfinite(e.B)
         start = _vf_finite_start(V, U, ctx)
         start === nothing && return (lam=lam, e=e, converged=false, gpasses=gp, hpasses=hp,
-            shares=Matrix{Float64}[])
+            shares=Matrix{Float64}[], iterations=0, capped=false)
         lam = start
         e = _vf_unit_terms(V, U, ctx, lam, true)
         gp += e.gpasses
         hp += e.hpasses
         isfinite(e.B) || return (lam=lam, e=e, converged=false, gpasses=gp, hpasses=hp,
-            shares=Matrix{Float64}[])
+            shares=Matrix{Float64}[], iterations=0, capped=false)
     end
     converged = lay.p == 0
     it = 0
@@ -934,7 +934,7 @@ function _vf_solve(V, U::Int, ctx::_VCtx, lam0::Vector{Float64})
         lam, e = lam1, e1
     end
     return (lam=lam, e=e, converged=converged, gpasses=gp, hpasses=hp,
-        shares=_vf_shares(lay, e))
+        shares=_vf_shares(lay, e), iterations=it, capped=it >= V.maxit)
 end
 
 # The shares a solve hands to the held one: each member's negated curvature,
@@ -970,7 +970,7 @@ function _vf_solve_held(V, U::Int, ctx::_VCtx, lam0::Vector{Float64},
             dec = dot(e.g, D)
             if dec / 2 < V.tol && !shifted
                 return (lam=lam, e=e, converged=true, gpasses=gp, hpasses=0, shares=shares,
-                    formed=false)
+                    formed=false, iterations=0, capped=false)
             end
             (it == 0 && dec / 2 > V.refresh) && break
             it >= V.quasi && break
@@ -1002,7 +1002,8 @@ function _vf_solve_held(V, U::Int, ctx::_VCtx, lam0::Vector{Float64},
     end
     r = _vf_solve(V, U, ctx, lam)
     return (lam=r.lam, e=r.e, converged=r.converged, gpasses=r.gpasses + gp,
-        hpasses=r.hpasses, shares=r.shares, formed=true)
+        hpasses=r.hpasses, shares=r.shares, formed=true, iterations=r.iterations,
+        capped=r.capped)
 end
 
 # ---- the objective ---------------------------------------------------------------------
@@ -1036,6 +1037,9 @@ mutable struct CTSEMVariational{L} <: CTSEMOptimisable
     gradient_passes::Int
     curvature_passes::Int
     curvature_formed::Int
+    # Exact solves' Newton iterations, and those that stopped at `maxit`.
+    exact_iterations::Int
+    exact_capped::Int
     lbfgs::Union{Nothing,CTSEMLBFGSMemory}
     # Units whose family is chosen by need (`family = "auto"`, one block of two
     # or three coordinates): Gaussian, tried once with the bending family where
@@ -1089,21 +1093,24 @@ function ctsem_variational(laplace::CTSEMLaplaceObjective; family::AbstractStrin
         [Matrix{Float64}[] for _ in layouts], [zeros(l.p) for l in layouts],
         [Matrix{Float64}[] for _ in layouts], false, false, false, Float64(tol),
         Float64(kappa), Int(quasi), Float64(refresh), Int(maxit), fill(NaN, n), 0, 0, 0, 0,
-        nothing, pending, Float64(need), (copy(layouts), copy(pending)))
+        0, 0, nothing, pending, Float64(need), (copy(layouts), copy(pending)))
 end
 
 function _vf_unit!(V::CTSEMVariational, ctx::_VCtx, U::Int, unit::Vector{Float64},
-    GE::Matrix{Float64}, gps::Vector{Int}, hps::Vector{Int}, formed::Vector{Bool})
+    GE::Matrix{Float64}, gps::Vector{Int}, hps::Vector{Int}, formed::Vector{Bool},
+    its::Vector{Int}, caps::Vector{Bool})
     r = if isempty(V.shares[U])
         s = _vf_solve(V, U, ctx, V.lam[U])
         (lam=s.lam, e=s.e, gpasses=s.gpasses, hpasses=s.hpasses, shares=s.shares,
-            formed=true)
+            formed=true, iterations=s.iterations, capped=s.capped)
     else
         _vf_solve_held(V, U, ctx, V.lam[U], V.shares[U])
     end
     gps[U] = r.gpasses
     hps[U] = r.hpasses
     formed[U] = r.formed
+    its[U] = r.iterations
+    caps[U] = r.capped
     isfinite(r.e.B) || return false
     V.lam_trial[U] = r.lam
     V.shares_trial[U] = r.shares
@@ -1153,12 +1160,16 @@ function ctsem_variational_evaluate(V::CTSEMVariational, values::AbstractVector;
     gps = zeros(Int, nunits)
     hps = zeros(Int, nunits)
     formed = fill(false, nunits)
+    its = zeros(Int, nunits)
+    caps = fill(false, nunits)
     ok = _laplace_parallel(laplace, 1:nunits) do U
-        return _vf_unit!(V, ctx, U, unit, GE, gps, hps, formed)
+        return _vf_unit!(V, ctx, U, unit, GE, gps, hps, formed, its, caps)
     end
     V.gradient_passes += sum(gps)
     V.curvature_passes += sum(hps)
     V.curvature_formed += count(formed)
+    V.exact_iterations += sum(its)
+    V.exact_capped += count(caps)
     (ok && all(isfinite, unit)) || return bad
     V.has_trial = true
     V.unit_value = unit
@@ -1180,6 +1191,7 @@ function ctsem_variational_info(V::CTSEMVariational)
     lay = V.layouts
     return (evaluations=V.evaluations, gradient_passes=V.gradient_passes,
         curvature_passes=V.curvature_passes, curvature_formed=V.curvature_formed,
+        exact_iterations=V.exact_iterations, exact_capped=V.exact_capped,
         units=length(lay), dims=[l.d for l in lay], parameters=[l.p for l in lay],
         blocks=[length(l.pblocks) for l in lay],
         nodes=[sum(length(m.w) for m in l.members; init=0) for l in lay],
@@ -1286,6 +1298,7 @@ function ctsem_variational_reset!(V::CTSEMVariational)
     V.running = false
     V.lbfgs = nothing
     V.evaluations = V.gradient_passes = V.curvature_passes = V.curvature_formed = 0
+    V.exact_iterations = V.exact_capped = 0
     return nothing
 end
 
