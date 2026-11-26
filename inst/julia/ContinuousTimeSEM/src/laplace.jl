@@ -4797,8 +4797,13 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         # "there is nothing left to gain here" from "the step went somewhere
         # the model has no value". See the `stationary` branch below.
         evaluable = false
+        # How far the value moves where the step predicts it should not: the
+        # largest loss among the shortest trials, at most 2^-15 of the step,
+        # where the quadratic predicts a change of 6e-5 of the step's gain.
+        # What the value cannot resolve, measured (see `!accepted` below).
+        noise = 0.0
         scale = 1.0
-        for _ in 1:20
+        for trialno in 1:20
             utry .= u .+ scale .* step
             trial = _laplace_unit_objective_gradient(laplace, U, values, Ls,
                 utry, aws, gtry; chains=psr1 ? ptry : nothing,
@@ -4812,6 +4817,8 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
                 accepted = true
                 break
             end
+            trialno > 15 && isfinite(trial.value) &&
+                (noise = max(noise, current.value - trial.value))
             scale /= 2
         end
         accepted && (stepped_exact = used_exact)
@@ -4892,10 +4899,30 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
             #
             # On an exact, unrepaired curvature a step this small was ranked by
             # its gradient before the search (`_laplace_floor_step`); what
-            # reaches here is a repaired curvature, or a step the model had no
-            # value for at its full length.
+            # reaches here is a repaired curvature, a step the model had no
+            # value for at its full length, or a value noisier than the
+            # tolerance supposes.
+            #
+            # That tolerance reads the value's roundoff off its size, and a
+            # unit's value can be a small difference of large terms: a person
+            # whose answers barely move, beside a measurement error near zero,
+            # sums log densities of about 1e9 to a value of -1.5, which then
+            # moves by 7e-7 between points two ulps apart. A Newton step there
+            # predicting 2e-9 is ranked by no trial, and the unit, at its mode
+            # to the arithmetic, was reported short and its point rejected:
+            # 1,664 of the 2,700 evaluations of a GESIS fit (3,461 persons, ten
+            # items), and every Hessian of it had columns that could not be
+            # differenced. So on an exact, unrepaired curvature, along which
+            # the step is an ascent direction, the shortest trials measure the
+            # value's noise (`noise` above), and a step predicting no more than
+            # that is at the floor. A step predicting more is not, wherever the
+            # gradient is the value's: over trials that short a correct
+            # gradient moves the value by 2^-14 of the gain, so a loss there as
+            # large as the gain is the value's noise, not the step's.
             stationary = evaluable &&
-                _laplace_floor_step(laplace, current.gradient, step, current.value)
+                (_laplace_floor_step(laplace, current.gradient, step, current.value) ||
+                (used_exact && !fac.repaired &&
+                    _laplace_stationary_gain(current.gradient, step) <= noise))
             converged = stationary
             stationary && exact && !fac.repaired &&
                 (final = _laplace_copy_blockmatrix(M))

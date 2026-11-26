@@ -1438,6 +1438,17 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
 
 ctOptimCovFromHessian <- function(hess, ridge=1e-8, rtol=.ctFlatDirectionRtol(), warn=TRUE,
   context='Hessian', screen=NULL, widen=NULL){
+  # No repair below can use a missing entry: each ended in the generic
+  # failure at the bottom, which named nothing.
+  bad <- which(colSums(!is.finite(hess)) > 0)
+  if (length(bad)) {
+    labels <- if (!is.null(colnames(hess))) colnames(hess)[bad] else bad
+    stop('The ', context, ' has missing or infinite entries for ', length(bad),
+      ' parameter', if (length(bad) > 1L) 's', ' (',
+      paste(utils::head(labels, 10L), collapse=', '),
+      if (length(bad) > 10L) paste0(' and ', length(bad) - 10L, ' more'),
+      '), so no covariance can be formed from it.', call.=FALSE)
+  }
   hess <- (hess + t(hess)) / 2
   info <- -hess
   infoEig <- try(eigen(info, symmetric=TRUE, only.values=TRUE), silent=TRUE)

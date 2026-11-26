@@ -470,6 +470,41 @@ test_that("a gap the objective does not resolve is not resumed for", {
   expect_false(ctsem:::.ctBackendGapRefused(NULL, 0.2))
 })
 
+# A resumed stage's opening search starts from the modes the run ended with, as
+# a checkpoint's resume does: the probe that measured an escape's gain
+# evaluated its point from them, and searched afresh a unit could fail there.
+# And a point whose exact Hessian the certification could not complete is
+# named, for the uncertainty stage not to form it again.
+test_that("a resume starts from the run's modes, and an incomplete Hessian is named", {
+  modes <- matrix(c(0.1, 0.2, NaN, 0.3, 0.4, 0.5), 3L)
+  short <- .fake_result(-diag(c(4, 25)), c(2, 5), value = -100,
+    fit_mode_units = c(1L, 2L), fit_mode_values = modes)
+  done <- .fake_result(-diag(c(4, 25)), c(0, 0), value = -99, x = c(0.5, 0.2))
+  seen <- NULL
+  ctsem:::.ctBackendCorrectResult(short, spec = list(), npar = 2L,
+    tolerance = 1e-6, maxtries = 1L, optimise = function(from, endgame = NULL) {
+      seen <<- from
+      done
+    })
+  expect_equal(attr(seen, "modes")$units, c(1L, 2L))
+  expect_identical(attr(seen, "modes")$values, modes)
+
+  # Formed once: the loop's certification gave nothing, and the closing one,
+  # at the same point, is not asked again.
+  bare <- .fake_result(NULL, c(2, 5), value = -100)
+  formed <- 0L
+  testthat::local_mocked_bindings(.ctBackendEndgameAt = function(spec, est, ...) {
+    formed <<- formed + 1L
+    list(incomplete = est)
+  }, .package = "ctsem")
+  out <- ctsem:::.ctBackendCorrectResult(bare, spec = list(), npar = 2L,
+    tolerance = 1e-6, maxtries = 0L)
+  expect_equal(formed, 1L)
+  expect_null(out$hessian)
+  expect_null(out$certification)
+  expect_equal(out$incomplete, c(0, 0))
+})
+
 test_that("a fit short of its optimum is resumed under its own rules", {
   # A gap of one nat: the finish did not close it (a line search that ran out,
   # say), so the certification says suboptimal.

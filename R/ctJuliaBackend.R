@@ -6418,8 +6418,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     common$overshoot_probe <- "cleared"
   }
   optimise_once <- function(from, pin = default_pin,
-      resumed = FALSE, endgame = NULL, finish = TRUE) {
+      resumed = FALSE, endgame = NULL, finish = TRUE, modes = NULL) {
     args <- common
+    # A resumed stage's further starts for its opening search: the modes the
+    # stage it resumes ended with (`stage()`), in place of a checkpoint's.
+    if (!is.null(modes) && length(modes$units)) {
+      args$resume_units <- .ctJuliaVector(as.integer(modes$units))
+      args$resume_values <- modes$values
+    }
     # A stage that only settles the rest of the model around held coordinates
     # (a run-off escape's, in `stage()` below) forms no Hessian and probes for
     # no overshoot: the stage that frees them does both where it ends.
@@ -6633,6 +6639,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # on the other side of the coordinate's range, not a measured improvement,
     # and the rest of the model has to move first.
     runoff <- identical(attr(from, "kind"), "runoff")
+    # The modes the stage before ended with (`.ctBackendCorrectResult()`), for
+    # the first search of the stage that starts here.
+    modes <- attr(from, "modes")
     from <- as.numeric(from)
     if ((isTRUE(optimcontrol$escapepin) || runoff) && length(coordinates)) {
       inside <- coordinates >= 1L & coordinates <= length(from)
@@ -6645,11 +6654,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         value = c(if (length(default_pin$index)) as.numeric(default_pin$value),
           from[coordinates]))
       staged <- optimise_once(from, pin = escape_pin, resumed = TRUE,
-        finish = !runoff)
+        finish = !runoff, modes = modes)
       return(.ctJuliaAddRunCounts(optimise_once(as.numeric(staged$minimizer),
-        resumed = TRUE, endgame = endgame), staged))
+        resumed = TRUE, endgame = endgame,
+        modes = .ctJuliaResultModes(staged)), staged))
     }
-    optimise_once(from, resumed = TRUE, endgame = endgame)
+    optimise_once(from, resumed = TRUE, endgame = endgame, modes = modes)
   }
   # Not for a run that ended on a jump: its point is on no continuous
   # objective, so a certification there has nothing to judge, and a resume
@@ -7990,7 +8000,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       hessian = correction$hessian,
       evaluated_at = if (is.null(correction$evaluated_at)) minimizer else
         as.numeric(correction$evaluated_at),
-      flatwalk = correction$flatwalk)
+      flatwalk = correction$flatwalk, incomplete = correction$incomplete)
     out <- .ctBackendCertifiedVerdict(out)
   }
   class(out) <- c("ctJuliaFit", "ctFit")
@@ -8079,6 +8089,17 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     draws = .ctJuliaOr(optimcontrol$uncertaintyDraws, "auto"),
     finishsamples = .ctJuliaOr(optimcontrol$finishsamples, 1000L),
     cores = cores, control = control, verbose = verbose)
+  # A stage below that fails leaves the fit as it was before that stage, with a
+  # warning, rather than losing the optimisation: the GESIS random-diffusion
+  # fit (3,461 persons) was lost after 17.5 hours when no covariance could be
+  # formed from a finite-difference Hessian with missing entries. `out` is read
+  # when a stage fails, before the assignment that stage was for.
+  keep <- function(expr, what, without) tryCatch(expr, error = function(e) {
+    warning(what, " failed (", conditionMessage(e), "); the fit is returned ",
+      without, ".", call. = FALSE)
+    out
+  })
+  nouncertainty <- "without standard errors, and ctFitUncertainty(fit) tries again"
   # A run that ended on a jump has no Laplace answer: the objective is not
   # continuous there, so it has no maximum. Its uncertainty is the curvature's
   # at that point all the same, and the stage below warns whatever
@@ -8105,9 +8126,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (uncertain && !(jumped && continuing)) {
     if (continuing) {
       restore <- .ctStreamKeep()
-      out <- holdrepair(measure(out, "hessian", plaincontrol))
+      out <- holdrepair(keep(measure(out, "hessian", plaincontrol),
+        "The uncertainty", nouncertainty))
       restore()
-    } else out <- holdrepair(measure(out, uncertainty))
+    } else out <- holdrepair(keep(measure(out, uncertainty), "The uncertainty",
+      nouncertainty))
   }
 
   # The random-effects check, or the refined fit, after the certification has
@@ -8119,11 +8142,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # the default, only checks and warns.
   if (!is.null(out$laplace) && isTRUE(intoverstates)) {
     if (continuing) {
-      out <- holdrepair(.ctLaplaceContinue(out, cores = cores, verbose = verbose,
-        method = uncertainty, uncertaintycontrol = uncertaintycontrol))
+      out <- holdrepair(keep(.ctLaplaceContinue(out, cores = cores,
+        verbose = verbose, method = uncertainty,
+        uncertaintycontrol = uncertaintycontrol), "The refined fit",
+        "at the Laplace estimate"))
     } else if (jumped || identical(correctlaplace, "check")) {
-      out <- holdrepair(.ctLaplaceContinue(out, cores = cores, verbose = verbose,
-        correct = FALSE))
+      out <- holdrepair(keep(.ctLaplaceContinue(out, cores = cores,
+        verbose = verbose, correct = FALSE), "The random-effects check",
+        "unchecked"))
     } else {
       out$laplace$correction <- list(status = if (isTRUE(optimcontrol$estonly) &&
         "randomeffects" %in% .ctUncertaintyChecks(.ctJuliaOr(optimcontrol$checks,
@@ -8138,8 +8164,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # fit moves the normal's (`.ctLaplaceUncertaintyAtOptimum()`), and the
   # interval check with them.
   if (continuing && !jumped && !identical(out$laplace$correction$draws, "redrawn")) {
-    out <- holdrepair(.ctLaplaceUncertaintyAtOptimum(out,
-      function(fit) measure(fit, uncertainty)))
+    out <- holdrepair(keep(.ctLaplaceUncertaintyAtOptimum(out,
+      function(fit) measure(fit, uncertainty)), "The uncertainty", nouncertainty))
   }
   # What the check beside the curvature found, said once.
   checknote <- if (uncertain) .ctUncertaintyCheckNote(out) else NULL
@@ -8148,9 +8174,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # method's own account of its error read against it, and a brief
   # sampling run where it falls short (`.ctUncertaintyEscalate()`).
   if (uncertain && !is.null(optimcontrol[["accuracy"]]) && !is.null(out$uncertainty$settings)) {
-    out <- holdrepair(.ctUncertaintyEscalate(out, optimcontrol[["accuracy"]],
+    out <- holdrepair(keep(.ctUncertaintyEscalate(out, optimcontrol[["accuracy"]],
       cores = cores, verbose = verbose,
-      control = .ctJuliaOr(optimcontrol$sampleControl, list())))
+      control = .ctJuliaOr(optimcontrol$sampleControl, list())),
+      "Sampling to the accuracy asked for", "with the uncertainty it had"))
   }
 
   # The draws pushed through the model's transforms, once, exactly as the Stan

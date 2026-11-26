@@ -1285,6 +1285,21 @@ test_that("the hessian raises the inner budget rather than returning NaN", {
   expect_identical(completed[-c(2, 5), ], full[-c(2, 5), ])
   expect_equal(completed[c(2, 5), c(2, 5)], full[c(2, 5), c(2, 5)],
     tolerance = 1e-3)
+  # The certification completes the matrix it formed from the specification
+  # alone (`.ctBackendEndgameAt()`), to the same entries.
+  expect_warning(fromspec <- ctsem:::.ctBackendHessianComplete(fit$model_spec,
+    raw, holes), "entries among 2 parameters")
+  expect_equal(fromspec, completed)
+  # A point whose exact Hessian the certification could not complete is not
+  # formed again by the uncertainty stage: the finite-difference fallback, at
+  # once.
+  noted <- fit
+  noted$uncertainty <- list(incomplete = as.numeric(raw))
+  expect_warning(again <- ctsem:::.ctBackendHessian(noted, raw), "not finite")
+  expect_null(again)
+  # And a Hessian with entries missing names them where no covariance can be
+  # formed from it, rather than failing in the repairs.
+  expect_error(ctsem:::ctOptimCovFromHessian(holes), "2 parameters \\(2, 5\\)")
 })
 
 test_that("gradient = 'forward' still gives a Laplace fit's certification its curvature", {
