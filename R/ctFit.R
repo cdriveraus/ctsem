@@ -847,9 +847,9 @@ T0VARredundancies <- function(ctm) {
 #' approximation of their posterior that is fitted at every step. This gives
 #' a lower bound on the likelihood, which the fit maximises. The approximation
 #' is a normal distribution, with skew and bending added for subjects with up
-#' to three random effects. The reported log likelihood is computed by
-#' importance sampling from the approximation, and the bound is kept in
-#' \code{loglik_lowerbound}.
+#' to three random effects. The reported log likelihood is integrated by the
+#' random-effects check (\code{optimcontrol$checks}), and the bound is kept in
+#' \code{loglik_lowerbound}. Without that check the bound is reported.
 #'
 #' \code{FALSE}, or \code{'none'}, samples the random effects with the other
 #' parameters and needs \code{optimize=FALSE}, because maximising over every

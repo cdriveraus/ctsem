@@ -4,10 +4,11 @@
 #
 # What is pinned here: on a model where every unit's integrand is Gaussian the
 # bound is the integral, so the fit is Laplace's (exact there); on a
-# nonlinear one the fit reports the importance-sampled log likelihood with
-# the bound below it, and its estimates are those of the refined fit, which
-# integrates every unit numerically; and the route is refused where it cannot
-# apply.
+# nonlinear one the fit reports the random-effects check's integral with the
+# bound below it and the check's step from the estimate, its estimates are
+# those of the refined fit, which integrates every unit numerically, and
+# without the check it reports the bound; and the route is refused where it
+# cannot apply.
 
 .vf_linear_model <- function() {
   model <- suppressWarnings(suppressMessages(ctModel(
@@ -103,6 +104,25 @@ test_that("on a nonlinear model the bound lies below the reported log likelihood
   # estimate lies within a fifth of a standard error of it.
   expect_lt(max(abs(vf$estimate$raw - qf$estimate$raw) / qf$estimate$se), 0.2)
   expect_equal(e$loglik, qf$estimate$loglik, tolerance = 0.1)
+  # The check's step from the estimate towards the integral's maximum, in the
+  # bound's standard errors: small where the estimate is the refined fit's.
+  expect_true(vf$variational$check$status %in% c("passed", "unresolved", "flagged"))
+  expect_lt(vf$variational$check$max_shift, 0.2)
+})
+
+test_that("without the random-effects check a variational fit reports its bound", {
+  skip_on_cran()
+  skip_without_julia()
+  set.seed(1)
+  vf <- suppressWarnings(suppressMessages(ctFit(.vf_nonlinear_data(),
+    .vf_nonlinear_model(), backend = "julia", intoverpop = "variational", cores = 2,
+    optimcontrol = list(checks = FALSE))))
+  e <- vf$estimate
+  expect_identical(e$loglik_method, "variational_bound")
+  expect_identical(e$loglik, e$loglik_lowerbound)
+  expect_null(vf$variational)
+  expect_equal(e$loglik, .vf_fit("nonlinear", "variational")$estimate$loglik_lowerbound,
+    tolerance = 1e-4)
 })
 
 # Persons in studies: a manifest mean that varies at both levels (a Gaussian

@@ -178,6 +178,34 @@ _vf_threelevel_gauss() = (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE;
         @test !any(V3.pending)
     end
 
+    @testset "the Hessian is the solved bound's" begin
+        # The implicit Hessian against differences of gradients solved to the
+        # last bit, where no unit's approximation stays fixed at the points; at
+        # the fixtures' values, since the formula holds wherever each unit's
+        # approximation is at its optimum. Then the solves its prediction
+        # starts reach the same optimum as solves from the accepted
+        # approximation.
+        laplace2 = ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE, [1, 4], [5, 6], [7],
+            [1.0, 1.0])
+        values2 = [0.1, 0.4, -0.2, 0.05, -0.25, -0.4, 0.2]
+        for (laplace, values, family) in ((_fresh_nonlinear()..., "auto"),
+            (_vf_nested_nonlinear()..., "auto"), (laplace2, values2, "gauss"),
+            (laplace2, values2, "bend"))
+            V = ctsem_variational(laplace; family=family, tol=1e-14)
+            _VF.ctsem_variational_evaluate(V, values)
+            Hd = _VF.ctsem_hessian(V, values; method=:differenced)
+            Hi = _VF.ctsem_hessian(V, values)
+            @test Hi ≈ Hd rtol = 1e-4 atol = 1e-5
+            @test V.pred !== nothing
+            moved = values .+ 0.05 .* (-1) .^ (1:length(values))
+            rp = _VF.ctsem_variational_evaluate(V, moved; gradient=false)
+            W = ctsem_variational(laplace; family=family, tol=1e-14)
+            _VF.ctsem_variational_evaluate(W, values)
+            ra = _VF.ctsem_variational_evaluate(W, moved; gradient=false)
+            @test rp.unit_loglik ≈ ra.unit_loglik atol = 1e-8
+        end
+    end
+
     @testset "optimised, and read after the run" begin
         for fresh in (_fresh_nonlinear, _vf_nested_nonlinear)
             laplace, values = fresh()

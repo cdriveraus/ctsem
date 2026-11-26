@@ -61,8 +61,16 @@ Within an optimisation (`running`) each evaluation starts every unit from the
 approximation the last accepted point left, and the optimiser's per-step
 callback (`_ctsem_anchor_here!`) makes the last evaluation's approximations
 the accepted ones, as the Laplace route moves its anchors. Outside one, an
-evaluation starts from the accepted approximations and keeps nothing, so a
-value is the parameters' given the held state.
+evaluation starts from the accepted approximations, or from their prediction
+where a Hessian left one (`V.pred`), and keeps nothing, so a value is the
+parameters' given the held state.
+
+The Hessian differentiates each unit's approximation through its optimum
+(`ctsem_hessian`): `B_tt + B_tl M^-1 B_lt` from passes at the approximation
+held, no inner solve at the difference points. A unit's bound may have more
+than one optimum in its approximation (a likelihood not log-concave in the
+effects, or the shaped family's own non-concavity); nothing looks for another,
+and a unit follows whichever its start leads to.
 
 The log likelihood a fit reports is not this file's: R takes the
 random-effects check's integral at the estimate (`ctsem_laplace_check` on the
@@ -70,7 +78,7 @@ Laplace objective underneath), which integrates nested units block by block.
 """
 
 export ctsem_variational, ctsem_variational_info, ctsem_variational_reset!,
-    ctsem_variational_choose!
+    ctsem_variational_choose!, ctsem_set_variational_predict!
 
 # ---- the shaped family (one block, at most three coordinates) ----------------------
 
@@ -778,31 +786,36 @@ function _vf_assemble(lay::CTSEMVLayout, shares::Vector{Matrix{Float64}}, Hneg)
     return M
 end
 
-"""A Newton step on `M` (the negated Hessian on the parameters' tree): the
-block elimination, with a Levenberg shift where `M` is not definite.
-`(step, shifted)`, `step === nothing` where no shift made it factor."""
-function _vf_block_step(M::CTSEMBlockMatrix{Float64}, pblocks, g::Vector{Float64})
+"""`M` (the negated Hessian on the parameters' tree) factored by the block
+elimination (`_laplace_block_factor`), with a Levenberg shift where it is not
+definite: `(factors, coupling, shifted)`, `factors === nothing` where no
+shift made it factor. Solve with `_laplace_block_solve`."""
+function _vf_block_factor(M::CTSEMBlockMatrix{Float64}, pblocks)
     F = _laplace_block_factor(M, pblocks)
-    shifted = false
-    if !F[1]
-        top = 1.0
-        for D in M.diag, i in axes(D, 1)
-            top = max(top, abs(D[i, i]))
-        end
-        mu = 1e-8 * top
-        for _ in 1:30
-            Ms = _laplace_copy_blockmatrix(M)
-            for D in Ms.diag, i in axes(D, 1)
-                D[i, i] += mu
-            end
-            F = _laplace_block_factor(Ms, pblocks)
-            F[1] && break
-            mu *= 10
-        end
-        F[1] || return (nothing, true)
-        shifted = true
+    F[1] && return (F[3], F[4], false)
+    top = 1.0
+    for D in M.diag, i in axes(D, 1)
+        top = max(top, abs(D[i, i]))
     end
-    return (_laplace_block_solve(F[3], F[4], pblocks, g), shifted)
+    mu = 1e-8 * top
+    for _ in 1:30
+        Ms = _laplace_copy_blockmatrix(M)
+        for D in Ms.diag, i in axes(D, 1)
+            D[i, i] += mu
+        end
+        F = _laplace_block_factor(Ms, pblocks)
+        F[1] && return (F[3], F[4], true)
+        mu *= 10
+    end
+    return (nothing, nothing, true)
+end
+
+"""A Newton step on `M` (`_vf_block_factor`): `(step, shifted)`, `step ===
+nothing` where no shift made it factor."""
+function _vf_block_step(M::CTSEMBlockMatrix{Float64}, pblocks, g::Vector{Float64})
+    fac, cpl, shifted = _vf_block_factor(M, pblocks)
+    fac === nothing && return (nothing, true)
+    return (_laplace_block_solve(fac, cpl, pblocks, g), shifted)
 end
 
 # A held share's SR1 update from a step `s` and its term's gradient's change
@@ -952,13 +965,20 @@ share of their own, held and updated alike. The curvature is formed afresh (`_vf
 decrement is above `refresh`, a step had to be cut below a quarter, or
 `quasi` steps did not converge."""
 function _vf_solve_held(V, U::Int, ctx::_VCtx, lam0::Vector{Float64},
-    shares0::Vector{Matrix{Float64}})
+    shares0::Vector{Matrix{Float64}}; fallback::Union{Nothing,Vector{Float64}}=nothing)
     lay = V.layouts[U]
     lam = copy(lam0)
     shares = [copy(S) for S in shares0]
     gp = 0
     e = _vf_unit_terms(V, U, ctx, lam, false)
     gp += e.gpasses
+    # A start that cannot be evaluated gives way to `fallback` (a predicted
+    # start to the accepted approximation, `_vf_unit!`).
+    if !isfinite(e.B) && fallback !== nothing
+        lam = copy(fallback)
+        e = _vf_unit_terms(V, U, ctx, lam, false)
+        gp += e.gpasses
+    end
     if isfinite(e.B)
         it = 0
         while true
@@ -1042,33 +1062,40 @@ mutable struct CTSEMVariational{L} <: CTSEMOptimisable
     exact_capped::Int
     lbfgs::Union{Nothing,CTSEMLBFGSMemory}
     # Units whose family is chosen by need (`family = "auto"`, one block of two
-    # or three coordinates): Gaussian, tried once with the bending family where
-    # a run stops (`_ctsem_take_search_modes!`), kept bending where that gains
-    # more than `need` nats.
+    # or three coordinates): Gaussian, tried with the bending family where a
+    # run stops (`_ctsem_take_search_modes!`), largest gain first, until what
+    # the rest would gain together is under `need` nats.
     pending::Vector{Bool}
     need::Float64
     # The layouts and choices a new fit starts from (`ctsem_variational_reset!`).
     start::Tuple{Vector{CTSEMVLayout},Vector{Bool}}
+    # Each unit's approximation as a linear function of the parameters about
+    # the point its Hessian was formed at (`ctsem_hessian`), which starts its
+    # solves outside an optimisation (`_vf_unit!`): `(x, lam, D)`, `D[U]` the
+    # derivative of unit `U`'s approximation in the free parameters.
+    pred::Any
 end
 
 """
     ctsem_variational(laplace; family = "auto", rule = "auto", seed = 1,
         tol = 1e-8, kappa = 1e-3, quasi = 10, refresh = 5.0, maxit = 50,
-        need = 0.005)
+        need = 0.05)
 
 The variational objective over `laplace`'s units. `family = "auto"`: the
 Gaussian family on each unit's block tree (`_vf_tree_layout`), except a unit
 of one block and one coordinate, which is skewed (product Gauss-Hermite, 7
 nodes), and a unit of one block and two or three coordinates, which is tried
-with the bending family (5 nodes a coordinate) where a run stops and kept
-bending where its bound gains more than `need` nats. "gauss" for the Gaussian
+with the bending family (5 nodes a coordinate) where a run stops: units take
+it largest gain first until what the rest would gain together is under
+`need` nats. A total of 0.05 that varies over a standard error moves the
+estimate by about 0.05 of one, half the random-effects check's bar. "gauss" for the Gaussian
 family everywhere; "skew" or "bend" for the shaped family on units of one
 block and at most three coordinates (Gaussian elsewhere). `rule` = "product"
 or "rot" fixes the Gaussian members' rule.
 """
 function ctsem_variational(laplace::CTSEMLaplaceObjective; family::AbstractString="auto",
     rule::AbstractString="auto", seed::Integer=1, tol::Real=1e-8, kappa::Real=1e-3,
-    quasi::Integer=10, refresh::Real=5.0, maxit::Integer=50, need::Real=0.005)
+    quasi::Integer=10, refresh::Real=5.0, maxit::Integer=50, need::Real=0.05)
     family in ("auto", "gauss", "skew", "bend") ||
         throw(ArgumentError("family: auto, gauss, skew or bend"))
     rule in ("auto", "product", "rot") || throw(ArgumentError("rule: auto, product or rot"))
@@ -1093,7 +1120,7 @@ function ctsem_variational(laplace::CTSEMLaplaceObjective; family::AbstractStrin
         [Matrix{Float64}[] for _ in layouts], [zeros(l.p) for l in layouts],
         [Matrix{Float64}[] for _ in layouts], false, false, false, Float64(tol),
         Float64(kappa), Int(quasi), Float64(refresh), Int(maxit), fill(NaN, n), 0, 0, 0, 0,
-        0, 0, nothing, pending, Float64(need), (copy(layouts), copy(pending)))
+        0, 0, nothing, pending, Float64(need), (copy(layouts), copy(pending)), nothing)
 end
 
 function _vf_unit!(V::CTSEMVariational, ctx::_VCtx, U::Int, unit::Vector{Float64},
@@ -1103,6 +1130,16 @@ function _vf_unit!(V::CTSEMVariational, ctx::_VCtx, U::Int, unit::Vector{Float64
         s = _vf_solve(V, U, ctx, V.lam[U])
         (lam=s.lam, e=s.e, gpasses=s.gpasses, hpasses=s.hpasses, shares=s.shares,
             formed=true, iterations=s.iterations, capped=s.capped)
+    elseif V.pred !== nothing && !V.running
+        # Outside an optimisation -- the interval check's draws, a profile,
+        # the overshoot probe's trials -- from the approximation predicted
+        # linearly from where the Hessian was formed: off the solved one by the
+        # move's square, so its bound is off by the fourth power, and many
+        # units need no step. The accepted approximation is the fallback.
+        p = V.pred
+        n = length(p.x)
+        start = p.lam[U] .+ p.D[U] * (view(ctx.theta, 1:n) .- p.x)
+        _vf_solve_held(V, U, ctx, start, V.shares[U]; fallback=V.lam[U])
     else
         _vf_solve_held(V, U, ctx, V.lam[U], V.shares[U])
     end
@@ -1125,6 +1162,8 @@ function _vf_commit!(V::CTSEMVariational)
         V.lam[U] = copy(V.lam_trial[U])
         V.shares[U] = V.shares_trial[U]
     end
+    # A run's accepted point moves on from where a prediction was made.
+    V.running && (V.pred = nothing)
     V.accepted = true
     return nothing
 end
@@ -1206,15 +1245,15 @@ end
 Where a run stops by its own rule at `x`: each unit whose family is chosen by
 need and still Gaussian fits the bending family there from its Gaussian
 approximation (whose parameters are the bending family's first ones, so the
-bound starts where the Gaussian's is), and keeps it where its bound gains
-more than `V.need` nats. The change to the objective at `x` sends the run on
-from there with its curvature pairs, as the Laplace route's search for other
-maxima does, up to the run's mode rounds. A unit that does not gain stays a
-candidate at the run's later stops: tried once only, gD3's units were tried
-where L-BFGS first stopped, far from the optimum, and 25 of 60 that bend at
-the optimum stayed Gaussian (0.94 nats). On gD3 every unit gained at the
-optimum (median 0.05 nats); on gD1 none did (at most 0.005), and its fit
-stays at the Gaussian family's cost.
+bound starts where the Gaussian's is). Units take it largest gain first,
+until what the rest would gain together is under `V.need` nats. The change to
+the objective at `x` sends the run on from there with its curvature pairs, as
+the Laplace route's search for other maxima does, up to the run's mode
+rounds. A unit that does not take it stays a candidate at the run's later
+stops: tried once only, gD3's units were tried where L-BFGS first stopped,
+far from the optimum, and 25 of 60 that bend at the optimum stayed Gaussian
+(0.94 nats). On gD3 every unit gained at the optimum (median 0.05 nats); on
+gD1 none gained more than 0.005, 0.07 in all.
 """
 function _ctsem_take_search_modes!(V::CTSEMVariational, x::AbstractVector, found)
     todo = findall(V.pending)
@@ -1239,10 +1278,16 @@ function _ctsem_take_search_modes!(V::CTSEMVariational, x::AbstractVector, found
         cand[U] = (lay=lay, lam=s.lam, shares=s.shares)
         return true
     end
+    # Largest gain first, until what the rest would gain together is under
+    # `V.need`: each unit's gain is of one sign, so a rule per unit leaves their
+    # sum, which grows with the units (gD1's 60 units left 0.07 nats under a
+    # bar of 0.005 a unit; 3,000 like them would leave 3.5).
     change = 0.0
     units = 0
-    for U in todo
-        gains[U] > V.need || continue
+    left = sum(max(gains[U], 0.0) for U in todo)
+    for U in sort(todo; by=U -> -gains[U])
+        (left > V.need && gains[U] > 0) || break
+        left -= gains[U]
         V.pending[U] = false
         c = cand[U]
         V.layouts[U] = c.lay
@@ -1254,6 +1299,7 @@ function _ctsem_take_search_modes!(V::CTSEMVariational, x::AbstractVector, found
         units += 1
     end
     units == 0 && return (change=0.0, units=0, joined=0)
+    V.pred = nothing
     return (change=change, units=units, joined=units)
 end
 
@@ -1297,6 +1343,7 @@ function ctsem_variational_reset!(V::CTSEMVariational)
     V.has_trial = false
     V.running = false
     V.lbfgs = nothing
+    V.pred = nothing
     V.evaluations = V.gradient_passes = V.curvature_passes = V.curvature_formed = 0
     V.exact_iterations = V.exact_capped = 0
     return nothing
@@ -1336,10 +1383,134 @@ function _vf_subject_values(V::CTSEMVariational, unit::Vector{Float64})
     return out
 end
 
-"""The fit's Hessian: central differences of the exact gradient, every unit
-solved from the accepted approximations at each point."""
+"""
+    ctsem_hessian(V, values; step = 1e-4, method = :implicit)
+
+The fit's Hessian. The objective is `f(theta) = sum_U w_U max_lam B_U(theta,
+lam)` plus the prior, so its Hessian is `sum_U w_U (B_tt + B_tl M_U^-1 B_lt)`
+(`M_U = -B_ll`, definite at the optimum) plus the prior's: `B_tt` and `B_lt`
+by central differences of the envelope gradient and of the gradient in `lam`
+with each unit's approximation held where it is solved at `values`, and
+`M_U` the exact curvature there, factored on the unit's tree
+(`_vf_block_factor`). No inner solve runs at the difference points, so no
+solve's tolerance decides whether a unit's approximation moves with them.
+Differencing solved gradients (`method = :differenced`, the oracle) leaves a
+unit's approximation fixed wherever the step's decrement, about `h^2 B_tl
+M^-1 B_lt`, falls under the inner tolerance, and that unit then contributes
+the fixed approximation's curvature, which is stiffer. A column visits only
+the units that read its parameter: a nonzero envelope gradient at `values`
+or at a point moved in every coordinate (`_laplace_reader_point`). Leaves
+each unit's approximation as a linear function of the parameters, `D_U =
+M_U^-1 B_lt`, to start the solves that follow outside an optimisation
+(`V.pred`, `_vf_unit!`). Falls back to the oracle where a unit cannot be
+evaluated beside `values` or its curvature does not factor.
+"""
 function ctsem_hessian(V::CTSEMVariational, values::AbstractVector; chunk::Integer=0,
-    progress=nothing, step::Real=1e-4)
+    progress=nothing, step::Real=1e-4, method::Symbol=:implicit)
+    method === :differenced && return _vf_hessian_differenced(V, values; step=step)
+    method === :implicit || throw(ArgumentError("method: :implicit or :differenced"))
+    x = collect(Float64, values)
+    n = length(x)
+    h = Float64(step)
+    laplace = V.laplace
+    nunits = length(V.layouts)
+    kept = (copy(V.lam_trial), copy(V.shares_trial), V.has_trial, copy(V.unit_value))
+    r0 = ctsem_variational_evaluate(V, x; gradient=false)
+    lam = [copy(l) for l in V.lam_trial]
+    V.lam_trial, V.shares_trial, V.has_trial, V.unit_value = kept
+    isfinite(r0.value) || return _vf_hessian_differenced(V, x; step=step)
+    ctx = _vf_ctx(laplace, x)
+    nx = length(ctx.theta)
+    ctxy = _vf_ctx(laplace, _laplace_reader_point(x, h))
+    wts = [_laplace_unit_weight(laplace, U) for U in 1:nunits]
+    facs = Vector{Any}(nothing, nunits)
+    G0 = zeros(nx, nunits)
+    Gy = zeros(nx, nunits)
+    ok = _laplace_parallel(laplace, 1:nunits) do U
+        lay = V.layouts[U]
+        # A unit with no family parameters (every effect integrated by the
+        # filter) still has its curvature in the parameters, `B_tt`; it has
+        # no approximation to move.
+        e = _vf_unit_terms(V, U, ctx, lam[U], lay.p > 0)
+        isfinite(e.B) || return false
+        G0[:, U] .= e.GE
+        if lay.p > 0
+            fac, cpl, _ = _vf_block_factor(_vf_assemble(lay, [-H for H in e.Hm], e.Hneg),
+                lay.pblocks)
+            fac === nothing && return false
+            facs[U] = (fac, cpl)
+        end
+        ey = _vf_unit_terms(V, U, ctxy, lam[U], false)
+        isfinite(ey.B) ? (Gy[:, U] .= ey.GE) : fill!(view(Gy, :, U), 1.0)
+        return true
+    end
+    ok || return _vf_hessian_differenced(V, x; step=step)
+    readers = (view(G0, 1:n, :) .!= 0) .| (view(Gy, 1:n, :) .!= 0)
+    Htt = zeros(n, n)
+    Blt = [zeros(V.layouts[U].p, n) for U in 1:nunits]
+    col = zeros(nx, nunits)
+    gpp = zeros(nx)
+    gpm = zeros(nx)
+    for j in 1:n
+        xp = copy(x)
+        xp[j] += h
+        xm = copy(x)
+        xm[j] -= h
+        ctxp = _vf_ctx(laplace, xp)
+        ctxm = _vf_ctx(laplace, xm)
+        us = [U for U in 1:nunits if readers[j, U]]
+        okj = _laplace_parallel(laplace, us) do U
+            ep = _vf_unit_terms(V, U, ctxp, lam[U], false)
+            em = _vf_unit_terms(V, U, ctxm, lam[U], false)
+            (isfinite(ep.B) && isfinite(em.B)) || return false
+            Blt[U][:, j] .= (ep.g .- em.g) ./ (2 * h)
+            col[:, U] .= wts[U] .* (ep.GE .- em.GE) ./ (2 * h)
+            return true
+        end
+        okj || return _vf_hessian_differenced(V, x; step=step)
+        for U in us
+            Htt[:, j] .+= view(col, 1:n, U)
+        end
+        fill!(gpp, 0.0)
+        fill!(gpm, 0.0)
+        _ctsem_log_prior_gradient!(gpp, laplace.objective, ctxp.theta)
+        _ctsem_log_prior_gradient!(gpm, laplace.objective, ctxm.theta)
+        Htt[:, j] .+= (view(gpp, 1:n) .- view(gpm, 1:n)) ./ (2 * h)
+    end
+    H = Htt
+    D = Vector{Matrix{Float64}}(undef, nunits)
+    for U in 1:nunits
+        lay = V.layouts[U]
+        D[U] = zeros(lay.p, n)
+        facs[U] === nothing && continue
+        js = findall(view(readers, :, U))
+        fac, cpl = facs[U]
+        for j in js
+            D[U][:, j] .= _laplace_block_solve(fac, cpl, lay.pblocks, Blt[U][:, j])
+        end
+        H[js, js] .+= wts[U] .* (transpose(Blt[U][:, js]) * D[U][:, js])
+    end
+    V.pred = _VF_PREDICT[] ? (x=x, lam=lam, D=D) : nothing
+    return (H .+ transpose(H)) ./ 2
+end
+
+const _VF_PREDICT = Ref(true)
+
+"""
+    ctsem_set_variational_predict!(on)
+
+Whether the Hessian leaves each unit's approximation predicted linearly in the
+parameters to start the solves that follow outside an optimisation
+(`ctsem_hessian`, `_vf_unit!`); off, they start from the accepted
+approximations. The oracle for the predicted starts.
+"""
+ctsem_set_variational_predict!(on::Bool) = (_VF_PREDICT[] = on; nothing)
+
+"""The fit's Hessian by central differences of the exact gradient, every unit
+solved from the accepted approximations at each point: the oracle for
+`ctsem_hessian`'s implicit one."""
+function _vf_hessian_differenced(V::CTSEMVariational, values::AbstractVector;
+    step::Real=1e-4)
     x = collect(Float64, values)
     n = length(x)
     H = zeros(n, n)
@@ -1442,6 +1613,32 @@ for f in (:ctsem_laplace_subject_values, :ctsem_laplace_sequential,
     :ctsem_laplace_coordinate_dimension, :ctsem_laplace_effect_draws,
     :ctsem_laplace_popcov, :ctsem_laplace_posterior_nodes, :ctsem_laplace_unit_dims,
     :ctsem_parameter_matrices, :ctsem_state_dimension, :ctsem_state_layout,
-    :ctsem_state_trajectories, :ctsem_laplace_check)
+    :ctsem_state_trajectories)
     @eval $f(V::CTSEMVariational, args...; kwargs...) = $f(V.laplace, args...; kwargs...)
+end
+
+"""
+    ctsem_laplace_check(V::CTSEMVariational, values; unit_scores = true, kwargs...)
+
+The random-effects check at a variational fit's estimate: the Laplace
+objective's (`ctsem_laplace_check` on `V.laplace`, whose integral the fit
+reports), its `gradient` and `unit_gradient` taken against the bound's rather
+than Laplace's. So they are the integral's minus the objective the fit
+maximised, and the step the caller takes from them is the estimate's distance
+from the integral's maximum, as on a Laplace fit. Read against Laplace's, a
+variational fit on the nonlinear test model read 1.7 standard errors from an
+estimate within 0.2 of the refined fit.
+"""
+function ctsem_laplace_check(V::CTSEMVariational, values::AbstractVector;
+    unit_scores::Bool=true, kwargs...)
+    x = collect(Float64, values)
+    kept = (copy(V.lam_trial), copy(V.shares_trial), V.has_trial, copy(V.unit_value))
+    b = ctsem_variational_evaluate(V, x; units=unit_scores)
+    V.lam_trial, V.shares_trial, V.has_trial, V.unit_value = kept
+    isfinite(b.value) || throw(ErrorException(
+        "the variational bound cannot be evaluated where the check was asked for"))
+    against = (gradient=b.gradient,
+        scores=unit_scores ? Matrix(transpose(b.unit_gradient)) : nothing)
+    return ctsem_laplace_check(V.laplace, x; unit_scores=unit_scores, against=against,
+        kwargs...)
 end

@@ -2660,6 +2660,10 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       "variational bound the fit maximised is ",
       format(object$estimate$loglik_lowerbound, digits = 8), ".")
   }
+  if (!sampled && identical(object$estimate$loglik_method, "variational_bound")) {
+    out$loglikNote <- paste0("The log likelihood is the variational lower bound ",
+      "the fit maximised. With checks = TRUE the random-effects check integrates it.")
+  }
   if (weighted) {
     w <- .ctBackendSpec(object)$subject_weights
     out$weights <- sprintf("%d subjects, relative weights %s to %s (mean 1)",

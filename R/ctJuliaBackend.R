@@ -8179,10 +8179,17 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # covariance and draws with its own wherever its Hessian serves; the check,
   # the default, only checks and warns.
   # A variational fit has no Laplace term to check: its log likelihood is
-  # each unit's integral on its fitted approximation (`.ctVariationalLoglik()`).
+  # the random-effects check's integral at the estimate
+  # (`.ctVariationalLoglik()`), and without that check its bound.
   if (.ctBackendVariational(model_spec)) {
-    out <- holdrepair(keep(.ctVariationalLoglik(out, cores),
-      "The variational fit's log likelihood", "with its bound as the log likelihood"))
+    if ("randomeffects" %in% .ctUncertaintyChecks(.ctJuliaOr(optimcontrol$checks,
+      TRUE))) {
+      out <- holdrepair(keep(.ctVariationalLoglik(out, cores),
+        "The variational fit's log likelihood", "with its bound as the log likelihood"))
+    } else {
+      out$estimate$loglik_lowerbound <- out$estimate$loglik
+      out$estimate$loglik_method <- "variational_bound"
+    }
   } else if (!is.null(out$laplace) && isTRUE(intoverstates)) {
     if (continuing) {
       out <- holdrepair(keep(.ctLaplaceContinue(out, cores = cores,
@@ -8325,7 +8332,9 @@ print.ctJuliaFit <- function(x, ...) {
       "; uncorrected ", format(x$estimate$loglik_laplace), ")") else
     if (identical(x$estimate$loglik_method, "variational")) paste0("(integrated ",
       "by the random-effects check, ", .ctLoglikCheckedError(x$estimate),
-      "; variational bound ", format(x$estimate$loglik_lowerbound), ")"), "\n")
+      "; variational bound ", format(x$estimate$loglik_lowerbound), ")") else
+    if (identical(x$estimate$loglik_method, "variational_bound"))
+      "(variational lower bound)", "\n")
   if (!is.null(x$estimate$loglik_weighted)) cat("  weighted log likelihood:",
     format(x$estimate$loglik_weighted), "(sampling weights)\n")
   if (!sampled) cat("  converged:", x$optim$converged, " iterations:",

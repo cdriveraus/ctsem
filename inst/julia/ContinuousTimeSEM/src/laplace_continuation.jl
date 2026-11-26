@@ -2598,7 +2598,8 @@ end
 
 """
     ctsem_laplace_check(laplace, values; draws=128, seeds=1:4, draws_df=4,
-        unit_scores=true, expansion=true, expansion_gate=1.0, progress=nothing)
+        unit_scores=true, expansion=true, expansion_gate=1.0, progress=nothing,
+        against=nothing)
 
 The Laplace term checked at `values` on every unit, whatever its width
 (review/PROPOSAL-laplace-check-every-unit-2026-10-27.md): at each seed every
@@ -2612,7 +2613,9 @@ identified covariance one seed's predicted shift was mostly noise.
 x seeds) its corrected term and that term's replicate standard error;
 `gradient` (free parameters x seeds) the corrected minus the Laplace gradient;
 with `unit_scores`, `unit_gradient` (units x free parameters) each unit's
-corrected minus Laplace score, averaged over the seeds that scored; and
+corrected minus Laplace score, averaged over the seeds that scored -- or minus
+`against`'s `gradient` and `scores` (units x free parameters), the objective
+a fit maximised where that is not Laplace's (a variational fit's); and
 A seed whose rules could not score every unit leaves its columns NaN. With `expansion`, each unit's
 Laplace term with its O(1/n) correction, a bound on that one's error and the
 curvature's smallest eigenvalue (`ctsem_laplace_expansion`; `expansion_term`,
@@ -2626,7 +2629,7 @@ took about five minutes.
 """
 function ctsem_laplace_check(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     draws::Integer=128, seeds=1:4, draws_df::Real=4, unit_scores::Bool=true,
-    expansion::Bool=true, expansion_gate::Real=1.0, progress=nothing)
+    expansion::Bool=true, expansion_gate::Real=1.0, progress=nothing, against=nothing)
     draws >= 1 || throw(ArgumentError("draws must be at least one"))
     started = time_ns()
     n = length(values)
@@ -2651,10 +2654,12 @@ function ctsem_laplace_check(laplace::CTSEMLaplaceObjective, values::AbstractVec
         unit_scores && fill!(cscores, 0.0)
         r = _continuation_evaluate(o, theta, true; scores=cscores)
         (r.converged && all(isfinite, r.gradient)) || continue
-        gradient[:, j] .= view(r.gradient, 1:n) .- lap.gradient
+        gradient[:, j] .= view(r.gradient, 1:n) .-
+            (against === nothing ? lap.gradient : against.gradient)
         check_unit[:, j] .= r.unit_loglik
         check_se[:, j] .= o.centre_se
-        unit_scores && (unit_gradient .+= view(cscores, :, 1:n) .- lscores)
+        unit_scores && (unit_gradient .+= view(cscores, :, 1:n) .-
+            (against === nothing ? lscores : against.scores))
         scored += 1
     end
     unit_scores && scored > 0 && (unit_gradient ./= scored)
