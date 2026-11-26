@@ -351,7 +351,8 @@ function _placed_scatter!(dir::AbstractVector{Float64}, spec, l::Int, w::Abstrac
 end
 
 """The largest gradient a leaf's centre may keep (`_quadrature_leaf_rule!`'s
-`gradmax`) for the placement to be differentiated there."""
+`gradmax`) for the placement to be differentiated there, unless its solve
+ended at the maximum to what the arithmetic resolves (`stationary`)."""
 const _PLACED_STATIONARY = 1e-6
 
 """
@@ -570,8 +571,13 @@ function _placed_leaf!(row::Vector{Float64}, wv::Vector{Float64}, P::CTSEMLaplac
     aws = _laplace_workspace!(laplace, Float64, npar)
     lr = _quadrature_leaf_rule!(laplace, U, theta, Ls, b, u, aws; start=start)
     # The implicit function theorem is the centre's derivative only at a
-    # stationary point; a solve stopped short of one has none to give.
-    (lr.ok && lr.gradmax <= _PLACED_STATIONARY) || return failure
+    # stationary point; a solve stopped short of one has none to give. A
+    # stationary point to the arithmetic is one: where a person's log densities
+    # near 1e9 cancel, the gradient at the maximum carries 1e-3 of roundoff,
+    # and read off the gradient the rule was refused at 13 of 24 evaluations
+    # beside a simulated SWB timescales fit's estimate.
+    (lr.ok && (lr.gradmax <= _PLACED_STATIONARY || lr.stationary)) ||
+        return failure
     c = lr.centre
     M = Matrix{Float64}(lr.precision)
     sc = lr.sc

@@ -1340,12 +1340,26 @@ test_that("a unit at its mode in a value noisier than its size converges", {
   # different points. So forty points along a line, every one solved, and
   # some by the noise rule.
   direction <- sin(seq_along(fixture$raw))
+  # The refined fit's leaf solve from each unit's mode there, as a placed rule
+  # takes it (`_placed_leaf!`): stationary to the arithmetic, which its
+  # gradient, 1e-3 of roundoff, is not.
+  leaves <- function(x) JuliaConnectoR::juliaLet('
+    let L = ContinuousTimeSEM, lap = obj, x = L._laplace_extend(obj, collect(Float64, x0))
+      Ls = L._laplace_popchols(x, lap.spec)
+      aws = L._laplace_workspace!(lap, Float64, length(x))
+      all(eachindex(lap.units.members)) do U
+        r = L._quadrature_leaf_rule!(lap, U, x, Ls, 1, copy(lap.modes[U]), aws;
+          start = copy(lap.modes[U]))
+        r.ok && r.stationary
+      end
+    end', obj = objective, x0 = x)
   ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_reset_opcounts!()")
   solved <- vapply(seq_len(40), function(i) {
+    x <- fixture$raw + 2.5e-6 * i * direction
     out <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall(
       "ContinuousTimeSEM.ctsem_laplace_evaluate", objective,
-      .ctJuliaNumericVector(fixture$raw + 2.5e-6 * i * direction), gradient = TRUE))
-    isTRUE(out$converged) && is.finite(out$value)
+      .ctJuliaNumericVector(x), gradient = TRUE))
+    isTRUE(out$converged) && is.finite(out$value) && isTRUE(leaves(x))
   }, logical(1))
   counts <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_opcounts()"))
   expect_true(all(solved))
