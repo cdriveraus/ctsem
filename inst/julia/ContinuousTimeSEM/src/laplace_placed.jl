@@ -433,14 +433,48 @@ end
 
 """The ranges a placed rule's `n` points are summed in, `evaluations` member
 evaluations in all: as the frozen rules split theirs (`_continuation_ranges`),
-one range for a small rule or a pool of one, else up to a slot each. An inner
-region takes only the slots idle when it starts (`_laplace_parallel`), so
-where every slot is busy with other units the ranges run in order on the one."""
+one range for a small rule or a pool of one, else up to a slot each. Where
+every slot is busy with other units the ranges run in order on the unit's
+own, and a slot another unit hands back takes the next range
+(`_laplace_pull!`), so the last units to finish share the pool."""
 _placed_ranges(n::Integer, evaluations::Integer) =
     _continuation_ranges(n, evaluations, _laplace_pool_width())
 
 """How many points a placed rule on `ps` evaluates (`_point_set_place`)."""
 _placed_npoints(ps::CTSEMPointSet) = size(ps.points, 2) + size(ps.prior, 2)
+
+"""
+    _placed_order(P)
+
+Positions in `P.placed`, dearest unit first, for the region that evaluates
+them (`_placed_evaluate`): a unit's member evaluations at one placement, its
+root's points times its leaves' points times their members, times the maxima
+it placed a rule at last time (`live`). Started first, the cheap units fill the
+pool around a dear unit, and the region does not end waiting on the part of
+one that no other slot can take (its Newton, its sweeps, the range it is in):
+1.73 s an evaluation against 1.86 at 16 threads on the map-spread analogue
+with ten dear units (dev2, 2026-11-26). Each unit's result is kept by its
+position, so the order moves no value.
+"""
+function _placed_order(P::CTSEMLaplacePlaced)
+    units = P.cont.laplace.units
+    cost = zeros(length(P.placed))
+    for (i, U) in enumerate(P.placed)
+        blocks = units.blocks[U]
+        sets = P.sets[U]
+        isempty(sets) && continue
+        if length(blocks) == 1
+            c = _placed_npoints(sets[1]) * length(blocks[1].members)
+        else
+            tree = _quadrature_children(blocks)
+            r0 = tree.roots[1]
+            c = _placed_npoints(sets[r0]) * sum(_placed_npoints(sets[cb]) *
+                length(blocks[cb].members) for cb in tree.children[r0]; init=0)
+        end
+        cost[i] = c * max(1, P.live[U])
+    end
+    return sortperm(cost; rev=true)
+end
 
 """
     _placed_leaf_points!(s, laplace, U, members, columns, theta, Ls, dL,
@@ -1412,7 +1446,7 @@ function _placed_evaluate(P::CTSEMLaplacePlaced, theta::Vector{Float64}, gradien
     plive = zeros(Int, np)
     prows = [gradient ? zeros(npar) : Float64[] for _ in 1:np]
     pmodes = Vector{Vector{Vector{Float64}}}(undef, np)
-    placed_ok = _laplace_parallel(laplace, 1:np) do i
+    placed_ok = _laplace_parallel(laplace, _placed_order(P)) do i
         local U, r
         U = P.placed[i]
         r = try
