@@ -161,3 +161,25 @@ test_that("the integration error's se is the slope check's where one ran", {
   expect_identical(level$se_from, "level")
   expect_identical(ctsem:::.ctLaplaceIntegrationError(info)$se_from, "level")
 })
+
+# The refined fit's pool is as wide as the call asks (`cores`), whatever
+# width the fit itself ran at: read from `fit$optim$chunks`, a fit made at
+# three cores was refined on three slots at `cores = 16`. Stopped at the
+# point the width is set, so nothing here needs Julia.
+test_that("the refined fit's pool is the call's cores, not the fit's", {
+  width <- NULL
+  testthat::local_mocked_bindings(
+    .ctJuliaModule = function(...) NULL,
+    .ctJuliaFitModes = function(...) NULL,
+    .ctJuliaHoldModes = function(...) NULL,
+    .ctBackendProgressSink = function(...) NULL,
+    .ctBackendSetMaxChunks = function(n) {
+      width <<- n
+      stop("width set")
+    })
+  fit <- list(estimate = list(raw = c(0, 0)),
+    model_spec = list(subject_starts = 1:4, project = NULL),
+    optim = list(chunks = 3L))
+  expect_error(ctsem:::.ctLaplaceContinue(fit, cores = 16L), "width set")
+  expect_identical(width, 16L)
+})

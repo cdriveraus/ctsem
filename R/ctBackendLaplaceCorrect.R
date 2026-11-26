@@ -585,8 +585,12 @@
       applied = FALSE, message = phrase, nodes = as.integer(control$nodes))
     fit
   }
-  chunks <- suppressWarnings(as.integer(fit$optim$chunks)[1L])
-  if (is.na(chunks) || chunks < 1L) chunks <- max(1L, as.integer(cores)[1L])
+  # The call's `cores`, never the width the fit ran at (`fit$optim$chunks`):
+  # read first, that held a fit made at three cores to three slots whatever
+  # `ctFitUncertainty(cores =)` asked for, 3 of 16 cores busy on the
+  # hc-wellbeing refinement.
+  chunks <- suppressWarnings(as.integer(cores)[1L])
+  if (is.na(chunks) || chunks < 1L) chunks <- 1L
   previous <- .ctBackendSetMaxChunks(chunks)
   on.exit(.ctBackendRestoreMaxChunks(previous), add = TRUE)
   # `sink` is non-NULL exactly when `.ctBackendReporting(verbose)` is, which
