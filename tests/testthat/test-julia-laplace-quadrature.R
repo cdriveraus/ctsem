@@ -225,8 +225,10 @@ test_that("the default checks and warns, and the correction it names is the fit-
   expect_true(any(grepl(corr$message, capture.output(print(default)), fixed = TRUE)))
   # The correction it names is the fit-time one: the refined fit on the units
   # its check named, from the same estimate, then its objective's curvature.
-  corrected <- suppressMessages(ctFitUncertainty(default,
-    intoverpop = "quadrature", cores = 1))
+  shown <- testthat::capture_messages(corrected <- ctFitUncertainty(default,
+    intoverpop = "quadrature", cores = 1, verbose = 1))
+  # The rule choice before the climb's first iteration says it is running.
+  expect_true(any(grepl("Refined fit, choosing rules", shown, fixed = TRUE)))
   expect_identical(corrected$laplace$correction$status, "continued")
   expect_equal(corrected$estimate$raw, fits$quadrature$estimate$raw, tolerance = 1e-6)
   expect_equal(corrected$estimate$loglik, fits$quadrature$estimate$loglik,
