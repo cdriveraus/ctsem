@@ -140,6 +140,8 @@ include("laplace_continuation.jl")
 # After laplace_continuation.jl: the placed objective is built from a
 # continuation and keeps its frozen rules.
 include("laplace_placed.jl")
+# The variational objective, on the Laplace objective's units.
+include("variational.jl")
 # After quadrature.jl: the binary measurement update integrates the
 # observation with the Gauss-Hermite rule defined there.
 include("binary_measurement.jl")

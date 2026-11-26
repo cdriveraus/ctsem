@@ -842,6 +842,15 @@ T0VARredundancies <- function(ctm) {
 #' \code{ctFitUncertainty(fit, intoverpop = 'quadrature')} does the same after
 #' a fit.
 #'
+#' \code{'variational'} (\code{backend='julia'}, optimizing, experimental)
+#' integrates the random effects of each subject (or group) with an
+#' approximation of their posterior that is fitted at every step. This gives
+#' a lower bound on the likelihood, which the fit maximises. The approximation
+#' is a normal distribution, with skew and bending added for subjects with up
+#' to three random effects. The reported log likelihood is computed by
+#' importance sampling from the approximation, and the bound is kept in
+#' \code{loglik_lowerbound}.
+#'
 #' \code{FALSE}, or \code{'none'}, samples the random effects with the other
 #' parameters and needs \code{optimize=FALSE}, because maximising over every
 #' subject's random effects would drive the population variance to zero. With
@@ -1328,6 +1337,18 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     intoverpop <- 'laplace'
     optimcontrol$.refit <- TRUE
   }
+  # 'variational' is the Laplace route's units, each integrated by a bound
+  # fitted at every evaluation (`.ctBackendVariational()`): set up as
+  # 'laplace', the bound asked of the specification, and recorded as asked.
+  variational <- identical(intoverpop, 'variational')
+  if(variational) {
+    if(!identical(backend, 'julia')) stop("intoverpop = 'variational' needs ",
+      "backend = 'julia'.", call.=FALSE)
+    if(!isTRUE(optimize)) stop("intoverpop = 'variational' fits by optimizing; ",
+      "use optimize = TRUE.", call.=FALSE)
+    intoverpop <- 'laplace'
+    optimcontrol$.variational <- TRUE
+  }
 
   setup <- .ctFitModelSetup(ctstanmodel, backend = backend,
     intoverpop = intoverpop, intoverstates = intoverstates, optimize = optimize,
@@ -1439,7 +1460,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   argsresolved <- args
   argsresolved$backend <- backend
   argsresolved$cores <- cores
-  argsresolved$intoverpop <- if(quadrature) 'quadrature' else intoverpopmethod
+  argsresolved$intoverpop <- if(quadrature) 'quadrature' else
+    if(variational) 'variational' else intoverpopmethod
   argsresolved$intoverpopreason <- intoverpopreason
   # The rank actually used, not the argument: 'auto' resolves to a number, and a
   # model the restriction did not apply to reports NA whatever was asked for.

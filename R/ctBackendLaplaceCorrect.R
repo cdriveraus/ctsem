@@ -28,6 +28,8 @@
 # `checks` says.
 .ctLaplaceCorrectResolve <- function(optimcontrol, intoverpop, optimize,
   intoverstates) {
+  # A variational fit has no Laplace term.
+  if (isTRUE(optimcontrol$.variational)) return(FALSE)
   refit <- isTRUE(optimcontrol$.refit)
   check <- "randomeffects" %in% .ctUncertaintyChecks(.ctJuliaOr(optimcontrol$checks, TRUE))
   if (!refit && !check) return(FALSE)
@@ -459,6 +461,10 @@
       !is.null(fit$estimate$loglik_laplace)) {
     return(as.numeric(fit$estimate$loglik_laplace))
   }
+  if (identical(fit$estimate$loglik_method, "variational") &&
+      !is.null(fit$estimate$loglik_lowerbound)) {
+    return(as.numeric(fit$estimate$loglik_lowerbound))
+  }
   as.numeric(fit$estimate$loglik)
 }
 
@@ -787,4 +793,29 @@
     verbose = verbose, sink = sink, method = method,
     uncertaintycontrol = uncertaintycontrol, report = report_quadrature,
     timed = timed)
+}
+
+# A variational fit's log likelihood (`intoverpop = 'variational'`): each
+# unit's integral by importance sampling on the approximation fitted at the
+# estimate (`ctsem_variational_value`), with its standard error. The bound the
+# optimiser maximised is kept as `loglik_lowerbound`, which
+# `.ctFitOptimisedLoglik()` reads.
+.ctVariationalLoglik <- function(fit, cores) {
+  objective <- .ctJuliaObjective(fit)
+  v <- .ctBackendWithMaxChunks(cores, .ctJuliaGet(.ctJuliaCall(
+    "ContinuousTimeSEM.ctsem_variational_value", objective,
+    .ctJuliaNumericVector(as.numeric(fit$estimate$raw)))))
+  value <- as.numeric(v$loglik)
+  if (length(value) != 1L || !is.finite(value)) stop("its value is not finite")
+  fit$estimate$loglik_lowerbound <- as.numeric(fit$estimate$loglik)
+  fit$estimate$loglik <- value
+  if (!is.null(fit$estimate$loglik_weighted))
+    fit$estimate$loglik_weighted <- as.numeric(v$loglik_weighted)
+  fit$estimate$logposterior <- as.numeric(v$value)
+  fit$estimate$loglik_se <- as.numeric(v$se)
+  subjects <- as.numeric(v$subject_loglik)
+  if (length(subjects) == length(fit$estimate$subject_loglik) &&
+      all(is.finite(subjects))) fit$estimate$subject_loglik <- subjects
+  fit$estimate$loglik_method <- "variational"
+  fit
 }
