@@ -239,6 +239,47 @@ test_that("maxima that share a basin add nothing to a unit's term", {
   expect_equal(fd, sum(as.numeric(r$gradient) * v), tolerance = 1e-5)
 })
 
+# A valley fades the maximum on its shallow side, which the inner solve loses
+# over it, and not the one on its deep side, which stays when that happens
+# (`_laplace_valley_weight`): losing the shallow one then leaves the unit's
+# term where it was. The terms and depths are the affect pilot's unit 5708 on
+# the full fit, two maxima 0.0041 and 0.0674 nats above the valley between
+# them and a third 2.4 nats lower and deep: faded by its own depth on both
+# sides, the deep one handed a fifth of the term down to the third, and losing
+# the shallow one moved the term by 0.48.
+test_that("losing the shallow side of a valley leaves a unit's term in place", {
+  skip_without_julia()
+  ctsem:::.ctJuliaEval(paste(
+    "function _ctsem_test_valley()",
+    "  C = ContinuousTimeSEM",
+    "  D = C._LAPLACE_MODE_DEPTH",
+    "  h = 1e-7; worst = 0.0",
+    "  for a in (0.02, 0.3, 0.67, 0.95), b in (0.02, 0.3, 1.5, Inf)",
+    "    w = C._laplace_valley_weight(a, b)",
+    "    fa = (C._laplace_valley_weight(a + h, b).phi - C._laplace_valley_weight(a - h, b).phi) / 2h",
+    "    fb = isfinite(b) ? (C._laplace_valley_weight(a, b + h).phi - C._laplace_valley_weight(a, b - h).phi) / 2h : 0.0",
+    "    worst = max(worst, abs(fa - w.da), abs(fb - w.db))",
+    "  end",
+    "  terms = [-603.091, -603.308, -605.724]",
+    "  depth = [0.0041 0.0041 0.6; 0.0674 0.0674 0.6; 0.374 0.374 0.374] ./ D",
+    "  fade(set) = [prod((C._laplace_valley_weight(depth[k, j], depth[j, k]).phi",
+    "    for j in set if j != k); init = 1.0) for k in set]",
+    "  T(set) = (s = C._laplace_mode_shares(fade(set), terms[set]); sum(s.pi .* terms[set]))",
+    "  [worst, T([1, 2, 3]), T([2, 3]), T([1, 2]),",
+    "   C._laplace_valley_weight(0.3, 0.3).phi, C._laplace_valley_weight(0.3, Inf).phi]",
+    "end", sep = "\n"))
+  r <- as.numeric(ctsem:::.ctJuliaCall("Main._ctsem_test_valley"))
+  expect_lt(r[1], 1e-6)
+  # The shallow one lost, or the far one: the term barely moves.
+  expect_lt(abs(r[3] - r[2]), 1e-2)
+  expect_lt(abs(r[4] - r[2]), 1e-2)
+  # Where the two sides are equally deep each takes half the fade; where the
+  # other side has no valley, the full fade.
+  s <- function(x) x^3 * (10 - 15 * x + 6 * x^2)
+  expect_equal(r[5], 1 - (1 - s(0.3)) / 2, tolerance = 1e-12)
+  expect_equal(r[6], s(0.3), tolerance = 1e-12)
+})
+
 # An anchored run follows the maxima it started with, so one born on its way
 # is the next search's to find; a run takes it where it stops and goes on,
 # rather than a new run starting (`ctsem_optimize`).
