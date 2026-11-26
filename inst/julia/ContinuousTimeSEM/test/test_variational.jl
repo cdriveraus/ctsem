@@ -100,6 +100,29 @@ const _VF = ContinuousTimeSEM
         @test maximum(v.unit_loglik .- r.unit_loglik) < 0.05
     end
 
+    @testset "the prior swapped under a moved approximation" begin
+        # On Gaussian units the swapped start is the new approximation: after
+        # a population sd and a mean move, no inner step is needed, and the
+        # value is a fresh solve's.
+        laplace, values = _fresh_linear()
+        V = ctsem_variational(laplace; family="gauss", tol=1e-12)
+        _VF.ctsem_variational_evaluate(V, values)
+        moved = copy(values)
+        moved[6] += 0.4
+        moved[1] -= 0.3
+        g0 = V.gradient_passes
+        r = _VF.ctsem_variational_evaluate(V, moved)
+        nodes = sum(size(Z, 2) for Z in V.Z)
+        @test V.gradient_passes - g0 <= 2 * nodes
+        Vf = ctsem_variational(laplace; family="gauss", tol=1e-12)
+        @test r.value ≈ _VF.ctsem_variational_evaluate(Vf, moved).value atol = 1e-9
+        Vn = ctsem_variational(laplace; family="gauss", tol=1e-12, swap=false)
+        _VF.ctsem_variational_evaluate(Vn, values)
+        gn = Vn.gradient_passes
+        _VF.ctsem_variational_evaluate(Vn, moved)
+        @test Vn.gradient_passes - gn > V.gradient_passes - g0
+    end
+
     @testset "the family chosen by need" begin
         # Two coordinates a unit: started Gaussian, tried with the bending
         # family once. On a Gaussian integrand bending gains nothing, so no

@@ -624,18 +624,37 @@ function _vf_solve(laplace, ctx::_VCtx, U::Int, f::CTSEMVFamily, lam0::Vector{Fl
     ev = _vf_eval(laplace, ctx, U, nd.U, true)
     hp += K
     pt = _vf_parts(f, lam, Z, w, nd, ev.h, ev.hg, ev.hH, kappa)
-    shrink = 0
-    while !isfinite(pt.B) && shrink < 30 && f.d > 0
-        shrink += 1
-        lam = zeros(f.p)
-        lam[f.ild] .= -shrink * log(2.0)
-        nd = _vf_nodes(f, lam, Z)
+    gp = 0
+    if !isfinite(pt.B) && f.d > 0
+        # A unit whose likelihood is not finite at its prior mean is beyond
+        # any approximation at these parameters (an explosive drift, a
+        # variance below zero): said at the cost of one point. Otherwise the
+        # approximation is shrunk towards the prior until every node is
+        # finite, on gradient passes, and the curvature formed there.
+        at0 = _vf_eval(laplace, ctx, U, zeros(f.d, 1), false)
+        isfinite(at0.h[1]) || return (lam=lam, B=-Inf, ev=ev, converged=false,
+            iterations=0, gpasses=1, hpasses=hp, H=zeros(0, 0))
+        gp += 1
+        found = false
+        for shrink in 1:12
+            lam = zeros(f.p)
+            lam[f.ild] .= -shrink * log(2.0)
+            nd = _vf_nodes(f, lam, Z)
+            evs = _vf_eval(laplace, ctx, U, nd.U, false)
+            gp += K
+            if all(isfinite, evs.h)
+                found = true
+                break
+            end
+        end
+        found || return (lam=lam, B=-Inf, ev=ev, converged=false, iterations=0,
+            gpasses=gp, hpasses=hp, H=zeros(0, 0))
         ev = _vf_eval(laplace, ctx, U, nd.U, true)
         hp += K
         pt = _vf_parts(f, lam, Z, w, nd, ev.h, ev.hg, ev.hH, kappa)
     end
     isfinite(pt.B) || return (lam=lam, B=-Inf, ev=ev, converged=false, iterations=0,
-        gpasses=0, hpasses=hp, H=pt.H)
+        gpasses=gp, hpasses=hp, H=pt.H)
     it = 0
     converged = f.p == 0
     while !converged
@@ -680,7 +699,7 @@ function _vf_solve(laplace, ctx::_VCtx, U::Int, f::CTSEMVFamily, lam0::Vector{Fl
         end
         lam, nd, ev, pt = lam1, nd1, ev1, pt1
     end
-    return (lam=lam, B=pt.B, ev=ev, converged=converged, iterations=it, gpasses=0,
+    return (lam=lam, B=pt.B, ev=ev, converged=converged, iterations=it, gpasses=gp,
         hpasses=hp, H=pt.H)
 end
 
@@ -797,6 +816,11 @@ mutable struct CTSEMVariational{L} <: CTSEMOptimisable
     # The families, rules and choices a new fit starts from (`ctsem_variational_reset!`).
     start::Tuple{Vector{CTSEMVFamily},Vector{Matrix{Float64}},Vector{Vector{Float64}},
         Vector{Symbol},Vector{Bool}}
+    # The (extended) parameters the accepted approximations were fitted at, and
+    # the last evaluation's, for the prior swap (`_vf_swap_start`).
+    theta_acc::Vector{Float64}
+    theta_trial::Vector{Float64}
+    swap::Bool
 end
 
 """
@@ -818,7 +842,7 @@ negative-weight nodes to where the likelihood is very low. `rule` = "auto", "pro
 function ctsem_variational(laplace::CTSEMLaplaceObjective; family::AbstractString="auto",
     rule::AbstractString="auto", seed::Integer=1, tol::Real=1e-8, kappa::Real=1e-3,
     quasi::Integer=10, refresh::Real=5.0, maxit::Integer=50, nodes::Integer=0,
-    need::Real=0.005)
+    need::Real=0.005, swap::Bool=true)
     _laplace_ensure_pool!(laplace)
     dims = laplace.units.dims
     n = length(dims)
@@ -844,7 +868,8 @@ function ctsem_variational(laplace::CTSEMLaplaceObjective; family::AbstractStrin
         [zeros(0, 0) for _ in fams], [zeros(f.p) for f in fams], [zeros(0, 0) for _ in fams],
         false, false, false, Float64(tol), Float64(kappa), Int(quasi), Float64(refresh),
         Int(maxit), fill(NaN, n), 0, 0, 0, 0, nothing, pending, Float64(need), Int(seed),
-        (copy(fams), copy(Zs), copy(ws), copy(rules), copy(pending)))
+        (copy(fams), copy(Zs), copy(ws), copy(rules), copy(pending)), Float64[], Float64[],
+        Bool(swap))
 end
 
 _vf_default_nodes(d::Int, skew::Bool) = !skew ? 3 : d == 1 ? 7 : 5
@@ -912,6 +937,77 @@ function _ctsem_take_search_modes!(V::CTSEMVariational, x::AbstractVector, found
     return (change=change, units=units, joined=units)
 end
 
+# The unit's members' parameter values as an affine function of its
+# coordinates, `v = c + J u`, stacked over its members.
+function _vf_affine(laplace, theta::Vector{Float64}, Ls, U::Int, d::Int)
+    spec = laplace.spec
+    offs = laplace.units.offsets[U]
+    z = zeros(d)
+    cs = Vector{Float64}[]
+    Js = Matrix{Float64}[]
+    for mm in eachindex(offs)
+        v0 = Vector{Float64}(_laplace_member_values(theta, spec, Ls, z, offs[mm]))
+        Jm = zeros(length(v0), d)
+        for i in 1:d
+            z[i] = 1.0
+            Jm[:, i] .= _laplace_member_values(theta, spec, Ls, z, offs[mm]) .- v0
+            z[i] = 0.0
+        end
+        push!(cs, v0)
+        push!(Js, Jm)
+    end
+    return reduce(vcat, cs), reduce(vcat, Js)
+end
+
+"""
+The unit's approximation moved from the parameters it was fitted at (`theta0`)
+to those of `ctx` by swapping the prior under it: its location and scale
+`(m, L)` read as a Gaussian posterior, `N(0, I)` prior times a Gaussian
+likelihood of precision `S^-1 - I` and natural mean `S^-1 m`, that
+likelihood held fixed on the members' parameter values and the new
+population's `N(0, I)` put under it in the new coordinates. Exact for a unit
+whose likelihood is Gaussian in its effects; elsewhere a start, its shape
+parameters kept. A population sd that moves rescales a unit's standardised
+coordinates, and a start held there is a long way from the new
+approximation. `nothing` where the swap is undefined.
+"""
+function _vf_swap_start(laplace, f::CTSEMVFamily, lam::Vector{Float64}, U::Int,
+    theta0::Vector{Float64}, ctx::_VCtx)
+    d = f.d
+    d == 0 && return nothing
+    Ls0 = [Matrix{Float64}(M) for M in _laplace_popchols(theta0, laplace.spec)]
+    c0, J0 = _vf_affine(laplace, theta0, Ls0, U, d)
+    c1, J1 = _vf_affine(laplace, ctx.theta, ctx.Ls, U, d)
+    G = Symmetric(transpose(J0) * J0)
+    FG = cholesky(G; check=false)
+    issuccess(FG) || return nothing
+    A = FG \ (transpose(J0) * J1)
+    delta = FG \ (transpose(J0) * (c1 .- c0))
+    maximum(abs, A - I) < 1e-10 && maximum(abs, delta) < 1e-10 && return nothing
+    m = lam[f.im]
+    L = LowerTriangular(_vf_L(f, lam))
+    Si = inv(L * transpose(L))
+    Q0 = Si - I
+    eta0 = Si * m
+    P1 = Symmetric(I + transpose(A) * Q0 * A)
+    F1 = cholesky(P1; check=false)
+    issuccess(F1) || return nothing
+    m1 = F1 \ (transpose(A) * (eta0 .- Q0 * delta))
+    L1 = cholesky(Symmetric(inv(F1)); check=false)
+    issuccess(L1) || return nothing
+    out = copy(lam)
+    Lm = L1.L
+    for i in 1:d
+        out[f.im[i]] = m1[i]
+        out[f.ild[i]] = log(Lm[i, i])
+        for j in 1:(i - 1)
+            out[f.ilo[i, j]] = Lm[i, j]
+        end
+    end
+    all(isfinite, out) || return nothing
+    return out
+end
+
 function _vf_unit!(V::CTSEMVariational, ctx::_VCtx, U::Int, unit::Vector{Float64},
     GE::Matrix{Float64}, gps::Vector{Int}, hps::Vector{Int}, formed::Vector{Bool})
     f = V.fams[U]
@@ -926,13 +1022,24 @@ function _vf_unit!(V::CTSEMVariational, ctx::_VCtx, U::Int, unit::Vector{Float64
         gps[U] = 1
         return true
     end
+    lam0 = V.lam[U]
+    if V.swap && !isempty(V.M[U]) && length(V.theta_acc) == length(ctx.theta) &&
+       V.theta_acc != ctx.theta
+        sw = _vf_swap_start(laplace, f, lam0, U, V.theta_acc, ctx)
+        sw === nothing || (lam0 = sw)
+    end
     r = if isempty(V.M[U])
         s = _vf_solve(laplace, ctx, U, f, V.lam[U], Z, w, V.tol, V.maxit, V.kappa)
         (lam=s.lam, B=s.B, ev=s.ev, gpasses=s.gpasses, hpasses=s.hpasses,
             M=isempty(s.H) ? Matrix{Float64}(I, f.p, f.p) : _vf_pd(-s.H), formed=true)
     else
-        _vf_solve_held(laplace, ctx, U, f, V.lam[U], Z, w, V.M[U], V.tol, V.maxit,
+        rh = _vf_solve_held(laplace, ctx, U, f, lam0, Z, w, V.M[U], V.tol, V.maxit,
             V.kappa, V.quasi, V.refresh)
+        # A swapped start the solve could not use: from the approximation as
+        # it was.
+        (isfinite(rh.B) || lam0 === V.lam[U]) ? rh :
+            _vf_solve_held(laplace, ctx, U, f, V.lam[U], Z, w, V.M[U], V.tol, V.maxit,
+                V.kappa, V.quasi, V.refresh)
     end
     gps[U] = r.gpasses
     hps[U] = r.hpasses
@@ -951,6 +1058,7 @@ function _vf_commit!(V::CTSEMVariational)
         V.lam[U] = copy(V.lam_trial[U])
         V.M[U] = V.M_trial[U]
     end
+    V.theta_acc = copy(V.theta_trial)
     V.accepted = true
     return nothing
 end
@@ -994,6 +1102,7 @@ function ctsem_variational_evaluate(V::CTSEMVariational, values::AbstractVector;
     V.curvature_formed += count(formed)
     (ok && all(isfinite, unit)) || return bad
     V.has_trial = true
+    V.theta_trial = copy(ctx.theta)
     V.unit_value = unit
     (!V.running && !V.accepted) && _vf_commit!(V)
     wts = [_laplace_unit_weight(laplace, U) for U in 1:nunits]
@@ -1007,15 +1116,20 @@ function ctsem_variational_evaluate(V::CTSEMVariational, values::AbstractVector;
 end
 
 """
-    ctsem_variational_value(V, values; draws = 2048, df = 4, seed = 11)
+    ctsem_variational_value(V, values; draws = 0, df = 0, seed = 11)
 
 The log likelihood at `values` by importance sampling on each unit's accepted
 approximation, its normal draws replaced by t (`df`) draws for heavier tails:
 what a fit reports, beside the bound it climbed. Returns the total with the
 prior, per unit values and standard errors, and each unit's effective draws.
+By default (0) a unit of `d` coordinates takes `2048 ceil(d / 2)` draws and
+`4 + d` degrees of freedom: at ten coordinates t4 put too many draws in the
+tails, and 2048 of them read 0.75 below the reference where t14 or t30 at
+8192 read 0.29-0.30 below (an importance sampler on the Gaussian family errs
+low there by about that much however many draws it takes).
 """
 function ctsem_variational_value(V::CTSEMVariational, values::AbstractVector;
-    draws::Integer=2048, df::Real=4, seed::Integer=11)
+    draws::Integer=0, df::Real=0, seed::Integer=11)
     laplace = V.laplace
     ctx = _vf_ctx(laplace, values)
     nunits = length(V.fams)
@@ -1023,7 +1137,9 @@ function ctsem_variational_value(V::CTSEMVariational, values::AbstractVector;
     se = fill(NaN, nunits)
     ess = fill(NaN, nunits)
     _laplace_parallel(laplace, 1:nunits) do U
-        return _vf_value_unit!(V, ctx, U, Int(draws), Float64(df), Int(seed), val, se, ess)
+        d = V.fams[U].d
+        return _vf_value_unit!(V, ctx, U, draws > 0 ? Int(draws) : 2048 * max(1, cld(d, 2)),
+            df > 0 ? Float64(df) : Float64(4 + d), Int(seed), val, se, ess)
     end
     wts = [_laplace_unit_weight(laplace, U) for U in 1:nunits]
     prior = _ctsem_log_prior(laplace.objective, ctx.theta)
@@ -1125,7 +1241,8 @@ function ctsem_hessian(V::CTSEMVariational, values::AbstractVector; chunk::Integ
     H = zeros(n, n)
     # The differences leave the trial where it was: the optimiser's next
     # accepted point is not one of them.
-    kept = (copy(V.lam_trial), copy(V.M_trial), V.has_trial, copy(V.unit_value))
+    kept = (copy(V.lam_trial), copy(V.M_trial), V.has_trial, copy(V.unit_value),
+        copy(V.theta_trial))
     for j in 1:n
         xp = copy(x)
         xp[j] += step
@@ -1135,7 +1252,7 @@ function ctsem_hessian(V::CTSEMVariational, values::AbstractVector; chunk::Integ
         gmi = ctsem_variational_evaluate(V, xm).gradient
         H[:, j] .= (gpl .- gmi) ./ (2 * step)
     end
-    V.lam_trial, V.M_trial, V.has_trial, V.unit_value = kept
+    V.lam_trial, V.M_trial, V.has_trial, V.unit_value, V.theta_trial = kept
     return (H .+ transpose(H)) ./ 2
 end
 
@@ -1226,6 +1343,8 @@ function ctsem_variational_reset!(V::CTSEMVariational)
     V.accepted = false
     V.has_trial = false
     V.running = false
+    V.theta_acc = Float64[]
+    V.theta_trial = Float64[]
     V.lbfgs = nothing
     V.evaluations = V.gradient_passes = V.curvature_passes = V.curvature_formed = 0
     return nothing
