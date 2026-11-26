@@ -1302,6 +1302,63 @@ test_that("the hessian raises the inner budget rather than returning NaN", {
   expect_error(ctsem:::ctOptimCovFromHessian(holes), "2 parameters \\(2, 5\\)")
 })
 
+# A unit whose value is a small difference of large terms: a person whose
+# answers barely move, beside a measurement error near zero, sums log densities
+# near 1e9 to a value of order one, which moves by 1e-7 between points ulps
+# apart. Newton reaches the mode, but no line search can rank its last step
+# there, and the solve reported such units short and their point rejected:
+# every evaluation of a simulated analogue of the SWB timescales fits' first
+# stage. Two persons of that analogue (six integer items, random diffusion,
+# rank 5) at its estimate; `inner_noise` counts the solves the value's
+# measured noise ended, each of which the old rule reported short.
+test_that("a unit at its mode in a value noisier than its size converges", {
+  skip_without_julia()
+  fixture <- readRDS(testthat::test_path("fixtures", "laplace-noise-floor.rds"))
+  k <- 6L
+  items <- paste0("y", seq_len(k))
+  MAN <- matrix(0, k, k)
+  diag(MAN) <- paste0("residualSD", seq_len(k))
+  DRIFT <- matrix(0, k, k)
+  diag(DRIFT) <- paste0("auto", items, "||TRUE||birthdate")
+  DIFF <- matrix("0", k, k)
+  diag(DIFF) <- paste0("sys", items, "||TRUE||birthdate")
+  cross <- outer(items, items, function(a, b) paste0("cross_", a, "_", b))
+  DIFF[lower.tri(DIFF)] <- cross[lower.tri(cross)]
+  model <- suppressMessages(ctModel(manifestNames = items,
+    latentNames = paste0("l", items), time = "time", id = "id", type = "ct",
+    TIpredNames = "birthdate", tipredDefault = FALSE, MANIFESTVAR = MAN,
+    LAMBDA = diag(1, k), MANIFESTMEANS = paste0("mu_", items, "||TRUE||birthdate"),
+    CINT = 0, T0MEANS = paste0("initial", items, "||TRUE||birthdate"),
+    DRIFT = DRIFT, DIFFUSION = DIFF))
+  spec <- suppressWarnings(suppressMessages(ctFit(fixture$data, model,
+    poprank = 5, popunique = c("MANIFESTMEANS", "T0MEANS"), priors = TRUE,
+    cores = 1, fit = FALSE)))
+  expect_equal(.ctBackendNpar(spec), length(fixture$raw))
+  objective <- .ctJuliaObjective(spec)
+  ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_reset_opcounts!()")
+  out <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall(
+    "ContinuousTimeSEM.ctsem_laplace_evaluate", objective,
+    .ctJuliaNumericVector(fixture$raw), gradient = TRUE))
+  counts <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_opcounts()"))
+  expect_true(out$converged)
+  expect_true(is.finite(out$value))
+  expect_gte(counts$inner_noise, 1L)
+})
+
+# What runs after the optimisation cannot lose it: a 17.5-hour fit was once
+# thrown away when no covariance could be formed from its Hessian.
+test_that("a failed uncertainty stage returns the fit without it", {
+  skip_without_julia()
+  testthat::local_mocked_bindings(.ctFitUncertaintyImpl = function(...)
+    stop("no covariance here"), .package = "ctsem")
+  expect_warning(fit <- suppressMessages(ctFit(.laplace_test_data(nsubjects = 15),
+    .laplace_test_model(), backend = "julia", intoverpop = "augmented")),
+    "The uncertainty failed \\(no covariance here\\)")
+  expect_s3_class(fit, "ctJuliaFit")
+  expect_true(all(is.finite(fit$estimate$raw)))
+  expect_null(fit$estimate$cov)
+})
+
 test_that("gradient = 'forward' still gives a Laplace fit's certification its curvature", {
   skip_without_julia()
   # `ctsem_hessian_forward` has no method for the Laplace objective, and on
