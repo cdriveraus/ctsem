@@ -1335,13 +1335,20 @@ test_that("a unit at its mode in a value noisier than its size converges", {
     cores = 1, fit = FALSE)))
   expect_equal(.ctBackendNpar(spec), length(fixture$raw))
   objective <- .ctJuliaObjective(spec)
+  # Whether a line search there finds a trial as high is the noise's last
+  # bits: about one point in four beside the estimate, on any machine at
+  # different points. So forty points along a line, every one solved, and
+  # some by the noise rule.
+  direction <- sin(seq_along(fixture$raw))
   ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_reset_opcounts!()")
-  out <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall(
-    "ContinuousTimeSEM.ctsem_laplace_evaluate", objective,
-    .ctJuliaNumericVector(fixture$raw), gradient = TRUE))
+  solved <- vapply(seq_len(40), function(i) {
+    out <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall(
+      "ContinuousTimeSEM.ctsem_laplace_evaluate", objective,
+      .ctJuliaNumericVector(fixture$raw + 2.5e-6 * i * direction), gradient = TRUE))
+    isTRUE(out$converged) && is.finite(out$value)
+  }, logical(1))
   counts <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_opcounts()"))
-  expect_true(out$converged)
-  expect_true(is.finite(out$value))
+  expect_true(all(solved))
   expect_gte(counts$inner_noise, 1L)
 })
 
