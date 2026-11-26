@@ -5734,6 +5734,42 @@ end
 end
 
 """
+    _laplace_valley_weight(a, b)
+
+The factor a valley puts on the fade of the maximum on one side of it, `a` how
+far it lies below that maximum and `b` below the one on its other side, both
+over `_LAPLACE_MODE_DEPTH`, with its derivatives in `a` and `b`:
+
+    phi = 1 - w (1 - s(a)),   w = s(b / (a + b)),
+
+`s` the fade's smoothstep (`_laplace_fade_weight`). A valley endangers the
+maximum on its shallow side, which Newton carries over it into the other's
+basin; the one on the deep side stays when that happens. So the shallow side
+fades by its depth and the deep side not at all, the weight passing between
+them smoothly as the two depths cross (`w` is one half where they are equal).
+Faded by its own depth on both sides, every valley faded the deep side too,
+and losing the shallow maximum took that fade with it: the unit's term jumped
+by what the fade had handed down. On the affect pilot's full fit (unit 5708) a
+maximum 0.004 nats above its valley faded the one 0.067 above it to 0.8,
+which passed a fifth of the term to a third maximum 2.4 nats lower; the run
+lost the shallow one and the search found it again at every round, about 0.5
+nats each time, and the fit resumed nine times on it.
+"""
+@inline function _laplace_valley_weight(a::Float64, b::Float64)
+    a >= 1 && return (phi=1.0, da=0.0, db=0.0)
+    sa = _laplace_fade_weight(a)
+    dsa = _laplace_fade_slope(a)
+    isfinite(b) || return (phi=sa, da=dsa, db=0.0)
+    tot = a + b
+    tot > 0 || return (phi=0.5, da=0.0, db=0.0)
+    w = _laplace_fade_weight(b / tot)
+    dw = _laplace_fade_slope(b / tot)
+    return (phi=1 - w * (1 - sa),
+        da=w * dsa + (1 - sa) * dw * b / tot^2,
+        db=-(1 - sa) * dw * a / tot^2)
+end
+
+"""
     _laplace_mode_join!(set, laplace, U, values, Ls, aws, r)
 
 Newton's end point `r` into `set`, unit `U`'s maxima so far (Newton results):
@@ -5879,12 +5915,14 @@ maximum's term, handed over to the next best as it fades out before the inner
 solve can lose it,
 
     T = sum_k pi_k t_k,   pi the shares `_laplace_mode_shares(f, t)`,
-    f_k = prod_i s(lambda_ki / _LAPLACE_MODE_FADE) prod_j s(depth_kj / _LAPLACE_MODE_DEPTH),
+    f_k = prod_i s(lambda_ki / _LAPLACE_MODE_FADE) prod_j phi(depth_kj, depth_jk),
 
 `t_k` the mode's term, `lambda_ki` its curvature's eigenvalues, `depth_kj` how
 far the valley towards maximum `j` lies below it (`_laplace_modes_geometry`, in
-the soft-direction quadrature's coordinates), and `s` the smoothstep
-`_laplace_fade_weight`, one at and above one. Ranked by term, each maximum
+the soft-direction quadrature's coordinates), `s` the smoothstep
+`_laplace_fade_weight`, one at and above one, and `phi` the valley's factor,
+`s(depth_kj / _LAPLACE_MODE_DEPTH)` on its shallow side and one on its deep
+side (`_laplace_valley_weight`). Ranked by term, each maximum
 takes its fade of what the ones above it left: a best maximum at full weight
 is the term, whatever lies below it. Products, not the smallest eigenvalue and
 the nearest valley: a fade read off whichever of two is the smaller bends where
@@ -5974,7 +6012,8 @@ function _laplace_mode_sum(laplace::CTSEMLaplaceObjective, U::Integer,
     y = Vector{Float64}[Float64[j == k ? Inf :
         max(geo.geos[k].g - geo.valley[k, j], 0.0) / dscale for j in 1:K] for k in 1:K]
     f = Float64[prod(_laplace_fade_weight, x[k]; init=1.0) *
-        prod(_laplace_fade_weight, y[k]; init=1.0)
+        prod((_laplace_valley_weight(y[k][j], y[j][k]).phi for j in 1:K if j != k);
+            init=1.0)
         for k in 1:K]
     live = findall(>(0), f)
     if isempty(live)
@@ -6105,13 +6144,19 @@ function _laplace_mode_seeds(fades, c::Vector{Float64})
             push!(Mbar[k].w, ck * sx / (_laplace_fade_weight(x[k][i]) * fade))
             push!(Mbar[k].v, low.vectors[:, i])
         end
+        # Each valley's factor reads its depth below both ends
+        # (`_laplace_valley_weight`): `d depth_kj = dg_k - dg(p)` and
+        # `d depth_jk = dg_j - dg(p)`, at the one point.
         for j in 1:K
-            sy = _laplace_fade_slope(y[k][j])
-            sy == 0 && continue
-            e = ck * sy / (_laplace_fade_weight(y[k][j]) * dscale)
+            j == k && continue
+            vw = _laplace_valley_weight(y[k][j], y[j][k])
+            (vw.da == 0 && vw.db == 0) && continue
+            ea = ck * vw.da / (vw.phi * dscale)
+            eb = ck * vw.db / (vw.phi * dscale)
             t = geo.vt[k, j]
-            gbar[k] += e
-            push!(pts, (e=e, k=k, j=j, t=t,
+            gbar[k] += ea
+            gbar[j] += eb
+            push!(pts, (e=ea + eb, k=k, j=j, t=t,
                 p=geo.geos[k].z0 .+ t .* (geo.geos[j].z0 .- geo.geos[k].z0)))
         end
     end
