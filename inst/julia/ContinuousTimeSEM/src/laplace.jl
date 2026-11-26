@@ -4909,20 +4909,27 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
             # sums log densities of about 1e9 to a value of -1.5, which then
             # moves by 7e-7 between points two ulps apart. A Newton step there
             # predicting 2e-9 is ranked by no trial, and the unit, at its mode
-            # to the arithmetic, was reported short and its point rejected:
-            # 1,664 of the 2,700 evaluations of a GESIS fit (3,461 persons, ten
-            # items), and every Hessian of it had columns that could not be
-            # differenced. So on an exact, unrepaired curvature, along which
-            # the step is an ascent direction, the shortest trials measure the
-            # value's noise (`noise` above), and a step predicting no more than
-            # that is at the floor. A step predicting more is not, wherever the
-            # gradient is the value's: over trials that short a correct
-            # gradient moves the value by 2^-14 of the gain, so a loss there as
-            # large as the gain is the value's noise, not the step's.
-            stationary = evaluable &&
-                (_laplace_floor_step(laplace, current.gradient, step, current.value) ||
-                (used_exact && !fac.repaired &&
-                    _laplace_stationary_gain(current.gradient, step) <= noise))
+            # to the arithmetic, was reported short and its point rejected: on
+            # a simulated analogue of the SWB timescales random-diffusion fits
+            # (600 persons, six integer items, measurement error near zero)
+            # every one of a stage's 124 evaluations, and 59-83 units at each
+            # of the Hessian's points; the GESIS fit (3,461 persons) lost 1,664
+            # of its 2,700 evaluations in the same way. More iterations and
+            # anchored starts changed nothing. So on an exact, unrepaired
+            # curvature, along which the step is an ascent direction, the
+            # shortest trials measure the value's noise (`noise` above), and a
+            # step predicting no more than that is at the floor
+            # (`inner_noise` in `ctsem_opcounts()`). A step predicting more is
+            # not, wherever the gradient is the value's: over trials that short
+            # a correct gradient moves the value by 2^-14 of the gain, so a
+            # loss there as large as the gain is the value's noise, not the
+            # step's.
+            floored = _laplace_floor_step(laplace, current.gradient, step,
+                current.value)
+            noisy = !floored && used_exact && !fac.repaired &&
+                _laplace_stationary_gain(current.gradient, step) <= noise
+            noisy && evaluable && (_CTSEM_OPCOUNT.inner_noise[] += 1)
+            stationary = evaluable && (floored || noisy)
             converged = stationary
             stationary && exact && !fac.repaired &&
                 (final = _laplace_copy_blockmatrix(M))

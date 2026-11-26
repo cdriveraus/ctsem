@@ -33,7 +33,8 @@ The `inner_*` counts are the Laplace inner solve's Newton
 (`_laplace_newton_unit_mode`): solves, their iterations, and the exact unit
 curvatures they formed. Their ratios say how far a solve's start was from its
 mode: an anchored solve one step from its anchor takes one iteration and one
-curvature, a search from the origin several.
+curvature, a search from the origin several. `inner_noise` counts the solves
+that ended where the value's measured noise was as large as a step's gain.
 
 The `sweep_*` counts are the Laplace route's second-order member passes, a
 member each: a unit curvature's (`_laplace_columns_jacobian`, a pass per lane
@@ -74,6 +75,7 @@ const _CTSEM_OPCOUNT = (
     inner_solves = Ref(0),
     inner_iterations = Ref(0),
     inner_curvatures = Ref(0),
+    inner_noise = Ref(0),
     sweep_curvature = Ref(0),
     sweep_seeded = Ref(0),
     sweep_jet = Ref(0),
