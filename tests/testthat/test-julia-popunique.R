@@ -1527,4 +1527,45 @@ test_that("a fold's deviations are reported at their modes given the coordinates
   t0 <- which(apply(sl, 2, stats::sd) > 1e-8)
   expect_gt(length(t0), 0)
   expect_gt(min(diag(stats::cor(sh[, t0], sl[, t0]))), 0.98)
+
+  # A sampled fit's report starts each draw's solve from the last draw's modes
+  # and steps on their curvature (`previous`). It finds the modes and
+  # curvature a solve from the origin finds, and a solve started at its own
+  # modes forms one curvature: a pass for the score, one a deviation, and at
+  # most one step.
+  ctsem:::.ctJuliaEval(paste(
+    "function __fold_warm(laplace, x)",
+    "  CT = ContinuousTimeSEM",
+    "  rng = CT.Random.Xoshiro(3)",
+    "  x = collect(Float64, x)",
+    "  th = CT._laplace_extend(laplace, x)",
+    "  th2 = CT._laplace_extend(laplace, x .+ 0.05 .* randn(rng, length(x)))",
+    "  aws = CT._laplace_workspace!(laplace, Float64, length(th))",
+    "  Ls = CT._laplace_popchols(th, laplace.spec)",
+    "  Ls2 = CT._laplace_popchols(th2, laplace.spec)",
+    "  dmode = 0.0; dA = 0.0; again = 0.0; n = 0",
+    "  for U in eachindex(laplace.units.members)",
+    "    u = zeros(length(laplace.modes[U]))",
+    "    near = CT._hybrid_member_modes(laplace, U, th2, Ls2, u, aws)",
+    "    cold = CT._hybrid_member_modes(laplace, U, th, Ls, u, aws)",
+    "    warm = CT._hybrid_member_modes(laplace, U, th, Ls, u, aws; previous=near)",
+    "    c0 = CT.ctsem_opcounts().fold_passes",
+    "    CT._hybrid_member_modes(laplace, U, th, Ls, u, aws; previous=cold)",
+    "    again = max(again, (CT.ctsem_opcounts().fold_passes - c0) /",
+    "      length(laplace.units.members[U]))",
+    "    for m in eachindex(cold.dhat)",
+    "      dmode = max(dmode, maximum(abs, warm.dhat[m] .- cold.dhat[m]))",
+    "      dA = max(dA, maximum(abs, warm.A[m] .- cold.A[m]) / maximum(abs, cold.A[m]))",
+    "      n += 1",
+    "    end",
+    "  end",
+    "  return (dmode=dmode, dA=dA, again=again, n=n,",
+    "    rd=CT._hybrid_items(laplace.objective.params.hybrid))",
+    "end", sep = "\n"))
+  fw <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall("Main.__fold_warm",
+    ctsem:::.ctJuliaObjective(handle(hy)), ctsem:::.ctJuliaNumericVector(x)))
+  expect_gt(fw$n, 0)
+  expect_lt(fw$dmode, 1e-6)
+  expect_lt(fw$dA, 1e-3)
+  expect_lte(fw$again, fw$rd + 2)
 })
