@@ -100,6 +100,32 @@ const _VF = ContinuousTimeSEM
         @test maximum(v.unit_loglik .- r.unit_loglik) < 0.05
     end
 
+    @testset "the family chosen by need" begin
+        # Two coordinates a unit: started Gaussian, tried with the bending
+        # family once. On a Gaussian integrand bending gains nothing, so no
+        # unit switches; on a non-Gaussian one the bound cannot fall.
+        laplace, values = _fresh_linear()
+        V = ctsem_variational(laplace)
+        @test all(V.pending) && !any(f.bend for f in V.fams)
+        r0 = _VF.ctsem_variational_evaluate(V, values)
+        c = ctsem_variational_choose!(V, values)
+        @test c.units == 0 && !any(V.pending)
+        # The nonlinear fixture with effects on T0MEANS and MANIFESTMEANS:
+        # raw 1-4 the model, 5-6 the scales, 7 their correlation.
+        laplace2 = ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE, [1, 4], [5, 6], [7],
+            [1.0, 1.0])
+        values2 = [0.1, 0.4, -0.2, 0.05, -0.25, -0.4, 0.2]
+        V2 = ctsem_variational(laplace2; need=0.0)
+        r2 = _VF.ctsem_variational_evaluate(V2, values2)
+        c2 = ctsem_variational_choose!(V2, values2)
+        r3 = _VF.ctsem_variational_evaluate(V2, values2)
+        @test c2.units == count(f -> f.bend, V2.fams)
+        @test r3.value >= r2.value - 1e-8
+        @test r3.value ≈ r2.value + c2.change atol = 1e-6
+        ctsem_variational_reset!(V2)
+        @test all(V2.pending) && !any(f.bend for f in V2.fams)
+    end
+
     @testset "optimised, and read after the run" begin
         laplace, values = _fresh_nonlinear()
         V = ctsem_variational(laplace)

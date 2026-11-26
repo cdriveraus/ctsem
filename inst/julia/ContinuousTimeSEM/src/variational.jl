@@ -54,7 +54,7 @@ out, where the negative-weight nodes' likelihood was -2e7, for a "bound" of
 """
 
 export ctsem_variational, ctsem_variational_info, ctsem_variational_value,
-    ctsem_variational_reset!
+    ctsem_variational_reset!, ctsem_variational_choose!
 
 # ---- families -------------------------------------------------------------------
 
@@ -787,6 +787,16 @@ mutable struct CTSEMVariational{L} <: CTSEMOptimisable
     curvature_passes::Int
     curvature_formed::Int
     lbfgs::Union{Nothing,CTSEMLBFGSMemory}
+    # Units whose family is chosen by need (`family = "auto"`, two or three
+    # coordinates): started Gaussian, tried once with the bending family where
+    # a run stops (`_ctsem_take_search_modes!`), kept bending where that gains
+    # more than `need` nats.
+    pending::Vector{Bool}
+    need::Float64
+    seed::Int
+    # The families, rules and choices a new fit starts from (`ctsem_variational_reset!`).
+    start::Tuple{Vector{CTSEMVFamily},Vector{Matrix{Float64}},Vector{Vector{Float64}},
+        Vector{Symbol},Vector{Bool}}
 end
 
 """
@@ -794,18 +804,21 @@ end
         tol = 1e-8, kappa = 1e-3, quasi = 10, refresh = 5.0)
 
 The variational objective over `laplace`'s units. `family = "auto"`: the
-skewed family at one coordinate on product Gauss-Hermite (7 nodes), the
-bending family at two or three on product Gauss-Hermite (5 nodes a
-coordinate), the Gaussian family on the rotated `2d + 1` rule beyond; "bend",
-"skew" or "gauss" for every unit; `nodes` sets the product rule's nodes a
-coordinate. Every default rule has positive weights:
+skewed family at one coordinate on product Gauss-Hermite (7 nodes); at two
+or three coordinates the Gaussian family on product Gauss-Hermite (3 nodes a
+coordinate), each unit tried with the bending family (5 nodes a coordinate)
+where a run stops and kept bending where its bound gains more than `need`
+nats (`_ctsem_take_search_modes!`); the Gaussian family on the rotated
+`2d + 1` rule beyond. "bend", "skew" or "gauss" for every unit; `nodes` sets
+the product rule's nodes a coordinate. Every default rule has positive weights:
 on a rule with negative weights (the cut rule, by name) the bound is not a
 bound, and an approximation can climb it without limit by moving the
 negative-weight nodes to where the likelihood is very low. `rule` = "auto", "product", "cut" or "rot" overrides the rule.
 """
 function ctsem_variational(laplace::CTSEMLaplaceObjective; family::AbstractString="auto",
     rule::AbstractString="auto", seed::Integer=1, tol::Real=1e-8, kappa::Real=1e-3,
-    quasi::Integer=10, refresh::Real=5.0, maxit::Integer=50, nodes::Integer=0)
+    quasi::Integer=10, refresh::Real=5.0, maxit::Integer=50, nodes::Integer=0,
+    need::Real=0.005)
     _laplace_ensure_pool!(laplace)
     dims = laplace.units.dims
     n = length(dims)
@@ -813,17 +826,16 @@ function ctsem_variational(laplace::CTSEMLaplaceObjective; family::AbstractStrin
     Zs = Matrix{Float64}[]
     ws = Vector{Float64}[]
     rules = Symbol[]
+    pending = fill(false, n)
     for U in 1:n
         d = dims[U]
-        skew = family in ("skew", "bend") ? true : family == "gauss" ? false : d <= 3
-        bend = family == "bend" || (family == "auto" && 2 <= d <= 3)
+        pending[U] = family == "auto" && 2 <= d <= 3
+        skew = family in ("skew", "bend") || (family == "auto" && d == 1)
+        bend = family == "bend"
         push!(fams, CTSEMVFamily(d, skew; bend=bend))
-        r = rule != "auto" ? Symbol(rule) : (d <= 1 || skew) ? :product : :rot
-        n1 = nodes > 0 ? Int(nodes) : !skew ? 3 : d == 1 ? 7 : 5
-        Z, w = r === :product ? _vf_rule_product(d, n1) :
-            r === :cut ? _vf_rule_cut(d; n1=skew ? 7 : 3) :
-            r === :rot ? _vf_rule_rot(d, 1, Int(seed) * 100003 + U) :
-            throw(ArgumentError("rule: auto, product, cut or rot"))
+        r = rule != "auto" ? Symbol(rule) : (d <= 3 || skew) ? :product : :rot
+        Z, w = _vf_rule(r, d, nodes > 0 ? Int(nodes) : _vf_default_nodes(d, skew), skew,
+            Int(seed) * 100003 + U)
         push!(Zs, Z)
         push!(ws, w)
         push!(rules, r)
@@ -831,7 +843,73 @@ function ctsem_variational(laplace::CTSEMLaplaceObjective; family::AbstractStrin
     return CTSEMVariational(laplace, fams, Zs, ws, rules, [zeros(f.p) for f in fams],
         [zeros(0, 0) for _ in fams], [zeros(f.p) for f in fams], [zeros(0, 0) for _ in fams],
         false, false, false, Float64(tol), Float64(kappa), Int(quasi), Float64(refresh),
-        Int(maxit), fill(NaN, n), 0, 0, 0, 0, nothing)
+        Int(maxit), fill(NaN, n), 0, 0, 0, 0, nothing, pending, Float64(need), Int(seed),
+        (copy(fams), copy(Zs), copy(ws), copy(rules), copy(pending)))
+end
+
+_vf_default_nodes(d::Int, skew::Bool) = !skew ? 3 : d == 1 ? 7 : 5
+
+function _vf_rule(r::Symbol, d::Int, n1::Int, skew::Bool, seed::Int)
+    r === :product && return _vf_rule_product(d, n1)
+    r === :cut && return _vf_rule_cut(d; n1=skew ? 7 : 3)
+    r === :rot && return _vf_rule_rot(d, 1, seed)
+    throw(ArgumentError("rule: auto, product, cut or rot"))
+end
+
+"""
+    _ctsem_take_search_modes!(V::CTSEMVariational, x, found)
+
+Where a run stops by its own rule at `x`: each unit whose family is chosen by
+need and not yet tried fits the bending family there from its Gaussian
+approximation (shape zero, so the bound starts where the Gaussian's is), and
+keeps it where its bound gains more than `V.need` nats; every such unit is
+tried once. The change to the objective at `x` sends the run on from there
+with its curvature pairs, as the Laplace route's search for other maxima
+does. On gD3 every unit gained (median 0.05 nats); on gD1 none did (at most
+0.005), and its fit stays at the Gaussian family's cost.
+"""
+function _ctsem_take_search_modes!(V::CTSEMVariational, x::AbstractVector, found)
+    todo = findall(V.pending)
+    isempty(todo) && return (change=NaN, units=0, joined=0)
+    laplace = V.laplace
+    ctx = _vf_ctx(laplace, x)
+    gains = fill(-Inf, length(V.fams))
+    cand = Vector{Any}(undef, length(V.fams))
+    _laplace_parallel(laplace, todo) do U
+        f0 = V.fams[U]
+        f = CTSEMVFamily(f0.d, true; bend=true)
+        Z, w = _vf_rule(:product, f.d, _vf_default_nodes(f.d, true), true, V.seed * 100003 + U)
+        lam0 = vcat(V.lam[U], zeros(f.p - f0.p))
+        s = _vf_solve(laplace, ctx, U, f, lam0, Z, w, V.tol, V.maxit, V.kappa)
+        isfinite(s.B) || return true
+        base = _vf_solve_held(laplace, ctx, U, f0, V.lam[U], V.Z[U], V.w[U],
+            isempty(V.M[U]) ? Matrix{Float64}(I, f0.p, f0.p) : V.M[U], V.tol, V.maxit,
+            V.kappa, V.quasi, V.refresh)
+        gains[U] = s.B - base.B
+        cand[U] = (f=f, Z=Z, w=w, lam=s.lam, M=isempty(s.H) ? Matrix{Float64}(I, f.p, f.p) :
+            _vf_pd(-s.H))
+        return true
+    end
+    change = 0.0
+    units = 0
+    for U in todo
+        V.pending[U] = false
+        gains[U] > V.need || continue
+        c = cand[U]
+        V.fams[U] = c.f
+        V.Z[U] = c.Z
+        V.w[U] = c.w
+        V.rules[U] = :product
+        V.lam[U] = copy(c.lam)
+        V.M[U] = c.M
+        V.lam_trial[U] = copy(c.lam)
+        V.M_trial[U] = c.M
+        change += _laplace_unit_weight(laplace, U) * gains[U]
+        units += 1
+    end
+    units == 0 && return (change=0.0, units=0, joined=0)
+    V.lbfgs = nothing
+    return (change=change, units=units, joined=units)
 end
 
 function _vf_unit!(V::CTSEMVariational, ctx::_VCtx, U::Int, unit::Vector{Float64},
@@ -1015,7 +1093,8 @@ ctsem_variational_info(V::CTSEMVariational) = (evaluations=V.evaluations,
     gradient_passes=V.gradient_passes, curvature_passes=V.curvature_passes,
     curvature_formed=V.curvature_formed, units=length(V.fams),
     nodes=[size(Z, 2) for Z in V.Z], dims=[f.d for f in V.fams],
-    skewed=[any(f.skew) for f in V.fams], rules=String.(V.rules))
+    skewed=[any(f.skew) for f in V.fams], bending=[f.bend for f in V.fams],
+    pending=copy(V.pending), rules=String.(V.rules))
 
 # ---- the optimisable protocol -------------------------------------------------------
 
@@ -1127,11 +1206,17 @@ ctsem_laplace_hessian(V::CTSEMVariational, values::AbstractVector; step::Real=1e
 """
     ctsem_variational_reset!(V)
 
-Forgets every unit's approximation and held curvature, so the next
-optimisation starts each unit from the prior: a new fit on an objective R
-had cached.
+Forgets every unit's approximation, held curvature and family choice, so the
+next optimisation starts each unit from the prior on its starting family: a
+new fit on an objective R had cached.
 """
 function ctsem_variational_reset!(V::CTSEMVariational)
+    fams, Zs, ws, rules, pending = V.start
+    V.fams = copy(fams)
+    V.Z = copy(Zs)
+    V.w = copy(ws)
+    V.rules = copy(rules)
+    V.pending = copy(pending)
     for U in eachindex(V.fams)
         V.lam[U] = zeros(V.fams[U].p)
         V.M[U] = zeros(0, 0)
@@ -1145,6 +1230,15 @@ function ctsem_variational_reset!(V::CTSEMVariational)
     V.evaluations = V.gradient_passes = V.curvature_passes = V.curvature_formed = 0
     return nothing
 end
+
+"""
+    ctsem_variational_choose!(V, values)
+
+The family choice a run makes where it stops (`_ctsem_take_search_modes!`),
+made at `values`; for a caller outside an optimisation.
+"""
+ctsem_variational_choose!(V::CTSEMVariational, values::AbstractVector) =
+    _ctsem_take_search_modes!(V, collect(Float64, values), nothing)
 
 # The readers of the effects, the plans made before a fit (substeps,
 # relinearisation) and generation take the Laplace objective the bound is
