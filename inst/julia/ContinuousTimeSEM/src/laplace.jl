@@ -4666,12 +4666,23 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         iterations = iteration
         small = d == 0 || maximum(abs, current.gradient) <
             _laplace_inner_tolerance(laplace, current.value)
-        # Nothing exact to measure the distance with -- a step on a curvature
-        # the factorization repaired: the bound is all there is.
-        if small && (d == 0 || (stepped_exact && !factored_exact))
+        if small && d == 0
             converged = true
             break
         end
+        # Reached by a step on a curvature the factorization repaired, the
+        # point is measured on the exact curvature here: where that is repaired
+        # too there is nothing exact to measure the distance with, and the
+        # bound is all there is (below, after the factorization); where it
+        # factors, its step decides, as anywhere. Taken on the bound alone, a
+        # solve stopped where it began to make sense: the bound is relative to
+        # the value, and at a trial point where a study unit's members
+        # exploded (nested panel fixture, value -3e37 at the origin) one
+        # repaired step from the origin landed 2.6e18 prior sds out, under a
+        # bound of 2e27, and that was the unit's mode. The probes then started
+        # from it, 149 Newton solves to the iteration cap.
+        verify = small && stepped_exact && !factored_exact
+        verify && (exact = true)
         # Under the bound the distance to the mode is measured on the exact
         # curvature at this point, which is then the term's curvature too, so
         # the measurement costs nothing more. An SR1 solve first walks on, a
@@ -4703,6 +4714,10 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         fac = _laplace_factor_repaired!(M, blocks; store=fstore)
         factored_exact = used_exact && fac.ok && !fac.repaired
         repaired |= fac.repaired
+        if verify && !factored_exact
+            converged = true
+            break
+        end
         fac.ok || break
         _laplace_block_solve!(step, fac.factors, fac.coupling, blocks,
             current.gradient)
@@ -4759,6 +4774,23 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
                 break
             end
             # Not evaluable at its full length: the line search halves it.
+        end
+        # A step too short to move the point moves it at no scale, and the next
+        # iteration forms the same curvature and takes the same step: the
+        # solve is stuck, at a mode only where the bound says so. The line
+        # search accepts a trial that loses nothing, and so accepted this one
+        # as often as it was let: on the nested panel fixture at an explosive
+        # trial point a probe's Newton reached a point where the repaired
+        # curvature's step was 1e-65, and formed that curvature 144 times
+        # more, every probe of the unit's 149 the same, 114 s a value.
+        utry .= u .+ step
+        if utry == u
+            if !exact
+                exact = true
+                continue
+            end
+            converged = small
+            break
         end
         accepted = false
         # Whether any trial could be evaluated at all, which is what separates

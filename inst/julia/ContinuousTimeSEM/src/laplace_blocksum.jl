@@ -217,6 +217,23 @@ function _laplace_block_newton(laplace::CTSEMLaplaceObjective, U::Integer,
             end
             return (y=u[idx], value=cur.value, converged=true, M=M, F=F)
         end
+        # A step too short to move the point moves it at no scale, and the
+        # next iteration takes the same step: stuck, as in
+        # `_laplace_newton_unit_mode`, where the line search accepted such a
+        # step at every iteration to the cap. A loop, not `all` over a
+        # closure: `u` is assigned again below, and a closure reading it
+        # would box it.
+        still = true
+        for k in eachindex(idx)
+            if u[idx[k]] + step[k] != u[idx[k]]
+                still = false
+                break
+            end
+        end
+        if still
+            exact && return (y=u[idx], value=cur.value, converged=true, M=M, F=F)
+            return fail
+        end
         t = 1.0
         moved = false
         for _ in 1:30
