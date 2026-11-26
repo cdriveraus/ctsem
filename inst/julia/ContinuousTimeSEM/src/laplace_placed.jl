@@ -351,7 +351,8 @@ function _placed_scatter!(dir::AbstractVector{Float64}, spec, l::Int, w::Abstrac
 end
 
 """The largest gradient a leaf's centre may keep (`_quadrature_leaf_rule!`'s
-`gradmax`) for the placement to be differentiated there."""
+`gradmax`) for the placement to be differentiated there, unless its solve
+ended at the maximum to what the arithmetic resolves (`stationary`)."""
 const _PLACED_STATIONARY = 1e-6
 
 """
@@ -604,8 +605,13 @@ function _placed_leaf!(row::Vector{Float64}, wv::Vector{Float64}, P::CTSEMLaplac
     aws = _laplace_workspace!(laplace, Float64, npar)
     lr = _quadrature_leaf_rule!(laplace, U, theta, Ls, b, u, aws; start=start)
     # The implicit function theorem is the centre's derivative only at a
-    # stationary point; a solve stopped short of one has none to give.
-    (lr.ok && lr.gradmax <= _PLACED_STATIONARY) || return failure
+    # stationary point; a solve stopped short of one has none to give. A
+    # stationary point to the arithmetic is one: where a person's log densities
+    # near 1e9 cancel, the gradient at the maximum carries 1e-3 of roundoff,
+    # and read off the gradient the rule was refused at 13 of 24 evaluations
+    # beside a simulated SWB timescales fit's estimate.
+    (lr.ok && (lr.gradmax <= _PLACED_STATIONARY || lr.stationary)) ||
+        return failure
     c = lr.centre
     M = Matrix{Float64}(lr.precision)
     sc = lr.sc
@@ -1680,7 +1686,7 @@ function ctsem_subject_gradients(P::CTSEMLaplacePlaced, values::AbstractVector;
 end
 
 """
-    ctsem_laplace_placed_hessian(P, values; step=1e-4)
+    ctsem_laplace_placed_hessian(P, values; step=1e-4, progress=nothing)
 
 The placed objective's Hessian at `values`: the Laplace part's and the prior's
 (`ctsem_laplace_hessian` on `P.cont.rest`, localised to the units that read
@@ -1690,9 +1696,12 @@ gradients, each column over the terms that read it -- a nonzero gradient at
 be exactly zero at a point of symmetry (`_laplace_hessian_readers`) -- and
 columns whose readers do not overlap moved together
 (`_ctsem_local_colours`). Every unit's Newton starts from its mode at `values`.
+`progress` is the Laplace part's, called as `ctsem_laplace_hessian` calls it:
+that part is the dear one, two gradients a column over the units outside the
+rules, and without it a refined fit's Hessian printed nothing for hours.
 """
 function ctsem_laplace_placed_hessian(P::CTSEMLaplacePlaced, values::AbstractVector;
-    step::Real=1e-4)
+    step::Real=1e-4, progress=nothing)
     started = time_ns()
     o = P.cont
     laplace = o.laplace
@@ -1700,7 +1709,7 @@ function ctsem_laplace_placed_hessian(P::CTSEMLaplacePlaced, values::AbstractVec
     x = collect(Float64, values)
     n = length(x)
     ctsem_laplace_placed_evaluate(P, x; gradient=false)
-    H = Matrix{Float64}(ctsem_laplace_hessian(o.rest, x; step=step))
+    H = Matrix{Float64}(ctsem_laplace_hessian(o.rest, x; step=step, progress=progress))
     theta = _laplace_extend(laplace, x)
     npar = length(theta)
     positions = [_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
@@ -2424,7 +2433,7 @@ _ctsem_lbfgs_held(P::CTSEMLaplacePlaced) =
 _ctsem_lbfgs_hold!(P::CTSEMLaplacePlaced, memory::CTSEMLBFGSMemory) =
     (P.lbfgs = memory; nothing)
 ctsem_hessian(P::CTSEMLaplacePlaced, values::AbstractVector; chunk::Integer=0,
-    progress=nothing) = ctsem_laplace_placed_hessian(P, values)
+    progress=nothing) = ctsem_laplace_placed_hessian(P, values; progress=progress)
 _ctsem_params(P::CTSEMLaplacePlaced) = _ctsem_params(P.cont.laplace)
 _ctsem_saturated_for(P::CTSEMLaplacePlaced, minimizer) =
     _laplace_saturated_parameters(P.cont.laplace, minimizer)

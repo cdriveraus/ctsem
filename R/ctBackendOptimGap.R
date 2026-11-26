@@ -1301,9 +1301,21 @@
     silent = TRUE)
   if (inherits(out, "try-error")) return(NULL)
   hessian <- out$hessian
-  if (!is.matrix(hessian) || nrow(hessian) != npar || ncol(hessian) != npar ||
-      !all(is.finite(hessian))) {
+  if (!is.matrix(hessian) || nrow(hessian) != npar || ncol(hessian) != npar) {
     return(NULL)
+  }
+  # Columns the engine could not difference (its warning says which units
+  # and why) are differenced here, the exact entries kept
+  # (`.ctBackendHessianComplete()`). Discarded, the same matrix was formed
+  # again at the same point by the uncertainty stage, to the same end: an hour
+  # each on the GESIS random-diffusion fit, before R differenced every
+  # parameter. Where it cannot be completed the point is said to have no
+  # exact Hessian (`incomplete`), and the uncertainty stage does not ask again.
+  if (!all(is.finite(hessian))) {
+    labels <- tryCatch(.ctBackendRawParameterNames(list(model_spec = spec), npar),
+      error = function(e) NULL)
+    hessian <- .ctBackendHessianComplete(spec, est, hessian, labels = labels)
+    if (is.null(hessian)) return(list(incomplete = est))
   }
   list(hessian = hessian, evaluated_at = est, distance = 0,
     probe = .ctBackendProbeFields(out, npar),
@@ -1403,7 +1415,14 @@
   formed <- 0L
   # The certification of one result: the engine's numbers, and the verdict.
   # NULL where the result carries no usable Hessian and none can be formed.
+  # Where the certification's exact Hessian could not be completed
+  # (`.ctBackendEndgameAt()`), for the uncertainty stage not to form it again.
+  incomplete <- NULL
+  # The result certification was last asked of: one that gave nothing is not
+  # asked again after the loop, which formed the same Hessian a second time.
+  asked <- NULL
   certify_at <- function(r) {
+    asked <<- r
     est <- as.numeric(r$minimizer)[seq_len(npar)]
     endgame <- .ctBackendEndgameOf(r, npar)
     if (is.null(endgame)) {
@@ -1412,7 +1431,12 @@
       .ctJuliaHoldModes(spec, .ctJuliaResultModes(r))
       endgame <- .ctBackendEndgameAt(spec, est, gradient = gradient,
         verbose = verbose, cores = cores)
-      if (!is.null(endgame)) formed <<- formed + as.integer(endgame$hessians)
+      if (!is.null(endgame)) formed <<- formed +
+        as.integer(.ctJuliaOr(endgame$hessians, 1L))
+      if (!is.null(endgame$incomplete)) {
+        incomplete <<- endgame$incomplete
+        endgame <- NULL
+      }
     }
     if (is.null(endgame)) return(NULL)
     gap <- .ctBackendOptimGap(endgame$hessian, as.numeric(r$gradient)[seq_len(npar)])
@@ -1510,6 +1534,13 @@
       message("Not yet a certified maximum (", kind, ", predicted ",
         signif(gap$gap, 3), "); resuming the optimiser")
     }
+    # The modes the run ended with, as further starts for the resumed stage's
+    # opening search, as a checkpoint's are (`.ctJuliaOptimise()`'s `stage`).
+    # The probe that measured an escape's gain evaluated its point from them;
+    # searched afresh, the GESIS random-diffusion fit's resume from a pullback
+    # worth 111 found a unit it could not solve at its first point, and the fit
+    # went on to certify the point it had just found was no maximum.
+    attr(from, "modes") <- .ctJuliaResultModes(result)
     resumed <- try(optimise(from, stage_endgame), silent = TRUE)
     ok <- !inherits(resumed, "try-error") &&
       is.finite(as.numeric(resumed$maximum_loglik)[1L]) &&
@@ -1559,7 +1590,7 @@
   # The final point's certification, where the loop ended on a stage it had
   # not certified: a kept escape with no budget left, or one whose resume
   # did not come out ahead.
-  if (isTRUE(certify) && is.null(certification)) {
+  if (isTRUE(certify) && is.null(certification) && !identical(asked, result)) {
     checked <- certify_at(result)
     if (!is.null(checked)) {
       endgame <- checked$endgame
@@ -1571,11 +1602,17 @@
     message("Certified to what the objective resolves, ",
       signif(certification$tolerance, 2), " (bar ", signif(tolerance, 2), ")")
   }
+  # Where the final point's own exact Hessian could not be completed: no
+  # matrix, and the point, so the uncertainty stage does not form it again.
+  final <- as.numeric(result$minimizer)[seq_len(npar)]
+  if (!is.null(endgame) || !isTRUE(all.equal(incomplete, final, tolerance = 0)))
+    incomplete <- NULL
   list(result = result, certification = certification,
     hessian = if (is.null(endgame)) NULL else endgame$hessian,
     evaluated_at = if (is.null(endgame)) NULL else endgame$evaluated_at,
     distance = if (is.null(endgame)) NA_real_ else endgame$distance,
     flatwalk = if (is.null(endgame)) NULL else endgame$flatwalk,
+    incomplete = incomplete,
     corrections = history, totals = totals,
     hessians = as.integer(totals[["newton_hessians"]]) + formed,
     escapes = escapes)

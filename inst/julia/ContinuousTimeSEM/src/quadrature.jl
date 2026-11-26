@@ -316,13 +316,19 @@ there; a line search on the integrand sizes it. Floored at 1e-8 of the largest
 eigenvalue instead, an eigenvalue at or below zero made the step about 1e8
 times too long for twenty halvings to bring back: on AnomAuth (race fixture
 anomS1) two units 0.3 se from the estimate stopped with a gradient of 0.1,
-their precision indefinite, the rule placed at no mode. Returns `(z, current)`
-where the solve stopped.
+their precision indefinite, the rule placed at no mode. Returns `(z, current,
+stationary)`: where the solve stopped, and whether that is the integrand's
+maximum to what the arithmetic resolves -- the gradient under `inner_tol`, the
+exact Newton step under it or at the value's floor, or a line search whose
+shortest trials measure the value's noise at least the step's gain, as in
+`_laplace_newton_unit_mode`. A placed rule reads that, not the gradient
+(`_placed_leaf!`): where a person's log densities near 1e9 cancel to a value of
+order one, the gradient at the maximum carries 1e-3 of roundoff.
 """
 function _quadrature_leaf_newton(inner, precision_at, z::Vector{Float64}, current,
     laplace::CTSEMLaplaceObjective, k::Integer)
     for _ in 1:laplace.inner_maxiter
-        maximum(abs, current.gradient) < laplace.inner_tol && break
+        maximum(abs, current.gradient) < laplace.inner_tol && return z, current, true
         M = precision_at(z)
         # The engine's factorization rather than LAPACK's: once per inner
         # Newton step per subject, inside the subject loop. See small_linalg.jl.
@@ -336,7 +342,8 @@ function _quadrature_leaf_newton(inner, precision_at, z::Vector{Float64}, curren
         end
         # A step at roundoff is a mode however large the gradient's roundoff
         # is; see `_laplace_newton_unit_mode`.
-        issuccess(factorization) && maximum(abs, step) < laplace.inner_tol && break
+        issuccess(factorization) && maximum(abs, step) < laplace.inner_tol &&
+            return z, current, true
         # Below what the value resolves the gradient ranks the step, as in
         # `_laplace_newton_unit_mode` (`_laplace_floor_step`).
         if issuccess(factorization) &&
@@ -344,15 +351,19 @@ function _quadrature_leaf_newton(inner, precision_at, z::Vector{Float64}, curren
             candidate = z .+ step
             trial = inner(candidate)
             if isfinite(trial.value) && all(isfinite, trial.gradient)
-                _laplace_floor_step_taken(current.gradient, trial.gradient) || break
+                _laplace_floor_step_taken(current.gradient, trial.gradient) ||
+                    return z, current, true
                 z = candidate
                 current = trial
                 continue
             end
         end
         accepted = false
+        # The value's noise where the step predicts no change, as in
+        # `_laplace_newton_unit_mode`.
+        noise = 0.0
         scale = 1.0
-        for _ in 1:20
+        for trialno in 1:20
             candidate = z .+ scale .* step
             trial = inner(candidate)
             if isfinite(trial.value) && all(isfinite, trial.gradient) &&
@@ -362,11 +373,14 @@ function _quadrature_leaf_newton(inner, precision_at, z::Vector{Float64}, curren
                 accepted = true
                 break
             end
+            trialno > 15 && isfinite(trial.value) &&
+                (noise = max(noise, current.value - trial.value))
             scale /= 2
         end
-        accepted || break
+        accepted || return z, current, issuccess(factorization) &&
+            _laplace_stationary_gain(current.gradient, step) <= noise
     end
-    return z, current
+    return z, current, false
 end
 
 """
@@ -381,12 +395,15 @@ solve's probes' along a soft direction (`_laplace_probe_modes`), and the
 centre moves only where one gains beyond the value's roundoff
 (`_laplace_inner_tolerance`). The direction is signed
 (`_ctsem_signed_columns!`), so which of two equal maxima is taken does not
-depend on the eigensolver. Returns `(z, current, M, sc)`: the centre, the
-integrand there, its precision and the clipped scale (`_quadrature_scale`).
+depend on the eigensolver. Returns `(z, current, M, sc, stationary)`: the
+centre, the integrand there, its precision, the clipped scale
+(`_quadrature_scale`) and whether the centre is a stationary point to the
+arithmetic (`_quadrature_leaf_newton`).
 """
 function _quadrature_leaf_solve(inner, precision_at, z::Vector{Float64}, current,
     laplace::CTSEMLaplaceObjective, k::Integer)
-    z, current = _quadrature_leaf_newton(inner, precision_at, z, current, laplace, k)
+    z, current, stationary = _quadrature_leaf_newton(inner, precision_at, z, current,
+        laplace, k)
     M = precision_at(z)
     sc = _quadrature_scale(M, k)
     if sc.ok && sc.clipped && sc.values[1] < 0
@@ -398,9 +415,9 @@ function _quadrature_leaf_solve(inner, precision_at, z::Vector{Float64}, current
             zs = z .+ s .* v[:, 1]
             cs = inner(zs)
             all(isfinite, cs.gradient) || continue
-            zs, cs = _quadrature_leaf_newton(inner, precision_at, zs, cs, laplace, k)
+            zs, cs, ss = _quadrature_leaf_newton(inner, precision_at, zs, cs, laplace, k)
             cs.value > bar || continue
-            z, current, moved = zs, cs, true
+            z, current, stationary, moved = zs, cs, ss, true
             bar = cs.value + _laplace_inner_tolerance(laplace, cs.value)
         end
         if moved
@@ -408,7 +425,7 @@ function _quadrature_leaf_solve(inner, precision_at, z::Vector{Float64}, current
             sc = _quadrature_scale(M, k)
         end
     end
-    return (z=z, current=current, M=M, sc=sc)
+    return (z=z, current=current, M=M, sc=sc, stationary=stationary)
 end
 
 """
@@ -442,10 +459,12 @@ is no maximum, is left along it. Where every Newton step's precision
 factorizes and the full step raises the integrand, the path and the scale are
 what they were, bit for bit.
 
-Returns `(ok, centre, sc, precision, gradmax)`: `sc` the clipped scale at the
-centre (`_quadrature_scale`), `precision` the unclipped `M` there, which a rule
-placed at every evaluation differentiates through (`laplace_placed.jl`), and
-`gradmax` the integrand's largest gradient left there.
+Returns `(ok, centre, sc, precision, gradmax, stationary)`: `sc` the clipped
+scale at the centre (`_quadrature_scale`), `precision` the unclipped `M` there,
+which a rule placed at every evaluation differentiates through
+(`laplace_placed.jl`), `gradmax` the integrand's largest gradient left there,
+and `stationary` whether the centre is its maximum to what the arithmetic
+resolves (`_quadrature_leaf_newton`).
 """
 function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, b::Integer,
@@ -455,7 +474,7 @@ function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
     columns = (block.offset + 1):(block.offset + k)
     members = block.members
     failure = (ok=false, centre=Float64[], sc=_quadrature_scale_failed(),
-        precision=zeros(Float64, 0, 0), gradmax=NaN)
+        precision=zeros(Float64, 0, 0), gradmax=NaN, stationary=false)
 
     # The block's own log integrand -- its members' log likelihood less
     # `z'z/2` -- and its gradient, as a function of this block alone.
@@ -477,7 +496,7 @@ function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
     r = _quadrature_leaf_solve(inner, precision_at, z0, here, laplace, k)
     r.sc.ok || return failure
     return (ok=true, centre=r.z, sc=r.sc, precision=r.M,
-        gradmax=maximum(abs, r.current.gradient))
+        gradmax=maximum(abs, r.current.gradient), stationary=r.stationary)
 end
 
 """

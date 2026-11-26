@@ -807,6 +807,14 @@
   # this and is not reused.
   stored <- .ctBackendStoredHessian(fit, est)
   if (!is.null(stored)) return(stored)
+  # The certification formed this point's exact Hessian and could not complete
+  # it (`.ctBackendCorrectResult()`); formed again here it fails again.
+  if (isTRUE(all.equal(as.numeric(fit$uncertainty[["incomplete"]]), as.numeric(est),
+      tolerance = 0))) {
+    warning("The exact Hessian was not finite at the estimate; ",
+      "falling back to the finite-difference Hessian.", call. = FALSE)
+    return(NULL)
+  }
   module <- .ctJuliaModule(.ctBackendSpec(fit)$project)
   # `gradient='forward'` selects `ctsem_hessian_forward` instead of
   # `ctsem_hessian`, whichever the caller asked `optimcontrol$gradient` for
@@ -874,10 +882,65 @@
   }
   hessian <- matrix(as.numeric(result), nrow = length(est), ncol = length(est))
   if (any(!is.finite(hessian))) {
-    warning("The exact Hessian was not finite at the estimate; ",
-      "falling back to the finite-difference Hessian.", call. = FALSE)
-    return(NULL)
+    completed <- .ctBackendHessianComplete(fit, est, hessian,
+      labels = names(fit$estimate$se))
+    if (is.null(completed)) {
+      warning("The exact Hessian was not finite at the estimate; ",
+        "falling back to the finite-difference Hessian.", call. = FALSE)
+      return(NULL)
+    }
+    hessian <- completed
   }
+  hessian
+}
+
+# An exact Laplace Hessian the engine could not complete: the entries among
+# the columns whose units failed at the estimate itself (the engine's warning
+# names them and why), the rest filled by symmetry. Those columns alone are
+# differenced here from the gradient of `object` (a fit, or a prepared
+# specification, as the certification holds), as the finite-difference
+# Hessian would difference every column, and the exact entries are kept: one
+# failed column cost the whole matrix and four hours of differencing all 600
+# parameters on the SWB timescales fits. NULL where every column failed, or a
+# point here could not be evaluated, for the full finite-difference Hessian.
+.ctBackendHessianComplete <- function(object, est, hessian, labels = NULL,
+  step = 1e-3) {
+  est <- as.numeric(est)
+  bad <- which(colSums(!is.finite(hessian)) > 0)
+  if (!length(bad) || length(bad) == length(est)) return(NULL)
+  if (!inherits(object, c("ctJuliaFit", "ctJuliaModel")))
+    object <- structure(object, class = c("ctJuliaModel", "ctFitModel"))
+  gradient <- function(at) {
+    out <- try(suppressMessages(suppressWarnings(.ctJuliaEvaluate(object, at,
+      gradient = TRUE, cores = NA))), silent = TRUE)
+    if (inherits(out, "try-error") || !isTRUE(is.finite(as.numeric(out$value)[1L])))
+      return(NULL)
+    g <- as.numeric(out$gradient)
+    if (length(g) != length(est) || !all(is.finite(g))) return(NULL)
+    g
+  }
+  for (j in bad) {
+    h <- step * max(1, abs(est[j]))
+    up <- est
+    up[j] <- up[j] + h
+    down <- est
+    down[j] <- down[j] - h
+    gu <- gradient(up)
+    gd <- gradient(down)
+    if (is.null(gu) || is.null(gd)) return(NULL)
+    missing <- !is.finite(hessian[, j])
+    hessian[missing, j] <- ((gu - gd) / (2 * h))[missing]
+  }
+  block <- hessian[bad, bad, drop = FALSE]
+  hessian[bad, bad] <- (block + t(block)) / 2
+  if (any(!is.finite(hessian))) return(NULL)
+  labels <- if (length(labels) == length(est)) labels[bad] else as.character(bad)
+  warning("The exact Hessian's entries among ", length(bad), " parameter",
+    if (length(bad) > 1L) "s", " (", paste(utils::head(labels, 10L), collapse = ", "),
+    if (length(bad) > 10L) paste0(" and ", length(bad) - 10L, " more"),
+    ") are central differences of the gradient, which the engine could not ",
+    "take exactly (its message says why); the rest of the matrix is exact.",
+    call. = FALSE)
   hessian
 }
 

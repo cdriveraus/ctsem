@@ -1271,6 +1271,113 @@ test_that("the hessian raises the inner budget rather than returning NaN", {
   # escalation is undone whether or not the column succeeded.
   expect_equal(getbudget(), 2L)
   setbudget(200L)
+
+  # What the engine leaves NaN -- the entries among columns whose units failed
+  # at the estimate itself -- is differenced here for those columns alone, and
+  # the exact entries are kept; with every column NaN there is nothing to keep,
+  # and the caller takes the full finite-difference Hessian.
+  expect_null(ctsem:::.ctBackendHessianComplete(fit, raw, bare))
+  holes <- full
+  holes[c(2, 5), c(2, 5)] <- NaN
+  expect_warning(completed <- ctsem:::.ctBackendHessianComplete(fit, raw, holes),
+    "entries among 2 parameters")
+  expect_true(all(is.finite(completed)))
+  expect_identical(completed[-c(2, 5), ], full[-c(2, 5), ])
+  expect_equal(completed[c(2, 5), c(2, 5)], full[c(2, 5), c(2, 5)],
+    tolerance = 1e-3)
+  # The certification completes the matrix it formed from the specification
+  # alone (`.ctBackendEndgameAt()`), to the same entries.
+  expect_warning(fromspec <- ctsem:::.ctBackendHessianComplete(fit$model_spec,
+    raw, holes), "entries among 2 parameters")
+  expect_equal(fromspec, completed)
+  # A point whose exact Hessian the certification could not complete is not
+  # formed again by the uncertainty stage: the finite-difference fallback, at
+  # once.
+  noted <- fit
+  noted$uncertainty <- list(incomplete = as.numeric(raw))
+  expect_warning(again <- ctsem:::.ctBackendHessian(noted, raw), "not finite")
+  expect_null(again)
+  # And a Hessian with entries missing names them where no covariance can be
+  # formed from it, rather than failing in the repairs.
+  expect_error(ctsem:::ctOptimCovFromHessian(holes), "2 parameters \\(2, 5\\)")
+})
+
+# A unit whose value is a small difference of large terms: a person whose
+# answers barely move, beside a measurement error near zero, sums log densities
+# near 1e9 to a value of order one, which moves by 1e-7 between points ulps
+# apart. Newton reaches the mode, but no line search can rank its last step
+# there, and the solve reported such units short and their point rejected:
+# every evaluation of a simulated analogue of the SWB timescales fits' first
+# stage. Two persons of that analogue (six integer items, random diffusion,
+# rank 5) at its estimate; `inner_noise` counts the solves the value's
+# measured noise ended, each of which the old rule reported short.
+test_that("a unit at its mode in a value noisier than its size converges", {
+  skip_without_julia()
+  fixture <- readRDS(testthat::test_path("fixtures", "laplace-noise-floor.rds"))
+  k <- 6L
+  items <- paste0("y", seq_len(k))
+  MAN <- matrix(0, k, k)
+  diag(MAN) <- paste0("residualSD", seq_len(k))
+  DRIFT <- matrix(0, k, k)
+  diag(DRIFT) <- paste0("auto", items, "||TRUE||birthdate")
+  DIFF <- matrix("0", k, k)
+  diag(DIFF) <- paste0("sys", items, "||TRUE||birthdate")
+  cross <- outer(items, items, function(a, b) paste0("cross_", a, "_", b))
+  DIFF[lower.tri(DIFF)] <- cross[lower.tri(cross)]
+  model <- suppressMessages(ctModel(manifestNames = items,
+    latentNames = paste0("l", items), time = "time", id = "id", type = "ct",
+    TIpredNames = "birthdate", tipredDefault = FALSE, MANIFESTVAR = MAN,
+    LAMBDA = diag(1, k), MANIFESTMEANS = paste0("mu_", items, "||TRUE||birthdate"),
+    CINT = 0, T0MEANS = paste0("initial", items, "||TRUE||birthdate"),
+    DRIFT = DRIFT, DIFFUSION = DIFF))
+  spec <- suppressWarnings(suppressMessages(ctFit(fixture$data, model,
+    poprank = 5, popunique = c("MANIFESTMEANS", "T0MEANS"), priors = TRUE,
+    cores = 1, fit = FALSE)))
+  expect_equal(.ctBackendNpar(spec), length(fixture$raw))
+  objective <- .ctJuliaObjective(spec)
+  # Whether a line search there finds a trial as high is the noise's last
+  # bits: about one point in four beside the estimate, on any machine at
+  # different points. So forty points along a line, every one solved, and
+  # some by the noise rule.
+  direction <- sin(seq_along(fixture$raw))
+  # The refined fit's leaf solve from each unit's mode there, as a placed rule
+  # takes it (`_placed_leaf!`): stationary to the arithmetic, which its
+  # gradient, 1e-3 of roundoff, is not.
+  leaves <- function(x) JuliaConnectoR::juliaLet('
+    let L = ContinuousTimeSEM, lap = obj, x = L._laplace_extend(obj, collect(Float64, x0))
+      Ls = L._laplace_popchols(x, lap.spec)
+      aws = L._laplace_workspace!(lap, Float64, length(x))
+      all(eachindex(lap.units.members)) do U
+        r = L._quadrature_leaf_rule!(lap, U, x, Ls, 1, copy(lap.modes[U]), aws;
+          start = copy(lap.modes[U]))
+        r.ok && r.stationary
+      end
+    end', obj = objective, x0 = x)
+  ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_reset_opcounts!()")
+  solved <- vapply(seq_len(40), function(i) {
+    x <- fixture$raw + 2.5e-6 * i * direction
+    out <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaCall(
+      "ContinuousTimeSEM.ctsem_laplace_evaluate", objective,
+      .ctJuliaNumericVector(x), gradient = TRUE))
+    isTRUE(out$converged) && is.finite(out$value) && isTRUE(leaves(x))
+  }, logical(1))
+  counts <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_opcounts()"))
+  expect_true(all(solved))
+  expect_gte(counts$inner_noise, 1L)
+})
+
+# What runs after the optimisation cannot lose it: a 17.5-hour fit was once
+# thrown away when no covariance could be formed from its Hessian.
+test_that("a failed uncertainty stage returns the fit without it", {
+  skip_without_julia()
+  testthat::local_mocked_bindings(.ctFitUncertaintyImpl = function(...)
+    stop("no covariance here"), .package = "ctsem")
+  expect_warning(fit <- suppressMessages(ctFit(.laplace_test_data(nsubjects = 15),
+    .laplace_test_model(), backend = "julia", intoverpop = "augmented")),
+    "The uncertainty failed \\(no covariance here\\)")
+  expect_s3_class(fit, "ctJuliaFit")
+  expect_true(all(is.finite(fit$estimate$raw)))
+  expect_null(fit$estimate$cov)
 })
 
 test_that("gradient = 'forward' still gives a Laplace fit's certification its curvature", {
