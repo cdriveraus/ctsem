@@ -5,32 +5,56 @@ using ForwardDiff, LinearAlgebra, Random, Statistics
 #
 # What has to hold, each checked on its own:
 #
-#  1. On a Gaussian integrand every family's bound is the integral, which
-#     Laplace gives exactly there.
-#  2. Each family's log Jacobian is log |det du/dz| of its own map, and the
-#     skewed family's hand-written second derivatives are the generic map's.
-#  3. The gradient is the derivative of the value (the envelope theorem: the
-#     approximation maximises the bound, so its derivative in the parameters
-#     is the partial at the nodes held), on a non-Gaussian integrand.
+#  1. On a Gaussian integrand the Gaussian family's bound is the integral,
+#     which Laplace gives exactly there -- on units of one block, of subjects
+#     in studies and of three levels. The tree family is exact there with
+#     parameters linear in the members, not quadratic in the coordinates.
+#  2. The shaped family's log Jacobian is log |det du/dz| of its own map, its
+#     hand-written second derivatives are the generic map's, and its entropy
+#     on its own rule is the nodes' on a rule fine enough to settle it.
+#  3. The gradient is the derivative of the value (the envelope theorem), on
+#     non-Gaussian integrands: one effect a subject, and subjects in studies.
 #  4. On a non-Gaussian integrand the bound lies below the integral, which
-#     importance sampling on the fitted approximation gives.
-#  5. The optimiser climbs it, and a value after the run is the run's.
+#     brute-force quadrature gives.
+#  5. The family chosen by need, and an optimisation, its value after the run
+#     the run's.
 
 isdefined(@__MODULE__, :_LAPLACE_LINEAR_OBJECTIVE) ||
     include(joinpath(@__DIR__, "laplace_fixtures.jl"))
 
 const _VF = ContinuousTimeSEM
 
+# Subjects nested in two studies on the nonlinear objective (as test_placed.jl's
+# `_fresh_placed_nested`): a T0MEANS effect a subject, a MANIFESTMEANS effect a
+# study.
+_vf_nested_nonlinear() = (ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE;
+    re_index=[1, 4], sd_index=[5, 6], cor_index=Int[], sd_scale=[1.0, 1.0],
+    level_nre=[1, 1], group=vcat(1:5, [1, 1, 2, 2, 2]), level_ngroups=[5, 2]),
+    [0.1, 0.4, -0.2, 0.05, -0.25, -0.1])
+
+# Three levels with every effect a mean's (the fixtures' `_fresh_threelevel`
+# puts the region's on the drift, through a nonlinear transform): subjects'
+# T0MEANS and CINT, studies' and regions' MANIFESTMEANS.
+_vf_threelevel_gauss() = (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE;
+    re_index=[1, 2, 5, 5], sd_index=[6, 7, 9, 10], cor_index=[8],
+    sd_scale=[1.0, 1.0, 1.0, 1.0], level_nre=[2, 1, 1],
+    group=vcat(1:6, _THREELEVEL_STUDY, _THREELEVEL_REGION), level_ngroups=[6, 3, 2]),
+    [0.2, -0.1, 0.3, -0.2, 0.05, -0.3, -0.15, 0.4, -0.25, 0.1])
+
 @testset "variational objective" begin
     @testset "Gaussian integrand: the bound is the integral" begin
+        for fresh in (_fresh_linear, _fresh_twolevel, _vf_threelevel_gauss)
+            laplace, values = fresh()
+            exact = ctsem_laplace_evaluate(laplace, values; gradient=false)
+            V = ctsem_variational(laplace; family="gauss", tol=1e-12)
+            r = _VF.ctsem_variational_evaluate(V, values)
+            @test r.converged
+            @test r.unit_loglik ≈ exact.unit_loglik atol = 1e-8
+        end
+        # A skewed or bending family on a Gaussian integrand stays at zero
+        # shape up to its rule's error.
         laplace, values = _fresh_linear()
         exact = ctsem_laplace_evaluate(laplace, values; gradient=false)
-        V = ctsem_variational(laplace; family="gauss", tol=1e-12)
-        r = _VF.ctsem_variational_evaluate(V, values)
-        @test r.converged
-        @test r.unit_loglik ≈ exact.unit_loglik atol = 1e-8
-        # A skewed or bending family on the cut rule leaves zero shape by the
-        # rule's error, about a thousandth of a nat a unit here.
         for family in ("skew", "bend")
             V = ctsem_variational(laplace; family=family, tol=1e-12)
             r = _VF.ctsem_variational_evaluate(V, values)
@@ -39,10 +63,31 @@ const _VF = ContinuousTimeSEM
         end
     end
 
-    @testset "families: log Jacobian and second derivatives" begin
+    @testset "the tree family's parameters are linear in the members" begin
+        for fresh in (_fresh_twolevel, _fresh_threelevel)
+            laplace, _ = fresh()
+            V = ctsem_variational(laplace; family="gauss")
+            for (U, lay) in enumerate(V.layouts)
+                blocks = laplace.units.blocks[U]
+                want = sum(b.size * (b.size + 3) ÷ 2 +
+                           b.size * sum((blocks[a].size for a in b.ancestors); init=0)
+                           for b in blocks; init=0)
+                @test lay.p == want
+                @test length(lay.pblocks) == length(blocks)
+                # Each member's term reads its own chain's parameters alone.
+                for mem in lay.members
+                    mine = [b for b in eachindex(blocks) if mem.member in blocks[b].members]
+                    @test all(q -> lay.pblock[q] in mine, mem.plist)
+                    @test length(mem.chain) == sum(blocks[b].size for b in mine)
+                end
+            end
+        end
+    end
+
+    @testset "shaped family: log Jacobian, second derivatives, entropy" begin
         rng = Random.Xoshiro(3)
         for (d, skew, bend) in ((1, true, false), (2, true, false), (2, true, true),
-            (3, true, true), (3, false, true), (4, false, false))
+            (3, true, true), (3, false, true))
             f = _VF.CTSEMVFamily(d, skew; bend=bend)
             lam = 0.3 .* randn(rng, f.p)
             Z = randn(rng, d, 5)
@@ -55,8 +100,6 @@ const _VF = ContinuousTimeSEM
                 @test nd.U[:, k] ≈ u atol = 1e-12
                 @test nd.J[k] ≈ ForwardDiff.jacobian(_VF._VFMapAt(f, z), lam) atol = 1e-10
             end
-            # The entropy on its fine rule against the nodes' log Jacobians
-            # on a product rule fine enough to settle it.
             Zf, wf = _VF._vf_rule_product(d, d == 1 ? 200 : d == 2 ? 100 : 30)
             @test _VF._vf_entropy(f, lam) ≈
                   dot(wf, _VF._vf_nodes(f, lam, Zf; jacobian=false).lj) atol = 2e-5
@@ -71,8 +114,9 @@ const _VF = ContinuousTimeSEM
     end
 
     @testset "the gradient is the value's" begin
-        laplace, values = _fresh_nonlinear()
-        for family in ("skew", "gauss")
+        for (fresh, family) in ((_fresh_nonlinear, "auto"), (_fresh_nonlinear, "gauss"),
+            (_vf_nested_nonlinear, "auto"))
+            laplace, values = fresh()
             V = ctsem_variational(laplace; family=family, tol=1e-14)
             r = _VF.ctsem_variational_evaluate(V, values)
             @test r.converged
@@ -93,44 +137,25 @@ const _VF = ContinuousTimeSEM
         laplace, values = _fresh_nonlinear()
         V = ctsem_variational(laplace)
         r = _VF.ctsem_variational_evaluate(V, values)
-        v = ctsem_variational_value(V, values; draws=8192)
-        @test all(isfinite, v.unit_loglik)
-        @test all(r.unit_loglik .<= v.unit_loglik .+ 4 .* v.unit_se .+ 1e-8)
-        # A skewed approximation of one effect leaves little of the integral.
-        @test maximum(v.unit_loglik .- r.unit_loglik) < 0.05
-    end
-
-    @testset "the prior swapped under a moved approximation" begin
-        # On Gaussian units the swapped start is the new approximation: after
-        # a population sd and a mean move, no inner step is needed, and the
-        # value is a fresh solve's.
-        laplace, values = _fresh_linear()
-        V = ctsem_variational(laplace; family="gauss", tol=1e-12)
-        _VF.ctsem_variational_evaluate(V, values)
-        moved = copy(values)
-        moved[6] += 0.4
-        moved[1] -= 0.3
-        g0 = V.gradient_passes
-        r = _VF.ctsem_variational_evaluate(V, moved)
-        nodes = sum(size(Z, 2) for Z in V.Z)
-        @test V.gradient_passes - g0 <= 2 * nodes
-        Vf = ctsem_variational(laplace; family="gauss", tol=1e-12)
-        @test r.value ≈ _VF.ctsem_variational_evaluate(Vf, moved).value atol = 1e-9
-        Vn = ctsem_variational(laplace; family="gauss", tol=1e-12, swap=false)
-        _VF.ctsem_variational_evaluate(Vn, values)
-        gn = Vn.gradient_passes
-        _VF.ctsem_variational_evaluate(Vn, moved)
-        @test Vn.gradient_passes - gn > V.gradient_passes - g0
+        z, w = _VF._vf_gh(80)
+        for U in eachindex(laplace.units.members)
+            a = [log(w[k]) + _unit_loglik(laplace, U, values, [z[k]]) for k in eachindex(z)]
+            pk = maximum(a)
+            exact = pk + log(sum(exp.(a .- pk)))
+            @test r.unit_loglik[U] <= exact + 1e-4
+            # A skewed approximation of one effect leaves little of the integral.
+            @test exact - r.unit_loglik[U] < 0.01
+        end
     end
 
     @testset "the family chosen by need" begin
-        # Two coordinates a unit: started Gaussian, tried with the bending
-        # family once. On a Gaussian integrand bending gains nothing, so no
-        # unit switches; on a non-Gaussian one the bound cannot fall.
+        # One block of two coordinates: started Gaussian, tried with the
+        # bending family once. On a Gaussian integrand bending gains nothing,
+        # so no unit switches; on a non-Gaussian one the bound cannot fall.
         laplace, values = _fresh_linear()
         V = ctsem_variational(laplace)
-        @test all(V.pending) && !any(f.bend for f in V.fams)
-        r0 = _VF.ctsem_variational_evaluate(V, values)
+        @test all(V.pending) && all(l -> l.shaped === nothing, V.layouts)
+        _VF.ctsem_variational_evaluate(V, values)
         c = ctsem_variational_choose!(V, values)
         @test c.units == 0 && !any(V.pending)
         # The nonlinear fixture with effects on T0MEANS and MANIFESTMEANS:
@@ -142,21 +167,26 @@ const _VF = ContinuousTimeSEM
         r2 = _VF.ctsem_variational_evaluate(V2, values2)
         c2 = ctsem_variational_choose!(V2, values2)
         r3 = _VF.ctsem_variational_evaluate(V2, values2)
-        @test c2.units == count(f -> f.bend, V2.fams)
+        @test c2.units == count(l -> l.shaped !== nothing && l.shaped.bend, V2.layouts)
         @test r3.value >= r2.value - 1e-8
         @test r3.value ≈ r2.value + c2.change atol = 1e-6
         ctsem_variational_reset!(V2)
-        @test all(V2.pending) && !any(f.bend for f in V2.fams)
+        @test all(V2.pending) && all(l -> l.shaped === nothing, V2.layouts)
+        # A nested unit's family is the tree's and is not tried.
+        V3 = ctsem_variational(_vf_nested_nonlinear()[1])
+        @test !any(V3.pending)
     end
 
     @testset "optimised, and read after the run" begin
-        laplace, values = _fresh_nonlinear()
-        V = ctsem_variational(laplace)
-        res = ctsem_optimize(V, values; maxiter=200, newton=false)
-        x = collect(Float64, res.minimizer)
-        after = _VF.ctsem_variational_evaluate(V, x; gradient=true)
-        @test after.value ≈ res.maximum_loglik atol = 1e-6
-        @test norm(after.gradient) < 1e-3
-        @test V.accepted && !V.running
+        for fresh in (_fresh_nonlinear, _vf_nested_nonlinear)
+            laplace, values = fresh()
+            V = ctsem_variational(laplace)
+            res = ctsem_optimize(V, values; maxiter=200, newton=false)
+            x = collect(Float64, res.minimizer)
+            after = _VF.ctsem_variational_evaluate(V, x; gradient=true)
+            @test after.value ≈ res.maximum_loglik atol = 1e-6
+            @test norm(after.gradient) < 1e-3
+            @test V.accepted && !V.running
+        end
     end
 end

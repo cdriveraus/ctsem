@@ -105,6 +105,70 @@ test_that("on a nonlinear model the bound lies below the reported log likelihood
   expect_equal(e$loglik, qf$estimate$loglik, tolerance = 0.1)
 })
 
+# Persons in studies: a manifest mean that varies at both levels (a Gaussian
+# integrand, where the bound is the integral), and with `drift` a person-level
+# drift through `-log1p_exp` beside it (not Gaussian).
+.vf_nested_model <- function(drift = FALSE) {
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", silent = TRUE,
+    id = c("id", "study"), manifestNames = "Y1", latentNames = "eta1",
+    LAMBDA = matrix(1), DRIFT = if (drift) "drift|-log1p_exp(-param)|TRUE" else
+      matrix(-0.5), DIFFUSION = matrix(0.5), MANIFESTMEANS = matrix("mm"),
+    T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0))))
+  m$pars$indvarying <- m$pars$param %in% "mm" | (drift & m$pars$param %in% "drift")
+  if (drift) m$pars$indvarying[m$pars$param %in% "drift"] <- "id"
+  m
+}
+
+.vf_nested_data <- function(npersons = 40L, nstudies = 8L, ntimes = 8L, seed = 7L) {
+  set.seed(seed)
+  study <- rep(seq_len(nstudies), length.out = npersons)
+  smean <- stats::rnorm(nstudies, 1, 0.7)
+  rows <- lapply(seq_len(npersons), function(i) {
+    a <- -log1p(exp(-stats::rnorm(1, 0.7, 0.6)))
+    decay <- exp(a)
+    innovation <- sqrt(0.25 * (exp(2 * a) - 1) / (2 * a))
+    latent <- numeric(ntimes)
+    latent[1] <- stats::rnorm(1, 0, 1)
+    for (t in seq_len(ntimes - 1L)) latent[t + 1L] <- decay * latent[t] +
+      stats::rnorm(1, 0, innovation)
+    data.frame(id = i, study = study[i], time = seq_len(ntimes) - 1L,
+      Y1 = smean[study[i]] + stats::rnorm(1, 0, 0.5) + latent +
+        stats::rnorm(ntimes, 0, 0.3))
+  })
+  do.call(rbind, rows)
+}
+
+.vf_nested_fit <- function(drift, route) {
+  key <- paste("nested", drift, route)
+  if (!exists(key, envir = .vf_cache, inherits = FALSE)) {
+    set.seed(1)
+    assign(key, suppressWarnings(suppressMessages(ctFit(.vf_nested_data(),
+      .vf_nested_model(drift), backend = "julia", intoverpop = route, cores = 2))),
+      envir = .vf_cache)
+  }
+  get(key, envir = .vf_cache)
+}
+
+test_that("persons in studies: the tree family is Laplace's on a Gaussian integrand", {
+  skip_on_cran()
+  skip_without_julia()
+  vf <- .vf_nested_fit(FALSE, "variational")
+  lf <- .vf_nested_fit(FALSE, "laplace")
+  expect_identical(vf$estimate$loglik_method, "variational")
+  expect_equal(vf$estimate$raw, lf$estimate$raw, tolerance = 1e-3)
+  expect_equal(vf$estimate$loglik_lowerbound, vf$estimate$loglik, tolerance = 1e-3)
+})
+
+test_that("persons in studies with a random drift: the bound lies below the integral", {
+  skip_on_cran()
+  skip_without_julia()
+  vf <- .vf_nested_fit(TRUE, "variational")
+  e <- vf$estimate
+  expect_identical(e$loglik_method, "variational")
+  expect_true(is.finite(e$loglik) && is.finite(e$loglik_lowerbound))
+  expect_lte(e$loglik_lowerbound, e$loglik + 4 * e$loglik_se + e$loglik_bound)
+})
+
 test_that("intoverpop = 'variational' is refused where it cannot apply", {
   skip_on_cran()
   expect_error(suppressWarnings(suppressMessages(ctFit(.vf_linear_data(5, 3),

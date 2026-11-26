@@ -338,6 +338,21 @@
     carrying <- c(carrying, u)
     left <- left - steps[u, ]
   }
+  integral <- .ctLaplaceCheckIntegral(r, scored)
+  c(list(status = status, shift = shift, noise = noise, bar = bar,
+    max_shift = max(abs(shift)), worst = which.max(abs(shift)),
+    carrying = carrying), integral[setdiff(names(integral), "laplace_units")],
+    list(units = length(integral$laplace_units), draws = as.integer(draws),
+      seeds = sum(scored), seconds = proc.time()[["elapsed"]] - started))
+}
+
+# The integral the random-effects check makes at its point (`r`, from
+# `ctsem_laplace_check`), as Laplace's term plus each unit's gap: on each unit
+# where Laplace's term with its O(1/n) correction has the tighter error
+# (`.ctLaplaceExpanded()`), that, whose bounds `gap_bound` sums; on the rest,
+# the draws, whose seeds `scored` give `gap_se`. Read by the check and by a
+# variational fit's log likelihood (`.ctVariationalLoglik()`).
+.ctLaplaceCheckIntegral <- function(r, scored) {
   laplace_units <- as.numeric(r$laplace_unit)
   checked <- matrix(as.numeric(r$check_unit), nrow = length(laplace_units))
   expanded <- .ctLaplaceExpanded(r, length(laplace_units), scored)
@@ -347,14 +362,10 @@
     sum(laplace_units[!expanded])
   unit_gap <- rowMeans(checked[, scored, drop = FALSE]) - laplace_units
   unit_gap[expanded] <- expansion[expanded]
-  list(status = status, shift = shift, noise = noise, bar = bar,
-    max_shift = max(abs(shift)), worst = which.max(abs(shift)),
-    carrying = carrying, gap = sum(expansion[expanded]) + mean(gaps),
+  list(laplace_units = laplace_units, gap = sum(expansion[expanded]) + mean(gaps),
     gap_se = stats::sd(gaps) / sqrt(length(gaps)),
     gap_bound = sum(as.numeric(r$expansion_bound)[expanded]),
-    expanded = sum(expanded), expanded_units = which(expanded), unit_gap = unit_gap,
-    units = length(laplace_units), draws = as.integer(draws), seeds = sum(scored),
-    seconds = proc.time()[["elapsed"]] - started)
+    expanded = sum(expanded), expanded_units = which(expanded), unit_gap = unit_gap)
 }
 
 # The smallest eigenvalue of a unit's curvature in its effects, relative to the
@@ -795,27 +806,37 @@
     timed = timed)
 }
 
-# A variational fit's log likelihood (`intoverpop = 'variational'`): each
-# unit's integral by importance sampling on the approximation fitted at the
-# estimate (`ctsem_variational_value`), with its standard error. The bound the
-# optimiser maximised is kept as `loglik_lowerbound`, which
-# `.ctFitOptimisedLoglik()` reads.
-.ctVariationalLoglik <- function(fit, cores) {
-  objective <- .ctJuliaObjective(fit)
-  v <- .ctBackendWithMaxChunks(cores, .ctJuliaGet(.ctJuliaCall(
-    "ContinuousTimeSEM.ctsem_variational_value", objective,
-    .ctJuliaNumericVector(as.numeric(fit$estimate$raw)))))
-  value <- as.numeric(v$loglik)
-  if (length(value) != 1L || !is.finite(value)) stop("its value is not finite")
-  fit$estimate$loglik_lowerbound <- as.numeric(fit$estimate$loglik)
+# A variational fit's log likelihood (`intoverpop = 'variational'`): the
+# random-effects check's integral at the estimate (`ctsem_laplace_check` on
+# the Laplace objective underneath, `.ctLaplaceCheckIntegral()`), which
+# integrates every unit whatever its width or nesting, with its standard error
+# and the expansion's bound, as a checked Laplace fit reports its own
+# (`.ctLaplaceCheckedLoglik()`). The bound the optimiser maximised is kept as
+# `loglik_lowerbound`, which `.ctFitOptimisedLoglik()` reads.
+.ctVariationalLoglik <- function(fit, cores, draws = 128L, seeds = 1:4) {
+  est <- as.numeric(fit$estimate$raw)
+  module <- .ctJuliaModule(fit$model_spec$project)
+  r <- .ctBackendWithMaxChunks(cores, .ctJuliaGet(module$ctsem_laplace_check(
+    .ctJuliaObjective(fit), .ctJuliaNumericVector(est), draws = as.integer(draws),
+    seeds = .ctJuliaVector(as.integer(seeds)),
+    draws_df = as.numeric(.ctLaplaceContinueDefaults$draws_df), unit_scores = FALSE,
+    expansion_gate = .ctLaplaceExpansionGate)))
+  G <- matrix(as.numeric(r$gradient), nrow = length(est))
+  scored <- apply(G, 2L, function(g) all(is.finite(g)))
+  if (sum(scored) < 2L) stop("the check scored every unit at fewer than two seeds")
+  integral <- .ctLaplaceCheckIntegral(r, scored)
+  units <- integral$laplace_units + integral$unit_gap
+  value <- sum(units)
+  if (!is.finite(value)) stop("its value is not finite")
+  bound <- as.numeric(fit$estimate$loglik)
+  fit$estimate$loglik_lowerbound <- bound
   fit$estimate$loglik <- value
-  if (!is.null(fit$estimate$loglik_weighted))
-    fit$estimate$loglik_weighted <- as.numeric(v$loglik_weighted)
-  fit$estimate$logposterior <- as.numeric(v$value)
-  fit$estimate$loglik_se <- as.numeric(v$se)
-  subjects <- as.numeric(v$subject_loglik)
-  if (length(subjects) == length(fit$estimate$subject_loglik) &&
-      all(is.finite(subjects))) fit$estimate$subject_loglik <- subjects
+  if (!is.null(fit$estimate$logposterior))
+    fit$estimate$logposterior <- as.numeric(fit$estimate$logposterior) + value - bound
+  fit$estimate$loglik_se <- as.numeric(integral$gap_se)
+  fit$estimate$loglik_bound <- as.numeric(integral$gap_bound)
+  if (length(units) == length(fit$estimate$subject_loglik) && all(is.finite(units)))
+    fit$estimate$subject_loglik <- units
   fit$estimate$loglik_method <- "variational"
   fit
 }

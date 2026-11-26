@@ -8322,7 +8322,10 @@ print.ctJuliaFit <- function(x, ...) {
   if (!sampled) cat("  log likelihood:", format(x$estimate$loglik),
     if (identical(x$estimate$loglik_method, "checked")) paste0("(corrected for ",
       "Laplace approximation error, ", .ctLoglikCheckedError(x$estimate),
-      "; uncorrected ", format(x$estimate$loglik_laplace), ")"), "\n")
+      "; uncorrected ", format(x$estimate$loglik_laplace), ")") else
+    if (identical(x$estimate$loglik_method, "variational")) paste0("(integrated ",
+      "by the random-effects check, ", .ctLoglikCheckedError(x$estimate),
+      "; variational bound ", format(x$estimate$loglik_lowerbound), ")"), "\n")
   if (!is.null(x$estimate$loglik_weighted)) cat("  weighted log likelihood:",
     format(x$estimate$loglik_weighted), "(sampling weights)\n")
   if (!sampled) cat("  converged:", x$optim$converged, " iterations:",
