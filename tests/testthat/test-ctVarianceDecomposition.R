@@ -168,7 +168,20 @@ test_that('the four components sum to the total and none is negative', {
     expect_true(all(out$within.stochastic >= 0))
     expect_true(all(out$within.measurement >= 0))
     expect_equal(out$prop.between + out$prop.within, rep(1, nrow(out)))
+    expect_equal(out$prop.between + out$prop.within.deterministic +
+        out$prop.within.stochastic + out$prop.within.measurement,
+      rep(1, nrow(out)))
+    expect_equal(out$icc, out$between / out$total)
+    expect_equal(out$icc.process, out$between / (out$between +
+        out$within.deterministic + out$within.stochastic))
+    # A latent process has no measurement error, so its two are the same, and
+    # an indicator's rises once measurement error leaves the total.
+    latent <- out$type == 'latent'
+    expect_equal(out$icc.process[latent], out$icc[latent])
+    expect_true(all(out$icc.process[!latent] > out$icc[!latent]))
   }
+  expect_output(print(out), 'Proportions of the total')
+  expect_output(print(out), 'Intraclass correlations')
 })
 
 test_that('the stochastic and measurement parts match their closed forms', {
@@ -240,6 +253,10 @@ test_that('sources split the stochastic term of a fit and bound its record level
     out$within.stochastic)
   expect_true(all(out$level.process <= out$within.stochastic.process + 1e-12))
   expect_true(all(out$level.process > 0))
+  expect_equal(out$prop.within.stochastic.initial +
+    out$prop.within.stochastic.process, out$prop.within.stochastic)
+  expect_equal(out$prop.level.process, out$level.process / out$total)
+  expect_output(print(out), 'by source')
   expect_error(ctVarianceDecomposition(fit, sources = list(a = 'eta9')),
     'does not have')
   expect_error(ctVarianceDecomposition(fit, sources = list(initial = 'eta1')),
@@ -463,6 +480,9 @@ test_that('times= resolves the decomposition over the window', {
   expect_equal(first$between, 0)
   expect_gt(last$between, 0)
   expect_gt(last$prop.between, first$prop.between)
+  expect_equal(out$icc, out$prop.between)
+  expect_false('prop.within.deterministic' %in% names(out))
+  expect_output(print(out), 'Intraclass correlations')
   # and it is monotone here, which is what a relaxation looks like.
   series <- out$between[out$variable == 'eta1'][order(unique(out$time))]
   expect_true(all(diff(series) >= 0))
@@ -660,6 +680,12 @@ test_that('a level above the subject gets its own between column', {
   # The levels are orthogonal by construction, so they add up to `between`.
   expect_equal(out$between.id + out$between.study, out$between)
   expect_equal(out$between + out$within, out$total)
+  expect_equal(out$prop.between.id + out$prop.between.study, out$prop.between)
+  # Two observations of one person share both levels, two persons of one study
+  # the study alone.
+  expect_equal(out$icc.id, out$icc)
+  expect_equal(out$icc.study, out$between.study / out$total)
+  expect_output(print(out), 'icc.study')
   expect_true(all(out$between.study >= 0))
   expect_true(all(out$between.id >= 0))
   # A between person variance that is actually there: the carrier route this
