@@ -110,6 +110,18 @@ test_that("on a nonlinear model the bound lies below the reported log likelihood
   expect_lt(vf$variational$check$max_shift, 0.2)
 })
 
+test_that("a variational fit's interval check and 'checked' run", {
+  skip_on_cran()
+  skip_without_julia()
+  vf <- .vf_fit("nonlinear", "variational")
+  check <- vf$uncertainty$details$normalcheck
+  expect_null(check$failed)
+  expect_gt(check$draws, 0)
+  # 'checked' takes no coreset of an objective the engine cannot take one of.
+  u <- suppressWarnings(suppressMessages(ctFitUncertainty(vf, "checked", cores = 2)))
+  expect_true(all(is.finite(u$estimate$se)))
+})
+
 test_that("without the random-effects check a variational fit reports its bound", {
   skip_on_cran()
   skip_without_julia()

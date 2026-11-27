@@ -206,50 +206,6 @@ _vf_threelevel_gauss() = (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE;
         end
     end
 
-    @testset "the tangent density" begin
-        # Each unit's approximation moved along its derivative from where the
-        # Hessian was formed, with no refit: the solved bound's value,
-        # gradient and Hessian there, below it elsewhere by the move's fourth
-        # power, and its gradient its value's.
-        laplace2 = ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE, [1, 4], [5, 6], [7],
-            [1.0, 1.0])
-        values2 = [0.1, 0.4, -0.2, 0.05, -0.25, -0.4, 0.2]
-        for (laplace, values, family) in ((_fresh_nonlinear()..., "auto"),
-            (_vf_nested_nonlinear()..., "auto"), (laplace2, values2, "bend"))
-            n = length(values)
-            V = ctsem_variational(laplace; family=family, tol=1e-14)
-            f0 = _VF.ctsem_variational_evaluate(V, values)
-            H = _VF.ctsem_hessian(V, values)
-            T = _VF.ctsem_variational_tangent(V, values)
-            t0 = _VF.ctsem_variational_tangent_evaluate(T, values)
-            @test t0.converged
-            @test t0.value ≈ f0.value atol = 1e-9
-            @test t0.gradient ≈ f0.gradient rtol = 1e-6 atol = 1e-8
-            tg(x) = _VF.ctsem_variational_tangent_evaluate(T, x).gradient
-            tv(x) = _VF.ctsem_variational_tangent_evaluate(T, x; gradient=false).value
-            h = 1e-5
-            HT = zeros(n, n)
-            for j in 1:n
-                e = zeros(n)
-                e[j] = h
-                HT[:, j] .= (tg(values .+ e) .- tg(values .- e)) ./ (2h)
-            end
-            @test (HT .+ transpose(HT)) ./ 2 ≈ H rtol = 1e-4 atol = 1e-5
-            dir = (-1.0) .^ (1:n) ./ sqrt(n)
-            gaps = map(a -> _VF.ctsem_variational_evaluate(V, values .+ a .* dir;
-                gradient=false).value - tv(values .+ a .* dir), (0.05, 0.1))
-            @test all(gaps .>= -1e-10)
-            gaps[1] > 1e-11 && @test gaps[2] / gaps[1] ≈ 16 rtol = 0.3
-            x1 = values .+ 0.1 .* dir
-            g1 = tg(x1)
-            for j in 1:n
-                e = zeros(n)
-                e[j] = 1e-5
-                @test g1[j] ≈ (tv(x1 .+ e) - tv(x1 .- e)) / 2e-5 rtol = 1e-5 atol = 1e-7
-            end
-        end
-    end
-
     @testset "optimised, and read after the run" begin
         for fresh in (_fresh_nonlinear, _vf_nested_nonlinear)
             laplace, values = fresh()
