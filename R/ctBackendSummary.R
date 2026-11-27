@@ -2277,15 +2277,32 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     list(chains = length(chains), chain_draws = chains) else
     list(chains = chains, draws = nrow(fit$estimate$rawposterior) %/% chains)),
     ".")
-  if (is.finite(worst)) {
-    note <- paste0(note, " Worst R-hat ", signif(worst, 4), " (", worstname, ")")
-    note <- paste0(note, if (is.finite(fewest))
-      paste0(", smallest n_eff ", round(fewest), " (", fewestname, ").") else ".")
+  # The thresholds are the ones `.ctSampleWarn()` warns at, so the summary and
+  # the fit-time warning cannot disagree about whether a run failed.
+  rhatmax <- .ctSampleRhatCeiling(fit$sample)
+  # A sampler that reports no R-hat (tempered SMC: ceiling Inf, every Rhat NA)
+  # is not sent to a column it does not fill.
+  hasrhat <- is.finite(rhatmax) && is.finite(worst)
+  # Whether the chains converged is R-hat's to say; divergent transitions are
+  # given beside it as a share of the transitions (`.ctSampleDiagnosis()`).
+  essnote <- if (is.finite(fewest))
+    paste0("smallest n_eff ", round(fewest), " (", fewestname, ")") else ""
+  if (hasrhat) {
+    note <- paste0(note, if (worst > rhatmax) " The chains have not converged: "
+      else " The chains converged: ", "worst R-hat ", signif(worst, 4), " (",
+      worstname, ")", if (nzchar(essnote)) paste0(", ", essnote) else "", ".")
+  } else if (identical(fit$sample$sampler, "smc")) {
+    note <- paste0(note, " Tempered SMC, which reports no R-hat",
+      if (nzchar(essnote)) paste0("; ", essnote) else "", ".")
+  } else if (nzchar(essnote)) {
+    note <- paste0(note, " ", toupper(substr(essnote, 1L, 1L)),
+      substring(essnote, 2L), ".")
   }
   divergent <- .ctSampleDivergent(fit$sample)
   if (divergent > 0L) {
-    note <- paste0(note, " ", divergent, " divergent transition",
-      if (divergent > 1L) "s" else "", ".")
+    note <- paste0(note, " ", .ctSampleDivergentShare(fit$sample),
+      .ctSampleTargetText(fit$sample),
+      ", so the draws may under-represent where that happened.")
   }
   bound <- .ctSampleDivergentBound(fit$sample)
   if (bound > 0L) {
@@ -2293,23 +2310,15 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       " stopped at the random-effect correlation bound.",
       .ctSampleBoundRankNote(fit$sample))
   }
-  # The thresholds are the ones `.ctSampleWarn()` warns at, so the summary and
-  # the fit-time warning cannot disagree about whether a run failed.
-  rhatmax <- .ctSampleRhatCeiling(fit$sample)
-  # A sampler that reports no R-hat (tempered SMC: ceiling Inf, every Rhat NA)
-  # is not sent to a column it does not fill.
-  hasrhat <- is.finite(rhatmax) && is.finite(worst)
-  bad <- (hasrhat && worst > rhatmax) || divergent > 0L
-  if (bad && hasrhat) {
+  if (hasrhat && worst > rhatmax) {
     # Not "these are not posterior summaries": a run can mix perfectly in the
     # population parameters and not at all in the random-effects scales, and it
     # commonly does. The reader is sent to the column rather than told to
     # discard the table.
-    note <- paste0(note, " The chains have not converged, so any estimate with ",
-      "an R-hat above ", rhatmax, " is not a posterior summary. See fit$sample.")
-  } else if (bad) {
-    note <- paste0(note, " The draws may under-represent where the sampler ",
-      "diverged. See fit$sample.")
+    note <- paste0(note, " Any estimate with an R-hat above ", rhatmax,
+      " is not a posterior summary. See fit$sample.")
+  } else if (divergent > 0L) {
+    note <- paste0(note, " See fit$sample.")
   } else if (is.finite(fewest) && fewest < .ctSampleEssFloor(fit$sample)) {
     note <- paste0(note, " Too few effective draws for reliable intervals.")
   }

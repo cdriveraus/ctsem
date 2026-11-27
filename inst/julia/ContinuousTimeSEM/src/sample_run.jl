@@ -233,17 +233,30 @@ struct _ChainResult
     warmup_used::Int
     x::Vector{Float64}
     metric::CTSEMMetric
+    # The acceptance target the step size was tuned for, after any raise
+    # (NaN where the step was handed in and its target is not known).
+    target::Float64
 end
 
-# How often warmup re-examines its divergence rate, what rate counts as
-# persisting, and how far the acceptance target may be pushed. The rate is
-# deliberately well above zero: an isolated divergence early in warmup, at a
-# step size dual averaging is still moving, says nothing worth acting on.
+# How often warmup re-examines its divergences, what rate of them raises the
+# acceptance target, and how far the target may be pushed. Any divergence
+# after the init buffer counts (Charles, 2026-11-27): the target is zero
+# divergences, and divergences in the buffer, where the step size is still
+# the crude first guess, are not counted. At a rate of 0.05 a stride the
+# raise rarely fired: on the ctsem book's N = 1 wearable model a chain's warmup
+# had 2-8 divergences in 200 transitions, and its draws then diverged 1 to 133
+# times a run of 5,764-12,800.
 const _ACCEPT_CHECK_STRIDE = 50
-const _ACCEPT_DIVERGENCE_RATE = 0.05
-const _ACCEPT_STEP = 0.05
+const _ACCEPT_DIVERGENCE_RATE = 0.0
 const _ACCEPT_MAX = 0.95
 const _ACCEPT_MAX_RAISES = 3
+
+"""The acceptance target after a warmup's raise on divergences: half way to
+one, at most `_ACCEPT_MAX`, so the default 0.8 reaches 0.95 in two raises,
+which a 200-draw warmup's two checks allow. Tempered SMC's final chains,
+which have no warmup, run at `_ACCEPT_MAX`'s step where any stage diverged
+(sample_smc.jl)."""
+_accept_raised(target::Float64) = min(_ACCEPT_MAX, 1 - (1 - target) / 2)
 
 """
     _ChainRetune(after, steps, target, count)
@@ -383,7 +396,7 @@ function _run_chain(logdensity!, centre::Vector{Float64},
         logp = logdensity!(g, x)
         return _continue_chain(logdensity!, ws, rng, x, g, logp,
             resume.stepsize, resume.metric, ndraws, maxdepth, maxdelta, progress,
-            callback)
+            callback; target=resume.target)
     end
     x, logp = _sample_initial_point(centre, metric, rng, init_scale,
         logdensity!, g)
@@ -484,7 +497,7 @@ function _run_chain(logdensity!, centre::Vector{Float64},
             rate = check_divergent / (iteration - check_start)
             if rate > _ACCEPT_DIVERGENCE_RATE && da.target < _ACCEPT_MAX &&
                     raises < _ACCEPT_MAX_RAISES
-                da.target = min(_ACCEPT_MAX, da.target + _ACCEPT_STEP)
+                da.target = _accept_raised(da.target)
                 raises += 1
                 eps = _dual_restart!(da, eps)
             end
@@ -581,7 +594,7 @@ function _run_chain(logdensity!, centre::Vector{Float64},
         ndraws, maxdepth, maxdelta, progress, callback; retune=retune)
     return _ChainResult(sampled.draws, sampled.accept, sampled.divergent,
         sampled.bound, sampled.depth, sampled.energy, sampled.eps,
-        warmup_divergent, warmup_used, copy(x), current)
+        warmup_divergent, warmup_used, copy(x), current, da.target)
 end
 
 """
@@ -599,11 +612,12 @@ function _continue_chain(logdensity!, ws::_NUTSWorkspace, rng::AbstractRNG,
     x::Vector{Float64}, g::Vector{Float64}, logp::Float64, eps::Float64,
     metric::CTSEMMetric, ndraws::Int, maxdepth::Int, maxdelta::Float64,
     progress::_ChainReport=_ChainReport(),
-    callback::CTSEMCallback=CTSEMCallback(nothing))
+    callback::CTSEMCallback=CTSEMCallback(nothing); target::Float64=NaN)
     sampled = _sample_draws!(logdensity!, ws, rng, x, g, logp, eps, metric,
         ndraws, maxdepth, maxdelta, progress, callback)
     return _ChainResult(sampled.draws, sampled.accept, sampled.divergent,
-        sampled.bound, sampled.depth, sampled.energy, eps, 0, 0, copy(x), metric)
+        sampled.bound, sampled.depth, sampled.energy, eps, 0, 0, copy(x), metric,
+        target)
 end
 
 """
@@ -865,7 +879,8 @@ end
 
 """
     _sample_result(pooled; nchains, ndraws, npar, ndim, maxdepth, stepsize,
-        warmup_divergent, trace, saved_effects, effects, ebfmi, diagnostics)
+        warmup_divergent, trace, saved_effects, effects, ebfmi, diagnostics,
+        target_accept)
 
 The record every sampler returns -- the joint and marginal NUTS samplers,
 tempered SMC and SAEM's kernel -- from its pooled draws and per-draw record
@@ -878,7 +893,8 @@ draws'; SMC passes its chains' own, taken before its correction resamples them.
 function _sample_result(pooled; nchains::Int, ndraws::Int, npar::Int, ndim::Int,
     maxdepth::Int, stepsize, warmup_divergent, trace, saved_effects::Bool=false,
     effects=_NO_EFFECT_SUMMARY, ebfmi=_ebfmi(pooled.energy, nchains),
-    diagnostics=ctsem_sample_diagnostics(pooled.draws, nchains))
+    diagnostics=ctsem_sample_diagnostics(pooled.draws, nchains),
+    target_accept=fill(NaN, nchains))
     return (
         draws=pooled.draws, npar=npar, ndim=ndim, nchains=nchains, ndraws=ndraws,
         saved_effects=saved_effects, effect_mean=effects.mean, effect_sd=effects.sd,
@@ -887,6 +903,9 @@ function _sample_result(pooled; nchains::Int, ndraws::Int, npar::Int, ndim::Int,
         ess_tail=diagnostics.ess_tail, accept=pooled.accept,
         divergent=pooled.divergent, depth=pooled.depth, energy=pooled.energy,
         stepsize=stepsize, warmup_divergent=warmup_divergent,
+        # The acceptance target each chain's step was tuned for, after the
+        # raises its warmup (or SMC's stages) made on divergences.
+        target_accept=target_accept,
         ndivergent=count(pooled.divergent),
         # The divergences past the correlation bound (`_divergence_at_bound`),
         # which the verdict reads as the posterior reaching the bound.
@@ -1020,7 +1039,7 @@ function _merge_chains(a::Vector{_ChainResult}, b::Vector{_ChainResult})
         vcat(a[c].bound, b[c].bound),
         vcat(a[c].depth, b[c].depth), vcat(a[c].energy, b[c].energy),
         b[c].stepsize, a[c].warmup_divergent, a[c].warmup_used,
-        b[c].x, b[c].metric) for c in eachindex(a)]
+        b[c].x, b[c].metric, a[c].target) for c in eachindex(a)]
 end
 
 """Have two successive metric estimates stopped disagreeing?"""
@@ -1182,6 +1201,7 @@ function _ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     return merge(_sample_result(pooled; nchains=nchains, ndraws=ndraws, npar=npar,
             ndim=npar + ndev, maxdepth=Int(maxdepth),
             stepsize=[r.stepsize for r in results],
+            target_accept=[r.target for r in results],
             warmup_divergent=[r.warmup_divergent for r in results], trace=run.trace,
             saved_effects=save_effects, effects=reported.effects),
         (placement=nothing,))
@@ -1476,6 +1496,7 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
     return merge(_sample_result(_sample_pool(results, nchains, ndraws, npar);
             nchains=nchains, ndraws=ndraws, npar=npar, ndim=npar, maxdepth=Int(maxdepth),
             stepsize=[r.stepsize for r in results],
+            target_accept=[r.target for r in results],
             warmup_divergent=[r.warmup_divergent for r in results], trace=run.trace),
         (forward_gradients=ctsem_forward_gradients() - forward0,
             explosive_passes=ctsem_explosive_passes() - explosive0,
