@@ -121,8 +121,8 @@ process, a cycle, or a process specific to one indicator.
 `ctNetwork()` and `ctNetworkPlot()` draw temporal and contemporaneous networks,
 `ctPhasePortrait()` a phase portrait, and `ctStateDependencePlot()` how a
 nonlinear model's parameters change with the state. `ctVarianceDecomposition()`
-splits variance into between subject, process and measurement parts, and
-`ctTracePlot()` shows the path of the optimiser or sampler.
+splits variance into between subject, process and measurement parts and gives
+intraclass correlations, and `ctTracePlot()` shows the path of the optimiser or sampler.
 
 ## Model specification
 
