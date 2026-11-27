@@ -2675,9 +2675,9 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     out$popsdNote <- paste(popsdnote, collapse = " ")
   }
   if (length(weak)) out$popsdNote <- paste(c(out$popsdNote, weak,
-    if (!is.null(weakrows)) paste0(if (nrow(weakrows) > 1L)
-      "Those population sds are" else "That population sd is",
-      " shown with their median only: no sd, interval or z."),
+    if (!is.null(weakrows)) if (nrow(weakrows) > 1L)
+      "Those population sds are shown with their medians only: no sd, interval or z."
+      else "That population sd is shown with its median only: no sd, interval or z.",
     "See fit$identifiability$effects."), collapse = " ")
 
   fixed <- cells[!cells$randomeffect & !(cells$stated %in% TRUE), , drop = FALSE]

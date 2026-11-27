@@ -583,18 +583,19 @@ test_that("a fit says so for a weakly determined effect and not for an informed 
   expect_gt(table$information, ctsem:::.ctEffectThresholds()$information)
   expect_false(any(grepl("barely determined", informed$messages)))
 
-  # summary() reports the weak effect's population sd as undetermined -- the
-  # estimate, and no sd, interval or z -- and says so beside the table, as it
-  # does for a coordinate with no width; the informed one keeps its interval.
+  # summary() reports the weak effect's population sd as undetermined -- its
+  # median, the point value, and no sd, interval or z -- and says so beside the
+  # table, as it does for a coordinate with no width; the informed one keeps
+  # its interval.
   weaksummary <- summary(weak$fit)
-  expect_true(is.finite(weaksummary$popsd["drift", "mean"]))
+  expect_true(is.finite(weaksummary$popsd["drift", "50%"]))
   expect_true(all(is.na(unlist(weaksummary$popsd["drift",
-    c("sd", "2.5%", "50%", "97.5%")]))))
+    c("sd", "2.5%", "97.5%")]))))
   expect_match(weaksummary$popsdNote,
-    "That population sd is shown with the estimate only", fixed = TRUE)
+    "That population sd is shown with its median only", fixed = TRUE)
   informedsummary <- summary(informed$fit)
   expect_true(all(is.finite(unlist(informedsummary$popsd["drift",
     c("mean", "sd", "2.5%", "97.5%")]))))
-  expect_false(isTRUE(grepl("estimate only", informedsummary$popsdNote,
+  expect_false(isTRUE(grepl("median only", informedsummary$popsdNote,
     fixed = TRUE)))
 })
