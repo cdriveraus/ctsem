@@ -1,0 +1,77 @@
+# Report per-chain progress from the parent while chain processes run
+
+Polls each chain's progress file on a short interval and reports every
+chain on one line – the shape asked for when chains are processes: each
+worker's own printed progress sits in output that never reaches the
+parent until the chain is already done, so the parent reports instead,
+from what the workers wrote rather than from what they printed.
+
+## Usage
+
+``` r
+.ctBackendReportProcesses(
+  results,
+  progress_files,
+  chains,
+  interval = 1,
+  overwrite = .ctProgressOverwrite(1),
+  tick = NULL
+)
+```
+
+## Arguments
+
+- results:
+
+  Future handles from \[.ctBackendSampleProcesses()\], one per chain,
+  possibly containing \`NULL\` for a chain that never started.
+
+- progress_files:
+
+  One path per chain, written by \[.ctBackendProgressFileWriter()\], or
+  \`NULL\` to print nothing and only poll for \`tick\`.
+
+- chains:
+
+  Number of chains.
+
+- interval:
+
+  Seconds between polls.
+
+- overwrite:
+
+  Update one line in place rather than printing each report on its own
+  line.
+
+- tick:
+
+  Called with which workers have finished on every poll: the parent's
+  half of the stopping rule (\`.ctBackendChainCoordinator()\`). Text it
+  returns is printed on its own line.
+
+## Value
+
+\`NULL\`, invisibly. Called for its printing.
+
+## Details
+
+Emitted through \[.ctProgressSink()\], which is what the engine's own
+progress line is delivered by – so the two look alike wherever a console
+distinguishes a message from plain output, and the rules about carriage
+returns and padding live in one place rather than in two copies that
+drift.
+
+Overwritten in place where a carriage return means something, exactly as
+\`CTSEMProgress\` does it in \`progress.jl\` and under the same
+detection – \`.ctProgressOverwrite()\`, so a log file, a knitr chunk or
+a captured stream gets its updates on their own lines and rarely
+instead. Printing a fresh block every poll is what this replaced: a
+five-minute sample left hundreds of lines of scrollback saying nothing
+the last of them did not.
+
+A chain that has finished keeps its last reported state on the line
+rather than dropping out of it. The line would otherwise shorten as
+chains end, which reads as chains disappearing, and the padding that
+makes in-place overwriting work would leave the tail of the longer line
+behind.

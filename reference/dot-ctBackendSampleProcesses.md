@@ -1,0 +1,66 @@
+# Run each chain in its own process
+
+Run each chain in its own process
+
+## Usage
+
+``` r
+.ctBackendSampleProcesses(
+  fit,
+  target,
+  chains,
+  warmup,
+  draws,
+  cores = 1L,
+  handles = NULL,
+  control = list(),
+  saveEffects = FALSE,
+  seed = 1L,
+  verbose = FALSE,
+  progress = .ctVerboseOn(verbose)
+)
+```
+
+## Arguments
+
+- fit:
+
+  A \`ctJuliaFit\`, or the shell \`ctFit(optimize = FALSE)\` is about to
+  fill. Carries the model and data a worker rebuilds its objective from.
+
+- target:
+
+  From \[.ctBackendSampleTarget()\]: what to sample, in a form that
+  survives serialisation.
+
+- chains:
+
+  Number of chains.
+
+- warmup, draws:
+
+  Per chain.
+
+- cores:
+
+  The most processes to run at once, and the threads they share.
+
+- handles:
+
+  Optional warmed pool from \[.ctBackendWarmWorkers()\]. When absent the
+  workers are started here and the compile is paid in full.
+
+- control, saveEffects, seed, verbose:
+
+  As for \[ctFitUncertainty()\].
+
+- progress:
+
+  Report chain progress from the parent while the workers run. Separate
+  from \`verbose\` for the same reason \`.ctBackendSampleEngine\` keeps
+  the two apart – see there.
+
+## Value
+
+A fit with pooled draws and diagnostics, or \`NULL\` if the workers
+could not be used, in which case the caller samples in-process.

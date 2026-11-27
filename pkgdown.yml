@@ -1,0 +1,28 @@
+pandoc: 3.8.3
+pkgdown: 2.2.1
+pkgdown_sha: ~
+articles:
+  accelerated-designs: accelerated-designs.html
+  binary-data: binary-data.html
+  continuous-time: continuous-time.html
+  ctsem: ctsem.html
+  ddm: ddm.html
+  discrete-time: discrete-time.html
+  dynamics: dynamics.html
+  growth-curves: growth-curves.html
+  heterogeneity: heterogeneity.html
+  interventions: interventions.html
+  irt-items: irt-items.html
+  kalman-filter: kalman-filter.html
+  laplace-multilevel: laplace-multilevel.html
+  measurement-models: measurement-models.html
+  model-syntax: model-syntax.html
+  ordinal-or-continuous: ordinal-or-continuous.html
+  sampling-weights: sampling-weights.html
+  score-tests: score-tests.html
+  sunspots: sunspots.html
+  uncertainty: uncertainty.html
+last_built: 2026-11-27T13:19Z
+urls:
+  reference: https://cdriveraus.github.io/ctsem/reference
+  article: https://cdriveraus.github.io/ctsem/articles

@@ -1,0 +1,114 @@
+# Sampling weights
+
+A sample rarely mirrors its population. A study may recruit a clinical
+group on purpose, or some kinds of people may be more likely to take
+part. Estimates then describe the sample rather than the population.
+Sampling weights correct this: each person counts in proportion to how
+many people like them there are in the population, relative to how many
+are in the sample.
+
+`ctFit(weights = )` does this for the julia backend.
+
+## An over-sampled group
+
+A mood study recruits as many people with a depression diagnosis as
+without, although only 15% of the population has one. Mood regulates
+towards each person’s own baseline, and baselines are lower with a
+diagnosis: -1 on average against 0.5. So the average baseline is 0.275
+in the population, but -0.25 in the sample.
+
+In the generating model the baseline `mm` varies between people with sd
+0.5 and is 1.5 lower with a diagnosis
+(`"mm|param|TRUE|0.5|depressed=-1.5"`, which gives the identity
+transform, individual variation, sd 0.5 and the effect of `depressed`).
+`datastruct` says who is observed when, and `values` gives the baseline
+without a diagnosis:
+
+``` r
+
+library(ctsem)
+set.seed(1)
+
+gen <- ctModel(type = "ct", manifestNames = "mood", latentNames = "eta",
+  LAMBDA = matrix(1), DRIFT = matrix(-0.5), DIFFUSION = matrix(0.8),
+  T0MEANS = matrix(0), T0VAR = matrix(1), CINT = matrix(0),
+  MANIFESTMEANS = matrix("mm|param|TRUE|0.5|depressed=-1.5"),
+  MANIFESTVAR = matrix(0.5), TIpredNames = "depressed", silent = TRUE)
+
+design <- data.frame(id = rep(1:200, each = 10), time = rep(0:9, 200),
+  depressed = rep(1:0, each = 1000))
+dat <- ctGenerate(gen, datastruct = design, values = c(mm = 0.5))
+```
+
+The weight is each group’s share of the population divided by its share
+of the sample:
+
+``` r
+
+dat$w <- ifelse(dat$depressed == 1, 0.15 / 0.5, 0.85 / 0.5)
+```
+
+Fit the same model with and without the weights. By default each
+person’s baseline (`mm_mood`) varies around a population mean:
+
+``` r
+
+model <- ctModel(type = "ct", manifestNames = "mood", latentNames = "eta",
+  LAMBDA = matrix(1), silent = TRUE)
+
+unweighted <- ctFit(dat, model, backend = "julia")
+weighted <- ctFit(dat, model, backend = "julia", weights = "w")
+
+rbind(unweighted = summary(unweighted)$popmeans["mm_mood", 1:2],
+  weighted = summary(weighted)$popmeans["mm_mood", 1:2])
+#>              mean    sd
+#> unweighted -0.254 0.073
+#> weighted    0.274 0.077
+```
+
+The unweighted fit estimates the sample’s average baseline, the weighted
+fit the population’s.
+
+## How it works
+
+- **One weight per person.** `weights` is a column of the data that is
+  constant within each person, or a vector with one value per person.
+  Only relative weights matter: they are rescaled to a mean of 1.
+- **It weights each person’s likelihood.** Each person’s log likelihood,
+  with their random effects integrated out, is multiplied by their
+  weight, and the fit maximises the sum. A weight of 2 counts a person
+  as twice as many people like them. This works for any model the julia
+  backend fits.
+- **Standard errors come from the sandwich.** Weighting adds no
+  information: a person with weight 2 is one person, not two. The
+  curvature of the weighted likelihood would treat them as two, and so
+  understate the uncertainty whenever weights are unequal. A weighted
+  fit therefore uses robust (sandwich) standard errors, built from the
+  spread of the people’s weighted contributions.
+- **What is reported.** The summary shows the weights and the weighted
+  log likelihood, which is the value maximised:
+
+``` r
+
+s <- summary(weighted)
+s[c("loglik", "weights", "loglik_weighted")]
+#> $loglik
+#> [1] -2807.597
+#> 
+#> $weights
+#> [1] "200 subjects, relative weights 0.3 to 1.7 (mean 1)"
+#> 
+#> $loglik_weighted
+#> [1] -2727.892
+```
+
+A weighted fit maximises a pseudo-likelihood, so likelihood comparisons
+do not apply: there is no AIC, and
+[`logLik()`](https://rdrr.io/r/stats/logLik.html) and
+[`AIC()`](https://rdrr.io/r/stats/AIC.html) refuse. Leave-one-out
+cross-validation, score tests, adequacy checks and sampling
+(`optimize = FALSE`) refuse weights too, and so does the stan backend.
+
+These are sampling weights. If each row instead stands for several
+identical, independent people (frequency weights), the right analysis is
+the data with those rows repeated, not this one.
