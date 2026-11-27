@@ -885,6 +885,31 @@
   fit
 }
 
+# How finely a variational fit's interval check solves each unit's
+# approximation at its draws (`ctsem_variational_tolerance!`, half the Newton
+# decrement), against the fit's own 1e-8. The check reads how the density
+# departs from the Hessian's normal to a few hundredths. On gD3, on the same
+# draws, 1e-3 took the check from 196 s to 86 s (2 cores) and moved what it
+# measures along each direction by at most 0.05, naming the same directions
+# (scripts/vrefine-2026-11/vfit_levers.R).
+.ctVariationalCheckTolerance <- 1e-3
+
+# Sets the rough tolerance on a variational fit's objective for its interval
+# check, where `lpgFunc` is a variational fit's density (its `variational`
+# attribute, `.ctBackendLpgFunc()`), and returns a function that puts the
+# fit's own back, which may be called more than once. A no-op on any other
+# density.
+.ctVariationalRoughCheck <- function(lpgFunc, tol = .ctVariationalCheckTolerance) {
+  engine <- attr(lpgFunc, "engine")
+  if (!isTRUE(attr(lpgFunc, "variational")) || !is.function(engine))
+    return(function() invisible(NULL))
+  objective <- engine()$objective
+  set <- function(value) .ctJuliaCall("ContinuousTimeSEM.ctsem_variational_tolerance!",
+    objective, as.numeric(value))
+  old <- as.numeric(set(tol))
+  function() invisible(set(old))
+}
+
 # What a variational fit the check flagged says: how far correcting the
 # bound's error would move the estimates, by the same step and the same rule
 # for message or warning as a Laplace fit's (`.ctLaplaceShiftMessage()`), and

@@ -2730,6 +2730,10 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
     # intervals are the curvature's normal, as without the check.
     if(uncertainty == 'checked' ||
         (uncertainty == 'hessian' && isTRUE(control$check))) {
+      # On a variational fit the check's draws are solved roughly, and the
+      # fit's own tolerance is back before anything else evaluates.
+      rough <- .ctVariationalRoughCheck(lpgFunc)
+      on.exit(rough(), add = TRUE)
       method_details$normalcheck <- tryCatch(.ctOptimNormalCheck(.ctJuliaOr(
         .ctImisGradient(lpgFunc, est), attr(.ctImisPointGradbatch(lpgFunc), 'gradbatch')),
         est, cov, progress = .ctBackendProgressSink(verbose)),
@@ -2738,6 +2742,7 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
             "); intervals are from the curvature at the estimate.", call. = FALSE)
           list(failed = conditionMessage(e))
         })
+      rough()
       # The widths its pairs measured where it samples nothing
       # (`.ctNormalSpread()`).
       if(uncertainty == 'checked' && !is.null(method_details$normalcheck$spread))

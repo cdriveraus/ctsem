@@ -80,7 +80,8 @@ Laplace objective underneath), which integrates nested units block by block.
 
 export ctsem_variational, ctsem_variational_info, ctsem_variational_reset!,
     ctsem_variational_choose!, ctsem_set_variational_predict!,
-    ctsem_variational_snapshot, ctsem_variational_restore!
+    ctsem_variational_snapshot, ctsem_variational_restore!,
+    ctsem_variational_tolerance!
 
 # ---- the shaped family (one block, at most three coordinates) ----------------------
 
@@ -1637,6 +1638,21 @@ derivative in the parameters from the last Hessian (`ctsem_hessian`,
 predicted starts.
 """
 ctsem_set_variational_predict!(on::Bool) = (_VF_PREDICT[] = on; nothing)
+
+"""
+    ctsem_variational_tolerance!(V, tol)
+
+Sets the tolerance each unit's approximation is solved to (`V.tol`, on half
+the Newton decrement) and returns the one it replaces. The interval check on
+a variational fit solves its draws roughly (`.ctVariationalRoughCheck()` in
+R): on gD3 at 1e-8 72% of its unit-evaluations formed their curvature after
+held steps that gave way, and the check took three times the Laplace fit.
+"""
+function ctsem_variational_tolerance!(V::CTSEMVariational, tol::Real)
+    old = V.tol
+    V.tol = Float64(tol)
+    return old
+end
 
 """The fit's Hessian by central differences of the exact gradient, every unit
 solved from the accepted approximations at each point: the oracle for

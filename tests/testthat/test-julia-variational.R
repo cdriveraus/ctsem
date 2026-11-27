@@ -134,6 +134,35 @@ test_that("a variational fit's interval check and 'checked' run", {
     "marginal cannot be sampled")
 })
 
+# The interval check on a variational fit solves its draws to a rough
+# tolerance (`.ctVariationalCheckTolerance`), and the fit's own is back once
+# it has run: what the objective's tolerance is while the check runs, read by
+# a stand-in for the check, and after.
+test_that("a variational fit's interval check solves its draws roughly", {
+  skip_on_cran()
+  skip_without_julia()
+  vf <- .vf_fit("nonlinear", "variational")
+  objective <- ctsem:::.ctJuliaObjective(vf)
+  tolerance <- function() {
+    old <- as.numeric(ctsem:::.ctJuliaCall(
+      "ContinuousTimeSEM.ctsem_variational_tolerance!", objective, 1))
+    ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_variational_tolerance!", objective, old)
+    old
+  }
+  expect_equal(tolerance(), 1e-8)
+  during <- NULL
+  testthat::local_mocked_bindings(.ctOptimNormalCheck = function(gradients, est, cov,
+    ...) {
+    during <<- tolerance()
+    list(draws = 0L, unusable = 0L, directions = matrix(0, length(est), 0L),
+      slope = numeric(), shape = numeric(), widths = numeric(),
+      parameters = integer(), centre = as.numeric(est))
+  })
+  suppressWarnings(suppressMessages(ctFitUncertainty(vf, cores = 2)))
+  expect_equal(during, ctsem:::.ctVariationalCheckTolerance)
+  expect_equal(tolerance(), 1e-8)
+})
+
 test_that("a variational fit is refined by quadrature from its own estimate", {
   skip_on_cran()
   skip_without_julia()
