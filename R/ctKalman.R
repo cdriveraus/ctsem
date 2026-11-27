@@ -378,10 +378,12 @@ ctStanKalman <- ctKalmanArray
 #'
 #' @examples
 #' \donttest{
+#' if (isTRUE(ctJuliaStatus()$available)) {
 #' # Persons one standard deviation either side of the population mean in each
 #' # random effect, and at each quantile of the predictors.
 #' p <- ctPredictVarying(ctsemtestfit, doDynamics = FALSE)
 #' names(p$Process$Observed)
+#' }
 #' }
 #' @export
 ctPredictVarying <- function(fit, vary = 'all', sdValues = c(-1, 0, 1),
