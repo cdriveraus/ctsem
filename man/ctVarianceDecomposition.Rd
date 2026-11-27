@@ -48,9 +48,11 @@ measurement variance of \eqn{\pi^2/3}) or the observed response
 distribution). The two are the same for a Gaussian indicator.}
 
 \item{times}{If given, decompose at each of these times. By default the
-decomposition averages over each person's observation times. Either a
-numeric vector, or \code{'asdata'} for the observed occasions. Every person
-is evaluated at the same times. The result gains a \code{time} column and
+decomposition averages over each person's observation times. Times are
+measured from the start of each person's record, where the initial state
+applies. Either a numeric vector, or \code{'asdata'} for the times of
+the observed occasions since each record began. Every person is
+evaluated at the same times. The result gains a \code{time} column and
 has no \code{within.deterministic} column, since that term is the variance
 of the mean path over time. Not available with \code{method='simulation'}
 or with time dependent predictors.}
