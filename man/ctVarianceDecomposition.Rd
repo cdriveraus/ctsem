@@ -12,7 +12,7 @@ ctVarianceDecomposition(
   times = NULL,
   npersons = 200L,
   npaths = 20L,
-  nsamples = 200L,
+  nsamples = 1000L,
   latents = TRUE,
   quadpoints = 21L,
   subjects = "all",

@@ -1751,7 +1751,7 @@
 #' @export
 ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulation'),
   persons = c('auto', 'model', 'estimated'), scale = c('latent', 'response'),
-  times = NULL, npersons = 200L, npaths = 20L, nsamples = 200L, latents = TRUE,
+  times = NULL, npersons = 200L, npaths = 20L, nsamples = 1000L, latents = TRUE,
   quadpoints = 21L, subjects = 'all', realid = TRUE, sources = NULL) {
 
   # `ctFit`, which both backends' fits carry, rather than naming the two
