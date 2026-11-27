@@ -196,10 +196,7 @@ test_that("the refined fit's tolerance reaches the climb", {
   expect_error(ctsem:::.ctLaplaceRefineSettings(list(quadratureTolerance = -1)),
     "quadratureTolerance")
   sent <- NULL
-  # The estimate is marshalled too (`.ctJuliaNumericVector()`), which reaches
-  # Julia: the fast-tests runner has none.
-  testthat::local_mocked_bindings(.ctJuliaGet = function(x) x,
-    .ctJuliaNumericVector = function(values) as.numeric(values))
+  testthat::local_mocked_bindings(.ctJuliaGet = function(x) x)
   module <- list(ctsem_laplace_placed_optimize = function(...) {
     sent <<- list(...)
     list()
