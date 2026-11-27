@@ -359,6 +359,86 @@ end
     end
 end
 
+# The inverse Mills ratio's terms against BigFloat, and the rule in the logistic
+# variable where its posterior lies far into the normal's tail: an observation
+# the prediction makes very unlikely at a predicted sd of 1e4 or more, as under
+# an explosive drift. Formed as differences there, `c + λ` had no correct digit
+# by `c = -1e4`, the rule's curvature came out negative and `sqrt` threw.
+@testset "the Mills ratio's terms, and the rule in V far into the tail" begin
+    CT = ContinuousTimeSEM
+    setprecision(BigFloat, 256) do
+        for c in (6.0, 1.0, -1.0, -5.0, -7.99, -8.01, -12.0, -40.0, -1e3, -1e5, -1e8)
+            cb = big(c)
+            lam = if c > -50
+                exp(-cb^2 / 2 - log(sqrt(2 * big(pi))) -
+                    log(CT.SpecialFunctions.erfc(-cb / sqrt(big(2))) / 2))
+            else
+                # lambda = t + 1/(t + 2/(t + 3/(t + ...))), t = -c, deep
+                r = zero(BigFloat)
+                for j in 4000:-1:1
+                    r = j / (-cb + r)
+                end
+                -cb + r
+            end
+            g = cb + lam
+            want = Float64.((lam, g, 1 - lam * g, lam * (1 - g * (cb + 2 * lam))))
+            got = CT._mills_terms(c)
+            tol = c > CT._MILLS_CF_BELOW ? 1e-9 : 1e-14
+            @test all(k -> isapprox(got[k], want[k]; rtol=tol), 1:4)
+        end
+    end
+    # log Phi's own derivatives at a dual, nested duals and a jet: `λ` and
+    # `-λ (c + λ)`. `logerfc`'s rule was off in the sixth digit at c = -1e5.
+    for c in (2.0, -3.0, -30.0, -1e4, -1e5)
+        λ, g, _, _ = CT._mills_terms(c)
+        d1(x) = ForwardDiff.derivative(CT._norm_logcdf, x)
+        @test d1(c) ≈ λ rtol = 1e-14
+        @test ForwardDiff.derivative(d1, c) ≈ -λ * g rtol = 1e-12
+        jt = CT._norm_logcdf(CT.CTSEMTraceJet{1}(c, (1.0,), 0.0))
+        @test jt.v == CT._norm_logcdf(c)
+        @test jt.d[1] ≈ λ rtol = 1e-14
+        @test jt.s ≈ -λ * g rtol = 1e-12
+    end
+    # A one-sided interval's `λ (c + λ)` stays in (0, 1): `1 - 1/c²` to first order.
+    for c in (-1e4, -1e6)
+        _, _, d = CT._interval_moments(nothing, c)
+        @test d ≈ 1 - 1 / c^2 rtol = 1e-14
+    end
+    nodes, weights = CT._binary_rule()
+    for (s, m) in ((1e4, -1.2e8), (1.3e4, -2e8), (1e5, -2e10), (1e6, -3e12))
+        lz, off, var, ok, parts = CT._binary_vquadrature(m, s, true)
+        @test ok && isfinite(lz) && all(isfinite, parts)
+        # The filter's entry point, where the error stopped a fit.
+        J = zeros(3, 2)
+        logZ, _, _, handled = CT._binary_moment_partials!(J, m, s^2, 1.0, nodes,
+            weights, Float64[], _BINARY)
+        @test handled && isfinite(logZ) && all(isfinite, J)
+        # At s = 1e6 the variance holds 1e-5 of roundoff and its slope 1e-4.
+        s > 1e5 && continue
+        # Dense trapezoid in V over 30 posterior sds either side of the mode.
+        vm, C, _ = CT._binary_vmode(m, s)
+        @test C > 0
+        grid = vm .+ range(-30, 30; length=6001) ./ sqrt(C)
+        f = [CT._logistic_logpdf(v) + CT._norm_logcdf((m - v) / s) for v in grid]
+        fmax = maximum(f)
+        w = exp.(f .- fmax)
+        terms = [CT._mills_terms((m - v) / s) for v in grid]
+        λs = first.(terms)
+        Ws = getindex.(terms, 3)
+        mλ = sum(w .* λs) / sum(w)
+        @test lz ≈ fmax + log(sum(w) * step(grid)) atol = 1e-8 + 4 * eps(abs(lz))
+        @test off ≈ s * mλ rtol = 1e-8
+        @test var ≈ s^2 * (sum(w .* Ws) + sum(w .* (λs .- mλ) .^ 2)) / sum(w) rtol = 1e-6
+        # The partials by hand against forward mode through the same function.
+        # The variance's slope in `b` is a difference of node sums, so its
+        # roundoff grows with `s`: 1e-6 of it at s = 1e5.
+        fm(x) = collect(CT._binary_vquadrature(promote(x, s)..., false)[1:3])
+        fb(x) = collect(CT._binary_vquadrature(promote(m, sqrt(x))..., false)[1:3])
+        @test [parts[1], parts[3], parts[5]] ≈ ForwardDiff.derivative(fm, m) rtol = 1e-6
+        @test [parts[2], parts[4], parts[6]] ≈ ForwardDiff.derivative(fb, s^2) rtol = 1e-5
+    end
+end
+
 # `_logistic` at second order, out to where `exp` overflows: a trace jet's
 # parts are the logistic's first and second derivatives, `p(1 - p)` and
 # `p(1 - p)(1 - 2p)`, finite at every argument. Switched to `e^x / (1 + e^x)`
