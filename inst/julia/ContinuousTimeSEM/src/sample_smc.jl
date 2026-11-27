@@ -1089,7 +1089,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         # book's N = 1 wearable model they ran 20-51 divergent transitions at
         # the default target and none at 0.95, at seven seeds.
         if sum(ndiv) > 0 && tacc < _ACCEPT_MAX
-            tacc = min(_ACCEPT_MAX, tacc + _ACCEPT_STEP)
+            tacc = _accept_raised(tacc)
         end
         step = _smc_next_step(step, sum(acc) / nok, tacc)
         # At the posterior the particles become the final chains' starts, and

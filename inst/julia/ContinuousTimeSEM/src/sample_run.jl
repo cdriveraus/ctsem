@@ -248,9 +248,14 @@ end
 # times a run of 5,764-12,800.
 const _ACCEPT_CHECK_STRIDE = 50
 const _ACCEPT_DIVERGENCE_RATE = 0.0
-const _ACCEPT_STEP = 0.05
 const _ACCEPT_MAX = 0.95
 const _ACCEPT_MAX_RAISES = 3
+
+"""The acceptance target after a raise on divergences: half way to one, at
+most `_ACCEPT_MAX`, so the default 0.8 reaches 0.95 in two raises. Raised by
+0.05 a time, SMC's stages on the ctsem book's N = 1 model ended at 0.9 with a
+divergent transition left in 1,925, where 0.95 left none at seven seeds."""
+_accept_raised(target::Float64) = min(_ACCEPT_MAX, 1 - (1 - target) / 2)
 
 """
     _ChainRetune(after, steps, target, count)
@@ -491,7 +496,7 @@ function _run_chain(logdensity!, centre::Vector{Float64},
             rate = check_divergent / (iteration - check_start)
             if rate > _ACCEPT_DIVERGENCE_RATE && da.target < _ACCEPT_MAX &&
                     raises < _ACCEPT_MAX_RAISES
-                da.target = min(_ACCEPT_MAX, da.target + _ACCEPT_STEP)
+                da.target = _accept_raised(da.target)
                 raises += 1
                 eps = _dual_restart!(da, eps)
             end
