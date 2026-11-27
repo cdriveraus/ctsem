@@ -698,7 +698,16 @@
   # optimiser can start from (`.ctDataStartUsable()`). One at a time, each once
   # a fit (`tried`); a point that cannot be used comes back marked so, for the
   # caller to count as tried.
-  if (!isFALSE(optimcontrol$flatretry)) {
+  #
+  # Asked for (`optimcontrol$flatretry = TRUE`, or `ctFitFlatRetry(fit)` after
+  # a fit), not run by default (Charles, 2026-11-27): from 2026-11-21 it fired
+  # 77 times in 975 bench fits and was never kept, every time a variance or a
+  # random effect's sd at zero whose refit ended hundreds of nats down. Its one
+  # gain was the dis model above. A fit it would apply to says so instead
+  # (`.ctBackendFlatRetryNote()`). On a variational fit it was half the fit's
+  # time: its refit runs far from the estimate, where each unit's
+  # approximation has far to go (review/VARIATIONAL-anomauth-cost-2026-11-27.md).
+  if (isTRUE(optimcontrol$flatretry)) {
     lead <- .ctBackendRunOff(result, model_spec, npar, tried)
     if (length(lead)) {
       was <- as.numeric(result$minimizer)[lead]
@@ -771,6 +780,33 @@
     names[k])), logical(1))]
   if (!length(far)) return(integer())
   far[which.max(share[far])]
+}
+
+# Every coordinate a fit's last stage left run off where the likelihood is flat
+# in it, by raw index, in the order the run-off escape would take them
+# (`.ctBackendRunOff()` with each found one as tried). A fit that did not run
+# the escape keeps them (`fit$optim$flatretry_parameters`) and names them in a
+# message pointing to `ctFitFlatRetry()`, which runs it.
+#' @keywords internal
+.ctBackendFlatRetryCandidates <- function(result, model_spec, npar) {
+  found <- integer()
+  repeat {
+    k <- .ctBackendRunOff(result, model_spec, npar, tried = found)
+    if (!length(k)) break
+    found <- c(found, k)
+  }
+  found
+}
+
+# What a fit says where the run-off escape could apply and did not run.
+#' @keywords internal
+.ctBackendFlatRetryMessage <- function(names) {
+  one <- length(names) == 1L
+  paste0(if (one) names else paste(paste(names[-length(names)], collapse = ", "),
+    "and", names[length(names)]), " ran off to where the data say little about ",
+    if (one) "it" else "them", ". ctFitFlatRetry(fit) fits the model again from ",
+    "the other end of ", if (one) "its range" else "each one's range",
+    " and keeps the better fit.")
 }
 
 # Whether raw coordinate `k`'s transform has a finite end below and above:

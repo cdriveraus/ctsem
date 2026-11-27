@@ -7089,29 +7089,33 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # -1,464,550.02, |g| 1.65) ended 181 below it with |g| 2,514. Only the runs
   # from `start` take this; random restarts start cold and batch as usual.
   startcontrol <- .ctJuliaStartControl(optimcontrol, inits)
-  if (isTRUE(datastart) && is.null(inits) && !is.null(datalong)) {
+  # `base` with the values read off the data where the optimiser can start
+  # from them; `say` for the fit's own start, not for the run-off escape's
+  # (below).
+  withdata <- function(base, say = TRUE) {
+    if (!isTRUE(datastart) || is.null(datalong)) return(base)
     derived <- try(.ctDataStart(datalong, model, model_spec, npar), silent = TRUE)
-    if (!inherits(derived, "try-error") && !is.null(derived)) {
-      use <- is.finite(derived)
-      # Exactly, not jittered: where the data decided the value, two runs of
-      # the same fit should start in the same place.
-      candidate <- start
-      candidate[use] <- derived[use]
-      # And only where the optimiser can start from it, which the default
-      # start may allow where a derived one does not (`.ctDataStartUsable()`).
-      # On the state-explicit target the objective is another, built below,
-      # and the start is taken as derived.
-      if (!isTRUE(intoverstates) ||
-          .ctDataStartUsable(model_spec, candidate, gradient, cores)) {
-        start <- candidate
-        if (verbose > 0) message("Starting values derived from the data for ",
-          sum(use), " of ", npar, " parameters.")
-      } else {
-        message("The starting values derived from the data could not be ",
-          "evaluated, so the fit starts from the default values.")
-      }
+    if (inherits(derived, "try-error") || is.null(derived)) return(base)
+    use <- is.finite(derived)
+    # Exactly, not jittered: where the data decided the value, two runs of
+    # the same fit should start in the same place.
+    candidate <- base
+    candidate[use] <- derived[use]
+    # And only where the optimiser can start from it, which the default
+    # start may allow where a derived one does not (`.ctDataStartUsable()`).
+    # On the state-explicit target the objective is another, built below,
+    # and the start is taken as derived.
+    if (!isTRUE(intoverstates) ||
+        .ctDataStartUsable(model_spec, candidate, gradient, cores)) {
+      if (say && verbose > 0) message("Starting values derived from the data for ",
+        sum(use), " of ", npar, " parameters.")
+      return(candidate)
     }
+    if (say) message("The starting values derived from the data could not be ",
+      "evaluated, so the fit starts from the default values.")
+    base
   }
+  if (is.null(inits)) start <- withdata(start)
   # The state-explicit target, when asked for: the same optimiser over a longer
   # vector. The innovations start at zero, which is both their prior mode and
   # the trajectory the parameters alone imply -- there is nothing better to
@@ -7187,8 +7191,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # different problems.
   # The start before the warm-up moves it, where a run-off escape restarts the
   # parameters it does not hold (`.ctBackendStallEscape()`): the warm-up's end
-  # is already in the basin the escape is leaving.
+  # is already in the basin the escape is leaving. So is a start the caller
+  # chose where it is an earlier fit's estimate, as `ctFitFlatRetry()` hands
+  # it, so with `inits` the escape restarts from the start the fit takes
+  # without them.
   coldstart <- start
+  if (!is.null(inits) && isTRUE(optimcontrol$flatretry) && isTRUE(intoverstates))
+    coldstart <- withdata(.ctJuliaInitialValues(npar, NULL,
+      initsd = .ctJuliaOr(optimcontrol$initsd, .01), spec = model_spec), say = FALSE)
   careful <- optimcontrol$carefulfit
   if (is.null(careful)) careful <- TRUE
   warmiter <- if (isTRUE(careful)) .ctJuliaWarmCap else
@@ -7711,8 +7721,25 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # further. With two or three fields each a prefix carries it, and making
   # `overshoot` a list would turn `if (fit$optim$overshot)` from a logical test
   # into a truthy one -- which is a silent change of meaning, not a rename.
+  #
+  # Where the run-off escape could apply and was not asked for
+  # (`optimcontrol$flatretry`, `.ctBackendStallEscape()`), the parameters it
+  # would hold, kept for `ctFitFlatRetry()`, and a message naming it. Not on
+  # the state-explicit target, where no escape runs.
+  flatretry_parameters <- character()
+  if (!isTRUE(optimcontrol$flatretry) && isTRUE(intoverstates)) {
+    lead <- .ctBackendFlatRetryCandidates(result, model_spec, npar)
+    if (length(lead)) {
+      flatretry_parameters <- .ctJuliaSaturatedNames(list(p = lead), model_spec,
+        npar, "p")
+      message(.ctBackendFlatRetryMessage(flatretry_parameters))
+    }
+  }
   optim_run <- list(
     converged = isTRUE(result$converged),
+    # The parameters run off where the likelihood is flat in them, which
+    # `ctFitFlatRetry()` refits from the other end of their range.
+    flatretry_parameters = flatretry_parameters,
     # The gradient at the reported point, and its norm. Run material: it says
     # where the optimiser stopped, not what was estimated.
     gradient = gradientvec,

@@ -58,14 +58,16 @@
 #'  ordinal indicators. If the objective cannot be evaluated there, the fit
 #'  starts from the default values and says so. Supplied \code{inits} are
 #'  always used as given.}
-#'  \item{\code{flatretry}}{Julia. Default TRUE. When the optimiser leaves a
+#'  \item{\code{flatretry}}{Julia. Default FALSE. When the optimiser leaves a
 #'  parameter far out where the likelihood hardly changes with it, such as an
 #'  auto-effect so fast or so slow that its value no longer matters, or a
-#'  variance or random effect standard deviation at zero, it optimises again
+#'  variance or random effect standard deviation at zero, TRUE optimises again
 #'  from the starting values with that parameter held at the other side of its
 #'  range, then lets it go. The better of the two
 #'  results is kept. This happens before the standard errors are computed, and
-#'  costs up to two more optimisations for each such parameter.}
+#'  costs up to two more optimisations for each such parameter. With FALSE the
+#'  fit names such parameters in a message, and \code{\link{ctFitFlatRetry}}
+#'  does the same for a fit afterwards.}
 #'  \item{\code{carefulfit}}{Both. Default TRUE. A first pass with ctsem's
 #'  \code{normal(0,1)} priors on every raw parameter, to find starting values,
 #'  after which the fit's own objective is maximised. Skipped with
