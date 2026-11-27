@@ -806,7 +806,7 @@
   # and `evaluated_at` is what says where it was. Comparing against
   # `fit$estimate$raw` instead is the trap: it is the same point on an
   # optimised fit and a different one on a sampled fit, whose Hessian is at the
-  # Laplace estimate while `$estimate$raw` is the posterior mean -- so a guard
+  # Laplace estimate while `$estimate$raw` is the posterior median -- so a guard
   # written that way passes exactly where it must not and returns curvature
   # from somewhere else. A fit carrying a Hessian and no `evaluated_at` predates
   # this and is not reused.

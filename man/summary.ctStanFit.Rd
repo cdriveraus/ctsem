@@ -47,11 +47,12 @@ posterior mean and sd to prior mean and sd. \code{backend='stan'} only.
 }
 \value{
 List containing summary items, with a \code{print} method for readable console and knitr output.
-  On an optimised \code{backend = 'julia'} fit with uncertainty draws, the
-  parameter tables and \code{parmatrices} have a \code{mode} column beside
-  the draws' mean, sd and quantiles. This is the fit's estimate on the same
-  scale, the point that likelihood ratio tests and information criteria
-  refer to.
+  The parameter tables and \code{parmatrices} give the mean, sd and
+  quantiles of each quantity's draws. The \code{50\%} column, the median,
+  is the point value. For an optimised fit whose draws come from the normal
+  approximation at its estimate, the median of a quantity that depends on a
+  single parameter is that quantity at the estimate, and \code{50\%} holds
+  it. The matrices at the estimate are \code{ctSummaryMatrices(fit)$estimate}.
 
   \code{popmeans} reports each free parameter. A \code{T0VAR},
   \code{DIFFUSION} or \code{MANIFESTVAR} parameter on the diagonal is a

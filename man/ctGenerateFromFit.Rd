@@ -20,7 +20,10 @@ ctGenerateFromFit(
 
 \item{nsamples}{Positive integer specifying number of datasets to generate.}
 
-\item{fullposterior}{Logical indicating whether to sample from the full posterior (original nsamples) or the posterior mean.}
+\item{fullposterior}{If TRUE, each data set is generated from one of the
+fit's draws of the parameters. If FALSE, all are generated at the fit's
+point: its estimate, or for a sampled fit the median of each raw parameter's
+draws.}
 
 \item{verboseErrors}{if TRUE, print verbose output when errors in generation encountered.}
 

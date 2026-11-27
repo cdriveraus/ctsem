@@ -221,7 +221,7 @@ border-radius: 0 4px 4px 0;
 <div class="cell">
 <div class="sourceCode cell-code" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>fit <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(dat, model, <span class="at">cores =</span> <span class="dv">4</span>)</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>s <span class="ot">&lt;-</span> <span class="fu">summary</span>(fit)</span>
-<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="fu">data.frame</span>(<span class="at">estimate =</span> s<span class="sc">$</span>popmeans[<span class="fu">names</span>(truth<span class="sc">$</span>popmeans), <span class="st">&#39;mode&#39;</span>],</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="fu">data.frame</span>(<span class="at">estimate =</span> s<span class="sc">$</span>popmeans[<span class="fu">names</span>(truth<span class="sc">$</span>popmeans), <span class="st">&#39;50%&#39;</span>],</span>
 <span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">sd =</span> s<span class="sc">$</span>popmeans[<span class="fu">names</span>(truth<span class="sc">$</span>popmeans), <span class="st">&#39;sd&#39;</span>], <span class="at">generated =</span> truth<span class="sc">$</span>popmeans)</span>
 <span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                estimate    sd generated</span></span>
 <span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_mean        1.593 0.102       1.5</span></span>
@@ -229,12 +229,12 @@ border-radius: 0 4px 4px 0;
 <span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; boundary          1.325 0.044       1.4</span></span>
 <span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; boundary_speed   -0.407 0.013      -0.4</span></span>
 <span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; ndt               0.298 0.010       0.3</span></span>
-<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a><span class="fu">data.frame</span>(<span class="at">estimate =</span> s<span class="sc">$</span>popsd[<span class="fu">names</span>(truth<span class="sc">$</span>popsd), <span class="st">&#39;mode&#39;</span>],</span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a><span class="fu">data.frame</span>(<span class="at">estimate =</span> s<span class="sc">$</span>popsd[<span class="fu">names</span>(truth<span class="sc">$</span>popsd), <span class="st">&#39;50%&#39;</span>],</span>
 <span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">generated =</span> truth<span class="sc">$</span>popsd)</span>
 <span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;            estimate generated</span></span>
 <span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_mean    0.409      0.40</span></span>
-<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; boundary      0.192      0.20</span></span>
-<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; ndt           0.048      0.04</span></span></code></pre></div>
+<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; boundary      0.195      0.20</span></span>
+<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; ndt           0.049      0.04</span></span></code></pre></div>
 </div>
 <p>The estimates are close to the values the data were generated from. Each person’s own values come from <code>ctSubjectPars(fit)</code>.</p>
 <p>To let the drift change over the session, use <code>dynamic = TRUE</code>. The drift then follows a mean reverting process around each person’s level, with an auto effect <code>drift_auto</code> and a diffusion <code>drift_diffusion</code> on the scale of the time column. <code>sv = TRUE</code> adds trial to trial variability of the drift, and <code>bias = ~ 1</code> estimates the start point.</p>
@@ -269,7 +269,7 @@ border-radius: 0 4px 4px 0;
 <div class="cell">
 <div class="sourceCode cell-code" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>fit2 <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(dat2, model2, <span class="at">cores =</span> <span class="dv">4</span>)</span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>s2 <span class="ot">&lt;-</span> <span class="fu">summary</span>(fit2)</span>
-<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="fu">data.frame</span>(<span class="at">estimate =</span> s2<span class="sc">$</span>popmeans[<span class="fu">names</span>(truth2<span class="sc">$</span>popmeans), <span class="st">&#39;mode&#39;</span>],</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="fu">data.frame</span>(<span class="at">estimate =</span> s2<span class="sc">$</span>popmeans[<span class="fu">names</span>(truth2<span class="sc">$</span>popmeans), <span class="st">&#39;50%&#39;</span>],</span>
 <span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">sd =</span> s2<span class="sc">$</span>popmeans[<span class="fu">names</span>(truth2<span class="sc">$</span>popmeans), <span class="st">&#39;sd&#39;</span>], <span class="at">generated =</span> truth2<span class="sc">$</span>popmeans)</span>
 <span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                 estimate    sd generated</span></span>
 <span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; alert_auto        -0.276 0.077      -0.4</span></span>

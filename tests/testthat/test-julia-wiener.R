@@ -141,9 +141,9 @@ test_that("a ctModelDDM fit recovers its parameters, predicts choices and genera
   fit <- fit_cached("wiener-static", suppressWarnings(suppressMessages(ctFit(dat,
     ctModelDDM(name = "rt", drift = ~ x), cores = 2))))
   pm <- summary(fit)$popmeans
-  expect_true(abs(pm["boundary", "mode"] - 1.2) < 0.2)
-  expect_true(abs(pm["ndt", "mode"] - 0.25) < 0.03)
-  expect_true(abs(pm["drift_x", "mode"] - 0.5) < 0.3)
+  expect_true(abs(pm["boundary", "50%"] - 1.2) < 0.2)
+  expect_true(abs(pm["ndt", "50%"] - 0.25) < 0.03)
+  expect_true(abs(pm["drift_x", "50%"] - 0.5) < 0.3)
   k <- suppressMessages(ctKalmanArray(fit, timestep = "asdata", subjects = 1))
   expect_setequal(unique(as.numeric(k$y)), c(0, 1))
   expect_true(all(k$yprior > 0 & k$yprior < 1))

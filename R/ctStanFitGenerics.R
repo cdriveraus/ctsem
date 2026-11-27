@@ -13,10 +13,9 @@
 #' @export
 coef.ctStanFit <- function(object, ...) {
   raw <- .ctFitRawEstimate(object)
-  # A sampled fit has no point estimate in `$rawest`; the posterior mean of the
-  # raw draws is what `summary()` reports for it, so it is what is returned
-  # here too.
-  if (is.null(raw)) raw <- colMeans(ctStanRawSamples(object))
+  # A sampled fit has no optimum; its point is the median of each raw
+  # coordinate, as `rawest` holds it and the julia backend's `$raw`.
+  if (is.null(raw)) raw <- apply(ctStanRawSamples(object), 2L, stats::median)
   .ctFitNameRaw(object, raw)
 }
 
