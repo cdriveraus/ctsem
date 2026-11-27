@@ -448,6 +448,12 @@
 #'   rows before and up to each row, smoothed from its whole record, on the raw
 #'   scale as deviations from the population value. Their covariances with the
 #'   latent states are not computed and are \code{NA}.
+#' @param subjectShift On a single level of Laplace random effects, a matrix
+#'   with a row for each subject to move, named by its id, and a column for
+#'   each raw parameter to move, named by its position in the raw parameter
+#'   vector: each named subject's values are its modes plus this row, for
+#'   every pass. NULL, the default,
+#'   leaves every subject at its modes. Used by \code{\link{ctPredictVarying}}.
 #' @param ... Passed to \code{collapsefunc}.
 #' @return A list of arrays, the same shape \code{\link{ctKalmanArray}} returns
 #'   for Stan fits, with \code{subjectMatrices} attached when
@@ -483,7 +489,7 @@
 ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   maxtime = "asdata", removeObs = FALSE, pointest = TRUE, nsamples = NA,
   collapsefunc = NA, standardisederrors = FALSE, subjectpars = FALSE,
-  indvarstates = FALSE, randomEffects = NULL, ...) {
+  indvarstates = FALSE, randomEffects = NULL, subjectShift = NULL, ...) {
 
   # Same hazard as .ctBackendGenerateFromFit's statepath branch further down
   # this file: a state-explicit fit's point estimate is the mode of the joint
@@ -509,7 +515,8 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   # summary runs one per posterior draw -- so a note about how to read a
   # trajectory was printed by things that return no trajectory, and every
   # Laplace fit said it whether or not anyone asked for a prediction.
-  .ctBackendLaplaceTrajectoryNote(spec, randomEffects)
+  # Not said for shifted subjects, whose every pass takes the values given.
+  if (is.null(subjectShift)) .ctBackendLaplaceTrajectoryNote(spec, randomEffects)
   model <- .ctFitModelObject(fit)
   samples <- .ctBackendKalmanSamples(fit, pointest, nsamples, collapsefunc, ...)
 
@@ -541,12 +548,17 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   id <- NULL
 
   for (iteration in seq_len(iterations)) {
+    # Subjects moved by `subjectShift` take their shifted values in every pass,
+    # so the sequential passes, which re-solve each prefix's modes, are not run.
+    shifted <- .ctBackendShiftedSubjectValues(spec, samples[iteration, ],
+      subjectShift, randomEffects)
     scores <- .ctBackendKalmanRaw(spec, samples[iteration, ],
       subjectmatrices = isTRUE(subjectpars),
       # Every field this loop reads, and nothing else -- in particular not
       # `transition`, which nothing here or downstream looks at.
       fields = c("eta", "etacov", "y", "ycov", "llrow", "subject", "subject_loglik"),
-      randomEffects = randomEffects, sequential = TRUE)
+      randomEffects = randomEffects, sequential = is.null(shifted),
+      subjectvalues = shifted)
     etaa[iteration, , , ] <- scores$eta
     etacova[iteration, , , , ] <- scores$etacov
     ya[iteration, , , ] <- scores$y
@@ -621,6 +633,41 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
     out$subjectMatrices <- .ctBackendSubjectMatrices(spec, subjectmatrices)
   }
   out
+}
+
+# Each subject's raw vector with the rows of `shift` added to the subjects it
+# names: the subject values a Laplace pass takes in place of the modes
+# (`.ctBackendKalmanRaw()`'s `subjectvalues`), for a hypothetical person whose
+# random effects sit at chosen values. The base is the modes the pass would
+# otherwise use, from the fitted source where this specification has one, so a
+# subject with no data starts at the population's values. NULL when nothing is
+# shifted.
+.ctBackendShiftedSubjectValues <- function(spec, raw, shift, randomEffects = NULL) {
+  if (is.null(shift)) return(NULL)
+  if (is.null(spec$laplace) || length(spec$laplace$levels) != 1L) {
+    stop("Moving a subject's random effects needs a fit with one level of ",
+      "random effects and intoverpop = 'laplace', the julia default.", call. = FALSE)
+  }
+  if (!is.null(randomEffects) && !identical(.ctBackendLaplaceLevel(spec, randomEffects), 1L)) {
+    stop("subjectShift moves a subject's own random effects, so randomEffects ",
+      "must be the subject level.", call. = FALSE)
+  }
+  module <- .ctJuliaModule(spec$project)
+  hybrid <- .ctBackendHybridReports(spec)
+  source <- attr(spec, "laplaceSource")
+  objective <- .ctJuliaObjective(if (is.null(source)) spec else source, layer = !hybrid)
+  base <- as.matrix(.ctBackendJuliaValue(module$ctsem_laplace_subject_values(objective,
+    .ctJuliaNumericVector(as.numeric(raw)), from_level = 1L, ti_effects = FALSE)))
+  if (!is.null(source)) base <- base[attr(spec, "laplaceSubjects"), , drop = FALSE]
+  ids <- as.character(unique(spec$data[[spec$model$subjectIDname]]))
+  rows <- match(rownames(shift), ids)
+  if (anyNA(rows)) stop("Internal: subjectShift names subjects that are not in ",
+    "the data: ", paste(rownames(shift)[is.na(rows)], collapse = ", "), call. = FALSE)
+  columns <- as.integer(colnames(shift))
+  if (anyNA(columns) || any(columns > ncol(base))) stop("Internal: subjectShift's ",
+    "columns must name positions in the subject parameter vector.", call. = FALSE)
+  base[rows, columns] <- base[rows, columns, drop = FALSE] + shift
+  base
 }
 
 # Names for the augmented carrier states, which are the individually varying

@@ -90,6 +90,7 @@
 "test-ctNetwork.R","reporting","core"
 "test-ctPlotPosterior.R","reporting","core"
 "test-ctReport.R","reporting","core"
+"test-ctPredictVarying.R","reporting","core"
 "test-ctScoreTest.R","reporting","core"
 "test-ctModelImprove.R","reporting","core"
 "test-ctModelReduce.R","reporting","core"

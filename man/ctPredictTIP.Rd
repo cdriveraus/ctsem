@@ -30,14 +30,14 @@ This is relevant only when time dependent predictors are also included in the mo
 
 \item{timestep}{A numeric value specifying the time step for predictions. Default is 'auto', which tries to automatically determine an appropriate time step.}
 
-\item{doDynamics}{A logical value indicating whether to plot the effects of time independent predictors on the dynamics of the system. Default is TRUE. 
+\item{doDynamics}{A logical value indicating whether to plot the effects of time independent predictors on the dynamics of the system. Default is TRUE.
 Can be problematic for systems with many dimensions.}
 
 \item{plot}{A logical value indicating whether to ggplot the results instead of returning a data.frame of predictions. Default is TRUE.}
 
 \item{quantiles}{A numeric vector specifying the quantiles of the time independent predictors to plot. Default is c(.16,.5,.84): the median, and one standard deviation either side for a normally distributed predictor.}
 
-\item{discreteTimeQuantiles}{a numeric vector of length 3 specifying the quantiles of the discrete time points to plot, when 
+\item{discreteTimeQuantiles}{a numeric vector of length 3 specifying the quantiles of the discrete time points to plot, when
 showUncertainty is TRUE.}
 
 \item{dynamicsControl}{A named list of additional arguments to pass to
@@ -51,7 +51,7 @@ Internally controlled arguments \code{fit}, \code{ctstanfitobj}, \code{plot},
 
 \item{showUncertainty}{A logical value indicating whether to plot the uncertainty of the predictions. Default is TRUE.}
 
-\item{TIPvalues}{An nvalue * nTIpred numeric matrix specifying the fixed values for each time independent predictor effect to plot. 
+\item{TIPvalues}{An nvalue * nTIpred numeric matrix specifying the fixed values for each time independent predictor effect to plot.
 Default is NA, which instead relies on the quantiles specified in the quantiles argument.}
 
 \item{realid}{If TRUE (the default), subject is read as an id in the data,
@@ -62,14 +62,21 @@ subjects, 1 to N, with a message. If FALSE, it is read as that numbering.}
 If plot is TRUE, a list of ggplot objects showing the estimated effects of covariate moderators. Otherwise, a data frame with the predictions.
 }
 \description{
-Outputs the estimated effect of time independent predictors (covariate moderators) on the expected observations.
+Outputs the estimated effect of time independent predictors (covariate
+moderators) on the expected observations. This is
+\code{\link{ctPredictVarying}} for time independent predictors, which can
+also vary parameters that differ between persons.
 }
 \details{
-This function estimates the effects of covariate moderators on the expected process 
-and observations for a specified subject in a dynamic system. The covariate moderators are defined at the specified quantiles, 
+This function estimates the effects of covariate moderators on the expected process
+and observations for a specified subject in a dynamic system. The covariate moderators are defined at the specified quantiles,
 and their effects on the trajectory are plotted or returned as a data frame.
+\code{ctPredictTIP(fit, tipreds)} is \code{ctPredictVarying(fit, vary = tipreds)}.
 }
 \examples{
 # Example usage:
 ctPredictTIP(ctstantestfit, tipreds='all', doDynamics=FALSE, plot=TRUE)
+}
+\seealso{
+\code{\link{ctPredictVarying}}
 }

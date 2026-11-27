@@ -295,25 +295,48 @@ ctStanKalman <- ctKalmanArray
 
 
 
-#' ctPredictTIP
-#' 
-#' Outputs the estimated effect of time independent predictors (covariate moderators) on the expected observations.
-#' 
-#' @param sf A fitted object from \code{\link{ctFit}}, from any backend.
-#' @param tipreds A character vector specifying which time independent predictors to use. Default is 'all', which uses all time independent predictors in the model.
-#' @param subject The subject for which predictions are made, as an id in the data
-#' (see \code{realid}), or NULL (the default) for the first subject.
-#' This is relevant only when time dependent predictors are also included in the model.
+#' Expected trajectories of persons who differ
+#'
+#' Plots or returns the expected trajectories of hypothetical persons who differ
+#' in one time independent predictor, or in one individually varying parameter,
+#' such as a random intercept, initial state or drift effect.
+#'
+#' @param fit A fitted object from \code{\link{ctFit}}.
+#' @param vary A character vector naming what to vary: time independent
+#'   predictors, and parameters that vary between persons, by their names in
+#'   the model (such as \code{'mmX'} or \code{'T0m_X'}). Each is varied on its
+#'   own. \code{'all'}, the default, varies every time independent predictor
+#'   and every parameter that varies between persons.
+#' @param sdValues For a parameter that varies between persons, the values of
+#'   its random effect to show, in standard deviations of the random effect.
+#'   The default, \code{c(-1, 0, 1)}, shows a person one standard deviation
+#'   either side of the population mean, and one at it.
+#' @param correlated For a parameter that varies between persons. If FALSE
+#'   (the default), the other random effects stay at their population means.
+#'   If TRUE, they take their expected values given the varied one, from the
+#'   estimated covariances of the random effects.
+#' @param quantiles For a time independent predictor, the quantiles of its
+#'   observed values to show. Default is c(.16,.5,.84): the median, and one
+#'   standard deviation either side for a normally distributed predictor.
+#' @param TIPvalues An nvalue * nTIpred numeric matrix of values for the time
+#'   independent predictors in \code{vary}, a column for each, in the order
+#'   they are named. Default is NA, which uses \code{quantiles} instead.
+#' @param subject The subject whose observation times and time dependent
+#'   predictors the hypothetical persons take, as an id in the data (see
+#'   \code{realid}), or NULL (the default) for the first subject.
 #' @param realid If TRUE (the default), subject is read as an id in the data,
 #' and an integer that is not an id there as ctsem's numbering of the
 #' subjects, 1 to N, with a message. If FALSE, it is read as that numbering.
-#' @param doDynamics A logical value indicating whether to plot the effects of time independent predictors on the dynamics of the system. Default is TRUE. 
-#' Can be problematic for systems with many dimensions.
-#' @param timestep A numeric value specifying the time step for predictions. Default is 'auto', which tries to automatically determine an appropriate time step.
-#' @param plot A logical value indicating whether to ggplot the results instead of returning a data.frame of predictions. Default is TRUE.
-#' @param quantiles A numeric vector specifying the quantiles of the time independent predictors to plot. Default is c(.16,.5,.84): the median, and one standard deviation either side for a normally distributed predictor.
-#' @param discreteTimeQuantiles a numeric vector of length 3 specifying the quantiles of the discrete time points to plot, when 
-#' showUncertainty is TRUE.
+#' @param timestep A numeric value specifying the time step for predictions.
+#'   Default is 'auto', which chooses one from the data.
+#' @param plot If TRUE (the default), returns a list of ggplot objects. If
+#'   FALSE, returns a data frame of the predictions.
+#' @param doDynamics If TRUE (the default), also plots the discrete time effects
+#'   (see \code{\link{ctDiscretePars}}) at each value of a time independent
+#'   predictor. Can be slow for systems with many processes.
+#' @param discreteTimeQuantiles A numeric vector of length 3 specifying the
+#'   quantiles of the discrete time effects to plot, when showUncertainty is
+#'   TRUE.
 #' @param dynamicsControl A named list of additional arguments to pass to
 #' \code{\link{ctDiscretePars}} and \code{\link{ctDiscreteParsPlot}}
 #' when \code{doDynamics=TRUE}. Arguments matching
@@ -322,25 +345,51 @@ ctStanKalman <- ctKalmanArray
 #' \code{subjects}, \code{realid}, \code{impulseType} (and its deprecated spelling
 #' \code{observational}), \code{x}, \code{quantiles}, and
 #' \code{splitSubjects} are ignored if supplied.
-#' @param showUncertainty A logical value indicating whether to plot the uncertainty of the predictions. Default is TRUE.
-#' @param TIPvalues An nvalue * nTIpred numeric matrix specifying the fixed values for each time independent predictor effect to plot. 
-#' Default is NA, which instead relies on the quantiles specified in the quantiles argument.
-#' 
-#' @return If plot is TRUE, a list of ggplot objects showing the estimated effects of covariate moderators. Otherwise, a data frame with the predictions.
-#' 
-#' @details This function estimates the effects of covariate moderators on the expected process 
-#' and observations for a specified subject in a dynamic system. The covariate moderators are defined at the specified quantiles, 
-#' and their effects on the trajectory are plotted or returned as a data frame.
-#' 
+#' @param showUncertainty If TRUE (the default), plots uncertainty bands.
+#'
+#' @return If plot is TRUE, a list of ggplot objects: \code{Process$Observed}
+#'   and \code{Process$Latent} hold the expected trajectories of the observed
+#'   variables and the latent processes, one plot for each name in
+#'   \code{vary}, and \code{Dynamics} the discrete time effects for each time
+#'   independent predictor. If plot is FALSE, a data frame of the predictions,
+#'   with one subject for each value, named by it, such as \code{'TI1 = 0.53'}
+#'   or \code{'mmX = -1'}.
+#'
+#' @details Each value shown is a hypothetical person with no observations,
+#'   observed at the times of \code{subject} and with its time dependent
+#'   predictors. For a time independent predictor, the person has that value
+#'   of the predictor and the others at zero. For a parameter that varies
+#'   between persons, the person's random effect for it is the given number of
+#'   standard deviations from the population mean, on the parameter's raw
+#'   scale, where the random effects are normal.
+#'
+#'   For a time independent predictor the uncertainty bands show the spread of
+#'   persons with that value of the predictor, including the differences
+#'   between persons that the random effects describe. For a parameter that
+#'   varies between persons they show the spread of that one person's values
+#'   about their expected trajectory.
+#'
+#'   Varying a parameter needs a fit with \code{intoverpop = 'laplace'}, the
+#'   julia default, and one level of random effects.
+#'   The dynamics panels are drawn for time independent predictors only.
+#'
+#'   \code{\link{ctPredictTIP}} is this function for time independent
+#'   predictors.
+#'
 #' @examples
-#' # Example usage:
-#' ctPredictTIP(ctstantestfit, tipreds='all', doDynamics=FALSE, plot=TRUE)
+#' \donttest{
+#' # Persons one standard deviation either side of the population mean in each
+#' # random effect, and at each quantile of the predictors.
+#' p <- ctPredictVarying(ctsemtestfit, doDynamics = FALSE)
+#' names(p$Process$Observed)
+#' }
 #' @export
-ctPredictTIP <- function(sf,tipreds='all',subject=NULL,timestep='auto',doDynamics=TRUE, plot=TRUE,
-  quantiles=c(.16,.5,.84), discreteTimeQuantiles=c(.025, .5, .975),
-  dynamicsControl=list(),
-  showUncertainty=TRUE,
-  TIPvalues=NA, realid=TRUE){
+ctPredictVarying <- function(fit, vary = 'all', sdValues = c(-1, 0, 1),
+  correlated = FALSE, quantiles = c(.16, .5, .84), TIPvalues = NA, subject = NULL,
+  realid = TRUE, timestep = 'auto', plot = TRUE, doDynamics = TRUE,
+  discreteTimeQuantiles = c(.025, .5, .975), dynamicsControl = list(),
+  showUncertainty = TRUE){
+  sf <- fit
   if(!is.list(dynamicsControl)) stop('dynamicsControl must be a list')
   if(length(dynamicsControl) > 0 && (is.null(names(dynamicsControl)) || any(names(dynamicsControl) == ''))){
     stop('dynamicsControl must be a named list')
@@ -353,20 +402,42 @@ ctPredictTIP <- function(sf,tipreds='all',subject=NULL,timestep='auto',doDynamic
   # `standata`, so this works for stan and julia fits alike; the covariate
   # grid it builds is a *dataset*, which is what all three consume.
   ctmb <- .ctFitModelObject(sf)
-  if(tipreds[1] %in% 'all') tipreds <- ctmb$TIpredNames
-  if(!length(tipreds)) stop('The model has no time independent predictors')
+  population <- .ctPredictVaryingPopulation(sf)
+  varyingNames <- if(!is.null(population)) population$param else
+    tryCatch(.ctModelRawPopVarNames(ctmb$pars), error = function(e) character())
+  if(identical(vary, 'all')) vary <- c(ctmb$TIpredNames, varyingNames)
+  if(!length(vary)) stop('The model has no time independent predictors or ',
+    'parameters that vary between persons.')
+  vary <- unique(as.character(vary))
+  tipreds <- vary[vary %in% ctmb$TIpredNames]
+  varied <- vary[!vary %in% ctmb$TIpredNames]
+  unknown <- varied[!varied %in% varyingNames]
+  if(length(unknown)) stop('vary names neither a time independent predictor nor ',
+    'a parameter that varies between persons: ', paste(unknown, collapse = ', '))
+  if(length(varied) && is.null(population)) stop('Varying a parameter (',
+    paste(varied, collapse = ', '), ') needs a fit with intoverpop = \'laplace\', ',
+    'the julia default, and one level of random effects. Time independent ',
+    'predictors can be varied for any fit.')
   if(length(subject) > 1) stop('>1 subject!')
   subject <- if(is.null(subject)) 1L else as.vector(.ctResolveSubjects(sf, subject, realid))
   if(.ctFitNsubjects(sf) < 3) stop('With fewer than 3 subjects in the data, these predictions are not possible')
-  
-  if(all(is.na(TIPvalues))){
-    TIPvalues = apply(.ctFitTIpredData(sf)[,tipreds,drop=FALSE],2,quantile,probs=quantiles)
+
+  if(length(tipreds)){
+    if(all(is.na(TIPvalues))){
+      TIPvalues = apply(.ctFitTIpredData(sf)[,tipreds,drop=FALSE],2,quantile,probs=quantiles)
+    }
+    TIPvalues <- as.matrix(TIPvalues)
+    if(ncol(TIPvalues) != length(tipreds)) stop('TIPvalues needs a column for each ',
+      'time independent predictor in vary: ', paste(tipreds, collapse = ', '))
+    #check for duplicates in columns of TIPvalues and stop if found
+    if(!all(apply(TIPvalues,2,function(x) length(unique(x))==length(x)))){
+      stop('Duplicate values for TI predictors -- if using categorical / dummy predictors, specify values using TIPvalues arg')
+    }
+    TIPvalues <- matrix(apply(TIPvalues,2,function(x) sort(x)),ncol=ncol(TIPvalues)) #sort ascending to get plot colours correct
   }
-  #check for duplicates in columns of TIPvalues and stop if found
-  if(!all(apply(TIPvalues,2,function(x) length(unique(x))==length(x)))){
-    stop('Duplicate values for TI predictors -- if using categorical / dummy predictors, specify values using TIPvalues arg')
-  }
-  
+  sdValues <- sort(unique(as.numeric(sdValues)))
+  if(length(varied) && (!length(sdValues) || anyNA(sdValues))) stop('sdValues must be numbers.')
+
   # Kept before .ctFitReplaceData() below swaps in the fabricated dataset: the
   # nonlinear dynamics panel needs the fit as estimated, not the one refitted
   # against all-missing data.
@@ -377,75 +448,89 @@ ctPredictTIP <- function(sf,tipreds='all',subject=NULL,timestep='auto',doDynamic
   idmap <- .ctFitIdMap(sf)
   dat <- dat[dat[[ctmb$subjectIDname]] %in% idmap[match(subject, idmap[,2]),1],,drop=FALSE]
   dat[,ctmb$manifestNames] <- NA #set all manifest obs to missing
-  
-  TIPvalues <- matrix(apply(TIPvalues,2,function(x) sort(x)),ncol=ncol(TIPvalues)) #sort ascending to get plot colours correct
+  dat[,ctmb$TIpredNames] <- 0 #set all covariates to zero
 
-  # One pseudo-subject per predictor value, its id naming both. ctsem numbers
-  # subjects in the order of their ids as strings, so "TI2 = -0.03" comes
-  # before "TI2 = -1.02", and a predictor's ids need not follow the order of
-  # `tipreds` either: everything below finds a pseudo-subject by its id, never
-  # by its position. Values are rounded to as few places (two at least) as keep
-  # them apart, since two values sharing an id would be one subject.
-  tipids <- matrix(NA_character_, nrow(TIPvalues), length(tipreds))
-  for(tipi in seq_along(tipreds)){
+  # One pseudo-subject per value, its id naming both. ctsem numbers subjects
+  # in the order of their ids as strings, so "TI2 = -0.03" comes before
+  # "TI2 = -1.02", and a predictor's ids need not follow the order of `vary`
+  # either: everything below finds a pseudo-subject by its id, never by its
+  # position. Values are rounded to as few places (two at least) as keep them
+  # apart, since two values sharing an id would be one subject.
+  values <- list()
+  for(tipi in seq_along(tipreds)) values[[tipreds[tipi]]] <- TIPvalues[,tipi]
+  for(p in varied) values[[p]] <- sdValues
+  ids <- lapply(names(values), function(name){
     digits <- 2
-    while(anyDuplicated(round(TIPvalues[,tipi],digits)) && digits < 15) digits <- digits + 1
-    tipids[,tipi] <- paste0(tipreds[tipi],' = ',round(TIPvalues[,tipi],digits))
+    while(anyDuplicated(round(values[[name]],digits)) && digits < 15) digits <- digits + 1
+    paste0(name,' = ',round(values[[name]],digits))
+  })
+  names(ids) <- names(values)
+  pseudo <- function(name){
+    do.call(rbind, lapply(seq_along(values[[name]]), function(vali){
+      tdat <- dat
+      tdat[[ctmb$subjectIDname]] <- ids[[name]][vali]
+      if(name %in% tipreds) tdat[,name] <- values[[name]][vali]
+      tdat
+    }))
   }
 
-  fulldat <- dat[c(),]
-  for(tipi in 1:length(tipreds)){ #for each tipred
-    for(vali in 1:nrow(TIPvalues)){ #for each tipred value
-      tdat <- dat #copy the data
-      tdat[,ctmb$TIpredNames] <- 0 #set all covariates to zero
-      tipvali <- TIPvalues[vali,tipi] #get the tipred value
-      tdat[[ctmb$subjectIDname]] <- tipids[vali,tipi] #modify the subject ID
-      tdat[,tipreds[tipi]] <- tipvali #set the tipred value to the quantile or value specified
-      if(nrow(fulldat)==0){
-        fulldat <- tdat #output to full dataset
-      } else fulldat <- rbind(fulldat,tdat)
-    }
+  k <- NULL
+  if(length(tipreds)){
+    tipdat <- do.call(rbind, lapply(tipreds, pseudo))
+    tipfit <- .ctFitReplaceData(sf, tipdat)
+    k <- ctPredict(fit = tipfit,subjects=unique(tipdat[[ctmb$subjectIDname]]),realid=TRUE,timestep=timestep)
   }
-  
-  sf <- .ctFitReplaceData(sf, fulldat)
-  k=ctPredict(fit = sf,subjects=unique(fulldat[[ctmb$subjectIDname]]),realid=TRUE,timestep=timestep)
+  if(length(varied)){
+    redat <- do.call(rbind, lapply(varied, pseudo))
+    # Each pseudo-subject's random effects, moved from the population mean: by
+    # its multiple of the varied effect's standard deviation, and with
+    # `correlated` the others by their regression on it.
+    shift <- matrix(0, 0, length(population$parnumber),
+      dimnames = list(NULL, as.character(population$parnumber)))
+    for(p in varied){
+      j <- match(p, population$param)
+      direction <- if(isTRUE(correlated)) population$cov[, j] / sqrt(population$cov[j, j]) else
+        replace(numeric(length(population$parnumber)), j, sqrt(population$cov[j, j]))
+      rows <- outer(values[[p]], direction)
+      rownames(rows) <- ids[[p]]
+      shift <- rbind(shift, rows)
+    }
+    refit <- .ctFitReplaceData(sf, redat)
+    out <- meltkalman(ctBackendKalman(refit, subjects = 'all', timestep = timestep,
+      pointest = TRUE, subjectpars = FALSE, subjectShift = shift))
+    reidmap <- .ctFitIdMap(refit)
+    out$Subject <- factor(reidmap[match(out$Subject, reidmap[,2]),1])
+    k <- if(is.null(k)) out else rbind(k[, names(out)], out)
+  }
   k = k[k$Element %in% c('etaprior','yprior','ypriorcov','etapriorcov'),]
   k$V1 <- k$variable <- NULL
 
-  
   if(!plot) return(k) else{
     Sample <- Col <- CovariateValue <- Effect <- Subject<- NULL #local variables for ggplot
     gglist <- list(Process=list(Observed=list(),Latent=list()),Dynamics=list(Independent=list(),Correlated=list())) #empty list
-    for(tipi in 1:length(tipreds)){ #for each tipred
-      ks <- k[as.character(k$Subject) %in% tipids[,tipi],] #subset to tipred
+    for(name in names(values)){
+      ks <- k[as.character(k$Subject) %in% ids[[name]],]
       ks$Subject <- factor(as.numeric(gsub('^.* = ','',ks$Subject))) #extract the subject value
+      title <- if(name %in% tipreds) name else paste0(name, ' (sd)')
 
-      
-      
       for(elementi in c('yprior','etaprior')){
         ksp=plot.ctKalmanDF(ks,plot=FALSE,kalmanvec=elementi,
           polygonsteps = ifelse(showUncertainty,10,0))
-        # if(tail(ksp$data$Subject,1)==99999){ #if we added a dummy subject, remove from plot now
-        #   ksp$data <- ksp$data[-nrow(ksp$data),]
-        #   # ksp$data$Subject <- factor(ksp$data$Subject)
-        # }
-        
         ksp <- ksp +
-          theme(legend.position = 'bottom') +
-          guides(colour=guide_legend(title=tipi)) +
           aes(linetype=NULL,colour=Subject,fill=Subject)+
           scale_colour_manual(values=colorRampPalette(c("red",'black', "blue"))(length(unique(ksp$data$Subject))))+
           scale_fill_manual(values=colorRampPalette(c("red",'black', "blue"))(length(unique(ksp$data$Subject))))+
           theme(legend.position = 'bottom')+
-          guides(colour=guide_legend(title=tipreds[tipi]))+
-          ggtitle(paste0('Effect of ',tipreds[tipi],' on ',ifelse(elementi=='yprior','observed','latent'),' trajectory'))+
+          guides(colour=guide_legend(title=title))+
+          ggtitle(paste0('Effect of ',name,' on ',ifelse(elementi=='yprior','observed','latent'),' trajectory'))+
           facet_wrap(vars(Variable),scales ='free_y')
-        
-        gglist[['Process']][[ifelse(elementi=='yprior','Observed','Latent')]][[tipreds[tipi]]] <- ksp
+
+        gglist[['Process']][[ifelse(elementi=='yprior','Observed','Latent')]][[name]] <- ksp
       }
-      
+
       #include ctstandiscretepars plots
-      if(doDynamics){
+      if(doDynamics && name %in% tipreds){
+        tipi <- match(name, tipreds)
         for(typei in c('Independent','Correlated')){
           if(contextdependent){
             # See .ctPredictTIPDynamics: reading a pseudo-subject's frozen
@@ -455,7 +540,7 @@ ctPredictTIP <- function(sf,tipreds='all',subject=NULL,timestep='auto',doDynamic
             # changes in the others, rather than premultiplying by a bare
             # correlation matrix.
             ctd <- .ctPredictTIPDynamics(originalfit,
-              tipredIndex = match(tipreds[tipi], ctmb$TIpredNames),
+              tipredIndex = match(name, ctmb$TIpredNames),
               values = TIPvalues[,tipi], times = if(!is.null(dynamicsControl$times))
                 dynamicsControl$times else seq(0,10,.5),
               ntipred = length(ctmb$TIpredNames),
@@ -466,14 +551,14 @@ ctPredictTIP <- function(sf,tipreds='all',subject=NULL,timestep='auto',doDynamic
               quiet = tipi > 1 || !typei %in% 'Independent')
           } else {
           discreteParsArgs <- c(dynamicsControl, list(
-            fit=sf,
+            fit=tipfit,
             plot=FALSE,
-            subjects=tipids[,tipi], realid=TRUE,
+            subjects=ids[[name]], realid=TRUE,
             impulseType = if(typei %in% 'Independent') 'unit' else 'observed'))
           ctd=do.call(ctDiscretePars, discreteParsArgs)
           # Labelled by id, in ctsem's order; relabel each by its row of
           # TIPvalues, as the context dependent panel labels them.
-          dimnames(ctd)$Subject <- match(dimnames(ctd)$Subject, tipids[,tipi])
+          dimnames(ctd)$Subject <- match(dimnames(ctd)$Subject, ids[[name]])
           }
           if(showUncertainty) ctdQuantiles <- discreteTimeQuantiles else ctdQuantiles <- c(.5,.5,.5)
           ctdp=do.call(ctDiscreteParsPlot, c(dynamicsPlotControl,
@@ -482,21 +567,99 @@ ctPredictTIP <- function(sf,tipreds='all',subject=NULL,timestep='auto',doDynamic
           # which order "10" before "2".
           ctdp$data$CovariateValue <- factor(round(
             TIPvalues[as.integer(as.character(ctdp$data$Subject)),tipi],3))
-          
+
           ctdp=ctdp+aes(colour=CovariateValue,fill=CovariateValue)+
             facet_wrap(vars(Effect))+theme(legend.position = 'bottom')+
             scale_colour_manual(values=colorRampPalette(c("red",'black', "blue"))(nrow(TIPvalues)))+
             scale_fill_manual(values=colorRampPalette(c("red",'black', "blue"))(nrow(TIPvalues)))+
             theme(legend.position = 'bottom') +
-            guides(colour=guide_legend(title=tipreds[tipi]),
-              fill=guide_legend(title=tipreds[tipi]))
-          
-          gglist[['Dynamics']][[typei]][[tipreds[tipi]]] <- ctdp
+            guides(colour=guide_legend(title=name),
+              fill=guide_legend(title=name))
+
+          gglist[['Dynamics']][[typei]][[name]] <- ctdp
         }
       }
     }
     return(gglist)
   }
+}
+
+# The random effects a pseudo-subject can be moved along, at the point the
+# trajectories are computed from: their names, their positions in the raw
+# parameter vector, and their raw-scale covariance. NULL where a subject's
+# random effects cannot be set (`.ctBackendShiftedSubjectValues()`): a fit off
+# the Laplace route, or one with random effects above the subject.
+.ctPredictVaryingPopulation <- function(fit) {
+  if (!.ctFitIsJulia(fit)) return(NULL)
+  spec <- .ctBackendSpec(fit)
+  if (is.null(spec$laplace) || length(spec$laplace$levels) != 1L) return(NULL)
+  raw <- .ctBackendKalmanSamples(fit, TRUE, NA, NA)
+  populations <- .ctBackendPopulations(fit, raw[1L, , drop = FALSE])
+  if (!length(populations)) return(NULL)
+  population <- populations[[1L]]
+  k <- length(population$parnumber)
+  list(param = as.character(population$param),
+    parnumber = as.integer(population$parnumber),
+    cov = matrix(population$covariance[1L, , ], k, k))
+}
+
+#' ctPredictTIP
+#'
+#' Outputs the estimated effect of time independent predictors (covariate
+#' moderators) on the expected observations. This is
+#' \code{\link{ctPredictVarying}} for time independent predictors, which can
+#' also vary parameters that differ between persons.
+#'
+#' @param sf A fitted object from \code{\link{ctFit}}, from any backend.
+#' @param tipreds A character vector specifying which time independent predictors to use. Default is 'all', which uses all time independent predictors in the model.
+#' @param subject The subject for which predictions are made, as an id in the data
+#' (see \code{realid}), or NULL (the default) for the first subject.
+#' This is relevant only when time dependent predictors are also included in the model.
+#' @param realid If TRUE (the default), subject is read as an id in the data,
+#' and an integer that is not an id there as ctsem's numbering of the
+#' subjects, 1 to N, with a message. If FALSE, it is read as that numbering.
+#' @param doDynamics A logical value indicating whether to plot the effects of time independent predictors on the dynamics of the system. Default is TRUE.
+#' Can be problematic for systems with many dimensions.
+#' @param timestep A numeric value specifying the time step for predictions. Default is 'auto', which tries to automatically determine an appropriate time step.
+#' @param plot A logical value indicating whether to ggplot the results instead of returning a data.frame of predictions. Default is TRUE.
+#' @param quantiles A numeric vector specifying the quantiles of the time independent predictors to plot. Default is c(.16,.5,.84): the median, and one standard deviation either side for a normally distributed predictor.
+#' @param discreteTimeQuantiles a numeric vector of length 3 specifying the quantiles of the discrete time points to plot, when
+#' showUncertainty is TRUE.
+#' @param dynamicsControl A named list of additional arguments to pass to
+#' \code{\link{ctDiscretePars}} and \code{\link{ctDiscreteParsPlot}}
+#' when \code{doDynamics=TRUE}. Arguments matching
+#' \code{ctDiscreteParsPlot} are automatically routed to the plot call.
+#' Internally controlled arguments \code{fit}, \code{ctstanfitobj}, \code{plot},
+#' \code{subjects}, \code{realid}, \code{impulseType} (and its deprecated spelling
+#' \code{observational}), \code{x}, \code{quantiles}, and
+#' \code{splitSubjects} are ignored if supplied.
+#' @param showUncertainty A logical value indicating whether to plot the uncertainty of the predictions. Default is TRUE.
+#' @param TIPvalues An nvalue * nTIpred numeric matrix specifying the fixed values for each time independent predictor effect to plot.
+#' Default is NA, which instead relies on the quantiles specified in the quantiles argument.
+#'
+#' @return If plot is TRUE, a list of ggplot objects showing the estimated effects of covariate moderators. Otherwise, a data frame with the predictions.
+#'
+#' @details This function estimates the effects of covariate moderators on the expected process
+#' and observations for a specified subject in a dynamic system. The covariate moderators are defined at the specified quantiles,
+#' and their effects on the trajectory are plotted or returned as a data frame.
+#' \code{ctPredictTIP(fit, tipreds)} is \code{ctPredictVarying(fit, vary = tipreds)}.
+#'
+#' @seealso \code{\link{ctPredictVarying}}
+#' @examples
+#' # Example usage:
+#' ctPredictTIP(ctstantestfit, tipreds='all', doDynamics=FALSE, plot=TRUE)
+#' @export
+ctPredictTIP <- function(sf,tipreds='all',subject=NULL,timestep='auto',doDynamics=TRUE, plot=TRUE,
+  quantiles=c(.16,.5,.84), discreteTimeQuantiles=c(.025, .5, .975),
+  dynamicsControl=list(),
+  showUncertainty=TRUE,
+  TIPvalues=NA, realid=TRUE){
+  if(tipreds[1] %in% 'all') tipreds <- .ctFitModelObject(sf)$TIpredNames
+  if(!length(tipreds)) stop('The model has no time independent predictors')
+  ctPredictVarying(sf, vary = tipreds, quantiles = quantiles, TIPvalues = TIPvalues,
+    subject = subject, realid = realid, timestep = timestep, plot = plot,
+    doDynamics = doDynamics, discreteTimeQuantiles = discreteTimeQuantiles,
+    dynamicsControl = dynamicsControl, showUncertainty = showUncertainty)
 }
 
 #' ctPredict
