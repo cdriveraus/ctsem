@@ -1585,6 +1585,10 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     if ("populations" %in% names(constrained)) return(constrained$populations)
     samples <- constrained$samples
   }
+  # The estimate, or some of the draws, from the fit's cache, as a stored fit
+  # reports without Julia.
+  cached <- .ctBackendCachedConstrain(fit$transformedpars, samples)
+  if ("populations" %in% names(cached)) return(cached$populations)
   spec <- .ctBackendSpec(fit)
   full <- .ctBackendRawFull(fit, samples)
   .ctBackendPopulationsOf(fit, spec, full, .ctBackendSummaryLayout(fit),
