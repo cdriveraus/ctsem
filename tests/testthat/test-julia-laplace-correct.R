@@ -214,3 +214,43 @@ test_that("the refined fit's tolerance reaches the climb", {
   ctsem:::.ctLaplacePlacedClimb(module, NULL, c(0, 0), 1e-6, list())
   expect_identical(sent$slope_bar, 0.5)
 })
+
+# A refinement asked for after the fit forces the units the fit's own check
+# carried, and climbs whatever the screen at the start says: where the screen
+# found every unit's Laplace term within its tolerance it returned the fit
+# untouched, forced units and all (anomS1 from a variational fit with 796
+# units forced, 2026-11-27). Mocked at the engine, so nothing here needs Julia.
+test_that("forced units are refined even where the screen passes", {
+  climbed <- NULL
+  testthat::local_mocked_bindings(
+    .ctJuliaFitModes = function(...) NULL,
+    .ctJuliaHoldModes = function(...) NULL,
+    .ctBackendProgressSink = function(...) NULL,
+    .ctBackendSetMaxChunks = function(n) 1L,
+    .ctBackendRestoreMaxChunks = function(...) NULL,
+    .ctJuliaObjective = function(...) NULL,
+    .ctJuliaNumericVector = function(values) as.numeric(values),
+    .ctJuliaVector = function(values) values,
+    .ctJuliaGet = function(x) x,
+    .ctBackendGapTolerance = function(...) 1e-6,
+    .ctLaplacePlacedRefine = function(fit, module, cont, est, record, ...) {
+      climbed <<- cont$force
+      fit
+    },
+    .ctJuliaModule = function(...) list(
+      ctsem_laplace_continuation = function(objective, values, ...) list(...),
+      # The screen at the start: every unit within the tolerance.
+      ctsem_laplace_continuation_info = function(cont) list(nodes = 5L,
+        tolerance = 0.01, screen = 0.001, gap = 0.001, laplace_units = c(-1, -1),
+        nflagged = length(cont$force), nunits = 2L, rule_failures = 0L,
+        nlattice = 0L, error = 0)))
+  fit <- list(estimate = list(raw = c(0, 0), loglik = -2),
+    model_spec = list(subject_starts = 1:2, project = NULL))
+  settings <- ctsem:::.ctLaplaceContinueDefaults
+  settings$check <- FALSE
+  out <- ctsem:::.ctLaplaceContinue(fit, control = settings)
+  expect_null(climbed)
+  expect_identical(out$laplace$correction$status, "exact")
+  ctsem:::.ctLaplaceContinue(fit, control = settings, force = 2L)
+  expect_identical(climbed, 2L)
+})
