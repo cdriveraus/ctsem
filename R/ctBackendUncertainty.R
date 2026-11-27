@@ -106,6 +106,9 @@
   # variational fit's is not yet one the engine can take a coreset of, and is
   # evaluated in full.
   attr(fn, "unitsum") <- !.ctBackendVariational(fit$model_spec)
+  # A variational fit's interval check solves its draws roughly
+  # (`.ctVariationalRoughCheck()`).
+  attr(fn, "variational") <- .ctBackendVariational(fit$model_spec)
   # The engine and its objective, for a stage that runs in the engine on this
   # density rather than calling it batch by batch (`.ctDaisEngine()`).
   attr(fn, "engine") <- engine
