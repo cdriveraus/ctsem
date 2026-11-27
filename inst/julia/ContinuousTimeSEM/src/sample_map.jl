@@ -2671,6 +2671,7 @@ function ctsem_sample_map(laplace::CTSEMLaplaceObjective, values::AbstractVector
     return merge(_sample_result(pooled; nchains=nchains, ndraws=ndraws, npar=npar,
             ndim=npar + ndev, maxdepth=Int(maxdepth),
             stepsize=[r.stepsize for r in results],
+            target_accept=[r.target for r in results],
             warmup_divergent=[r.warmup_divergent for r in results], trace=final.trace,
             saved_effects=save_effects, effects=reported.effects),
         (sampler="map", placement=_saem_placement_summary(nothing),

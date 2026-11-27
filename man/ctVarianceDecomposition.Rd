@@ -90,17 +90,22 @@ process acts as a stable level within the record. Needs
 A data frame of class \code{ctVarianceDecomposition}, one row per
   variable, with columns \code{variable}, \code{type}, \code{between},
   \code{within.deterministic}, \code{within.stochastic},
-  \code{within.measurement}, \code{within}, \code{total} and the
-  corresponding proportions. The population the between column refers to,
-  the scale, and the number of persons are recorded as attributes and shown
-  by \code{print}.
+  \code{within.measurement}, \code{within} and \code{total}, the
+  \code{between.<level>}, \code{within.stochastic.<source>} and
+  \code{level.<source>} columns where they apply, a \code{prop.} column for
+  each of these giving it as a proportion of \code{total}, and the
+  intraclass correlations \code{icc}, \code{icc.process} and
+  \code{icc.<level>}. The population the between column refers to, the
+  scale, and the number of persons are recorded as attributes and shown by
+  \code{print}.
 }
 \description{
 Splits the variance each indicator of a fitted model implies into a between
 person part, a within person part from the latent process, and a within
 person part from measurement error. The process part is further split into
 the contribution of the system noise and that of the mean path changing
-over time.
+over time. Each part is also given as a proportion of the total, along with
+intraclass correlations.
 }
 \details{
 The decomposition applies the law of total variance over the
@@ -152,6 +157,15 @@ The decomposition applies the law of total variance over the
   With \code{method='simulation'}, the function checks that the engine
   draws the individually varying parameters, and stops with an error if it
   does not.
+
+  \strong{Intraclass correlations.} \code{icc} is the between person
+  variance divided by the total, and \code{icc.process} the between person
+  variance divided by the total without measurement error. For a latent
+  process the two are the same. With more than one random effect level,
+  \code{icc.<level>} is the between person variance of that level and all
+  levels above it, divided by the total. For a level above the person, such
+  as a study, this is the correlation between observations of two persons
+  in the same study. For the innermost level it equals \code{icc}.
 }
 \examples{
 \donttest{

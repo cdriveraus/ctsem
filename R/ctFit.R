@@ -928,7 +928,9 @@ T0VARredundancies <- function(ctm) {
 #' (see also \code{\link{ctJuliaSetup}}). The stan backend needs no other
 #' software, and will be deprecated.
 #' @param sampleControl Used when \code{optimize=FALSE}: a list of sampler
-#' settings. \code{chains} is the number of chains (4 on julia, 2 on stan).
+#' settings. \code{chains} is the number of chains (4 on julia, 2 on stan);
+#' tempered SMC, which samples some models without random effects, runs as
+#' many as it needs and does not use it.
 #' \code{iter} is the number of iterations including warmup (1000).
 #' \code{warmup} is the number of warmup iterations (200, or half of
 #' \code{iter} if that is less), and is not used by the map sampler, which
@@ -940,7 +942,8 @@ T0VARredundancies <- function(ctm) {
 #'
 #' For \code{backend='julia'} the list also takes \code{sampler}:
 #' \code{'map'} (NUTS through a learnt map, the default for the joint
-#' posterior), \code{'saem'} or \code{'nuts'}. \code{placement} sets where the
+#' posterior), \code{'saem'}, \code{'nuts'} or \code{'smc'} (see
+#' \code{\link{ctFitUncertainty}} for which is used by default). \code{placement} sets where the
 #' chains start: \code{'fit'} around an optimised fit, the default for
 #' \code{'map'} and \code{'nuts'}, or \code{'saem'} from an SAEM run, with no
 #' optimisation needed, the default for \code{'saem'}. Sampling stops when
