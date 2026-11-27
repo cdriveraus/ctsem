@@ -374,8 +374,8 @@ from the Hessian's normal approximation, and otherwise by NUTS
 has no interval check, one is made first. Setting \code{warmup},
 \code{stepsize}, \code{adapt_metric}, \code{adapt_effects} or
 \code{settleTol} selects NUTS, and \code{sampler = 'smc'} together with
-\code{warmup} or \code{stepsize} is an error. \code{chains} selects no
-sampler: it is not used by SMC, with a warning. Tempered SMC
+\code{warmup} or \code{stepsize} is an error. \code{chains} does not
+select a sampler, and SMC does not use it (with a warning). Tempered SMC
 moves \code{particles} (200) draws from the normal approximation to the
 posterior in stages, then runs as many further chains as the effective
 sample size target needs. It is for posteriors that NUTS, started from the
