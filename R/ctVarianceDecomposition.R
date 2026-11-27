@@ -1133,7 +1133,14 @@
   ndraws <- batch$ndraws
   npeople <- length(batch$rows)
   nvar <- nmanifest + if (latents) nlatent else 0L
-  persontimes <- lapply(batch$rows, function(rows) if (bytime) times else
+  # A grid starts at the record's start, time 0, where the initial state
+  # applies; a grid that starts later steps there from 0, and that row is
+  # dropped. Read as the start itself, a first time of 4 gave the initial
+  # state's within person variance, which a random initial mean leaves at its
+  # floor, and an ICC of 1.
+  fromzero <- bytime && times[1L] > 0
+  grid <- if (fromzero) c(0, times) else times
+  persontimes <- lapply(batch$rows, function(rows) if (bytime) grid else
     design$time[rows])
   persontd <- if (!bytime && !is.null(design$tdpreds)) lapply(batch$rows,
     function(rows) design$tdpreds[rows, , drop = FALSE])
@@ -1148,6 +1155,7 @@
     moments <- .ctVarDecompMoments(mats, ndraws, persontimes, persontd,
       continuoustime, covariance = s == 1L || response,
       sources = if (s == 1L) sources)
+    if (fromzero) moments$rows <- moments$rows[-1L]
     stats <- .ctVarDecompRowStats(moments, mats, ndraws, lengths(persontimes),
       type, scale, gh, nmanifest, nlatent, latents, bytime, within = s == 1L)
     value[[s]] <- stats$value
@@ -1619,9 +1627,11 @@
 #'   (\code{'response'}, integrating the link over each row's normal
 #'   distribution). The two are the same for a Gaussian indicator.
 #' @param times If given, decompose at each of these times. By default the
-#'   decomposition averages over each person's observation times. Either a
-#'   numeric vector, or \code{'asdata'} for the observed occasions. Every person
-#'   is evaluated at the same times. The result gains a \code{time} column and
+#'   decomposition averages over each person's observation times. Times are
+#'   measured from the start of each person's record, where the initial state
+#'   applies. Either a numeric vector, or \code{'asdata'} for the times of
+#'   the observed occasions since each record began. Every person is
+#'   evaluated at the same times. The result gains a \code{time} column and
 #'   has no \code{within.deterministic} column, since that term is the variance
 #'   of the mean path over time. Not available with \code{method='simulation'}
 #'   or with time dependent predictors.
@@ -1835,9 +1845,16 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
         'Drop times= for the window average over the observed design.',
         call. = FALSE)
     }
-    times <- if (identical(as.character(times)[1L], 'asdata'))
-      sort(unique(design$time)) else sort(as.numeric(times))
+    # Times run from the start of each record, where the model's initial
+    # state applies; 'asdata' gives each observation's time since its own
+    # record began.
+    times <- if (identical(as.character(times)[1L], 'asdata')) {
+      start <- tapply(design$time, design$subject, min)
+      sort(unique(round(design$time - start[as.character(design$subject)], 10)))
+    } else sort(as.numeric(times))
     if (length(times) < 1L) stop('times= is empty.', call. = FALSE)
+    if (any(!is.finite(times) | times < 0)) stop('times= are measured from ',
+      'the start of each record, so must be 0 or more.', call. = FALSE)
   }
   wanted <- if (identical(subjects, 'all')) seq_len(design$nsubjects) else
     as.vector(.ctResolveSubjects(fit, subjects, realid))
@@ -1976,10 +1993,10 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
 print.ctVarianceDecomposition <- function(x, digits = 3L, ...) {
   bytime <- isTRUE(attr(x, 'bytime'))
   frame <- as.data.frame(x)
-  # The named columns of `table`, rounded, beside the time and variable each
-  # row is about.
+  # The named columns of `table`, rounded, beside the time, variable and type
+  # each row is about: a manifest and a latent of one name are two rows.
   show <- function(table, columns, labels = columns) {
-    keys <- intersect(c('time', 'variable'), names(table))
+    keys <- intersect(c('time', 'variable', 'type'), names(table))
     table <- table[c(keys, columns)]
     numeric <- vapply(table, is.numeric, logical(1L))
     table[numeric] <- lapply(table[numeric], round, digits)
@@ -1998,7 +2015,7 @@ print.ctVarianceDecomposition <- function(x, digits = 3L, ...) {
   nsamples <- attr(x, 'nsamples')
 
   cat('Model implied variance decomposition\n\n')
-  show(frame, c(if (!bytime) 'type', parts, 'total'))
+  show(frame, c(parts, 'total'))
   cat('\nProportions of the total\n')
   show(frame, paste0('prop.', c(parts, 'within')), c(parts, 'within'))
   if (length(levelcols)) {
@@ -2015,13 +2032,13 @@ print.ctVarianceDecomposition <- function(x, digits = 3L, ...) {
   }
   if (is.null(intervals)) {
     cat('\nIntraclass correlations\n')
-    show(frame, c(if (!bytime) 'type', iccs))
+    show(frame, iccs)
   } else {
     cat('\nIntraclass correlations, medians and 95% intervals\n')
     for (icc in iccs) {
       cat('\n', icc, '\n', sep = '')
       show(intervals[intervals$quantity == icc, , drop = FALSE],
-        c(if (!bytime) 'type', '2.5%', '50%', '97.5%'))
+        c('2.5%', '50%', '97.5%'))
     }
   }
 

@@ -673,6 +673,25 @@ test_that('the two modes agree about the part they share', {
   expect_equal(unique(resolved$time), sort(unique(datalong[, 'time'])))
 })
 
+test_that('times= are measured from the start of each record', {
+  # A grid that starts after time 0 steps there from the initial state: its
+  # rows are the same rows of a grid that starts at 0, with the same persons.
+  # Read as the start itself, times = 5 gave the initial state, where this
+  # fixed T0MEANS leaves no between person variance (and the book's RI-CLPM,
+  # whose random initial means leave no within, an ICC of 1).
+  set.seed(5)
+  later <- ctVarianceDecomposition(fit, times = 5, npersons = 100, nsamples = 0)
+  set.seed(5)
+  full <- ctVarianceDecomposition(fit, times = c(0, 5), npersons = 100,
+    nsamples = 0)
+  at5 <- full[full$time == 5, ]
+  rownames(at5) <- NULL
+  expect_equal(later$between, at5$between)
+  expect_equal(later$within.stochastic, at5$within.stochastic)
+  expect_gt(later$between[later$variable == 'eta1'], 0)
+  expect_error(ctVarianceDecomposition(fit, times = -1), '0 or more')
+})
+
 test_that('times= refuses what it has no grid for', {
   expect_error(ctVarianceDecomposition(fit, times = c(0, 1),
     method = 'simulation'), 'no common grid')
