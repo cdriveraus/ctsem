@@ -134,6 +134,29 @@ test_that("a variational fit's interval check and 'checked' run", {
     "marginal cannot be sampled")
 })
 
+test_that("a variational fit is refined by quadrature from its own estimate", {
+  skip_on_cran()
+  skip_without_julia()
+  vf <- .vf_fit("nonlinear", "variational")
+  qf <- .vf_fit("nonlinear", "quadrature")
+  rf <- suppressWarnings(suppressMessages(ctFitUncertainty(vf,
+    intoverpop = "quadrature", cores = 2)))
+  corr <- rf$laplace$correction
+  expect_identical(corr$status, "continued")
+  expect_true(corr$applied)
+  # The climb started at the variational estimate, on the Laplace objective
+  # with the units the check names against Laplace there flagged.
+  expect_equal(corr$laplace_estimate, vf$estimate$raw)
+  expect_null(rf$model_spec$laplace$variational)
+  expect_gt(length(corr$check$carriers), 0)
+  expect_true(all(corr$check$carriers %in% corr$flagged_units))
+  expect_identical(rf$estimate$loglik_method, "quadrature")
+  # It ends where ctFit(intoverpop = 'quadrature') ends from Laplace's
+  # optimum, up to the units the screen flags at the two starts.
+  expect_lt(max(abs(rf$estimate$raw - qf$estimate$raw) / qf$estimate$se), 0.1)
+  expect_lt(abs(rf$estimate$loglik - qf$estimate$loglik), 0.1)
+})
+
 test_that("without the random-effects check a variational fit reports its bound", {
   skip_on_cran()
   skip_without_julia()
