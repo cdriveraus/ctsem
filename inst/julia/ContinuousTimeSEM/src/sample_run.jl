@@ -251,10 +251,10 @@ const _ACCEPT_DIVERGENCE_RATE = 0.0
 const _ACCEPT_MAX = 0.95
 const _ACCEPT_MAX_RAISES = 3
 
-"""The acceptance target after a raise on divergences: half way to one, at
-most `_ACCEPT_MAX`, so the default 0.8 reaches 0.95 in two raises. Raised by
-0.05 a time, SMC's stages on the ctsem book's N = 1 model ended at 0.9 with a
-divergent transition left in 1,925, where 0.95 left none at seven seeds."""
+"""The acceptance target after a warmup's raise on divergences: half way to
+one, at most `_ACCEPT_MAX`, so the default 0.8 reaches 0.95 in two raises,
+which a 200-draw warmup's two checks allow. Tempered SMC, whose final chains
+have no warmup, goes to `_ACCEPT_MAX` at once (sample_smc.jl)."""
 _accept_raised(target::Float64) = min(_ACCEPT_MAX, 1 - (1 - target) / 2)
 
 """

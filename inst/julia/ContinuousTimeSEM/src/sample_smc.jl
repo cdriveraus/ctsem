@@ -1081,15 +1081,16 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         end
         _invoke_callback(callback, "tempering", round(Int, 100 * beta), 100,
             _smc_mean(filter(isfinite, lp)), sum(ndiv); force=beta >= 1.0)
-        # The next stage's step, and the final phase's after the last: for a
-        # higher acceptance target where these moves diverged, as NUTS's
-        # warmup raises its own (`_ACCEPT_DIVERGENCE_RATE`, sample_run.jl).
-        # The final chains have no warmup and run at the step the last stage
-        # sets, so this is where their divergences are prevented: on the ctsem
-        # book's N = 1 wearable model they ran 20-51 divergent transitions at
-        # the default target and none at 0.95, at seven seeds.
+        # The next stage's step, and the final phase's after the last: for the
+        # highest acceptance target warmup raises to (`_ACCEPT_MAX`,
+        # sample_run.jl) where these moves diverged. The final chains have no
+        # warmup and run at the step the last stage sets, so this is where
+        # their divergences are prevented, and at once: on the ctsem book's
+        # N = 1 wearable model they ran 20-51 divergent transitions at the
+        # default target, 1-3 where one divergent stage raised it half way
+        # (to 0.9), and none at 0.95, at seven seeds.
         if sum(ndiv) > 0 && tacc < _ACCEPT_MAX
-            tacc = _accept_raised(tacc)
+            tacc = _ACCEPT_MAX
         end
         step = _smc_next_step(step, sum(acc) / nok, tacc)
         # At the posterior the particles become the final chains' starts, and
