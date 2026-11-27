@@ -496,7 +496,8 @@ ctScoreTest <- function(fit, covariates = NULL,
   .ctJuliaHoldModes(spec, .ctJuliaFitModes(fit))
   ptab <- .ctScoreParameterTable(fit)
   out <- list(heterogeneity = NULL, covariates = NULL, statedependence = NULL,
-    volatility = NULL, fixed = NULL, level = NULL, info = list(route = .ctBackendIntOverPop(spec),
+    volatility = NULL, fixed = NULL, level = NULL, info = list(
+      route = if (.ctBackendVariational(spec)) 'variational' else .ctBackendIntOverPop(spec),
       nsubjects = .ctFitNsubjects(fit), npar = length(est)))
   out$info$variance <- variance
   out$info$nboot <- nboot
