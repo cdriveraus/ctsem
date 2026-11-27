@@ -248,15 +248,14 @@ end
 # times a run of 5,764-12,800.
 const _ACCEPT_CHECK_STRIDE = 50
 const _ACCEPT_DIVERGENCE_RATE = 0.0
-const _ACCEPT_MAX = 0.95
-const _ACCEPT_MAX_RAISES = 3
+const _ACCEPT_MAX = 0.99
 
-"""The acceptance target after a warmup's raise on divergences: half way to
-one, at most `_ACCEPT_MAX`, so the default 0.8 reaches 0.95 in two raises,
-which a 200-draw warmup's two checks allow. Tempered SMC's final chains,
-which have no warmup, run at `_ACCEPT_MAX`'s step where any stage diverged
-(sample_smc.jl)."""
-_accept_raised(target::Float64) = min(_ACCEPT_MAX, 1 - (1 - target) / 2)
+"""The acceptance target after a raise on divergences: half way to one, at
+most `_ACCEPT_MAX` (Charles, 2026-11-27), so from the default 0.8 the raises
+go 0.9, 0.95, 0.975, 0.9875, 0.99. A 200-draw warmup's two checks reach 0.95;
+a longer warmup goes on while its chains still diverge. Never lowers a target
+the caller set above the cap."""
+_accept_raised(target::Float64) = max(target, min(_ACCEPT_MAX, 1 - (1 - target) / 2))
 
 """
     _ChainRetune(after, steps, target, count)
@@ -486,17 +485,16 @@ function _run_chain(logdensity!, centre::Vector{Float64},
         #
         # Checked on a fixed stride rather than at the metric windows, so it
         # still works when warmup is too short to hold a window and the Laplace
-        # metric is used as it stands. Bounded at 0.95 and at three raises: past
+        # metric is used as it stands. Bounded at 0.99 (`_ACCEPT_MAX`): past
         # that the steps are short enough that trajectories lengthen to
-        # compensate, and geometry surviving 0.95 wants a reparameterisation
+        # compensate, and geometry surviving 0.99 wants a reparameterisation
         # rather than a smaller step. `_dual_restart!` because the averaging is
         # chasing a new target from here, and its accumulated `hbar` is evidence
         # about the old one.
         if iteration > check_start &&
                 iteration - check_start >= _ACCEPT_CHECK_STRIDE
             rate = check_divergent / (iteration - check_start)
-            if rate > _ACCEPT_DIVERGENCE_RATE && da.target < _ACCEPT_MAX &&
-                    raises < _ACCEPT_MAX_RAISES
+            if rate > _ACCEPT_DIVERGENCE_RATE && da.target < _ACCEPT_MAX
                 da.target = _accept_raised(da.target)
                 raises += 1
                 eps = _dual_restart!(da, eps)

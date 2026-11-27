@@ -2090,7 +2090,7 @@
 }
 
 # What to try after divergent transitions. The engine already raises the
-# target to 0.95 where warmup or SMC's stages diverge (sample_run.jl's
+# target where warmup or SMC's stages diverge, up to 0.99 (sample_run.jl's
 # `_ACCEPT_MAX`), so the next step up is named; past 0.99 shorter steps buy
 # little and the geometry wants a change of model or priors.
 #' @keywords internal
