@@ -105,6 +105,7 @@ reference:
   - ctFit
   - ctOptimControl
   - ctFitUpdate
+  - ctFitFlatRetry
   - ctFitUncertainty
   - ctsem-options
 - title: Inspect a fit

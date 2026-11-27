@@ -108,7 +108,7 @@
       "parameter table, which the stan path does not build. Pass inits, or ",
       "optimcontrol$initsd for the scale of the random start")),
   flatretry = list(only = 'julia',
-    inert = function(v) isFALSE(v),
+    inert = function(v) !isTRUE(v),
     msg = paste0("refits a julia fit with a parameter held at the other side of ",
       "its range, where the parameter ran off where the likelihood is flat. ",
       "The stan path has no equivalent")),
