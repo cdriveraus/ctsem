@@ -808,9 +808,12 @@
   # the tolerance, and the fit is left alone to the bit. Not at a jump: the
   # screen says the hybrid agrees with Laplace at the point, which is no
   # optimum of either (round 9's jump point passed the screen with a gradient
-  # of 2.5e5), and the climb is what leaves it. Nor where the shift
-  # check found a move to make: the screen reads values, the check the move.
-  if (is.null(jump) && is.null(check) && record$screen <= record$tolerance) {
+  # of 2.5e5), and the climb is what leaves it. Nor where a shift check found
+  # a move to make, this call's or the fit's whose units are forced (`force`,
+  # as a refinement asked for after the fit passes them): the screen reads
+  # values, the check the move.
+  if (is.null(jump) && is.null(check) && !length(force) &&
+      record$screen <= record$tolerance) {
     record$seconds <- timed()
     fit$laplace$correction <- record
     return(fit)
