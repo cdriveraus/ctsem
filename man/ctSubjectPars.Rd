@@ -17,8 +17,9 @@ ctSubjectPars(
 \arguments{
 \item{fit}{A fit from \code{\link{ctFit}}.}
 
-\item{pointest}{if TRUE, returns only the set of individual difference parameters
-based on the max a posteriori estimate (or the median if sampling approaches were used).}
+\item{pointest}{if TRUE, returns only the individual parameters at the
+fit's point: its estimate, or for a sampled fit the median of each raw
+parameter's draws.}
 
 \item{cores}{Number of cores to use. \code{backend='stan'} only, and an
 error for a julia fit, which already holds the subject matrices.}

@@ -65,11 +65,11 @@ test_that("a sampled fit carries draws the summary machinery can read", {
   expect_equal(colnames(sampled$estimate$rawposterior),
     ctsem:::.ctBackendRawParameterNames(fit, npar))
 
-  # The point estimate becomes the posterior mean, and the point the chains
-  # were placed from is kept rather than overwritten: on the joint target
-  # SAEM's estimate (it ran from the fit's), with what SAEM did.
+  # The fit's point becomes the median of each raw coordinate, and the point
+  # the chains were placed from is kept rather than overwritten: on the joint
+  # target SAEM's estimate (it ran from the fit's), with what SAEM did.
   expect_equal(sampled$estimate$raw,
-    as.numeric(colMeans(sampled$estimate$rawposterior)))
+    as.numeric(apply(sampled$estimate$rawposterior, 2L, stats::median)))
   expect_identical(sampled$sample$placement$method, "saem")
   expect_gt(sampled$sample$placement$saem_iterations, 0L)
   expect_length(sampled$estimate$placed_raw, npar)

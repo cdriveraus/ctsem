@@ -6,7 +6,10 @@
 #'
 #' @param fit A fit from \code{\link{ctFit}}, on either backend.
 #' @param nsamples Positive integer specifying number of datasets to generate. 
-#' @param fullposterior Logical indicating whether to sample from the full posterior (original nsamples) or the posterior mean.
+#' @param fullposterior If TRUE, each data set is generated from one of the
+#' fit's draws of the parameters. If FALSE, all are generated at the fit's
+#' point: its estimate, or for a sampled fit the median of each raw parameter's
+#' draws.
 #' @param verboseErrors if TRUE, print verbose output when errors in generation encountered.
 #' @param cores Number of cpu cores to use: R worker processes for a stan fit,
 #' and for a julia fit the engine threads its draws are generated on.
@@ -107,7 +110,7 @@ ctGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErrors=
   } else {
     genm <- stanmodels$ctsmgen
   }
-  message('Generating data from ',ifelse(fullposterior,'posterior', 'posterior mean'))
+  message('Generating data from ',ifelse(fullposterior,'the draws', 'the point estimate'))
   standata <- fit$standata
   # standata$intoverstates=0L #why doesnt this work??
   standata$savescores <- 0L #have to disable for data generation in same structure as original

@@ -1760,22 +1760,25 @@
 
   out <- fit
   out$estimate$rawposterior <- posterior
-  # The posterior mean, not the mode, is now the point estimate: it is what the
-  # draws describe, and leaving `raw` at the mode would make ctKalman() and the
-  # system matrices report a different fit from the one summarised.
+  # The median of each raw coordinate, not the mode, is now the fit's point:
+  # pushed through the transforms it is each parameter's posterior median,
+  # the value summary() reports, so ctKalman(), ctPredict() and the other
+  # functions evaluated at one point describe the fit summarised. 3.11.1's
+  # sampled fits took the same point (stan's `rawest`); the raw mean is no
+  # reported value of any parameter with a nonlinear transform.
   # Where the chains were placed: SAEM's estimate under `placement = 'saem'`,
   # the fit's otherwise. `startvalues` stays the fit's estimate, which is where
   # any Hessian on the fit was taken.
   placed <- if (!is.null(result$placement$theta))
     as.numeric(result$placement$theta)[seq_len(npar)] else as.numeric(startvalues)
   out$estimate$placed_raw <- placed
-  out$estimate$raw <- as.numeric(colMeans(posterior))
+  out$estimate$raw <- as.numeric(apply(posterior, 2L, stats::median))
   out$estimate$cov <- stats::cov(posterior)
   out$estimate$se <- sqrt(diag(out$estimate$cov))
   # `evaluated_at` is the Laplace estimate, not `$estimate$raw`: the exact
   # Hessian was taken at the point the sampler was placed from, and `$raw` is
-  # now the posterior mean. Saying so is what stops it being reused as
-  # curvature at the mean -- see `.ctBackendHessian()` -- and what lets a
+  # now the posterior median. Saying so is what stops it being reused as
+  # curvature at the median -- see `.ctBackendHessian()` -- and what lets a
   # reader of the conditional SEs know which point they belong to.
   out$uncertainty <- list(method = "sampling", hessian = hessian,
     evaluated_at = as.numeric(startvalues),
@@ -1783,7 +1786,7 @@
       processes = FALSE))
   # The same for the random-effect check the placement fit made "at the
   # estimate": that estimate was the optimum, and the fit's estimate is now
-  # the posterior mean. Its `values` say exactly where; this says it in words.
+  # the posterior median. Its `values` say exactly where; this says it in words.
   if (!is.null(out$identifiability[["effects"]])) {
     out$identifiability$effects$point <- "at the optimum that placed the sampler"
   }
@@ -1924,7 +1927,7 @@
   out$priorerrors <- .ctBackendPriorErrors(out)
   # Each group's posterior of its effects: from the draws when the effects were
   # sampled, and otherwise -- a marginal sample -- from the Laplace or
-  # augmented posterior at the posterior mean, as an optimised fit stores it.
+  # augmented posterior at the fit's point, as an optimised fit stores it.
   out$randomeffects <- tryCatch(.ctRandomEffectsFromSample(out),
     error = function(e) NULL)
 

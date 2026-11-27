@@ -100,6 +100,12 @@ with the drift as a latent process, constant or changing over the session.
   gives the share of divergent transitions. Some models without random effects
   are sampled by sequential Monte Carlo, which runs as many chains as it needs
   and does not use `chains`.
+- The median of the draws (the `50%` column) is the point value. For a single
+  parameter of an optimised fit it is the estimate, without simulation noise.
+  `ctSummaryMatrices(fit)$estimate` gives the matrices at the estimate.
+- `ctCalcPerDraw()` computes a quantity from the model's matrices for each draw,
+  such as an explained variance or an indirect effect, and gives its median and
+  interval.
 
 ## Checking and improving models
 
@@ -128,6 +134,10 @@ nonlinear model's parameters change with the state. `ctVarianceDecomposition()`
 splits variance into between subject, process and measurement parts and gives
 intraclass correlations, each with a 95% interval from the fit's parameter
 draws, and `ctTracePlot()` shows the path of the optimiser or sampler.
+`ctPredictVarying()` plots the expected trajectories of persons whose random
+effects are one standard deviation either side of the mean, or at other chosen
+values, and of persons with chosen values of a time independent predictor, as
+`ctPredictTIP()` does.
 
 ## Model specification
 

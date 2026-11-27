@@ -28,7 +28,8 @@ ctKalmanArray(
 
 \item{nsamples}{either NA (to extract all) or a positive integer from 1 to maximum samples in the fit.}
 
-\item{pointest}{If TRUE, uses the posterior mode as the single sample.}
+\item{pointest}{If TRUE, uses the fit's point as the single sample: its
+estimate, or for a sampled fit the median of each raw parameter's draws.}
 
 \item{collapsefunc}{function to apply over samples, such as \code{mean}}
 

@@ -1496,8 +1496,8 @@ test_that("initial means alone are folded as the augmented route integrates them
   fa <- quiet(ctFit(d, m, backend = "julia", intoverpop = "augmented", cores = 1,
     optimcontrol = list(checks = FALSE)))
   expect_equal(fl$estimate$loglik, fa$estimate$loglik, tolerance = 1e-4)
-  expect_equal(summary(fl)$popsd[, "mode"], summary(fa)$popsd[, "mode"],
-    tolerance = 1e-2)
+  sds <- function(fit) sqrt(diag(ctSummaryMatrices(fit)$estimate$popcov))
+  expect_equal(sds(fl), sds(fa), tolerance = 1e-2)
 })
 
 test_that("a fold's deviations are reported at their modes given the coordinates", {

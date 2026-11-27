@@ -852,9 +852,29 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # model linearised at the evaluation point, which is expm(DRIFT * t) for a
 # linear model and not, for a cell nonlinear in the state, expm of DRIFT's
 # value there.
+#
+# `exact`, `list(at =, raw =)`, puts the median where it is known in place of
+# the draws' (`.ctExactMedians()`): `at` the arrays at the estimate, one draw
+# deep, `raw` the draws' raw parameters where they are symmetric about it
+# (`.ctFitCentredDraws()`). Callers pass it only when `calcfunc` takes the
+# median.
 .ctSummaryMatricesFromArrays <- function(e, continuoustime, latentNames, manifestNames,
   TDpredNames, calcfunc = quantile, calcfuncargs = list(probs = 0.5), timeinterval = 1,
-  binaryNames = NULL, jacobians = FALSE) {
+  binaryNames = NULL, jacobians = FALSE, exact = NULL) {
+  build <- function(x) .ctSummaryArrays(x, continuoustime = continuoustime,
+    latentNames = latentNames, manifestNames = manifestNames,
+    TDpredNames = TDpredNames, timeinterval = timeinterval,
+    binaryNames = binaryNames, jacobians = jacobians)
+  if (!is.null(exact)) exact$at <- build(exact$at)
+  .ctCollapseArrays(build(e), calcfunc, calcfuncargs, exact)
+}
+
+# The model's matrices for each draw, draws x rows x cols, trimmed to the
+# processes and labelled as ctSummaryMatrices() reports them, with dtDRIFT and
+# each covariance's correlations computed draw by draw. `.ctCollapseArrays()`
+# summarises them, and ctCalcPerDraw() hands a user's function one draw of them.
+.ctSummaryArrays <- function(e, continuoustime, latentNames, manifestNames,
+  TDpredNames, timeinterval = 1, binaryNames = NULL, jacobians = FALSE) {
 
   mats <- .ctMatricesList()
   mats <- c(names(mats$base), names(mats$asymptotic), names(mats$extra),
@@ -881,70 +901,85 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 
   out <- list()
   for (matname in mats) {
-    try({
-      calcfuncargs$collapsemargin <- 1
-      calcfuncargs$collapsefunc <- calcfunc
-      calcfuncargs$na.rm <- TRUE
-      calcfuncargs$inarray <- e[[paste0("pop_", matname)]]
-      out[[matname]] <- array(do.call(ctCollapse, calcfuncargs),
-        dim = dim(calcfuncargs$inarray)[-1])
-    }, silent = TRUE)
+    a <- e[[paste0("pop_", matname)]]
+    if (length(dim(a)) != 3L) next
+    dimnames(a) <- NULL
+    out[[matname]] <- a
   }
+  rows <- function(a) dim(a)[2L]
+  cut <- function(a, r, c) a[, r, c, drop = FALSE]
 
-  if (nrow(out$T0MEANS) > nrow(out$CINT)) { # then intoverpop used...
-    nlatent <- nrow(out$CINT)
-    out$T0MEANS <- out$T0MEANS[1:nlatent, 1, drop = FALSE]
-    out$DRIFT <- out$DRIFT[1:nlatent, 1:nlatent, drop = FALSE]
-    out$T0VAR <- out$T0VAR[1:nlatent, 1:nlatent, drop = FALSE]
-    out$T0cov <- out$T0cov[1:nlatent, 1:nlatent, drop = FALSE]
-    if (!is.null(out$T0cor)) out$T0cor <- out$T0cor[1:nlatent, 1:nlatent, drop = FALSE]
+  if (rows(out$T0MEANS) > rows(out$CINT)) { # then intoverpop used...
+    nlatent <- rows(out$CINT)
+    keep <- seq_len(nlatent)
+    out$T0MEANS <- cut(out$T0MEANS, keep, 1L)
+    out$DRIFT <- cut(out$DRIFT, keep, keep)
+    out$T0VAR <- cut(out$T0VAR, keep, keep)
+    out$T0cov <- cut(out$T0cov, keep, keep)
+    if (!is.null(out$T0cor)) out$T0cor <- cut(out$T0cor, keep, keep)
     # The carriers' rows of the transition are constant states and their
     # columns the effects they carry, so the processes' own block is the
     # transition of DRIFT's block, as DRIFT's block is the processes' drift.
     for (name in intersect(c("dtDRIFT", "JAx"), names(out))) {
-      out[[name]] <- out[[name]][1:nlatent, 1:nlatent, drop = FALSE]
+      out[[name]] <- cut(out[[name]], keep, keep)
     }
-    if (!is.null(out$Jy)) out$Jy <- out$Jy[, 1:nlatent, drop = FALSE]
+    if (!is.null(out$Jy)) out$Jy <- cut(out$Jy, seq_len(rows(out$Jy)), keep)
   }
 
   ln <- latentNames
   mn <- manifestNames
   tdn <- TDpredNames
-  for (name in intersect(c("dtDRIFT", "JAx"), names(out))) {
-    if (identical(dim(out[[name]]), rep(length(ln), 2L))) dimnames(out[[name]]) <- list(ln, ln)
+  label <- function(name, r, c) {
+    a <- out[[name]]
+    if (is.null(a)) return()
+    if (!is.null(r) && length(r) != dim(a)[2L]) return()
+    if (!is.null(c) && length(c) != dim(a)[3L]) return()
+    dimnames(a) <- list(NULL, r, c)
+    out[[name]] <<- a
   }
-  if (!is.null(out$Jy) && identical(dim(out$Jy), c(length(mn), length(ln))))
-    dimnames(out$Jy) <- list(mn, ln)
-  dimnames(out$DRIFT) <- list(ln, ln)
-  dimnames(out$DIFFUSIONcov) <- list(ln, ln)
-  dimnames(out$DIFFUSION) <- list(ln, ln)
-  dimnames(out$T0cov) <- list(ln, ln)
-  dimnames(out$asymDIFFUSIONcov) <- list(ln, ln)
-  rownames(out$CINT) <- ln
-  rownames(out$MANIFESTMEANS) <- mn
-  rownames(out$T0MEANS) <- ln
-  dimnames(out$T0VAR) <- list(ln, ln)
-  dimnames(out$LAMBDA) <- list(mn, ln)
-
-  if (!is.null(e$pop_MANIFESTVAR)) {
-    dimnames(out$MANIFESTVAR) <- list(mn, mn)
-    dimnames(out$MANIFESTcov) <- list(mn, mn)
+  for (name in c("dtDRIFT", "JAx", "DRIFT", "DIFFUSIONcov", "DIFFUSION", "T0cov",
+    "asymDIFFUSIONcov", "T0VAR", "T0cor", "DIFFUSIONcor", "asymDIFFUSIONcor")) {
+    label(name, ln, ln)
   }
-  for (name in intersect(c("T0cor", "DIFFUSIONcor", "asymDIFFUSIONcor",
-      "MANIFESTcor"), names(out))) {
-    labels <- if (name == "MANIFESTcor") mn else ln
-    if (identical(dim(out[[name]]), rep(length(labels), 2L)))
-      dimnames(out[[name]]) <- list(labels, labels)
-  }
-  if (!is.null(e$pop_TDPREDEFFECT)) dimnames(out$TDPREDEFFECT) <- list(ln, tdn)
-  if (!is.null(out$ASYMPTOTES) && length(binaryNames) == nrow(out$ASYMPTOTES))
-    dimnames(out$ASYMPTOTES) <- list(binaryNames, c('lower', 'upper'))
-  if (!is.null(out$RESPONSE) && length(mn) == nrow(out$RESPONSE))
-    dimnames(out$RESPONSE) <- list(mn, c('halfwidth', 'power'))
-  if (!is.null(out$WIENER) && length(mn) == nrow(out$WIENER))
-    dimnames(out$WIENER) <- list(mn, .ctWienerColumns)
+  label("Jy", mn, ln)
+  label("CINT", ln, NULL)
+  label("MANIFESTMEANS", mn, NULL)
+  label("T0MEANS", ln, NULL)
+  label("LAMBDA", mn, ln)
+  for (name in c("MANIFESTVAR", "MANIFESTcov", "MANIFESTcor")) label(name, mn, mn)
+  if (!is.null(e$pop_TDPREDEFFECT)) label("TDPREDEFFECT", ln, tdn)
+  if (length(binaryNames)) label("ASYMPTOTES", binaryNames, c('lower', 'upper'))
+  label("RESPONSE", mn, c('halfwidth', 'power'))
+  label("WIENER", mn, .ctWienerColumns)
 
   out$MANIFESTVAR <- NULL
+  out
+}
+
+# Each array of draws (draws x ...) collapsed over its draws by `calcfunc`,
+# keeping its labels; `exact` as for `.ctSummaryMatricesFromArrays()`, its
+# `at` arrays matching these by name.
+.ctCollapseArrays <- function(arrays, calcfunc, calcfuncargs, exact = NULL) {
+  out <- list()
+  for (name in names(arrays)) {
+    draws <- arrays[[name]]
+    if (length(dim(draws)) < 2L || !prod(dim(draws)[-1L])) next
+    args <- calcfuncargs
+    args$collapsemargin <- 1
+    args$collapsefunc <- calcfunc
+    args$na.rm <- TRUE
+    args$inarray <- draws
+    value <- try(array(do.call(ctCollapse, args), dim = dim(draws)[-1L],
+      dimnames = dimnames(draws)[-1L]), silent = TRUE)
+    if (inherits(value, "try-error")) next
+    at <- exact$at[[name]]
+    if (!is.null(at) && length(at) == length(value)) {
+      known <- .ctExactMedians(matrix(draws, nrow = dim(draws)[1L]), exact$raw,
+        as.numeric(at))
+      value[!is.na(known)] <- known[!is.na(known)]
+    }
+    out[[name]] <- value
+  }
   out
 }
 
@@ -952,51 +987,113 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # (`rawpopcorr`) matrices among the draws' arrays `e`, each level's
 # (`<name>.<level>`), collapsed as the model matrices are and named by
 # parameter. Shared by both backends: a stan fit's ctExtract() carries both under
-# these names.
-.ctSummaryPopulationMatrices <- function(e, calcfunc, calcfuncargs) {
+# these names. `exact` as for `.ctSummaryMatricesFromArrays()`.
+.ctSummaryPopulationMatrices <- function(e, calcfunc, calcfuncargs, exact = NULL) {
+  .ctCollapseArrays(.ctPopulationArrays(e), calcfunc, calcfuncargs, exact)
+}
+
+.ctPopulationArrays <- function(e) {
   out <- list()
   for (name in grep("^(popcov|rawpopcorr)(\\..+)?$", names(e), value = TRUE)) {
     draws <- e[[name]]
-    if (length(dim(draws)) != 3L || !prod(dim(draws)[-1L])) next
-    args <- calcfuncargs
-    args$collapsemargin <- 1
-    args$collapsefunc <- calcfunc
-    args$na.rm <- TRUE
-    args$inarray <- draws
-    value <- array(do.call(ctCollapse, args), dim = dim(draws)[-1L])
-    dimnames(value) <- dimnames(draws)[-1L]
-    out[[name]] <- value
+    if (length(dim(draws)) == 3L && prod(dim(draws)[-1L])) out[[name]] <- draws
   }
   out
+}
+
+# Where a median is known without the draws' noise. An optimised fit's draws
+# from the normal at its estimate are symmetric about it in every raw
+# coordinate, so a quantity that is a monotone function of one coordinate --
+# a single parameter on its own scale, its square, its exponential -- has its
+# median exactly at the estimate's value. `values` are draws x quantities
+# (rows the draws of `raw`), `at` the quantities at the estimate; returned is
+# `at` where so and NA elsewhere. Monotone is read off the draws: ordered by
+# the coordinate, the quantity never turns. One that also moves with any other
+# coordinate turns somewhere among a few hundred draws. With `raw` NULL, all NA.
+.ctExactMedians <- function(values, raw, at) {
+  values <- as.matrix(values)
+  out <- rep(NA_real_, ncol(values))
+  if (is.null(raw) || nrow(values) != nrow(raw) || length(at) != ncol(values) ||
+      nrow(values) < 3L) return(out)
+  n <- nrow(raw)
+  sub <- seq_len(min(n, 500L))
+  ranked <- apply(raw[sub, , drop = FALSE], 2L, rank)
+  moving <- which(apply(ranked, 2L, function(r) length(unique(r)) > 1L))
+  if (!length(moving)) return(out)
+  orders <- list()
+  for (k in seq_len(ncol(values))) {
+    v <- values[, k]
+    if (!is.finite(at[k]) || !all(is.finite(v)) || length(unique(v[sub])) < 2L) next
+    rho <- suppressWarnings(abs(stats::cor(rank(v[sub]), ranked[, moving, drop = FALSE])))
+    if (!isTRUE(max(rho, na.rm = TRUE) > 0.999)) next
+    best <- as.character(moving[which.max(rho)])
+    if (is.null(orders[[best]])) orders[[best]] <- order(raw[, as.integer(best)])
+    step <- diff(v[orders[[best]]])
+    if (all(step >= 0) || all(step <= 0)) out[k] <- at[k]
+  }
+  out
+}
+
+# The fit's raw draws where every coordinate is symmetric about its estimate:
+# an optimised julia fit whose draws are the normal there (`draws = 'normal'`:
+# uncertainty 'hessian', 'opg' or 'sandwich'). NULL for a sampled fit, for
+# draws reweighted or resampled ('checked', 'is', 'bootstrap'), and on stan.
+.ctFitCentredDraws <- function(fit, samples) {
+  if (!.ctFitIsJulia(fit) || !is.null(fit$sample)) return(NULL)
+  if (!identical(fit$uncertainty$settings$draws, "normal")) return(NULL)
+  raw <- .ctFitEstimateRaw(fit)
+  if (is.null(raw) || !is.matrix(samples) || nrow(samples) < 3L ||
+      ncol(samples) != ncol(raw)) return(NULL)
+  samples
+}
+
+# Whether a ctSummaryMatrices() collapse takes the median, where
+# `.ctExactMedians()` applies.
+.ctIsMedian <- function(calcfunc, calcfuncargs) {
+  identical(calcfunc, stats::median) || (identical(calcfunc, stats::quantile) &&
+    length(calcfuncargs$probs) == 1L &&
+    isTRUE(all.equal(as.numeric(calcfuncargs$probs), 0.5)))
+}
+
+# The model's arrays and population arrays at `samples` (NULL: the fit's
+# draws), with the raw draws they come from.
+.ctBackendDrawArrays <- function(fit, samples = NULL, ...) {
+  constrained <- .ctBackendConstrained(fit, samples)
+  list(e = .ctBackendPopArrays(fit, samples = samples, constrained = constrained, ...),
+    population = .ctBackendPopulationArrays(constrained),
+    raw = constrained$samples)
 }
 
 .ctBackendSummaryMatrices <- function(fit, calcfunc = quantile,
   calcfuncargs = list(probs = 0.5), timeinterval = 1, ...) {
   model <- .ctBackendModel(fit)
-  at <- function(samples, calcfunc, calcfuncargs) {
-    constrained <- .ctBackendConstrained(fit, samples)
-    e <- .ctBackendPopArrays(fit, samples = samples, constrained = constrained, ...)
-    c(.ctSummaryMatricesFromArrays(e, continuoustime = model$continuoustime,
+  collapse <- function(arrays, calcfunc, calcfuncargs, point = NULL, raw = NULL) {
+    exact <- function(at) if (!is.null(raw)) list(at = at, raw = raw)
+    c(.ctSummaryMatricesFromArrays(arrays$e, continuoustime = model$continuoustime,
       latentNames = model$latentNames, manifestNames = model$manifestNames,
       TDpredNames = model$TDpredNames, calcfunc = calcfunc,
       calcfuncargs = calcfuncargs, timeinterval = timeinterval,
-      binaryNames = model$manifestNames[model$manifesttype %in% 1], jacobians = TRUE),
-      .ctSummaryPopulationMatrices(.ctBackendPopulationArrays(constrained),
-        calcfunc, calcfuncargs))
+      binaryNames = model$manifestNames[model$manifesttype %in% 1], jacobians = TRUE,
+      exact = exact(point$e)),
+      .ctSummaryPopulationMatrices(arrays$population, calcfunc, calcfuncargs,
+        exact = exact(point$population)))
   }
-  out <- at(NULL, calcfunc, calcfuncargs)
+  draws <- .ctBackendDrawArrays(fit, NULL, ...)
   # The matrices at the estimate, unrounded, where the fit has one, beside the
-  # summary of its draws.
+  # summary of its draws; and the median taken from them where it is exact.
   raw <- .ctFitEstimateRaw(fit)
-  if (!is.null(raw)) out$estimate <- at(raw, mean, list())
+  point <- if (!is.null(raw)) .ctBackendDrawArrays(fit, raw, ...)
+  centred <- if (!is.null(point) && .ctIsMedian(calcfunc, calcfuncargs))
+    .ctFitCentredDraws(fit, draws$raw)
+  out <- collapse(draws, calcfunc, calcfuncargs, point, centred)
+  if (!is.null(point)) out$estimate <- collapse(point, mean, list())
   out
 }
 
 # A fit's estimate as a one-row matrix of raw parameters, or NULL where it has
-# none: an optimised fit's. A sampled fit's `raw` is its posterior mean, which
-# is no estimate (summary()'s `mode` columns are absent there for the same
-# reason). ctSummaryMatrices() and ctDiscretePars() report their `estimate`
-# from this, on both backends, so the two give the same point.
+# none: an optimised fit's. A sampled fit's `raw` is the median of its raw
+# draws, which is no estimate. ctSummaryMatrices() and ctDiscretePars() report
+# their `estimate` from this, on both backends, so the two give the same point.
 .ctFitEstimateRaw <- function(fit) {
   if (inherits(fit, "ctStanFit")) {
     if (length(fit$stanfit$stanfit@sim) == 0L && length(fit$stanfit$rawest)) {
@@ -1225,11 +1322,12 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # Mean / sd / quantiles of a sample matrix, in Stan's summary column order, with
 # `n_eff` and `Rhat` in Stan's place when the draws are a Hamiltonian sample and
 # `chains` says how they are grouped. Base R for the moments: with one
-# point-estimate "sample" there is nothing to monitor. `mode`, the same
-# quantities at the optimiser's estimate (one row), adds a column after the
-# quantiles.
+# point-estimate "sample" there is nothing to monitor. `at`, the same
+# quantities at the optimiser's estimate (one row), is the `50%` of each that
+# `.ctExactMedians()` finds exact, given `raw`, the draws' raw parameters
+# where they are symmetric about the estimate (`.ctFitCentredDraws()`).
 .ctBackendSampleSummary <- function(values, digits = 3, z = FALSE, chains = NULL,
-  mode = NULL) {
+  at = NULL, raw = NULL) {
   if (nrow(values) < 2L) {
     out <- data.frame(mean = as.numeric(values[1L, ]), row.names = colnames(values))
     return(round(out, digits))
@@ -1248,11 +1346,13 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     out$n_eff <- diagnostics$n_eff
     out$Rhat <- if (isFALSE(attr(chains, "rhat"))) NA_real_ else diagnostics$Rhat
   }
-  if (!is.null(mode) && length(mode) && ncol(as.matrix(mode)) == ncol(values)) {
-    mode <- as.matrix(mode)
-    at <- if (!is.null(colnames(mode)) && !is.null(colnames(values)) &&
-        all(colnames(values) %in% colnames(mode))) mode[1L, colnames(values)] else mode[1L, ]
-    out$mode <- as.numeric(at)
+  if (!is.null(raw) && !is.null(at) && length(at) &&
+      ncol(as.matrix(at)) == ncol(values)) {
+    at <- as.matrix(at)
+    at <- if (!is.null(colnames(at)) && !is.null(colnames(values)) &&
+        all(colnames(values) %in% colnames(at))) at[1L, colnames(values)] else at[1L, ]
+    known <- .ctExactMedians(values, raw, as.numeric(at))
+    out[["50%"]][!is.na(known)] <- known[!is.na(known)]
   }
   # A quantity with no posterior spread has no z, rather than an enormous one.
   # Two things land here with an exactly zero sd and both want this: a
@@ -1299,13 +1399,13 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   paste0(prefix, rows, suffix) %in% nowidth
 }
 
-# Blank the width columns, keeping the estimate. The point estimate is an
-# arbitrary point on the ridge and the warning says so, but it is what the
+# Blank the width columns, keeping the point value (`mean`, `50%`). The point
+# is an arbitrary one on the ridge and the warning says so, but it is what the
 # optimiser returned and there is nothing else to put there; the sd, the
 # interval and the z are the ones that claim something false.
 .ctBackendMarkNoWidth <- function(table, flagged) {
   if (!is.data.frame(table) || !length(flagged) || !any(flagged)) return(table)
-  for (column in intersect(names(table), c("sd", "2.5%", "50%", "97.5%", "z"))) {
+  for (column in intersect(names(table), c("sd", "2.5%", "97.5%", "z"))) {
     table[[column]][flagged] <- NA_real_
   }
   table
@@ -1485,6 +1585,10 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     if ("populations" %in% names(constrained)) return(constrained$populations)
     samples <- constrained$samples
   }
+  # The estimate, or some of the draws, from the fit's cache, as a stored fit
+  # reports without Julia.
+  cached <- .ctBackendCachedConstrain(fit$transformedpars, samples)
+  if ("populations" %in% names(cached)) return(cached$populations)
   spec <- .ctBackendSpec(fit)
   full <- .ctBackendRawFull(fit, samples)
   .ctBackendPopulationsOf(fit, spec, full, .ctBackendSummaryLayout(fit),
@@ -2164,7 +2268,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 }
 
 # The constrain step a fit keeps: its draws, and its estimate where the draws
-# are not the estimate, which summary()'s `mode` column and
+# are not the estimate, which summary()'s exact medians and
 # ctSummaryMatrices()'s `estimate` read. `fresh` recomputes where the draws are
 # unchanged but what they are pushed through may not be.
 .ctBackendConstrainCache <- function(fit, fresh = FALSE) {
@@ -2369,16 +2473,15 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   cells <- constrained$cells
   layout <- constrained$layout
   flat <- constrained$flat
-  # The optimiser's estimate through the same transforms, for a `mode` column
-  # beside the draws' moments. They differ where the posterior is skewed, and
-  # the estimate is the point a likelihood ratio or an information criterion
-  # refers to. Only for an optimised fit with draws: a sampled fit's `raw` is
-  # its posterior mean, and without draws the table is the estimate already.
-  atmode <- if (nrow(samples) > 1L && is.null(object$sample) &&
-      length(object$estimate$raw) == ncol(samples))
-    .ctBackendConstrained(object, matrix(as.numeric(object$estimate$raw), nrow = 1L)) else NULL
-  modelevel <- function(level, field) {
-    for (m in atmode$randomeffectlevels) if (identical(m$level, level)) return(m[[field]])
+  # The estimate through the same transforms, as the `50%` of each quantity
+  # whose median it is exactly (`.ctExactMedians()`), which removes the draws'
+  # noise from those rows. Only where the draws are the normal at the
+  # estimate (`.ctFitCentredDraws()`); elsewhere every median is the draws'.
+  centred <- .ctFitCentredDraws(object, samples)
+  atest <- if (!is.null(centred))
+    .ctBackendConstrained(object, matrix(as.numeric(object$estimate$raw), nrow = 1L))
+  atlevel <- function(level, field) {
+    for (m in atest$randomeffectlevels) if (identical(m$level, level)) return(m[[field]])
     NULL
   }
 
@@ -2415,7 +2518,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     for (lv in constrained$randomeffectlevels) {
       if (!is.null(lv$rawpopcorr)) {
         section <- .ctBackendSampleSummary(lv$rawpopcorr, digits = digits,
-          chains = chains, mode = modelevel(lv$level, "rawpopcorr"))
+          chains = chains, at = atlevel(lv$level, "rawpopcorr"), raw = centred)
         section <- .ctBackendMarkNoWidth(section,
           .ctBackendNoWidthRows(nowidth, rownames(section), "rawcor_", lv$level))
         section <- .ctBackendMarkNotFinite(section)
@@ -2427,7 +2530,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   } else if (!is.null(constrained$rawpopcorr)) {
     out$rawpopcorr <- .ctBackendSampleSummary(constrained$rawpopcorr,
       digits = digits, z = nrow(samples) > 1L, chains = chains,
-      mode = atmode$rawpopcorr)
+      at = atest$rawpopcorr, raw = centred)
     out$rawpopcorr <- .ctBackendMarkNoWidth(out$rawpopcorr,
       .ctBackendNoWidthRows(nowidth, rownames(out$rawpopcorr), "rawcor_"))
     out$rawpopcorr <- .ctBackendMarkNotFinite(out$rawpopcorr)
@@ -2449,7 +2552,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 
   if (!is.null(constrained$tipreds)) {
     out$tipreds <- .ctBackendSampleSummary(constrained$tipreds, digits = digits,
-      z = nrow(samples) > 1L, chains = chains, mode = atmode$tipreds)
+      z = nrow(samples) > 1L, chains = chains, at = atest$tipreds, raw = centred)
     out$tipredsNote <- "Approximate (linearised) effects on the transformed parameters."
   }
   # A smooth term's columns are one effect, and a coefficient of its basis says
@@ -2477,29 +2580,27 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     # .ctBackendSummaryMatrices(), each of which would ask the engine for the
     # same arrays again.
     model <- .ctBackendModel(object)
-    arrays <- .ctBackendPopArraysFromFlat(flat, layout, .ctBackendSpec(object),
-      .ctBackendT0MeansCached(object, constrained))
-    collapse <- function(calcfunc, calcfuncargs, from = arrays) {
-      .ctSummaryMatricesFromArrays(from, continuoustime = model$continuoustime,
-        latentNames = model$latentNames, manifestNames = model$manifestNames,
-        TDpredNames = model$TDpredNames, calcfunc = calcfunc,
-        calcfuncargs = calcfuncargs, timeinterval = timeinterval)
-    }
+    build <- function(from) .ctSummaryArrays(from,
+      continuoustime = model$continuoustime, latentNames = model$latentNames,
+      manifestNames = model$manifestNames, TDpredNames = model$TDpredNames,
+      timeinterval = timeinterval)
+    arrays <- build(.ctBackendPopArraysFromFlat(flat, layout, .ctBackendSpec(object),
+      .ctBackendT0MeansCached(object, constrained)))
+    # The matrices at the estimate give the `50%` where it is exact, as in the
+    # other tables.
+    exact <- if (!is.null(atest)) list(raw = centred, at = build(
+      .ctBackendPopArraysFromFlat(atest$flat, layout, .ctBackendSpec(object),
+        atest$t0population)))
+    collapse <- function(calcfunc, calcfuncargs, exact = NULL)
+      .ctCollapseArrays(arrays, calcfunc, calcfuncargs, exact)
     collapsed <- list(Mean = collapse(mean, list()))
     if (has_posterior) {
       collapsed$sd <- collapse(stats::sd, list(na.rm = TRUE))
       for (probability in c(.025, .5, .975)) {
-        collapsed[[paste0(probability * 100, "%")]] <-
-          collapse(stats::quantile, list(probs = probability))
+        collapsed[[paste0(probability * 100, "%")]] <- collapse(stats::quantile,
+          list(probs = probability), if (probability == .5) exact)
       }
       names(collapsed) <- c("Mean", "sd", "2.5%", "50%", "97.5%")
-    }
-    # The matrices at the estimate, as the other tables' `mode` columns. A
-    # covariance built from the population tables' modes is this table's mode;
-    # built from their means it is no column here, nor any summary of the draws.
-    if (!is.null(atmode)) {
-      collapsed$mode <- collapse(mean, list(), from = .ctBackendPopArraysFromFlat(
-        atmode$flat, layout, .ctBackendSpec(object), atmode$t0population))
     }
     d <- data.frame(ctModelUnlist(collapsed$Mean, matnames = names(collapsed$Mean)))
     colnames(d)[colnames(d) %in% "value"] <- "Mean"
@@ -2515,7 +2616,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     parsrows <- d$matrix %in% "PARS"
     if (any(parsrows)) {
       values <- as.matrix(d[parsrows, intersect(names(d),
-        c("Mean", "sd", "2.5%", "50%", "97.5%", "mode")), drop = FALSE])
+        c("Mean", "sd", "2.5%", "50%", "97.5%")), drop = FALSE])
       if (all(!is.finite(values) | values == 0)) d <- d[!parsrows, , drop = FALSE]
     }
     out$parmatrices <- d
@@ -2545,7 +2646,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     for (lv in constrained$randomeffectlevels) {
       if (!is.null(lv$popsd)) {
         section <- .ctBackendSampleSummary(lv$popsd, digits = digits,
-          chains = chains, mode = modelevel(lv$level, "popsd"))
+          chains = chains, at = atlevel(lv$level, "popsd"), raw = centred)
         out[[paste0("popsd.", lv$level)]] <- .ctBackendMarkNoWidth(section,
           .ctBackendNoWidthRows(undetermined, rownames(section), "popsd_",
             lv$level))
@@ -2553,7 +2654,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     }
   } else if (!is.null(constrained$popsd)) {
     out$popsd <- .ctBackendSampleSummary(constrained$popsd, digits = digits,
-      chains = chains, mode = atmode$popsd)
+      chains = chains, at = atest$popsd, raw = centred)
     out$popsd <- .ctBackendMarkNoWidth(out$popsd,
       .ctBackendNoWidthRows(undetermined, rownames(out$popsd), "popsd_"))
     out$popsd <- .ctBackendMarkNotFinite(out$popsd)
@@ -2576,7 +2677,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   if (length(weak)) out$popsdNote <- paste(c(out$popsdNote, weak,
     if (!is.null(weakrows)) paste0(if (nrow(weakrows) > 1L)
       "Those population sds are" else "That population sd is",
-      " shown with the estimate only: no sd, interval or z."),
+      " shown with their median only: no sd, interval or z."),
     "See fit$identifiability$effects."), collapse = " ")
 
   fixed <- cells[!cells$randomeffect & !(cells$stated %in% TRUE), , drop = FALSE]
@@ -2595,8 +2696,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   }
   out$popmeans <- .ctBackendSampleSummary(
     .ctBackendPopCellsFromFlat(flat, fixed, layout), digits = digits,
-    chains = chains, mode = if (!is.null(atmode))
-      .ctBackendPopCellsFromFlat(atmode$flat, fixed, layout))
+    chains = chains, raw = centred, at = if (!is.null(atest))
+      .ctBackendPopCellsFromFlat(atest$flat, fixed, layout))
   # A model parameter's raw coordinate is spelled the same way here as in the
   # raw vector, so no prefix -- see `.ctBackendRawParameterNames()`. Marked
   # too, because a flat direction is not confined to random-effect
@@ -2607,9 +2708,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   offdiagonal <- fixed[fixed$matrix %in% .ctCovSystemMatrices &
     fixed$row != fixed$col, , drop = FALSE]
   out$popNote <- paste0("Population values on the transformed scale.",
-    .ctCovParameterNote(.ctBackendParameterNames(offdiagonal), offdiagonal$matrix),
-    if (!is.null(atmode)) paste0(" mode is the fit's estimate, the other ",
-      "columns its posterior draws."))
+    .ctCovParameterNote(.ctBackendParameterNames(offdiagonal), offdiagonal$matrix))
   anchors <- .ctBackendSpec(object)$anchors
   if (length(anchors$index)) out$popNote <- paste0(out$popNote,
     " Population means stated in the model, not estimated: ",
@@ -2638,7 +2737,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     counts <- vapply(levels, function(l) length(unique(data[[l]])), integer(1))
     out$units <- paste(paste(counts, levels), collapse = " within ")
   }
-  # A sampled fit's estimate is the posterior mean, and the log likelihood and
+  # A sampled fit's point is the posterior median, and the log likelihood and
   # posterior it carries are the placement optimisation's, at another point --
   # under SAEM placement, the start. Neither they nor an AIC describe a
   # posterior sample; ctLOO() compares those.
@@ -2836,7 +2935,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     identical(fit$uncertainty$settings$method, "sampling")
   laplace <- !is.null(fit$model_spec$laplace)
   if (sampled && laplace) {
-    return(paste("at the posterior mean of the population parameters, with each",
+    return(paste("at the posterior median of the population parameters, with each",
       "subject's random effects re-estimated from their whole record"))
   }
   if (laplace) {

@@ -17,6 +17,7 @@ ctBackendKalman(
   subjectpars = FALSE,
   indvarstates = FALSE,
   randomEffects = NULL,
+  subjectShift = NULL,
   ...
 )
 }
@@ -73,6 +74,13 @@ latent states are not computed and are \code{NA}.}
   subjects, interpolating a time grid or withholding observations with
   \code{removeObs} therefore leaves them alone: with every observation
   withheld the smoothed pass still uses that subject's own random effects.}
+
+\item{subjectShift}{On a single level of Laplace random effects, a matrix
+with a row for each subject to move, named by its id, and a column for
+each raw parameter to move, named by its position in the raw parameter
+vector: each named subject's values are its modes plus this row, for
+every pass. NULL, the default,
+leaves every subject at its modes. Used by \code{\link{ctPredictVarying}}.}
 
 \item{...}{Passed to \code{collapsefunc}.}
 }
