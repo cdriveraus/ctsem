@@ -1895,7 +1895,7 @@ whether it read every flagged unit (`complete`: none on frozen draws or at a
 product rule's most nodes).
 """
 function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
-    H::AbstractMatrix; bar::Real=_PLACED_SLOPE_BAR)
+    H::AbstractMatrix; bar::Real=_PLACED_SLOPE_BAR, progress=nothing)
     o = P.cont
     laplace = o.laplace
     spec = laplace.spec
@@ -1921,12 +1921,15 @@ function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
     finer = [_placed_finer(o.unit_rules[U]) for U in units]
     alt = [f === nothing ? _rule_sets(laplace, U, o.unit_rules[U]; alt=1) :
         _rule_sets(laplace, U, f) for (U, f) in zip(units, finer)]
+    tick = _placed_tick(progress, nu)
     ok = _laplace_parallel(laplace, 1:nu) do i
-        local U
+        local U, r
         U = units[i]
-        return _placed_unit!(own[i], P, U, theta, Ls, dL, positions, true).ok &&
+        r = _placed_unit!(own[i], P, U, theta, Ls, dL, positions, true).ok &&
             _placed_unit!(other[i], P, U, theta, Ls, dL, positions, true;
                 sets=alt[i]).ok
+        _placed_tick!(tick)
+        return r
     end
     ok || return (sd=NaN, units=Int[], doublings=0, complete=false)
     contribution = zeros(nu, n)
@@ -2053,7 +2056,7 @@ lattice there, and the estimate needed about 2,000 points a unit, where the
 the one with the smallest share. Returns how many units changed rule.
 """
 function _placed_choose!(P::CTSEMLaplacePlaced, values::AbstractVector,
-    H::AbstractMatrix; bar::Real=_PLACED_SLOPE_BAR)
+    H::AbstractMatrix; bar::Real=_PLACED_SLOPE_BAR, progress=nothing)
     o = P.cont
     laplace = o.laplace
     spec = laplace.spec
@@ -2068,9 +2071,11 @@ function _placed_choose!(P::CTSEMLaplacePlaced, values::AbstractVector,
     dL = _laplace_level_chol_derivatives(theta, spec)
     positions = [_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
     chosen = Vector{CTSEMRuleChoice}(undef, length(units))
+    tick = _placed_tick(progress, length(units))
     _laplace_parallel(laplace, eachindex(units)) do i
         chosen[i] = _placed_choose_unit(P, units[i], theta, Ls, dL, positions,
             metric, n, budget)
+        _placed_tick!(tick)
         return true
     end
     rules = copy(o.unit_rules)
@@ -2277,9 +2282,11 @@ function ctsem_laplace_placed_optimize(P::CTSEMLaplacePlaced, start::AbstractVec
         # Each unit on the cheapest rule its share of the estimate's error
         # allows, then the whole checked as it will be at the end.
         H0 = Matrix{Float64}(hessian)
-        raised += _placed_choose!(P, x, H0)
+        raised += _placed_choose!(P, x, H0;
+            progress=_placed_stage_progress(kwargs, "Refined fit, choosing rules"))
         ctsem_laplace_placed_evaluate(P, x; gradient=false)
-        check = _placed_slope_check(P, x, H0)
+        check = _placed_slope_check(P, x, H0;
+            progress=_placed_stage_progress(kwargs, "Refined fit, slope check"))
         slope = check.complete ? check.sd : NaN
         steep = Int[U for U in check.units if
             _placed_finer(P.cont.unit_rules[U]) !== nothing]
@@ -2301,7 +2308,8 @@ function ctsem_laplace_placed_optimize(P::CTSEMLaplacePlaced, start::AbstractVec
             steep = Int[]
             doublings = 0
             if !drifted && isempty(rough) && !stopped
-                check = _placed_slope_check(P, x, res.hessian)
+                check = _placed_slope_check(P, x, res.hessian;
+                    progress=_placed_stage_progress(kwargs, "Refined fit, slope check"))
                 slope = check.complete ? check.sd : NaN
                 doublings = check.doublings
                 steep = Int[U for U in check.units if
@@ -2334,6 +2342,49 @@ struct _PlacedStop{P}
 end
 (s::_PlacedStop)(st) = (!isempty(s.placed.frozen) && s.ratio > 0 &&
     _placed_drifted(s.placed, s.ratio)) || !isempty(_placed_rough(s.placed, _PLACED_ROUGH))
+
+"""
+    _placed_stage_progress(kwargs, label)
+
+A `(done, total)` callback for a stage `ctsem_laplace_placed_optimize` runs
+before or between its runs -- the rule choice, the slope check -- through the
+progress keywords the runs take, on a line of its own (`label`) with its own
+clock, or `nothing` without progress. The climb's own line starts with its
+run: on the hc-wellbeing life satisfaction fit (6,985 units flagged) the rule
+choice and slope check took 79 minutes at 8 cores (dev3, 2026-11-26) with
+nothing printed after the screen, and the refinement read as stalled.
+"""
+function _placed_stage_progress(kwargs, label::AbstractString)
+    reporter = _ctsem_progress_reporter(Bool(get(kwargs, :progress, false)),
+        String(label), Bool(get(kwargs, :progress_overwrite, true)),
+        get(kwargs, :progress_sink, nothing), Float64(get(kwargs, :progress_every, 0.0)))
+    reporter.enabled || return nothing
+    return function (done::Integer, total::Integer)
+        _due(reporter) && _progress_fraction(reporter,
+            @sprintf("%d of %d units", done, total))
+        nothing
+    end
+end
+
+"""
+A region's count of finished units for `_placed_stage_progress`, reported only
+by the task that opened the region: the sink calls into R, which is reached
+from the task R called. `nothing` without progress.
+"""
+struct _PlacedTick{F}
+    progress::F
+    total::Int
+    done::Threads.Atomic{Int}
+    owner::Task
+end
+_placed_tick(progress, total::Integer) = progress === nothing ? nothing :
+    _PlacedTick(progress, Int(total), Threads.Atomic{Int}(0), current_task())
+_placed_tick!(::Nothing) = nothing
+function _placed_tick!(t::_PlacedTick)
+    done = Threads.atomic_add!(t.done, 1) + 1
+    current_task() === t.owner && t.progress(done, t.total)
+    return nothing
+end
 
 """
     ctsem_laplace_placed_error(P)
