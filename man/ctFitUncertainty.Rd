@@ -282,8 +282,13 @@ With \code{intoverpop = 'quadrature'} (julia, Laplace fits), \code{'is'}
 and \code{'checked'} draw from a more exact density, in which the subjects
 or groups flagged by the random-effects check are integrated by quadrature
 (\code{control$nodes} per effect, 5 by default) and the rest by the
-Laplace approximation. The error of this density is reported in
-\code{fit$laplace$correction$error} and in \code{summary()}. A fit that
+Laplace approximation. The quadrature is made fine enough that its error
+moves no estimate by more than about \code{control$quadratureTolerance}
+standard errors (0.5 by default), with each subject's or group's error
+counted with its sign. A smaller value gives more accurate estimates and
+takes longer: with thousands of subjects, 0.1 took several times as long.
+The error of this density, and how far it can move the estimates, is
+reported in \code{fit$laplace$correction$error} and in \code{summary()}. A fit that
 was not refined when it was fitted is first re-optimised on this density,
 unless \code{correctEstimate = FALSE}. With \code{'quadrature'},
 \code{'hessian'} gives the Hessian of the refined fit at its optimum, as

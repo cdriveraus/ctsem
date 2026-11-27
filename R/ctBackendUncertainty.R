@@ -1011,7 +1011,7 @@
 
 .ctBackendUncertaintyLikelihood <- function(fit, uncertainty, likelihood,
   finishsamples, cores, control, verbose) {
-  own <- switch(likelihood, quadrature = c("nodes", "check"),
+  own <- switch(likelihood, quadrature = c("nodes", "quadratureTolerance", "check"),
     particle = c("particles", "substeps", "transition", "seed"))
   shared <- c(isESS = "target_ess", isitersize = "nbatch",
     imisMaxIter = "maxiter", imisScaleInit = "scale",
@@ -1101,11 +1101,10 @@
       "and the certification of where it ends. Run ctFitUncertainty(fit) ",
       "first, or refit without optimcontrol$estonly.", call. = FALSE)
   }
-  settings <- .ctLaplaceContinueDefaults
+  settings <- .ctLaplaceRefineSettings(control)
   # The hybrid was asked for by name, so its rules are placed whatever the
   # shift check would have said about the estimate.
   settings$check <- FALSE
-  if (!is.null(control$nodes)) settings$nodes <- as.integer(control$nodes)
   if (stay) settings$stay <- TRUE
   if (is.null(finishsamples)) {
     finishsamples <- if (!is.null(fit$estimate$rawposterior))

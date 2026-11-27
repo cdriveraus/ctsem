@@ -1849,11 +1849,18 @@ w6 restarted its climb eight times and ended unconverged.
 const _PLACED_ROUGH = 4.0
 
 """
-The standard deviation, in an estimate's standard errors, that the placed
-rules' error may move any estimate by (`_placed_slope_check`): the shift
-check's `material` bar.
+How far, in an estimate's standard errors, the placed rules' error may move
+any estimate (`_placed_slope_check`, `_placed_choose!`), unless the climb is
+handed another (`ctsem_laplace_placed_optimize`'s `slope_bar`, R's
+`quadratureTolerance` in `ctFitUncertainty`'s control). At 0.1, the shift
+check's `material` bar
+until 2026-11-27, the hc-wellbeing life satisfaction fit's rules (6,985 units)
+took four times the member points the continuation gave them, a value and
+gradient 449 s against 98 at 8 cores; at 0.5 the map-spread analogue's took
+0.12-0.19 of 0.1's points and left the estimate 0.22-0.26 se from a reference
+(`CT-SEM/review/PLACED-rule-budget-2026-11-27.md`).
 """
-const _PLACED_SLOPE_BAR = 0.1
+const _PLACED_SLOPE_BAR = 0.5
 
 """
     _placed_slope_check(P, values, H; bar=_PLACED_SLOPE_BAR)
@@ -1879,13 +1886,16 @@ check said 0.16, the ratio's small-sample bias shared by both sets. A unit
 already at the most points is read on independent shifts.
 Carried through the inverse curvature `-H` on its directions with curvature,
 as the standard errors are, and divided by them, it is that unit's
-contribution to the estimate's error in standard errors. A product rule's
-error has one sign at every unit, so the product and mixed units'
-contributions add as vectors, signed; the lattice units' are independent and
-add in quadrature; per
-coordinate the estimate's error from the rules is the first's magnitude plus
-the second's root, as the value's error adds them
-(`ctsem_laplace_placed_error`). Returns `(sd, units, doublings)`: the largest
+contribution to the estimate's error in standard errors. The units' errors
+share a sign: a product rule's at every unit, a lattice's partly, most at low
+counts. So per coordinate the estimate's error from the rules is every
+unit's contribution summed with its sign, plus the lattice units' root of
+squares for their part that does not share one (`_placed_slope_measure`).
+Lattices in quadrature alone read the map-spread analogue's error at 0.22 se
+where a reference put it at 0.37, and w4s's at 0.056 against 0.11; read so,
+they were under the truth in 32 of 56 allocations of nine fixtures, summed
+signed as well in 20, median 1.4 times it
+(`CT-SEM/review/PLACED-rule-budget-2026-11-27.md`). Returns `(sd, units, doublings)`: the largest
 coordinate's; the units taken largest contribution first until what is left is
 under `bar`; and how many times their points are to double (or a product
 rule's nodes to step by two) for the whole to come under `bar`, were their
@@ -1982,8 +1992,8 @@ function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
 end
 
 """Per coordinate, the estimate's error from the units `kept` of `contribution`'s
-rows (`_placed_slope_check`): the `signed` units' rows summed, its magnitude,
-plus the root of the others' squares."""
+rows (`_placed_slope_check`): every row summed, its magnitude, plus the root
+of the squares of the rows not `signed` (the lattice units')."""
 function _placed_slope_measure(contribution::Matrix{Float64}, signed::Vector{Bool},
     kept::AbstractVector{Bool})
     n = size(contribution, 2)
@@ -1991,14 +2001,12 @@ function _placed_slope_measure(contribution::Matrix{Float64}, signed::Vector{Boo
     r = zeros(n)
     for i in axes(contribution, 1)
         kept[i] || continue
-        if signed[i]
-            @inbounds for k in 1:n
-                s[k] += contribution[i, k]
-            end
-        else
-            @inbounds for k in 1:n
-                r[k] += contribution[i, k]^2
-            end
+        @inbounds for k in 1:n
+            s[k] += contribution[i, k]
+        end
+        signed[i] && continue
+        @inbounds for k in 1:n
+            r[k] += contribution[i, k]^2
         end
     end
     return abs.(s) .+ sqrt.(r)
@@ -2273,7 +2281,8 @@ function _placed_raise!(P::CTSEMLaplacePlaced, values::AbstractVector,
 end
 
 """
-    ctsem_laplace_placed_optimize(P, start; drift=0.5, replacements=8, kwargs...)
+    ctsem_laplace_placed_optimize(P, start; drift=0.5, replacements=8,
+        slope_bar=_PLACED_SLOPE_BAR, kwargs...)
 
 `ctsem_optimize` on the placed objective from `start`, its keywords passed on.
 Its units are anchored as the Laplace route's are: a search at each run's
@@ -2290,14 +2299,15 @@ rough ones raised (`_placed_raise!`), and the run goes on from there, with
 its L-BFGS memory dropped where frozen rules were placed again; a run its
 stop ended goes on even where its end finds nothing to do. Where it ends
 on a Hessian, the slope check (`_placed_slope_check`) reads how far the
-lattice rules' error can move the estimate; the units carrying more than
-`_PLACED_SLOPE_BAR` standard errors have their points raised as many
+rules' error can move the estimate; the units carrying more than
+`slope_bar` standard errors (`_PLACED_SLOPE_BAR`) have their points raised as many
 doublings as it says, and the run goes on with its memory, the objective
 having moved by less than the rules' error. At most `replacements` times in
 all, the last of them run to its end with no stop. With `hessian`, a curvature
 at `start` (the Laplace fit's), each unit of one block is first put on the
-cheapest rule whose share of the estimate's error is within the bar
-(`_placed_choose!`) and the whole is checked there, so that the run starts
+cheapest rule whose share of the estimate's error is within `slope_bar`
+over the root of the units (`_placed_choose!`) and the whole is checked
+there, so that the run starts
 with the rules the estimate needs: checked only where each climb ended, w4s
 and w6 restarted eight times. The result is the last run's, with
 `replacements` the count, `raised` the units raised, `multimodal` the units
@@ -2305,7 +2315,9 @@ whose term took more than one maximum's share at the end, and `slope_sd` the slo
 check's last sd (`NaN` where none ran or it did not read every flagged unit).
 """
 function ctsem_laplace_placed_optimize(P::CTSEMLaplacePlaced, start::AbstractVector;
-    drift::Real=0.5, replacements::Integer=8, hessian=nothing, kwargs...)
+    drift::Real=0.5, replacements::Integer=8, hessian=nothing,
+    slope_bar::Real=_PLACED_SLOPE_BAR, kwargs...)
+    bar = Float64(slope_bar)
     x = collect(Float64, start)
     count = 0
     raised = 0
@@ -2319,10 +2331,10 @@ function ctsem_laplace_placed_optimize(P::CTSEMLaplacePlaced, start::AbstractVec
         # gradients the choice formed.
         H0 = Matrix{Float64}(hessian)
         known = Dict{Int,Tuple{Vector{Float64},Vector{Float64}}}()
-        raised += _placed_choose!(P, x, H0; known=known,
+        raised += _placed_choose!(P, x, H0; known=known, bar=bar,
             progress=_placed_stage_progress(kwargs, "Refined fit, choosing rules"))
         ctsem_laplace_placed_evaluate(P, x; gradient=false)
-        check = _placed_slope_check(P, x, H0; known=known,
+        check = _placed_slope_check(P, x, H0; known=known, bar=bar,
             progress=_placed_stage_progress(kwargs, "Refined fit, slope check"))
         empty!(known)
         slope = check.complete ? check.sd : NaN
@@ -2346,7 +2358,7 @@ function ctsem_laplace_placed_optimize(P::CTSEMLaplacePlaced, start::AbstractVec
             steep = Int[]
             doublings = 0
             if !drifted && isempty(rough) && !stopped
-                check = _placed_slope_check(P, x, res.hessian;
+                check = _placed_slope_check(P, x, res.hessian; bar=bar,
                     progress=_placed_stage_progress(kwargs, "Refined fit, slope check"))
                 slope = check.complete ? check.sd : NaN
                 doublings = check.doublings
