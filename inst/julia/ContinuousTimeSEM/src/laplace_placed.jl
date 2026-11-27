@@ -1883,7 +1883,12 @@ independent sets of shifts at the same count (`_rule_sets`'s `alt`), whose
 difference over `sqrt(2)` has the variance of either's error, see the noise
 alone: read so, w4s's estimate stood 0.63 se from a reference fit where the
 check said 0.16, the ratio's small-sample bias shared by both sets. A unit
-already at the most points is read on independent shifts.
+already at the most points is read on independent shifts, and one on a
+product or mixed rule at its most nodes against its own last step, the rule
+two nodes coarser (`_placed_coarser`). Left unread, such a unit made the
+check incomplete and the fit reported the value's error as a distance: at a
+tolerance of 0.1 on the map-spread analogue (1,000 units), 5.24 se from 13.7
+nats of node error, where the estimate stood 0.031 se from one refined at 0.5.
 Carried through the inverse curvature `-H` on its directions with curvature,
 as the standard errors are, and divided by them, it is that unit's
 contribution to the estimate's error in standard errors. The units' errors
@@ -1901,8 +1906,7 @@ under `bar`; and how many times their points are to double (or a product
 rule's nodes to step by two) for the whole to come under `bar`, were their
 errors to fall as `n^-0.7`, the slowest rate the lattice showed (at ten
 effects; `point_sets.jl`) -- one to five, and checked again after -- and
-whether it read every flagged unit (`complete`: none on frozen draws or at a
-product rule's most nodes).
+whether it read every flagged unit (`complete`: none on frozen draws).
 
 `known` holds, for units whose two gradients the caller has at `values` on
 these rules, the pair (`_placed_choose!`'s, unit => (own, other)), which are
@@ -1919,11 +1923,13 @@ function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
     spec = laplace.spec
     x = collect(Float64, values)
     n = length(x)
-    units = Int[U for U in P.placed if any(ps -> ps.family === :lattice, P.sets[U]) ||
-        _placed_finer(o.unit_rules[U]) !== nothing]
-    # Whether every flagged unit's error is read here: not a frozen rule's, nor
-    # a product rule's at the most nodes, which has no finer rule to read
-    # against.
+    # Each placed unit read against its finer rule; at its most, a lattice on
+    # independent shifts and a product or mixed rule against its last step.
+    lattice = Bool[any(ps -> ps.family === :lattice, P.sets[U]) for U in P.placed]
+    units = Int[U for (U, l) in zip(P.placed, lattice) if l ||
+        _placed_finer(o.unit_rules[U]) !== nothing ||
+        _placed_coarser(o.unit_rules[U]) !== nothing]
+    # Whether every flagged unit's error is read here: not a frozen rule's.
     complete = isempty(P.frozen) && length(units) == length(P.placed)
     metric = isempty(units) ? nothing : _placed_metric(H, n)
     metric === nothing && return (sd=0.0, units=Int[], doublings=0, complete=false)
@@ -1937,8 +1943,12 @@ function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
     own = [zeros(npar) for _ in 1:nu]
     other = [zeros(npar) for _ in 1:nu]
     finer = [_placed_finer(o.unit_rules[U]) for U in units]
-    alt = [f === nothing ? _rule_sets(laplace, U, o.unit_rules[U]; alt=1) :
-        _rule_sets(laplace, U, f) for (U, f) in zip(units, finer)]
+    shifted = Bool[f === nothing && any(ps -> ps.family === :lattice, P.sets[U])
+        for (U, f) in zip(units, finer)]
+    alt = [f !== nothing ? _rule_sets(laplace, U, f) :
+        sh ? _rule_sets(laplace, U, o.unit_rules[U]; alt=1) :
+        _rule_sets(laplace, U, _placed_coarser(o.unit_rules[U]))
+        for (U, f, sh) in zip(units, finer, shifted)]
     if known !== nothing
         for (i, U) in enumerate(units)
             pair = get(known, U, nothing)
@@ -1962,7 +1972,7 @@ function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
     contribution = zeros(nu, n)
     for i in 1:nu
         w = _laplace_unit_weight(laplace, units[i])
-        d = ((finer[i] === nothing ? 1 / sqrt(2) : 1.0) * w) .*
+        d = ((shifted[i] ? 1 / sqrt(2) : 1.0) * w) .*
             (own[i][1:n] .- other[i][1:n])
         contribution[i, :] .= (Cinv * d) ./ se
     end
@@ -2033,6 +2043,17 @@ function _placed_finer(c::CTSEMRuleChoice)
     end
     c.points < _LATTICE_MAX || return nothing
     return CTSEMRuleChoice(c.family, c.nodes, 2 * c.points)
+end
+
+"""The rule a product or mixed rule at its most is read against by the slope
+check (`_placed_slope_check`): the step before it, two nodes coarser (a mixed
+rule's points halved too), its own last step. `nothing` for a lattice, read on
+independent shifts instead, and for a rule with no coarser step."""
+function _placed_coarser(c::CTSEMRuleChoice)
+    c.family === :lattice && return nothing
+    c.nodes - 2 >= 1 || return nothing
+    c.family === :product && return CTSEMRuleChoice(:product, c.nodes - 2, 0)
+    return CTSEMRuleChoice(:mixed, c.nodes - 2, max(c.points ÷ 2, 1))
 end
 
 """
