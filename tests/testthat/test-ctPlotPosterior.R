@@ -27,8 +27,10 @@ test_that("ctPlotPosterior draws a julia fit's posterior from the draws summary(
   # A varying parameter also gets its population sd, the one summary() reports.
   t0 <- pars[[match('T0m_eta1', parnames)]]
   expect_equal(vapply(t0$quantities, `[[`, '', 'type'), c('Pop. Mean', 'Pop. SD'))
-  expect_equal(median(t0$quantities[[2]]$post), s$popsd['T0m_eta1', '50%'],
-    tolerance = 0.01)
+  # The same draws: their mean, since summary()'s 50% for a single parameter
+  # is its estimate rather than the draws' median.
+  expect_equal(mean(t0$quantities[[2]]$post), s$popsd['T0m_eta1', 'mean'],
+    tolerance = 1e-3)
   expect_true(all(t0$quantities[[2]]$prior > 0))
   # A parameter that does not vary has no sd panel.
   drift <- pars[[match('drift_eta1', parnames)]]

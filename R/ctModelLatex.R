@@ -822,8 +822,13 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=inherits(x,'ctStan
     # already backend agnostic -- `ctExtract()` has a ctJuliaFit method
     # returning the same pop_* arrays, `.ctFitModelObject()` returns the model
     # they belong to -- so what follows is only the two places the layouts
-    # genuinely differ from stan's.
-    e <- ctExtract(x)
+    # genuinely differ from stan's. Every number is at one parameter vector,
+    # the fit's point (its estimate, or a sampled fit's median of each raw
+    # coordinate), so the equations are one model: each cell's mean over the
+    # draws beside the point's population means was none.
+    point <- matrix(as.numeric(x$estimate$raw), nrow = 1L)
+    e <- .ctBackendPopArrays(x, samples = point,
+      constrained = .ctBackendConstrained(x, point))
     ctmodel <- .ctFitModelObject(x)
     ctmodelmats <- listOfMatrices(ctmodel$pars)
 
@@ -873,7 +878,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=inherits(x,'ctStan
     # themselves: .ctBackendRawPopCov() recombines the same level populations
     # the summary's popsd comes from, and a covariate coefficient is a free
     # parameter with its own place in the raw vector.
-    levelcovs <- .ctBackendRawPopCov(x)
+    levelcovs <- .ctBackendRawPopCov(x, samples = point)
     popcov <- if(length(levelcovs)) round(levelcovs[[1]]$cov,digits) else diag(0,0)
     # Levels above the subject are their own populations -- a study sd is the
     # spread between studies -- so they are shown as their own zero-mean term
