@@ -102,9 +102,9 @@
     }
   })
   # This density is a sum over the fit's units, which a coreset of them may
-  # stand in for (`.ctCoresetLpg()`), built on `engine()$objective`; a
-  # variational fit's is not yet one the engine can take a coreset of, and is
-  # evaluated in full.
+  # stand in for (`.ctCoresetLpg()`), built on `engine()$objective`. A
+  # variational fit's is evaluated in full: a coreset of its bounds left the
+  # interval check as slow or slower (variational_readers.jl).
   attr(fn, "unitsum") <- !.ctBackendVariational(fit$model_spec)
   # A variational fit's interval check solves its draws roughly
   # (`.ctVariationalRoughCheck()`).

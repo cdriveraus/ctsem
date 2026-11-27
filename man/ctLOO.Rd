@@ -157,7 +157,8 @@ the estimate. There are two levels:
   multilevel model one group at a time, since subjects that share a group
   effect are not independent. Each subject's or group's likelihood has its
   random effects integrated out, by the Kalman filter under
-  \code{intoverpop = 'augmented'} and by the Laplace approximation
+  \code{intoverpop = 'augmented'}, by its variational lower bound under
+  \code{intoverpop = 'variational'}, and by the Laplace approximation
   otherwise. On a sampled fit (\code{optimize = FALSE}, or
   \code{ctFitUncertainty(fit, 'sample')}) the population parameters are
   its posterior draws. On an optimised fit they are drawn from its normal
@@ -175,7 +176,8 @@ the estimate. There are two levels:
   outlying subject, a variance near zero, binary indicators), is worth
   rerunning with larger \code{nsamples} or on a sampled fit.
   \item \code{subjectwise = FALSE}, on an optimised
-  \code{intoverpop = 'laplace'} fit only: leave out one row at a time,
+  \code{intoverpop = 'laplace'} or \code{'variational'} fit only: leave
+  out one row at a time,
   conditional on the estimated population parameters, with each subject's
   random effects drawn from the normal distribution the Laplace
   approximation fits at their mode, widened by a factor of 1.5. This is

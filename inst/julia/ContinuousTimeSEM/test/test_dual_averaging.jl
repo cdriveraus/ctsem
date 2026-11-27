@@ -48,6 +48,22 @@ end
     @test ContinuousTimeSEM._dual_final(da) != 1.0
 end
 
+@testset "a raise on divergences halves the gap to one, up to 0.99" begin
+    raised = ContinuousTimeSEM._accept_raised
+    @test raised(0.8) ≈ 0.9
+    @test raised(0.9) ≈ 0.95
+    @test raised(0.98) ≈ 0.99
+    @test raised(0.99) ≈ 0.99
+    @test raised(0.995) == 0.995
+    # Tempered SMC's final chains: one raise for each divergent stage and one
+    # more; none where no stage diverged.
+    final = ContinuousTimeSEM._smc_final_target
+    @test final(0.8, 0) == 0.8
+    @test final(0.8, 1) ≈ 0.95
+    @test final(0.8, 2) ≈ 0.975
+    @test final(0.8, 10) ≈ 0.99
+end
+
 @testset "an ordinary (non-restarted) average still converges as before" begin
     # The fix touches only the restart path; an ordinary run of updates should
     # still average as dual averaging does; regression check that nothing
