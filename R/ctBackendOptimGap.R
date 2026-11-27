@@ -1541,10 +1541,14 @@
     # worth 111 found a unit it could not solve at its first point, and the fit
     # went on to certify the point it had just found was no maximum.
     attr(from, "modes") <- .ctJuliaResultModes(result)
+    kept <- .ctJuliaVariationalSnapshot(spec)
     resumed <- try(optimise(from, stage_endgame), silent = TRUE)
     ok <- !inherits(resumed, "try-error") &&
       is.finite(as.numeric(resumed$maximum_loglik)[1L]) &&
       as.numeric(resumed$maximum_loglik)[1L] >= value
+    # A stage not kept leaves a variational objective's approximations where
+    # it ended; the kept stage's go back.
+    if (!ok) .ctJuliaVariationalRestore(spec, kept)
     # A run-off escape tries each coordinate once a fit
     # (`.ctBackendRunOff()`), which bounds it: it takes nothing from the
     # budget the stall escapes and certification resumes share.

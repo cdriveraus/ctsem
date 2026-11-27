@@ -28,6 +28,8 @@
 # `checks` says.
 .ctLaplaceCorrectResolve <- function(optimcontrol, intoverpop, optimize,
   intoverstates) {
+  # A variational fit has no Laplace term.
+  if (isTRUE(optimcontrol$.variational)) return(FALSE)
   refit <- isTRUE(optimcontrol$.refit)
   check <- "randomeffects" %in% .ctUncertaintyChecks(.ctJuliaOr(optimcontrol$checks, TRUE))
   if (!refit && !check) return(FALSE)
@@ -285,24 +287,32 @@
 # (`ctsem_laplace_expansion`) has the tighter error (`.ctLaplaceExpanded()`),
 # that, whose bounds `gap_bound` sums; on the rest, the draws, whose seeds give
 # `gap_se`. NULL where the fit has no curvature to step on or fewer than two
-# seeds scored.
+# seeds scored. A variational fit's estimate maximises its bound, so the same
+# step measures how far correcting the bound's error would move it
+# (`.ctVariationalLoglik()`), which takes the integral alone where there is no
+# curvature (`shiftless`; `status` then "unchecked"), and no unit's step
+# (`carriers = FALSE`).
 .ctLaplaceShiftCheck <- function(fit, draws = 128L, seeds = 1:4, bar = 0.1,
-  control = .ctLaplaceContinueDefaults, progress = NULL) {
+  control = .ctLaplaceContinueDefaults, progress = NULL, shiftless = FALSE,
+  carriers = TRUE) {
   est <- as.numeric(fit$estimate$raw)
   hessian <- .ctBackendStoredHessian(fit, est)
-  if (is.null(hessian) || !all(is.finite(hessian))) return(NULL)
-  basis <- .ctLaplaceContinueBasis(hessian,
-    fit$uncertainty$details$flatdirections$vectors, rtol = control$rtol)
-  if (is.null(basis)) return(NULL)
+  basis <- if (!is.null(hessian) && all(is.finite(hessian)))
+    .ctLaplaceContinueBasis(hessian, fit$uncertainty$details$flatdirections$vectors,
+      rtol = control$rtol)
+  if (is.null(basis) && !shiftless) return(NULL)
   # In the curvature's widths along the directions it identifies, the basis
   # the step is taken in. A coordinate the fit reports with a near-zero
   # standard error because it lies where there is no curvature has no width
   # here either, and no step: divided by the reported one, a 20-effect fit
   # with most directions held showed steps of thousands of standard errors.
-  B <- basis$basis
-  se <- sqrt(rowSums(B^2))
-  held <- !is.finite(se) | se <= 1e-8 * max(se[is.finite(se)], 0)
-  se[held] <- 1
+  if (!is.null(basis)) {
+    B <- basis$basis
+    se <- sqrt(rowSums(B^2))
+    held <- !is.finite(se) | se <= 1e-8 * max(se[is.finite(se)], 0)
+    se[held] <- 1
+  }
+  carriers <- carriers && !is.null(basis)
   module <- .ctJuliaModule(fit$model_spec$project)
   started <- proc.time()[["elapsed"]]
   # Each seed on the progress line (`progress(done, total)`, the seeds and
@@ -312,11 +322,15 @@
   r <- .ctJuliaGet(do.call(module$ctsem_laplace_check, c(list(
     .ctJuliaObjective(fit), .ctJuliaNumericVector(est),
     draws = as.integer(draws), seeds = .ctJuliaVector(as.integer(seeds)),
-    draws_df = as.numeric(control$draws_df),
+    draws_df = as.numeric(control$draws_df), unit_scores = carriers,
     expansion_gate = .ctLaplaceExpansionGate), hook)))
   G <- matrix(as.numeric(r$gradient), nrow = length(est))
   scored <- apply(G, 2L, function(g) all(is.finite(g)))
   if (sum(scored) < 2L) return(NULL)
+  integral <- .ctLaplaceCheckIntegral(r, scored)
+  counts <- list(units = length(integral$laplace_units), draws = as.integer(draws),
+    seeds = sum(scored), seconds = proc.time()[["elapsed"]] - started)
+  if (is.null(basis)) return(c(list(status = "unchecked"), integral, counts))
   project <- B %*% t(B)
   project[held, ] <- 0
   Z <- (project %*% G[, scored, drop = FALSE]) / se
@@ -326,16 +340,30 @@
     if (any(abs(shift) - 2 * noise >= bar)) "flagged" else "unresolved"
   # Each unit's own step, units in rows; the units carrying the step taken in
   # order of their largest component until what is left is under `bar`.
-  U <- matrix(as.numeric(r$unit_gradient), ncol = length(est))
-  steps <- t((project %*% t(U)) / se)
-  order <- order(-apply(abs(steps), 1L, max))
-  left <- shift
   carrying <- integer()
-  for (u in order) {
-    if (max(abs(left)) < bar) break
-    carrying <- c(carrying, u)
-    left <- left - steps[u, ]
+  if (carriers) {
+    U <- matrix(as.numeric(r$unit_gradient), ncol = length(est))
+    steps <- t((project %*% t(U)) / se)
+    order <- order(-apply(abs(steps), 1L, max))
+    left <- shift
+    for (u in order) {
+      if (max(abs(left)) < bar) break
+      carrying <- c(carrying, u)
+      left <- left - steps[u, ]
+    }
   }
+  c(list(status = status, shift = shift, noise = noise, bar = bar,
+    max_shift = max(abs(shift)), worst = which.max(abs(shift)),
+    carrying = carrying), integral, counts)
+}
+
+# The integral the random-effects check makes at its point (`r`, from
+# `ctsem_laplace_check`), as Laplace's term plus each unit's gap: on each unit
+# where Laplace's term with its O(1/n) correction has the tighter error
+# (`.ctLaplaceExpanded()`), that, whose bounds `gap_bound` sums; on the rest,
+# the draws, whose seeds `scored` give `gap_se`. Read by the check and by a
+# variational fit's log likelihood (`.ctVariationalLoglik()`).
+.ctLaplaceCheckIntegral <- function(r, scored) {
   laplace_units <- as.numeric(r$laplace_unit)
   checked <- matrix(as.numeric(r$check_unit), nrow = length(laplace_units))
   expanded <- .ctLaplaceExpanded(r, length(laplace_units), scored)
@@ -345,14 +373,10 @@
     sum(laplace_units[!expanded])
   unit_gap <- rowMeans(checked[, scored, drop = FALSE]) - laplace_units
   unit_gap[expanded] <- expansion[expanded]
-  list(status = status, shift = shift, noise = noise, bar = bar,
-    max_shift = max(abs(shift)), worst = which.max(abs(shift)),
-    carrying = carrying, gap = sum(expansion[expanded]) + mean(gaps),
+  list(laplace_units = laplace_units, gap = sum(expansion[expanded]) + mean(gaps),
     gap_se = stats::sd(gaps) / sqrt(length(gaps)),
     gap_bound = sum(as.numeric(r$expansion_bound)[expanded]),
-    expanded = sum(expanded), expanded_units = which(expanded), unit_gap = unit_gap,
-    units = length(laplace_units), draws = as.integer(draws), seeds = sum(scored),
-    seconds = proc.time()[["elapsed"]] - started)
+    expanded = sum(expanded), expanded_units = which(expanded), unit_gap = unit_gap)
 }
 
 # The smallest eigenvalue of a unit's curvature in its effects, relative to the
@@ -458,6 +482,10 @@
   if (identical(fit$estimate$loglik_method, "checked") &&
       !is.null(fit$estimate$loglik_laplace)) {
     return(as.numeric(fit$estimate$loglik_laplace))
+  }
+  if (identical(fit$estimate$loglik_method, "variational") &&
+      !is.null(fit$estimate$loglik_lowerbound)) {
+    return(as.numeric(fit$estimate$loglik_lowerbound))
   }
   as.numeric(fit$estimate$loglik)
 }
@@ -787,4 +815,58 @@
     verbose = verbose, sink = sink, method = method,
     uncertaintycontrol = uncertaintycontrol, report = report_quadrature,
     timed = timed)
+}
+
+# A variational fit's log likelihood (`intoverpop = 'variational'`): the
+# random-effects check's integral at the estimate (`.ctLaplaceShiftCheck()` on
+# the Laplace objective underneath), which integrates every unit whatever its
+# width or nesting, with its standard error and the expansion's bound, as a
+# checked Laplace fit reports its own (`.ctLaplaceCheckedLoglik()`). The bound
+# the optimiser maximised is kept as `loglik_lowerbound`, which
+# `.ctFitOptimisedLoglik()` reads. Where the fit has a Hessian the check also
+# steps from the estimate towards the integral's maximum, as it does on a
+# Laplace fit: kept in `fit$variational$check`, and said where it is resolved
+# over its bar (`.ctVariationalShiftMessage()`).
+.ctVariationalLoglik <- function(fit, cores, draws = 128L, seeds = 1:4,
+  quiet = FALSE) {
+  check <- .ctBackendWithMaxChunks(cores, .ctLaplaceShiftCheck(fit, draws = draws,
+    seeds = seeds, shiftless = TRUE, carriers = FALSE))
+  if (is.null(check)) stop("the check scored every unit at fewer than two seeds")
+  units <- check$laplace_units + check$unit_gap
+  value <- sum(units)
+  if (!is.finite(value)) stop("its value is not finite")
+  bound <- as.numeric(fit$estimate$loglik)
+  fit$estimate$loglik_lowerbound <- bound
+  fit$estimate$loglik <- value
+  if (!is.null(fit$estimate$logposterior))
+    fit$estimate$logposterior <- as.numeric(fit$estimate$logposterior) + value - bound
+  fit$estimate$loglik_se <- as.numeric(check$gap_se)
+  fit$estimate$loglik_bound <- as.numeric(check$gap_bound)
+  if (length(units) == length(fit$estimate$subject_loglik) && all(is.finite(units)))
+    fit$estimate$subject_loglik <- units
+  fit$estimate$loglik_method <- "variational"
+  if (!is.null(check$shift)) {
+    record <- .ctLaplaceShiftRecord(check, fit)
+    if (identical(record$status, "flagged")) {
+      record$message <- .ctVariationalShiftMessage(record$max_shift, record$worst)
+      if (!quiet) {
+        if (record$max_shift >= 1) warning(record$message, call. = FALSE) else
+          message(record$message)
+      }
+    }
+    fit$variational$check <- record
+  }
+  fit
+}
+
+# What a variational fit the check flagged says: how far correcting the
+# bound's error would move the estimates, by the same step and the same rule
+# for message or warning as a Laplace fit's (`.ctLaplaceShiftMessage()`), and
+# the call that gives intervals to report.
+.ctVariationalShiftMessage <- function(shift, worst) {
+  paste0("Correcting for the variational approximation's error would move some ",
+    "estimates by ", if (shift < 1) paste0("about ", format(shift, digits = 2),
+      " standard errors") else "a standard error or more", " (most: ", worst,
+    "). ctFitUncertainty(fit, 'sample', intoverpop = 'none') gives intervals ",
+    "to report.")
 }

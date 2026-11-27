@@ -153,9 +153,11 @@ anova.ctStanFit <- function(object, ...) {
   method <- vapply(fits, function(f) if (.ctFitIsJulia(f))
     as.character(.ctJuliaOr(f$estimate$loglik_method, '')) else '', '')
   notes <- c(
-    vapply(which(method == 'checked'), function(i) paste0(names[i],
-      ": log likelihood integrated by the random-effects check, ",
+    vapply(which(method %in% c('checked', 'variational')), function(i)
+      paste0(names[i], ": log likelihood integrated by the random-effects check, ",
       .ctLoglikCheckedError(fits[[i]]$estimate), "."), ''),
+    vapply(which(method == 'variational_bound'), function(i) paste0(names[i],
+      ": log likelihood is the variational lower bound."), ''),
     vapply(which(method == 'quadrature'), function(i) paste0(names[i],
       ": log likelihood integrated by the refined fit's quadrature."), ''),
     vapply(which(vapply(fits, .ctFitHasPriors, NA)), function(i)

@@ -266,6 +266,11 @@
 # identically and differ only in what happens afterwards, so re-preparing one
 # as the other rebuilds the same structure. It is correct by coincidence
 # though, and this function's whole job is to say what the fit did.
+# Whether a specification is a variational fit's (`intoverpop =
+# 'variational'`): the Laplace route's units, each integrated by its fitted
+# bound. Its route is still 'laplace'.
+.ctBackendVariational <- function(spec) !is.null(spec$laplace$variational)
+
 .ctBackendIntOverPop <- function(spec) {
   recorded <- spec$intoverpop
   if (!is.null(recorded) && nzchar(as.character(recorded)[1L])) {

@@ -150,6 +150,12 @@ BENCH_VARIANTS <- list(
   # default's while its objective values do not.
   onestep = list(optimcontrol = list(laplace_onestep = TRUE), objective = "onestep"),
 
+  # The variational bound (`intoverpop = 'variational'`): each unit's effects
+  # integrated by a lower bound, its approximation fitted at every evaluation.
+  # Another approximation of the same integral, so its exact scores compare
+  # with the default's while its objective values do not.
+  variational = list(args = list(intoverpop = "variational"), objective = "variational"),
+
   # The certification's bar stated in standard errors: the gap is half the
   # squared distance from the maximum in them, so 0.01 se is 5e-5 nats and
   # 0.02 se 2e-4, against the default 1e-6 (0.0014 se). L-BFGS's own rule

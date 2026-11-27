@@ -5056,6 +5056,31 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 .ctJuliaObjective <- function(object, layer = FALSE) {
   stopifnot(inherits(object, "ctJuliaModel") || inherits(object, "ctJuliaFit"))
   spec <- if (inherits(object, "ctJuliaFit")) object$model_spec else object
+  # A variational fit's objective (`intoverpop = 'variational'`,
+  # `spec$laplace$variational`) is the Laplace objective's units, each
+  # integrated by its fitted bound (`ctsem_variational`, variational.jl): built
+  # on the Laplace objective of the same specification, which it shares with
+  # the readers of the effects. `layer = TRUE` is that objective's layer, built
+  # below from the specification without the bound.
+  if (!is.null(spec$laplace$variational)) {
+    settings <- spec$laplace$variational
+    spec$laplace$variational <- NULL
+    if (!isTRUE(layer)) {
+      key <- digest::digest(list(.ctJuliaObjectiveKey(spec), "variational",
+        settings), algo = "sha256")
+      cached <- .ctJuliaCached(key)
+      if (!is.null(cached)) return(cached)
+      module <- .ctJuliaModule(spec$project)
+      # The Laplace objective underneath, from the object handed in with the
+      # bound dropped: a fit's specification does not carry the class this
+      # function checks for.
+      plain <- object
+      if (inherits(object, "ctJuliaFit")) plain$model_spec <- spec else plain <- spec
+      objective <- do.call(module$ctsem_variational, c(list(.ctJuliaObjective(plain)),
+        lapply(settings, .ctJuliaMarshal)))
+      return(.ctJuliaCacheStore(key, objective))
+    }
+  }
   # The fit's objective: where the subject filter integrates some effects
   # (`.ctJuliaLaplaceHybrid`: own variances, and a full-rank level's affine
   # effects as a block), the hybrid. `layer = TRUE` gives the same model with
@@ -6880,6 +6905,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         .ctJuliaOr(optimcontrol$laplace_soft_directions, .ctJuliaSoftDirectionsDefault)
         else optimcontrol$laplace_soft_directions))
   model_spec$tipredMissing <- tipredMissing
+  # `intoverpop = 'variational'` (ctFit()): the bound's settings, on the
+  # specification so every objective built from it is the variational one.
+  if (isTRUE(optimcontrol$.variational)) {
+    if (is.null(model_spec$laplace)) stop("intoverpop = 'variational' needs ",
+      "random effects.", call. = FALSE)
+    model_spec$laplace$variational <- list(family = "auto", rule = "auto")
+  }
   # 'auto' samples the random effects under optimize = FALSE ('none'), but
   # where the Laplace term is exact -- every unit's integrand Gaussian in its
   # effects (`laplace$quadratic`) -- the marginal it integrates is the exact
@@ -6950,6 +6982,36 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   (walked + t(walked)) / 2
 }
 
+# A variational fit starts every unit's approximation from the prior, also
+# where R had cached its objective from an earlier fit; a fit's later stages go
+# on from the approximations the last left.
+.ctJuliaVariationalReset <- function(spec) {
+  if (!.ctBackendVariational(spec)) return(invisible(NULL))
+  if (!inherits(spec, "ctJuliaModel"))
+    spec <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
+  invisible(.ctJuliaCall("ContinuousTimeSEM.ctsem_variational_reset!",
+    .ctJuliaObjective(spec)))
+}
+
+# A variational objective's accepted state before a stage R may not keep, and
+# put back where it does not (`.ctBackendCorrectResult()`): the stages after
+# the optimisation evaluate from the accepted approximations, and a rejected
+# stage left its own (`ctsem_variational_snapshot`). NULL, and nothing to put
+# back, for any other objective.
+.ctJuliaVariationalSnapshot <- function(spec) {
+  if (!.ctBackendVariational(spec)) return(NULL)
+  if (!inherits(spec, "ctJuliaModel"))
+    spec <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
+  .ctJuliaCall("ContinuousTimeSEM.ctsem_variational_snapshot", .ctJuliaObjective(spec))
+}
+.ctJuliaVariationalRestore <- function(spec, snapshot) {
+  if (is.null(snapshot)) return(invisible(NULL))
+  if (!inherits(spec, "ctJuliaModel"))
+    spec <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
+  invisible(.ctJuliaCall("ContinuousTimeSEM.ctsem_variational_restore!",
+    .ctJuliaObjective(spec), snapshot))
+}
+
 # The most iterations the prior warm-up (`optimcontrol$carefulfit`) takes by
 # default; it stops by L-BFGS's own rule before that on most models (median 30
 # on the bench, at most 115 on the ctsem book's trend models). Why it runs to
@@ -6985,6 +7047,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       "Free a parameter, or use fit = FALSE to prepare the model without ",
       "fitting it.", call. = FALSE)
   }
+  .ctJuliaVariationalReset(model_spec)
   # A checkpoint from an earlier run of this fit is its start, and its modes
   # the opening search's further starts (`.ctJuliaCheckpoint()`).
   checkpoint <- .ctJuliaCheckpoint(optimcontrol, model_spec, npar, intoverstates)
@@ -7164,6 +7227,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   } else {
     spec <- warmspec()
     if (is.null(spec)) warmskip <- "the priors do not map onto this model's layout"
+    if (!is.null(spec)) .ctJuliaVariationalReset(spec)
     if (!is.null(spec)) {
       # No callback here, deliberately. This stage is a starting-value device,
       # not the fit: it optimises a *different* objective (the posterior rather
@@ -8140,7 +8204,19 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # `.ctLaplaceContinue()`: the refined fit (`intoverpop = 'quadrature'`) replaces the
   # covariance and draws with its own wherever its Hessian serves; the check,
   # the default, only checks and warns.
-  if (!is.null(out$laplace) && isTRUE(intoverstates)) {
+  # A variational fit has no Laplace term to check: its log likelihood is
+  # the random-effects check's integral at the estimate
+  # (`.ctVariationalLoglik()`), and without that check its bound.
+  if (.ctBackendVariational(model_spec)) {
+    if ("randomeffects" %in% .ctUncertaintyChecks(.ctJuliaOr(optimcontrol$checks,
+      TRUE))) {
+      out <- holdrepair(keep(.ctVariationalLoglik(out, cores),
+        "The variational fit's log likelihood", "with its bound as the log likelihood"))
+    } else {
+      out$estimate$loglik_lowerbound <- out$estimate$loglik
+      out$estimate$loglik_method <- "variational_bound"
+    }
+  } else if (!is.null(out$laplace) && isTRUE(intoverstates)) {
     if (continuing) {
       out <- holdrepair(keep(.ctLaplaceContinue(out, cores = cores,
         verbose = verbose, method = uncertainty,
@@ -8279,7 +8355,12 @@ print.ctJuliaFit <- function(x, ...) {
   if (!sampled) cat("  log likelihood:", format(x$estimate$loglik),
     if (identical(x$estimate$loglik_method, "checked")) paste0("(corrected for ",
       "Laplace approximation error, ", .ctLoglikCheckedError(x$estimate),
-      "; uncorrected ", format(x$estimate$loglik_laplace), ")"), "\n")
+      "; uncorrected ", format(x$estimate$loglik_laplace), ")") else
+    if (identical(x$estimate$loglik_method, "variational")) paste0("(integrated ",
+      "by the random-effects check, ", .ctLoglikCheckedError(x$estimate),
+      "; variational bound ", format(x$estimate$loglik_lowerbound), ")") else
+    if (identical(x$estimate$loglik_method, "variational_bound"))
+      "(variational lower bound)", "\n")
   if (!is.null(x$estimate$loglik_weighted)) cat("  weighted log likelihood:",
     format(x$estimate$loglik_weighted), "(sampling weights)\n")
   if (!sampled) cat("  converged:", x$optim$converged, " iterations:",

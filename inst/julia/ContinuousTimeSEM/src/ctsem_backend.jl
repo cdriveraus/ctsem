@@ -2568,6 +2568,13 @@ _ctsem_anchor_modes(p::CTSEMPinnedObjective; kwargs...) =
     _ctsem_anchor_modes(p.objective; kwargs...)
 _ctsem_anchor_finish!(p::CTSEMPinnedObjective, x) =
     _ctsem_anchor_finish!(p.objective, _ctsem_pinned_point(p, x))
+"""What a run's search where it stopped (`_ctsem_take_search_modes!`) did,
+for its progress line: on the Laplace route, other maxima found and kept."""
+_ctsem_search_note(objective, taken) = @sprintf(
+    "a search where the run stopped found other maxima for %d unit(s), moving the objective by %+.3g; they are kept and the run goes on",
+    taken.units, taken.change)
+_ctsem_search_note(p::CTSEMPinnedObjective, taken) = _ctsem_search_note(p.objective, taken)
+
 _ctsem_take_search_modes!(p::CTSEMPinnedObjective, x, found) =
     _ctsem_take_search_modes!(p.objective, _ctsem_pinned_point(p, x), found)
 ctsem_laplace_clear_anchors!(p::CTSEMPinnedObjective) =
@@ -4135,9 +4142,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
                 took = isfinite(taken.change) &&
                     abs(taken.change) > _ctsem_tolerance(_CTSEM_MODE_RESUME_TOL, directional)
                 took || (searched_at = copy(minimizer))
-                took && progress && _ctsem_mode_note(reporter, label, @sprintf(
-                    "a search where the run stopped found other maxima for %d unit(s), moving the objective by %+.3g; they are kept and the run goes on",
-                    taken.units, taken.change))
+                took && progress && _ctsem_mode_note(reporter, label,
+                    _ctsem_search_note(objective, taken))
             end
         end
         if took

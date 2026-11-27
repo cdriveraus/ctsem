@@ -102,8 +102,10 @@
     }
   })
   # This density is a sum over the fit's units, which a coreset of them may
-  # stand in for (`.ctCoresetLpg()`), built on `engine()$objective`.
-  attr(fn, "unitsum") <- TRUE
+  # stand in for (`.ctCoresetLpg()`), built on `engine()$objective`; a
+  # variational fit's is not yet one the engine can take a coreset of, and is
+  # evaluated in full.
+  attr(fn, "unitsum") <- !.ctBackendVariational(fit$model_spec)
   # The engine and its objective, for a stage that runs in the engine on this
   # density rather than calling it batch by batch (`.ctDaisEngine()`).
   attr(fn, "engine") <- engine
