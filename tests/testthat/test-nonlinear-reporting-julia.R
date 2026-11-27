@@ -317,8 +317,13 @@ test_that("a fitted network's edges are the linearisation it says they are", {
   expect_true(attr(net, 'jacobian'))
   expect_message(ctNetwork(fit, dt = 1, state = 'asymptotic'),
     'these edges are a linearisation', fixed = TRUE)
-  jac <- apply(ctsem:::.ctBackendPopArrays(fit, state = state)$pop_JAx, c(2, 3),
+  # The Jacobian's medians over the draws, each at its own fixed point; a cell
+  # that is one parameter has its median at the estimate, which ctSummaryMatrices()
+  # gives in place of the draws' (test-ctCalcPerDraw.R).
+  jac <- suppressMessages(ctSummaryMatrices(fit, state = 'asymptotic'))$JAx
+  draws <- apply(ctsem:::.ctBackendPopArrays(fit, state = state)$pop_JAx, c(2, 3),
     stats::median)
+  expect_equal(unname(jac), unname(draws), tolerance = 0.05)
   expect_equal(unname(net$DRIFT), unname(jac))
   expect_gt(abs(net$DRIFT[1, 2]), 1e-3)
   expect_equal(unname(net$temporal), unname(as.matrix(Matrix::expm(jac))),
