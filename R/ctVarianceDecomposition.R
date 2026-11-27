@@ -1993,10 +1993,10 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
 print.ctVarianceDecomposition <- function(x, digits = 3L, ...) {
   bytime <- isTRUE(attr(x, 'bytime'))
   frame <- as.data.frame(x)
-  # The named columns of `table`, rounded, beside the time and variable each
-  # row is about.
+  # The named columns of `table`, rounded, beside the time, variable and type
+  # each row is about: a manifest and a latent of one name are two rows.
   show <- function(table, columns, labels = columns) {
-    keys <- intersect(c('time', 'variable'), names(table))
+    keys <- intersect(c('time', 'variable', 'type'), names(table))
     table <- table[c(keys, columns)]
     numeric <- vapply(table, is.numeric, logical(1L))
     table[numeric] <- lapply(table[numeric], round, digits)
@@ -2015,7 +2015,7 @@ print.ctVarianceDecomposition <- function(x, digits = 3L, ...) {
   nsamples <- attr(x, 'nsamples')
 
   cat('Model implied variance decomposition\n\n')
-  show(frame, c(if (!bytime) 'type', parts, 'total'))
+  show(frame, c(parts, 'total'))
   cat('\nProportions of the total\n')
   show(frame, paste0('prop.', c(parts, 'within')), c(parts, 'within'))
   if (length(levelcols)) {
@@ -2032,13 +2032,13 @@ print.ctVarianceDecomposition <- function(x, digits = 3L, ...) {
   }
   if (is.null(intervals)) {
     cat('\nIntraclass correlations\n')
-    show(frame, c(if (!bytime) 'type', iccs))
+    show(frame, iccs)
   } else {
     cat('\nIntraclass correlations, medians and 95% intervals\n')
     for (icc in iccs) {
       cat('\n', icc, '\n', sep = '')
       show(intervals[intervals$quantity == icc, , drop = FALSE],
-        c(if (!bytime) 'type', '2.5%', '50%', '97.5%'))
+        c('2.5%', '50%', '97.5%'))
     }
   }
 
