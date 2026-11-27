@@ -96,6 +96,10 @@ with the drift as a latent process, constant or changing over the session.
   `ctFitUncertainty(fit, 'sample')` gives a warning.
 - If the approximation for the random effects would move an estimate by a
   standard error or more, sampling refines the fit first and starts there.
+- When the sampler's steps diverge, it shortens them itself, and `summary()`
+  gives the share of divergent transitions. Some models without random effects
+  are sampled by sequential Monte Carlo, which runs as many chains as it needs
+  and does not use `chains`.
 
 ## Checking and improving models
 

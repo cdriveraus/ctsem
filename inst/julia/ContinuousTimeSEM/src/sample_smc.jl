@@ -758,7 +758,7 @@ it started from, and the chain, reported through `reporter` (`_ChainReport`).
 A function of its own, as `_smc_move` is.
 """
 function _smc_final_chain(ld, geo, Xf, k, np, s, rng, step, metric, ndraws, maxdepth,
-    maxdelta, reporter::_ChainReport)
+    maxdelta, reporter::_ChainReport, target::Float64)
     w = _jmap_theta_inverse(geo, Xf[:, k])
     logp = ld(s.g, w)
     if !isfinite(logp)
@@ -767,7 +767,7 @@ function _smc_final_chain(ld, geo, Xf, k, np, s, rng, step, metric, ndraws, maxd
         logp = ld(s.g, w)
     end
     out = _continue_chain(ld, s.ws, rng, w, s.g, logp, step, metric, ndraws,
-        maxdepth, maxdelta, reporter)
+        maxdepth, maxdelta, reporter; target=target)
     _chain_end!(reporter)
     return k, out
 end
@@ -786,8 +786,8 @@ end
 `geo` they ran in."""
 _smc_theta_chains(geo, chains::Vector{_ChainResult}) = [_ChainResult(
     _jmap_thetas(geo, r.draws), r.accept, r.divergent, r.bound, r.depth, r.energy,
-    r.stepsize, r.warmup_divergent, r.warmup_used, _jmap_theta(geo, r.x)[1], r.metric)
-    for r in chains]
+    r.stepsize, r.warmup_divergent, r.warmup_used, _jmap_theta(geo, r.x)[1], r.metric,
+    r.target) for r in chains]
 
 """
     ctsem_sample_smc(objective, values; kwargs...)
@@ -1130,7 +1130,18 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     # Each chain's particle, and the chains.
     start = Int[]
     held = Ref(_ChainResult[])
-    final_step = step
+    # Where any stage's moves diverged, the final chains run at the step for
+    # the highest target NUTS's warmup raises to (`_ACCEPT_MAX`,
+    # sample_run.jl), read off the last stage's acceptance as the stages' own
+    # steps are (`_smc_next_step`). They have no warmup in which to find it,
+    # and on the ctsem book's N = 1 wearable model they ran 20-51 divergent
+    # transitions at the default target and none at 0.95, at seven seeds.
+    # The stages keep the target they were given: raised there, each later
+    # stage's fixed count of moves went less far, and on an off-centre
+    # Gaussian the stages' log constant ended 3.3 nats out (test_smc.jl).
+    final_target = any(st.divergent > 0 for st in stages) ? max(tacc, _ACCEPT_MAX) : tacc
+    final_step = final_target == tacc ? step :
+        _smc_next_step(stages[end].step, stages[end].accept, final_target)
     final_metric = metric
     # The final chains run in the last stage's coordinates; every reader of
     # their draws reads them in theta (`_smc_theta_chains`).
@@ -1151,7 +1162,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
                     final_geo, Xf, ks[i], size(Xf, 2), s,
                     Random.Xoshiro(hash((UInt64(seed), 0, off + i))),
                     final_step, final_metric, nfirst, mdepth, mdelta,
-                    _chain_handle(line, i))
+                    _chain_handle(line, i), final_target)
                 return nothing
             end
         end
@@ -1266,7 +1277,8 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     corrected_pool = (draws=draws, accept=accept, divergent=divergent, bound=bound,
         depth=depth, energy=energy)
     return merge(_sample_result(corrected_pool; nchains=nch, ndraws=nper, npar=npar,
-        ndim=npar, maxdepth=mdepth, stepsize=fill(step, nch),
+        ndim=npar, maxdepth=mdepth, stepsize=fill(final_step, nch),
+        target_accept=fill(final_target, nch),
         warmup_divergent=zeros(Int, nch), trace=trace, diagnostics=diagnostics), (
         forward_gradients=ctsem_forward_gradients() - forward0,
         explosive_passes=ctsem_explosive_passes() - explosive0,

@@ -316,8 +316,9 @@
   # off `control` here, and handed in by `ctFit(optimize = FALSE)`, whose
   # control carries its own resolved chain count and warmup either way.
   if (is.null(nutsgiven)) nutsgiven <- .ctBackendNutsControls(control)
-  if (identical(control$sampler, "smc") && length(nutsgiven)) {
-    stop("control$", paste(nutsgiven, collapse = ", control$"),
+  nutsonly <- setdiff(nutsgiven, "chains")
+  if (identical(control$sampler, "smc") && length(nutsonly)) {
+    stop("control$", paste(nutsonly, collapse = ", control$"),
       " is a setting of NUTS, which tempered SMC (control$sampler = 'smc') ",
       "does not read: its chains start from its particles (control$particles), and ",
       "it has no warmup. Drop it, or use sampler = 'nuts'.", call. = FALSE)
@@ -397,6 +398,7 @@
     named = if (marginal && !isTRUE(state_explicit) && !tisampled &&
       !is.null(directions)) NCOL(directions) else 0L,
     nutsonly = .ctBackendNutsAsked(control, nutsgiven))
+  if ("chains" %in% nutsgiven) .ctSampleChainsUnused(control$sampler)
   # After the sampler: the map's default placement is the fit's estimate.
   placement <- .ctBackendPlacementFor(control, marginal || isTRUE(state_explicit))
   # The map sampler's warm-up is its learning schedule's (`ctsem_sample_map`'s
@@ -795,14 +797,31 @@
   sampler
 }
 
-# The sample controls only NUTS reads, by the names a caller set: its chain
-# count (tempered SMC's chains start from its particles), its warmup (SMC has none)
-# and its starting step size. A call that sets one is asking for NUTS, so on
-# a marginal target it gets NUTS by default, and naming 'smc' beside one is
-# refused rather than the setting ignored. `ctFit(optimize = FALSE)` folds a
+# The sample controls only samplers that run chains read, by the names a
+# caller set: the chain count (NUTS, the map and SAEM's kernel; tempered SMC's
+# chains start from its particles), the warmup (SMC has none) and the starting
+# step size. A call that sets the warmup or the step size is asking for NUTS,
+# so on a marginal target it gets NUTS by default, and naming 'smc' beside one
+# is refused rather than the setting ignored. The chain count chooses no
+# sampler (Charles, 2026-11-27): `ctFit(chains = 4)` is how 3.x asked for four
+# chains, and read as a request for NUTS it gave the ctsem book's N = 1
+# wearable model NUTS where its check had chosen SMC; NUTS ended there with
+# R-hat up to 1.06 and up to 133 divergent transitions, SMC with neither. It
+# applies wherever the sampler runs chains, and under SMC it is said to be
+# unused (`.ctSampleChainsUnused()`). `ctFit(optimize = FALSE)` folds a
 # resolved chain count and warmup into every control it passes on, so it says
 # which of them its caller wrote instead (`.ctJuliaSampleFit()`).
 .CT_NUTS_CONTROL_NAMES <- c("chains", "warmup", "stepsize")
+
+# A chain count the caller set, where the sampler that runs takes none.
+.ctSampleChainsUnused <- function(sampler) {
+  if (!identical(sampler, "smc")) return(invisible(FALSE))
+  warning("chains is not used by tempered SMC, the sampler for this fit, ",
+    "which runs as many chains as it needs. Use sampleControl = ",
+    "list(sampler = 'nuts') (control in ctFitUncertainty) for a set number ",
+    "of NUTS chains.", call. = FALSE)
+  invisible(TRUE)
+}
 
 .ctBackendNutsControls <- function(control) {
   given <- names(control)[!vapply(control, is.null, logical(1))]
@@ -810,9 +829,10 @@
 }
 
 # Whether a call asks for NUTS on a marginal target: a NUTS-only control it
-# set (`nutsgiven`, names), or a setting of NUTS's warmup metric.
+# set (`nutsgiven`, names; the chain count is not one), or a setting of NUTS's
+# warmup metric.
 .ctBackendNutsAsked <- function(control, nutsgiven = .ctBackendNutsControls(control)) {
-  length(nutsgiven) > 0L || isTRUE(control$adapt_metric) ||
+  length(setdiff(nutsgiven, "chains")) > 0L || isTRUE(control$adapt_metric) ||
     isTRUE(control$adapt_effects) || !is.null(control$settleTol)
 }
 
@@ -1791,6 +1811,10 @@
     saturated = as.integer(result$nsaturated),
     max_depth = as.integer(result$max_depth),
     stepsize = as.numeric(result$stepsize),
+    # The acceptance target each chain's step size was tuned for, after the
+    # raises the engine makes on divergences (sample_run.jl, sample_smc.jl);
+    # the divergence warning and summary() report it.
+    target_accept = as.numeric(.ctJuliaOr(result$target_accept, NA_real_)),
     ebfmi = as.numeric(result$ebfmi),
     accept = as.numeric(result$accept),
     depth = as.integer(result$depth),
@@ -1955,12 +1979,14 @@
 # What went wrong with this sample, as short phrases, and whether the chains
 # agreed at all.
 #
-# `converged` is about whether the draws are a posterior, not about how precise
-# one they are: a bad R-hat means the chains did not describe the same
-# distribution, and a divergent transition that the sampler could not follow
-# means the draws may under-represent where it happened. A small effective
-# sample size or a saturated tree depth means they did describe one, and did
-# so inefficiently. Only the first two set it to FALSE.
+# `converged` is whether the chains describe one distribution: a bad R-hat
+# says they do not. Divergent transitions are reported beside it, as the share
+# of transitions and the acceptance target the run ended at, and do not set it
+# (Charles, 2026-11-27): one divergent transition in 5,764, with every R-hat at
+# 1.005 or under, read as "not converged" on the ctsem book's N = 1 model. A
+# small effective sample size or a saturated tree depth means the chains did
+# describe one distribution, and did so inefficiently. A sampler with no R-hat
+# (tempered SMC) has converged where its tempering reached the posterior.
 #
 # A divergence on a trajectory that crossed the random-effect correlation bound
 # is not of that kind. The bound is a cubic wall in the objective, part of the
@@ -2015,10 +2041,13 @@
   # every chain sat still, and calling that convergence is the failure mode this
   # whole field exists to avoid. A sampler that reports no R-hat by design
   # (tempered SMC, whose ceiling is Inf) is judged by its divergences alone.
-  converged <- if (!is.finite(rhatmax)) divergent == 0L else if (!is.finite(worst)) {
+  converged <- if (!is.finite(rhatmax)) {
+    beta <- suppressWarnings(as.numeric(diagnostics$stage_beta))
+    !length(beta) || isTRUE(utils::tail(beta, 1L) >= 1)
+  } else if (!is.finite(worst)) {
     problems <- c(problems, "R-hat could not be computed for any parameter")
     NA
-  } else !(worst > rhatmax || divergent > 0L)
+  } else !(worst > rhatmax)
   list(converged = converged, problems = problems)
 }
 
@@ -2031,6 +2060,47 @@
   all <- suppressWarnings(as.integer(diagnostics$divergent)[1L])
   if (!length(all) || is.na(all)) return(0L)
   max(all - .ctSampleDivergentBound(diagnostics), 0L)
+}
+
+# "22 of 2100 transitions (1%) diverged": the count with its share of the
+# run's transitions, for the warning and the summary's note.
+#' @keywords internal
+.ctSampleDivergentShare <- function(diagnostics) {
+  divergent <- .ctSampleDivergent(diagnostics)
+  total <- sum(.ctSampleChainDraws(diagnostics))
+  share <- if (is.finite(total) && total > 0)
+    format(signif(100 * divergent / total, 2), scientific = FALSE) else NA
+  paste0(divergent, " of ", total, " transition", if (total == 1L) "" else "s",
+    if (!is.na(share)) paste0(" (", share, "%)") else "", " diverged")
+}
+
+# The acceptance target the chains' steps were tuned for, as ", at
+# target_accept 0.95" ("0.85-0.95" where chains differ); empty for a fit
+# sampled before the engine reported it.
+#' @keywords internal
+.ctSampleTargetText <- function(diagnostics) {
+  target <- suppressWarnings(as.numeric(diagnostics$target_accept))
+  target <- target[is.finite(target)]
+  if (!length(target)) return("")
+  range <- unique(signif(range(target), 3))
+  paste0(", at target_accept ", paste(range, collapse = "-"))
+}
+
+# What to try after divergent transitions. The engine already raises the
+# target to 0.95 where warmup or SMC's stages diverge (sample_run.jl's
+# `_ACCEPT_MAX`), so the next step up is named; past 0.99 shorter steps buy
+# little and the geometry wants a change of model or priors.
+#' @keywords internal
+.ctSampleDivergentRemedy <- function(diagnostics) {
+  target <- suppressWarnings(max(as.numeric(diagnostics$target_accept), na.rm = TRUE))
+  if (!is.finite(target)) target <- 0.8
+  if (target >= 0.99) {
+    return(paste0("The steps are already short, so stronger priors or fixing ",
+      "parameters the data barely inform are more likely to help."))
+  }
+  paste0("A higher target shortens the steps and usually removes them: ",
+    "sampleControl = list(target_accept = ", if (target < 0.95) 0.95 else 0.99,
+    ") in ctFit, or control in ctFitUncertainty.")
 }
 
 #' @keywords internal
@@ -2151,12 +2221,10 @@
   total <- sum(.ctSampleChainDraws(diagnostics))
   divergent <- .ctSampleDivergent(diagnostics)
   if (divergent > 0L) {
-    warning(divergent, " of ", total, " transitions diverged. The ",
-      "sampler could not follow the posterior's geometry there, so these draws ",
-      "under-represent whatever it could not reach",
-      if (isTRUE(randomeffects)) " -- most often a population standard deviation near zero",
-      ". Raising target_accept towards 0.95 (sampleControl in ctFit, control ",
-      "in ctFitUncertainty) shortens the steps and often clears it.", call. = FALSE)
+    warning(.ctSampleDivergentShare(diagnostics), .ctSampleTargetText(diagnostics),
+      ". The draws may under-represent the region the sampler could not follow",
+      if (isTRUE(randomeffects)) ", most often a population standard deviation near zero",
+      ". ", .ctSampleDivergentRemedy(diagnostics), call. = FALSE)
   }
   bound <- .ctSampleDivergentBound(diagnostics)
   if (bound > 0L) {
@@ -2291,6 +2359,9 @@ print.ctSampleDiagnostics <- function(x, ...) {
     "   max tree depth reached: ", x$saturated, "\n", sep = "")
   cat("  step size: ", paste(signif(x$stepsize, 3), collapse = ", "),
     "\n", sep = "")
+  target <- suppressWarnings(as.numeric(x$target_accept))
+  if (any(is.finite(target))) cat("  target_accept: ",
+    paste(unique(signif(target, 3)), collapse = ", "), "\n", sep = "")
   if (saem) {
     cat("  scale moves accepted, centred / non-centred: ",
       paste(signif(x$scale_accept, 2), collapse = ", "), " / ",
