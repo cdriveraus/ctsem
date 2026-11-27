@@ -127,6 +127,10 @@ process, a cycle, or a process specific to one indicator.
 nonlinear model's parameters change with the state. `ctVarianceDecomposition()`
 splits variance into between subject, process and measurement parts and gives
 intraclass correlations, and `ctTracePlot()` shows the path of the optimiser or sampler.
+`ctPredictVarying()` plots the expected trajectories of persons whose random
+effects are one standard deviation either side of the mean, or at other chosen
+values, and of persons with chosen values of a time independent predictor, as
+`ctPredictTIP()` does.
 
 ## Model specification
 
