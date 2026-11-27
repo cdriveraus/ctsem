@@ -870,3 +870,25 @@
     "). ctFitUncertainty(fit, 'sample', intoverpop = 'none') gives intervals ",
     "to report.")
 }
+
+# A variational fit as the Laplace fit its refinement starts from
+# (`ctFitUncertainty(fit, intoverpop = 'quadrature')`,
+# `.ctBackendUncertaintyQuadrature()`). The refined fit is the Laplace
+# objective with the flagged units integrated, so it climbs that objective from
+# the variational estimate, and the units the random-effects check names
+# against Laplace there are flagged whatever the screen says
+# (`check$carriers`), as a Laplace fit's own check names them. The check the
+# variational fit made for its log likelihood was against its bound
+# (`.ctVariationalLoglik()`), which names no units.
+.ctVariationalAsLaplace <- function(fit, cores,
+  control = .ctLaplaceContinueDefaults) {
+  fit$model_spec$laplace$variational <- NULL
+  check <- .ctBackendWithMaxChunks(cores, .ctLaplaceShiftCheck(fit,
+    draws = as.integer(control$check_draws),
+    seeds = seq_len(as.integer(control$check_seeds)),
+    bar = as.numeric(control$material), control = control))
+  fit$laplace$correction <- list(method = "quadrature", status = "variational",
+    applied = FALSE, laplace_estimate = as.numeric(fit$estimate$raw),
+    check = .ctLaplaceShiftRecord(check, fit))
+  fit
+}

@@ -1082,6 +1082,9 @@
       "in the state and has no separate integral to take by quadrature; ",
       "filter = 'particle' is its exact reference.", call. = FALSE)
   }
+  # A variational fit is refined from its estimate on the Laplace objective
+  # its bound is built on, with the units the check names there flagged.
+  if (.ctBackendVariational(fit$model_spec)) fit <- .ctVariationalAsLaplace(fit, cores)
   already <- .ctLaplaceIsCorrected(fit)
   if (already && isTRUE(control$correctEstimate)) {
     stop("This fit was already corrected by quadrature when it was fitted ",
