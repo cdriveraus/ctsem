@@ -598,6 +598,23 @@ function _smc_next_step(step::Float64, accept::Float64, target::Float64)
 end
 
 """
+    _smc_final_target(target, ndivergent)
+
+The acceptance target the final chains' step is set for, from the stages'
+`target` and how many stages' moves diverged: one raise (`_accept_raised`,
+sample_run.jl) for each such stage and one more, since the final chains have
+no warmup to raise it in. One divergent stage takes the default 0.8 to 0.95,
+four or more to the cap of 0.99; none leaves it.
+"""
+function _smc_final_target(target::Float64, ndivergent::Int)
+    ndivergent > 0 || return target
+    for _ in 0:ndivergent
+        target = _accept_raised(target)
+    end
+    return target
+end
+
+"""
     _smc_logdensity(objective, coreset, gradient_method)
 
 The log density and its gradient as a `(g, x)` closure, writing the gradient
@@ -1130,16 +1147,16 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     # Each chain's particle, and the chains.
     start = Int[]
     held = Ref(_ChainResult[])
-    # Where any stage's moves diverged, the final chains run at the step for
-    # the highest target NUTS's warmup raises to (`_ACCEPT_MAX`,
-    # sample_run.jl), read off the last stage's acceptance as the stages' own
-    # steps are (`_smc_next_step`). They have no warmup in which to find it,
-    # and on the ctsem book's N = 1 wearable model they ran 20-51 divergent
-    # transitions at the default target and none at 0.95, at seven seeds.
-    # The stages keep the target they were given: raised there, each later
-    # stage's fixed count of moves went less far, and on an off-centre
-    # Gaussian the stages' log constant ended 3.3 nats out (test_smc.jl).
-    final_target = any(st.divergent > 0 for st in stages) ? max(tacc, _ACCEPT_MAX) : tacc
+    # Where stages' moves diverged, the final chains run at the step for a
+    # raised target (`_smc_final_target`), read off the last stage's
+    # acceptance as the stages' own steps are (`_smc_next_step`). They have no
+    # warmup in which to find it, and on the ctsem book's N = 1 wearable model
+    # they ran 20-51 divergent transitions at the default target and none at
+    # 0.95, at seven seeds. The stages keep the target they were given:
+    # raised there, each later stage's fixed count of moves went less far, and
+    # on an off-centre Gaussian the stages' log constant ended 3.3 nats out
+    # (test_smc.jl).
+    final_target = _smc_final_target(tacc, count(st -> st.divergent > 0, stages))
     final_step = final_target == tacc ? step :
         _smc_next_step(stages[end].step, stages[end].accept, final_target)
     final_metric = metric
