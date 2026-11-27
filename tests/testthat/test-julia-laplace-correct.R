@@ -183,3 +183,26 @@ test_that("the refined fit's pool is the call's cores, not the fit's", {
   expect_error(ctsem:::.ctLaplaceContinue(fit, cores = 16L), "width set")
   expect_identical(width, 16L)
 })
+
+# `control$quadratureTolerance` sets how far the refined fit's rules may move
+# an estimate, and the climb hands it to the engine (`slope_bar`). Mocked at
+# the engine call, so nothing here needs Julia.
+test_that("the refined fit's tolerance reaches the climb", {
+  s <- ctsem:::.ctLaplaceRefineSettings(list())
+  expect_identical(s$slope_bar, 0.5)
+  s <- ctsem:::.ctLaplaceRefineSettings(list(quadratureTolerance = 0.1, nodes = 7))
+  expect_identical(s$slope_bar, 0.1)
+  expect_identical(s$nodes, 7L)
+  expect_error(ctsem:::.ctLaplaceRefineSettings(list(quadratureTolerance = -1)),
+    "quadratureTolerance")
+  sent <- NULL
+  testthat::local_mocked_bindings(.ctJuliaGet = function(x) x)
+  module <- list(ctsem_laplace_placed_optimize = function(...) {
+    sent <<- list(...)
+    list()
+  })
+  ctsem:::.ctLaplacePlacedClimb(module, NULL, c(0, 0), 1e-6, s)
+  expect_identical(sent$slope_bar, 0.1)
+  ctsem:::.ctLaplacePlacedClimb(module, NULL, c(0, 0), 1e-6, list())
+  expect_identical(sent$slope_bar, 0.5)
+})

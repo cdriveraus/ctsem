@@ -192,10 +192,10 @@ end
     @test all(V -> P.sets[V] === sets[V], P.placed)
     # Without a curvature there is nothing to carry the error through.
     @test isempty(C._placed_slope_check(P, theta, zeros(1, 1)).units)
-    # Product units' contributions share a sign and add as vectors; lattice
-    # units' add in quadrature.
+    # Every unit's contribution is summed with its sign, and the lattice
+    # units' root of squares is added.
     @test C._placed_slope_measure([1.0 -2.0; 0.5 1.0; 3.0 4.0], [true, true, false],
-        trues(3)) ≈ [1.5 + 3.0, 1.0 + 4.0]
+        trues(3)) ≈ [4.5 + 3.0, 3.0 + 4.0]
     @test C._placed_slope_measure([1.0 -2.0; 0.5 1.0; 3.0 4.0], [true, true, false],
         [true, false, false]) ≈ [1.0, 2.0]
     # Product units are read by their node step and raised by it, the step's

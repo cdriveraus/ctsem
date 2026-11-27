@@ -24,7 +24,9 @@
     certify = isTRUE(certify), lbfgs_pairs = "objective",
     progress = !is.null(climb_sink), progress_sink = climb_sink,
     progress_overwrite = .ctProgressOverwrite(verbose),
-    progress_label = "Refined fit, rules placed")
+    progress_label = "Refined fit, rules placed",
+    slope_bar = as.numeric(.ctJuliaOr(control$slope_bar,
+      .ctLaplaceContinueDefaults$slope_bar)))
   # Sent only where there is one: an optional argument is left out rather
   # than sent empty.
   if (is.matrix(hessian) && length(hessian) == length(est)^2 && all(is.finite(hessian))) {
