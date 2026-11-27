@@ -119,9 +119,11 @@ Each value shown is a hypothetical person with no observations,
 }
 \examples{
 \donttest{
+if (isTRUE(ctJuliaStatus()$available)) {
 # Persons one standard deviation either side of the population mean in each
 # random effect, and at each quantile of the predictors.
 p <- ctPredictVarying(ctsemtestfit, doDynamics = FALSE)
 names(p$Process$Observed)
+}
 }
 }
