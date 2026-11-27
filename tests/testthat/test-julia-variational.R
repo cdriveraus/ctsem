@@ -120,6 +120,18 @@ test_that("a variational fit's interval check and 'checked' run", {
   # 'checked' takes no coreset of an objective the engine cannot take one of.
   u <- suppressWarnings(suppressMessages(ctFitUncertainty(vf, "checked", cores = 2)))
   expect_true(all(is.finite(u$estimate$se)))
+  # The joint sample's target is the Laplace objective of the same
+  # specification; the bound's marginal is no sampler's.
+  lf <- vf
+  lf$model_spec$laplace$variational <- NULL
+  joint <- ctsem:::.ctBackendSampleObjective(vf, list(marginal = FALSE))
+  x <- as.numeric(vf$estimate$raw)
+  module <- ctsem:::.ctJuliaModule(vf$model_spec$project)
+  value <- function(o) as.numeric(ctsem:::.ctJuliaGet(module$ctsem_evaluate(o,
+    ctsem:::.ctJuliaNumericVector(x), gradient = FALSE))$value)
+  expect_equal(value(joint), value(ctsem:::.ctJuliaObjective(lf)))
+  expect_error(ctsem:::.ctBackendSampleObjective(vf, list(marginal = TRUE)),
+    "marginal cannot be sampled")
 })
 
 test_that("without the random-effects check a variational fit reports its bound", {
