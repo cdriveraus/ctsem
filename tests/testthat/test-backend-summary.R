@@ -909,11 +909,13 @@ test_that("marking a row blanks its width and keeps its estimate", {
     `97.5%` = c(0.614, -0.36), z = c(65.3, -20),
     row.names = c("diff_eta1__drift_eta1", "drift_eta1"), check.names = FALSE)
   marked <- ctsem:::.ctBackendMarkNoWidth(table, c(TRUE, FALSE))
-  # The estimate stays: it is an arbitrary point on the ridge, but it is what
-  # the optimiser returned and there is nothing else to print. The sd, the
-  # interval and the z are the ones claiming something the data does not say.
+  # The point value stays (mean and median): an arbitrary point on the ridge,
+  # but what the optimiser returned, and there is nothing else to print. The
+  # sd, the interval and the z are the ones claiming something the data does
+  # not say.
   expect_equal(marked$mean, c(0.6, -0.4))
-  expect_true(all(is.na(unlist(marked[1, c("sd", "2.5%", "50%", "97.5%", "z")]))))
+  expect_equal(marked[["50%"]], c(0.597, -0.4))
+  expect_true(all(is.na(unlist(marked[1, c("sd", "2.5%", "97.5%", "z")]))))
   # And the identified row is untouched, column for column.
   expect_equal(marked[2, ], table[2, ])
   # Nothing flagged, nothing changed.
