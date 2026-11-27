@@ -1742,7 +1742,8 @@ end
 # a variational fit reports each unit's effects at their conditional modes
 # there, at the fit's estimate. What reads the objective's value per unit or
 # per row -- LOO's unit terms, the score tests' Hessian columns and row
-# scores, the samplers -- has no method here yet and fails by name.
+# scores -- reads the bound (variational_readers.jl); the joint samplers take
+# the Laplace objective's joint target.
 for f in (:ctsem_laplace_subject_values, :ctsem_laplace_sequential,
     :ctsem_laplace_sequential_mixture, :ctsem_laplace_population_deviations,
     :ctsem_laplace_deviation_layout, :ctsem_parameter_layout,
