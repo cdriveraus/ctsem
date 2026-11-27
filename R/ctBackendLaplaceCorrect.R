@@ -174,11 +174,34 @@
 # nothing moved); four seeds give the noise, which at ten effects a unit with
 # a weakly identified covariance was larger than the step itself
 # (scripts/lapcheck-2026-10/highdim_check.R).
+# `slope_bar` (0.5) is how far, in standard errors, the refined fit's rules
+# may move the estimate (`_PLACED_SLOPE_BAR`); users set it as
+# `control$quadratureTolerance` (`.ctLaplaceRefineSettings()`).
 .ctLaplaceContinueDefaults <- list(nodes = 5L, tolerance = 0.01,
-  maxiter = 1000L, material = 0.1, guard = 50, guard_per_subject = 0.5,
+  maxiter = 1000L, material = 0.1, slope_bar = 0.5, guard = 50,
+  guard_per_subject = 0.5,
   rtol = 1e-8, value_tol = 1e-3,
   draws = 256L, draws_se = 0.05, draws_max = 16384L, draws_df = 4,
   check = TRUE, check_draws = 128L, check_seeds = 4L, stay = FALSE)
+
+# The refined fit's settings with what a user's control list sets, from
+# `ctFitUncertainty(control =)` or `ctFit(optimcontrol = list(uncertaintyControl
+# =))`: `nodes`, the screen's nodes per effect, and `quadratureTolerance`, how
+# far the rules' error may move an estimate, in its standard errors.
+.ctLaplaceRefineSettings <- function(control = list(),
+  settings = .ctLaplaceContinueDefaults) {
+  if (!is.null(control$nodes)) settings$nodes <- as.integer(control$nodes)
+  tol <- control$quadratureTolerance
+  if (!is.null(tol)) {
+    tol <- suppressWarnings(as.numeric(tol))
+    if (length(tol) != 1L || !is.finite(tol) || tol <= 0) {
+      stop("control$quadratureTolerance must be one positive number, in ",
+        "standard errors.", call. = FALSE)
+    }
+    settings$slope_bar <- tol
+  }
+  settings
+}
 
 # How far the hybrid's objective is from the exact marginal, from the engine's
 # info at a placement (`ctsem_laplace_continuation_info`): `nats`, the frozen

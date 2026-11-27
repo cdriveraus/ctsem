@@ -115,7 +115,9 @@ random effects of the subjects (or groups) that the random-effects check
 flags (\code{optimcontrol$checks}). The reported estimates, standard errors
 and log likelihood are from the refined fit, with the Laplace log
 likelihood kept in \code{loglik_laplace}. The refinement takes seconds to
-minutes, longer with nested levels.
+minutes, longer with nested levels. How far the integration's error may move
+the estimates is set by \code{optimcontrol$uncertaintyControl$quadratureTolerance},
+in standard errors (0.5 by default; see \code{\link{ctFitUncertainty}}).
 \code{ctFitUncertainty(fit, intoverpop = 'quadrature')} does the same after
 a fit.
 

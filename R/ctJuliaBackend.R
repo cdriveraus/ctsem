@@ -8219,8 +8219,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   } else if (!is.null(out$laplace) && isTRUE(intoverstates)) {
     if (continuing) {
       out <- holdrepair(keep(.ctLaplaceContinue(out, cores = cores,
-        verbose = verbose, method = uncertainty,
-        uncertaintycontrol = uncertaintycontrol), "The refined fit",
+        verbose = verbose, control = .ctLaplaceRefineSettings(uncertaintycontrol),
+        method = uncertainty, uncertaintycontrol = uncertaintycontrol), "The refined fit",
         "at the Laplace estimate"))
     } else if (jumped || identical(correctlaplace, "check")) {
       out <- holdrepair(keep(.ctLaplaceContinue(out, cores = cores,
