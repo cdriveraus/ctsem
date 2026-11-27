@@ -27,8 +27,8 @@
 test_that("ctPredictVarying moves a person's random effects by their sds", {
   skip_without_julia()
   fit <- .predictvarying_fit()
-  sds <- summary(fit)$popsd
-  sds <- stats::setNames(sds$mode, rownames(sds))
+  # Unrounded, at the estimate: summary() rounds its tables.
+  sds <- sqrt(diag(ctSummaryMatrices(fit)$estimate$popcov))
   k <- suppressWarnings(ctPredictVarying(fit, vary = c("mm", "T0m_eta1"),
     plot = FALSE))
   expect_setequal(as.character(unique(k$Subject)),
