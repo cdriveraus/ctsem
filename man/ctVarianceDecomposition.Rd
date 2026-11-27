@@ -12,6 +12,7 @@ ctVarianceDecomposition(
   times = NULL,
   npersons = 200L,
   npaths = 20L,
+  nsamples = 200L,
   latents = TRUE,
   quadpoints = 21L,
   subjects = "all",
@@ -54,13 +55,23 @@ has no \code{within.deterministic} column, since that term is the variance
 of the mean path over time. Not available with \code{method='simulation'}
 or with time dependent predictors.}
 
-\item{npersons}{Number of persons to draw when \code{persons='model'}.
-With \code{persons='estimated'} on a julia fit, each subject gets enough
-draws to make at least this many persons in total.}
+\item{npersons}{Number of persons for the between person variance, at each
+parameter draw. Each subject's observation times are used
+\code{round(npersons / N)} times for N subjects, and at least once. With
+\code{persons='model'} each use gets its own draw of random effects from
+the population distribution, and with \code{persons='estimated'} on a
+julia fit its own draw from the subject's posterior.}
 
 \item{npaths}{Trajectories drawn per person when \code{method='simulation'}.
 The result is unbiased for any \code{npaths}, but small values give noisy
 results.}
+
+\item{nsamples}{Number of parameter draws to compute the decomposition at.
+Each value is the median of that quantity over the draws, and its 2.5\%
+and 97.5\% quantiles give an interval. 0 computes the decomposition once
+at the estimate, without intervals. \code{method='simulation'}, and
+\code{persons='estimated'} on an \code{intoverpop='augmented'} fit, give
+values at the estimate only.}
 
 \item{latents}{If TRUE, also decompose the latent processes, which have no
 measurement component.}
@@ -95,9 +106,13 @@ A data frame of class \code{ctVarianceDecomposition}, one row per
   \code{level.<source>} columns where they apply, a \code{prop.} column for
   each of these giving it as a proportion of \code{total}, and the
   intraclass correlations \code{icc}, \code{icc.process} and
-  \code{icc.<level>}. The population the between column refers to, the
-  scale, and the number of persons are recorded as attributes and shown by
-  \code{print}.
+  \code{icc.<level>}. With \code{nsamples} above 0 each value is a median
+  over parameter draws, \code{attr(x, 'intervals')} is a data frame with
+  the 2.5\%, 50\% and 97.5\% quantiles of every column for every variable,
+  and \code{attr(x, 'draws')} holds the values at each draw, an array of
+  draws by rows by columns. The population the between column refers to,
+  the scale, and the number of persons and draws are recorded as attributes
+  and shown by \code{print}.
 }
 \description{
 Splits the variance each indicator of a fitted model implies into a between
@@ -105,7 +120,8 @@ person part, a within person part from the latent process, and a within
 person part from measurement error. The process part is further split into
 the contribution of the system noise and that of the mean path changing
 over time. Each part is also given as a proportion of the total, along with
-intraclass correlations.
+intraclass correlations. Each value is computed at a set of the fit's
+parameter draws, giving intervals.
 }
 \details{
 The decomposition applies the law of total variance over the
@@ -132,6 +148,14 @@ The decomposition applies the law of total variance over the
   trajectories. State dependent measurement cells (\code{LAMBDA},
   \code{MANIFESTMEANS}, \code{MANIFESTVAR}) are not supported by either
   method.
+
+  \strong{Intervals.} The decomposition is computed at each of
+  \code{nsamples} draws of the fit's parameters: draws from the normal
+  approximation for an optimised fit, and posterior draws for a sampled
+  one. Each value in the returned table is the median of that quantity over
+  the draws. Each median is taken separately, so the medians of the parts
+  need not add up to the median of the total, though at each draw they add
+  up exactly. The same persons are used at every draw.
 
   \strong{Random effect levels.} A model with a grouping level above the
   subject (\code{id = c('subject','study')} in \code{\link{ctModel}}),

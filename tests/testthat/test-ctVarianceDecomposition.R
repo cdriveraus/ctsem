@@ -27,47 +27,86 @@ test_that('the stochastic variance splits by source, and its record mean has the
     CINT = matrix(0, 2, 1), T0MEANS = matrix(0, 2, 1), T0cov = diag(2),
     LAMBDA = matrix(1, 1, 2), MANIFESTMEANS = matrix(0, 1, 1))
   times <- c(0, 0.5, 1.5, 2, 4, 4.3, 7)
-  m <- ctsem:::.ctVarDecompPersonMoments(mats, times, NULL, TRUE,
+  # One trajectory: each matrix with a single leading entry.
+  mats <- lapply(mats, function(x) array(x, c(1L, dim(as.matrix(x)))))
+  m <- ctsem:::.ctVarDecompMoments(mats, 1L, list(times), NULL, TRUE,
     sources = list(fast = 1L, slow = 2L))
-  # initial, fast, slow
-  expect_equal(m$partlatent[, 1L, 1L] + m$partlatent[, 1L, 2L], rep(1, 7))
-  expect_equal(m$partlatent[, 1L, 1L], exp(-times))
-  expect_equal(m$partlatent[, 1L, 3L], rep(0, 7))
-  expect_equal(m$partlatent[, 2L, 1L] + m$partlatent[, 2L, 3L], rep(1, 7))
-  expect_equal(apply(m$partlinear, c(1L, 2L), sum), m$linearvar)
+  # rows x latents x parts: initial, fast, slow
+  partlatent <- aperm(simplify2array(lapply(m$rows, function(r)
+    matrix(r$partlatent, 2L))), c(3L, 1L, 2L))
+  expect_equal(partlatent[, 1L, 1L] + partlatent[, 1L, 2L], rep(1, 7))
+  expect_equal(partlatent[, 1L, 1L], exp(-times))
+  expect_equal(partlatent[, 1L, 3L], rep(0, 7))
+  expect_equal(partlatent[, 2L, 1L] + partlatent[, 2L, 3L], rep(1, 7))
+  expect_equal(vapply(m$rows, function(r) sum(r$partlinear), numeric(1L)),
+    vapply(m$rows, function(r) r$linearvar[1L, 1L], numeric(1L)))
   lag <- abs(outer(times, times, `-`))
-  expect_equal(m$levellatent[1L, 1L] + m$levellatent[1L, 2L],
+  expect_equal(m$levellatent[1L, 1L, 1L] + m$levellatent[1L, 1L, 2L],
     sum(exp(-0.5 * lag)) / 49)
-  expect_equal(m$levellatent[2L, 1L] + m$levellatent[2L, 3L],
+  expect_equal(m$levellatent[1L, 2L, 1L] + m$levellatent[1L, 2L, 3L],
     sum(exp(-0.05 * lag)) / 49)
   expect_equal(sum(m$levellinear), (sum(exp(-0.5 * lag)) +
     sum(exp(-0.05 * lag))) / 49)
+})
+
+test_that('stacked matrix products match one at a time', {
+  set.seed(4)
+  a <- array(stats::rnorm(5 * 3 * 2), c(5L, 3L, 2L))
+  b <- array(stats::rnorm(5 * 2 * 4), c(5L, 2L, 4L))
+  ab <- ctsem:::.ctVarDecompMul(a, b)
+  x <- matrix(stats::rnorm(5 * 2), 5L)
+  ax <- ctsem:::.ctVarDecompMulVec(a, x)
+  for (k in 1:5) {
+    expect_equal(ab[k, , ], a[k, , ] %*% b[k, , ])
+    expect_equal(ax[k, ], as.numeric(a[k, , ] %*% x[k, ]))
+  }
+  # One matrix in the stack, and one column in the second, keep their shape.
+  expect_equal(as.numeric(ctsem:::.ctVarDecompMul(a[1L, , , drop = FALSE],
+    b[1L, , 1L, drop = FALSE])), as.numeric(a[1L, , ] %*% b[1L, , 1L]))
 })
 
 test_that('one interval step matches the closed forms it generalises', {
   drift <- matrix(c(-0.5, 0, 0.2, -0.3), 2, 2)
   diffusioncov <- matrix(c(1, 0.2, 0.2, 0.6), 2, 2)
   cint <- matrix(c(0.7, -0.4), 2, 1)
-  dt <- 1.3
-  step <- ctsem:::.ctVarDecompStep(drift, diffusioncov, cint, dt, TRUE)
-  expect_equal(step$transition, as.matrix(expm::expm(drift * dt)))
-  # The block exponential intercept is solve(DRIFT) %*% (expm(DRIFT dt) - I) %*%
-  # CINT wherever DRIFT is invertible, which is ctsem's own discreteCINT.
-  expect_equal(step$intercept,
-    solve(drift) %*% (as.matrix(expm::expm(drift * dt)) - diag(2)) %*% cint)
+  # Several intervals at once, as the recursion asks for them.
+  dt <- c(1.3, 0.01, 200)
+  stack <- function(x) array(rep(x, each = 3L), c(3L, dim(as.matrix(x))))
+  step <- ctsem:::.ctVarDecompSteps(stack(drift), matrix(rep(cint, each = 3L), 3L),
+    list(stack(diffusioncov)), dt, TRUE)
+  for (k in 1:2) {
+    expect_equal(step$transition[k, , ], as.matrix(expm::expm(drift * dt[k])))
+    # The block exponential intercept is solve(DRIFT) %*% (expm(DRIFT dt) - I)
+    # %*% CINT wherever DRIFT is invertible, which is ctsem's own discreteCINT.
+    expect_equal(step$intercept[k, ], as.numeric(solve(drift) %*%
+      (as.matrix(expm::expm(drift * dt[k])) - diag(2)) %*% cint))
+    expect_equal(step$innovation[[1L]][k, , ],
+      ctsem:::.ctNetworkInnovation(drift, diffusioncov, dt[k]))
+  }
   # And the innovation over an infinite interval is the asymptotic covariance.
   asym <- matrix(solve(kronecker(diag(2), drift) + kronecker(drift, diag(2)),
     -as.vector(diffusioncov)), 2, 2)
-  expect_equal(ctsem:::.ctVarDecompStep(drift, diffusioncov, cint, 200, TRUE)$innovation,
-    asym, tolerance = 1e-6)
+  expect_equal(step$innovation[[1L]][3L, , ], asym, tolerance = 1e-10)
+  # A stiff process over a long interval, where exponentiating Van Loan's
+  # block over the whole interval carries expm(-A' dt), about 1e130 here.
+  stiff <- drift * 6
+  long <- ctsem:::.ctVarDecompSteps(stack(stiff)[1L, , , drop = FALSE],
+    t(cint), list(stack(diffusioncov)[1L, , , drop = FALSE]), 100, TRUE)
+  expect_equal(long$innovation[[1L]][1L, , ], matrix(solve(kronecker(diag(2),
+    stiff) + kronecker(stiff, diag(2)), -as.vector(diffusioncov)), 2, 2),
+    tolerance = 1e-10)
 })
 
 test_that('a discrete time step accumulates the intercept over its steps', {
   drift <- matrix(c(0.5, 0, 0.1, 0.4), 2, 2)
   cint <- matrix(c(1, -2), 2, 1)
-  step <- ctsem:::.ctVarDecompStep(drift, diag(2) * 0.5, cint, 3, FALSE)
-  expect_equal(step$transition, drift %*% drift %*% drift)
-  expect_equal(step$intercept, cint + drift %*% cint + drift %*% drift %*% cint)
+  step <- ctsem:::.ctVarDecompSteps(array(drift, c(1L, 2L, 2L)), t(cint),
+    list(array(diag(2) * 0.5, c(1L, 2L, 2L))), 3, FALSE)
+  expect_equal(step$transition[1L, , ], drift %*% drift %*% drift)
+  expect_equal(step$intercept[1L, ],
+    as.numeric(cint + drift %*% cint + drift %*% drift %*% cint))
+  expect_equal(step$innovation[[1L]][1L, , ],
+    ctsem:::.ctNetworkInnovation(drift, diag(2) * 0.5, 3, FALSE))
 })
 
 
@@ -144,14 +183,15 @@ fixedfit <- ctFit(datalong, fixedmodel, backend = 'julia', cores = 1, verbose = 
   testthat::local_mocked_bindings(
     .ctVarDecompCarrierNoise = function(fit, donors, carrier)
       matrix(0, length(donors), length(carrier)),
-    .ctVarDecompCoordinateDraws = function(fit, objective, draws, nlevels, dims) {
+    .ctVarDecompCoordinateDraws = function(fit, objective, at, nlevels,
+      effects = NULL) {
       module <- ctsem:::.ctJuliaModule(ctsem:::.ctBackendSpec(fit)$project)
       raw <- ctsem:::.ctJuliaNumericVector(as.numeric(fit$estimate$raw))
-      lapply(seq_len(nlevels + 1L), function(l) {
+      lapply(seq_len(nlevels), function(l) {
         modes <- as.matrix(ctsem:::.ctBackendJuliaValue(
           module$ctsem_laplace_subject_values(objective, raw,
             from_level = as.integer(l), ti_effects = FALSE)))
-        aperm(array(modes, c(dims, draws)), c(3L, 1L, 2L))
+        aperm(array(modes, c(dim(modes), nrow(at))), c(3L, 1L, 2L))
       })
     }, .package = 'ctsem')
   expr
@@ -160,7 +200,8 @@ fixedfit <- ctFit(datalong, fixedmodel, backend = 'julia', cores = 1, verbose = 
 
 test_that('the four components sum to the total and none is negative', {
   for (source in c('model', 'estimated')) {
-    out <- ctVarianceDecomposition(fit, persons = source, npersons = 100)
+    out <- ctVarianceDecomposition(fit, persons = source, npersons = 100,
+      nsamples = 0)
     expect_equal(out$between + out$within.deterministic + out$within.stochastic +
         out$within.measurement, out$total)
     expect_true(all(out$between >= 0))
@@ -185,7 +226,8 @@ test_that('the four components sum to the total and none is negative', {
 })
 
 test_that('the stochastic and measurement parts match their closed forms', {
-  out <- ctVarianceDecomposition(fit, persons = 'model', npersons = 60)
+  out <- ctVarianceDecomposition(fit, persons = 'model', npersons = 60,
+    nsamples = 0)
   matrices <- ctSummaryMatrices(fit)
   # The generating T0VAR is exactly the asymptotic variance, so the process
   # covariance is constant over the design and the stochastic part is that
@@ -202,7 +244,8 @@ test_that('the stochastic and measurement parts match their closed forms', {
 })
 
 test_that('the deterministic part is the transient the model implies', {
-  out <- ctVarianceDecomposition(fit, persons = 'model', npersons = 400)
+  out <- ctVarianceDecomposition(fit, persons = 'model', npersons = 400,
+    nsamples = 0)
   matrices <- ctSummaryMatrices(fit)
   drift <- as.numeric(matrices$DRIFT)
   # T0MEANS is fixed at zero and each person's asymptote is -CINT/DRIFT, so the
@@ -226,10 +269,12 @@ test_that('the deterministic part is the transient the model implies', {
 
 test_that('estimated persons at their modes are shrunk, at plausible values not', {
   set.seed(3)
-  drawn <- ctVarianceDecomposition(fit, persons = 'model', npersons = 600)
-  modes <- .vd_modes_only(ctVarianceDecomposition(fit, persons = 'estimated'))
+  drawn <- ctVarianceDecomposition(fit, persons = 'model', npersons = 600,
+    nsamples = 0)
+  modes <- .vd_modes_only(ctVarianceDecomposition(fit, persons = 'estimated',
+    nsamples = 0))
   estimated <- ctVarianceDecomposition(fit, persons = 'estimated',
-    npersons = 600)
+    npersons = 600, nsamples = 0)
   between <- function(x) x$between[x$variable == 'eta1']
   expect_lt(between(modes), between(drawn))
   # A mode plus a draw from its posterior has the population's spread: the
@@ -248,7 +293,7 @@ test_that('estimated persons at their modes are shrunk, at plausible values not'
 
 test_that('sources split the stochastic term of a fit and bound its record level', {
   out <- ctVarianceDecomposition(fit, persons = 'model', npersons = 50,
-    sources = list(process = 'eta1'))
+    sources = list(process = 'eta1'), nsamples = 0)
   expect_equal(out$within.stochastic.initial + out$within.stochastic.process,
     out$within.stochastic)
   expect_true(all(out$level.process <= out$within.stochastic.process + 1e-12))
@@ -257,6 +302,11 @@ test_that('sources split the stochastic term of a fit and bound its record level
     out$prop.within.stochastic.process, out$prop.within.stochastic)
   expect_equal(out$prop.level.process, out$level.process / out$total)
   expect_output(print(out), 'by source')
+  # At every parameter draw the sources add up too.
+  draws <- attr(ctVarianceDecomposition(fit, npersons = 50, nsamples = 10,
+    sources = list(process = 'eta1')), 'draws')
+  expect_equal(draws[, , 'within.stochastic.initial'] +
+    draws[, , 'within.stochastic.process'], draws[, , 'within.stochastic'])
   expect_error(ctVarianceDecomposition(fit, sources = list(a = 'eta9')),
     'does not have')
   expect_error(ctVarianceDecomposition(fit, sources = list(initial = 'eta1')),
@@ -277,8 +327,114 @@ test_that('a state dependent model is refused by the moment route', {
   expect_error(ctVarianceDecomposition(nonlinearfit, method = 'moment'),
     'depend on the latent state')
   # and the default picks the route that can answer.
-  auto <- ctVarianceDecomposition(nonlinearfit, method = 'auto', npaths = 4)
+  auto <- ctVarianceDecomposition(nonlinearfit, method = 'auto', npaths = 4,
+    nsamples = 0)
   expect_equal(attr(auto, 'method'), 'simulation')
+})
+
+
+# Intervals -------------------------------------------------------------------
+#
+# Each value is the median of its own draws, so the parts' medians need not add
+# up to the total's; at each draw they do, which is what is checked.
+
+test_that('intervals come from the decomposition at each parameter draw', {
+  set.seed(5)
+  out <- ctVarianceDecomposition(ctsemtestfit, nsamples = 40)
+  draws <- attr(out, 'draws')
+  intervals <- attr(out, 'intervals')
+  quantities <- setdiff(names(out), c('variable', 'type'))
+  expect_equal(attr(out, 'nsamples'), 40L)
+  expect_equal(dim(draws), c(40L, nrow(out), length(quantities)))
+  expect_equal(dimnames(draws)[[3L]], quantities)
+  expect_equal(nrow(intervals), nrow(out) * length(quantities))
+  # The table's values are the draws' medians, and the quantiles bracket them.
+  for (q in quantities) {
+    expect_equal(out[[q]], apply(draws[, , q], 2L, stats::median), label = q)
+    expect_equal(intervals[intervals$quantity == q, '50%'], out[[q]], label = q)
+  }
+  expect_true(all(intervals[['2.5%']] <= intervals[['50%']] &
+    intervals[['50%']] <= intervals[['97.5%']], na.rm = TRUE))
+  icc <- intervals[intervals$quantity == 'icc', ]
+  expect_true(all(icc[['97.5%']] > icc[['2.5%']]))
+  # Each draw is a decomposition of its own: its parts add up to its total.
+  expect_equal(draws[, , 'between'] + draws[, , 'within'], draws[, , 'total'])
+  expect_equal(draws[, , 'within'], draws[, , 'within.deterministic'] +
+    draws[, , 'within.stochastic'] + draws[, , 'within.measurement'])
+  expect_equal(draws[, , 'icc'], draws[, , 'between'] / draws[, , 'total'])
+  expect_output(print(out), '97.5%')
+  expect_output(print(out), 'medians over 40 parameter draws')
+
+  # Estimated persons at each draw are plausible values from that draw.
+  estimated <- ctVarianceDecomposition(ctsemtestfit, persons = 'estimated',
+    nsamples = 20)
+  draws <- attr(estimated, 'draws')
+  expect_equal(attr(estimated, 'nsamples'), 20L)
+  expect_equal(draws[, , 'between'] + draws[, , 'within'], draws[, , 'total'])
+  expect_true(attr(estimated, 'plausible'))
+})
+
+test_that('each draw is decomposed at its own parameters, and nsamples = 0 at the estimate', {
+  estimate <- as.numeric(ctsemtestfit$estimate$raw)
+  other <- as.numeric(ctsemtestfit$estimate$rawposterior[7L, ])
+  set.seed(5)
+  point <- ctVarianceDecomposition(ctsemtestfit, nsamples = 0)
+  expect_null(attr(point, 'intervals'))
+  expect_null(attr(point, 'draws'))
+  expect_equal(attr(point, 'nsamples'), 0L)
+  expect_equal(point$between + point$within, point$total)
+  expect_output(print(point), 'at the estimate')
+  # The columns the decomposition had before it had intervals.
+  expect_equal(names(point), c('variable', 'type', 'between',
+    'within.deterministic', 'within.stochastic', 'within.measurement', 'within',
+    'total', 'prop.between', 'prop.within.deterministic',
+    'prop.within.stochastic', 'prop.within.measurement', 'prop.within', 'icc',
+    'icc.process'))
+
+  # The estimate and another draw as a fit's only two draws, with the same
+  # persons: the first is the decomposition at the estimate, and the second
+  # the one a fit estimated there would report, nothing of the estimate in it.
+  pair <- ctsemtestfit
+  pair$estimate$rawposterior <- rbind(estimate, other)
+  set.seed(5)
+  draws <- attr(ctVarianceDecomposition(pair, nsamples = 2), 'draws')
+  moved <- ctsemtestfit
+  moved$estimate$raw <- other
+  set.seed(5)
+  atother <- ctVarianceDecomposition(moved, nsamples = 0)
+  for (q in c('between', 'within.stochastic', 'total', 'icc')) {
+    expect_equal(draws[1L, , q], point[[q]], label = q)
+    expect_equal(draws[2L, , q], atother[[q]], label = q)
+  }
+  expect_false(isTRUE(all.equal(draws[2L, , 'between'], point$between)))
+})
+
+test_that('engine calls do not grow with the draws or the persons', {
+  calls <- 0L
+  original <- ctsem:::.ctBackendParMatricesFlat
+  testthat::local_mocked_bindings(.ctBackendParMatricesFlat = function(...) {
+    calls <<- calls + 1L
+    original(...)
+  }, .package = 'ctsem')
+  count <- function(...) {
+    calls <<- 0L
+    invisible(ctVarianceDecomposition(ctsemtestfit, ...))
+    calls
+  }
+  few <- count(nsamples = 0, npersons = 30)
+  expect_lte(few, 2L)
+  expect_equal(count(nsamples = 100, npersons = 300), few)
+  expect_lt(system.time(ctVarianceDecomposition(ctsemtestfit))[['elapsed']], 60)
+})
+
+test_that('routes computed at the estimate only say so', {
+  expect_message(out <- ctVarianceDecomposition(fit, persons = 'estimated',
+    npersons = 25), 'without intervals')
+  expect_null(attr(out, 'intervals'))
+  expect_message(simulated <- ctVarianceDecomposition(fixedfit,
+    method = 'simulation', npaths = 2), 'without intervals')
+  expect_equal(attr(simulated, 'nsamples'), 0L)
+  expect_error(ctVarianceDecomposition(fixedfit, nsamples = -1), 'nsamples')
 })
 
 
@@ -291,9 +447,9 @@ test_that('a state dependent model is refused by the moment route', {
 
 test_that('simulation and moment agree on a model both can do', {
   set.seed(19)
-  moment <- ctVarianceDecomposition(fixedfit, method = 'moment')
+  moment <- ctVarianceDecomposition(fixedfit, method = 'moment', nsamples = 0)
   simulated <- ctVarianceDecomposition(fixedfit, method = 'simulation',
-    npaths = 400)
+    npaths = 400, nsamples = 0)
   expect_equal(attr(simulated, 'method'), 'simulation')
   expect_equal(simulated$within.measurement, moment$within.measurement)
   expect_equal(simulated$within.stochastic, moment$within.stochastic,
@@ -321,9 +477,10 @@ test_that('simulation and moment agree on a model with random effects', {
   # cent below; at 600 it is about 5 per cent (0.131-0.148 over four seeds;
   # dev1, 2026-10-25).
   set.seed(23)
-  moment <- ctVarianceDecomposition(fit, method = 'moment', npersons = 600)
+  moment <- ctVarianceDecomposition(fit, method = 'moment', npersons = 600,
+    nsamples = 0)
   simulated <- ctVarianceDecomposition(fit, method = 'simulation',
-    npersons = 600, npaths = 30)
+    npersons = 600, npaths = 30, nsamples = 0)
   expect_equal(simulated$within.measurement, moment$within.measurement)
   expect_equal(simulated$within.stochastic, moment$within.stochastic,
     tolerance = 0.05)
@@ -354,7 +511,7 @@ test_that('the simulation route runs a state dependent model', {
   nonlinearfixed$pars$indvarying <- FALSE
   nonlinearfit <- ctFit(datalong, nonlinearfixed, backend = 'julia', cores = 1,
     verbose = 0)
-  out <- ctVarianceDecomposition(nonlinearfit, npaths = 50)
+  out <- ctVarianceDecomposition(nonlinearfit, npaths = 50, nsamples = 0)
   expect_equal(attr(out, 'method'), 'simulation')
   expect_equal(out$between + out$within, out$total)
   expect_true(all(out$within.stochastic > 0))
@@ -380,14 +537,14 @@ test_that('a binary indicator decomposes on both scales', {
   # difference between them is the scale rather than Monte Carlo error.
   set.seed(7)
   latent <- ctVarianceDecomposition(binaryfit, persons = 'model', npersons = 40,
-    scale = 'latent')
+    scale = 'latent', nsamples = 0)
   # The threshold form is a cumulative logit, so the response's own variance on
   # the latent scale is the logistic one.
   expect_equal(latent$within.measurement[latent$variable == 'Y1'], pi^2 / 3)
 
   set.seed(7)
   response <- ctVarianceDecomposition(binaryfit, persons = 'model',
-    npersons = 40, scale = 'response')
+    npersons = 40, scale = 'response', nsamples = 0)
   expect_equal(response$between + response$within, response$total)
   # A Bernoulli variable's variance cannot exceed 0.25, whatever the process
   # behind it does -- which the latent scale decomposition has no bound on.
@@ -415,7 +572,8 @@ test_that('a time dependent predictor shows up as deterministic within variance'
   tddata <- cbind(datalong, TD1 = 0)
   tddata[tddata[, 'time'] %in% c(5, 6, 7), 'TD1'] <- 2
   tdfit <- ctFit(tddata, tdmodel, backend = 'julia', cores = 1, verbose = 0)
-  out <- ctVarianceDecomposition(tdfit, persons = 'model', npersons = 20)
+  out <- ctVarianceDecomposition(tdfit, persons = 'model', npersons = 20,
+    nsamples = 0)
   expect_gt(out$within.deterministic[out$variable == 'eta1'], 0)
   expect_equal(out$between + out$within, out$total)
 })
@@ -434,8 +592,9 @@ test_that('the two backends decompose the same model the same way', {
     verbose = 0)
   # Stan's estimated persons are its modes, so julia's are compared there.
   julia <- .vd_modes_only(ctVarianceDecomposition(fits$julia,
-    persons = 'estimated'))
-  stan <- suppressMessages(ctVarianceDecomposition(fits$stan, persons = 'estimated'))
+    persons = 'estimated', nsamples = 0))
+  stan <- suppressMessages(ctVarianceDecomposition(fits$stan, persons = 'estimated',
+    nsamples = 0))
   parts <- c('between', 'within.deterministic', 'within.stochastic',
     'within.measurement', 'total')
   for (part in parts) {
@@ -452,7 +611,7 @@ test_that('the two backends decompose the same model the same way', {
 
 test_that('times= resolves the decomposition over the window', {
   grid <- c(0, 1, 2, 5, 10, 19)
-  out <- ctVarianceDecomposition(fit, times = grid, npersons = 300)
+  out <- ctVarianceDecomposition(fit, times = grid, npersons = 300, nsamples = 0)
 
   expect_true('time' %in% names(out))
   expect_equal(nrow(out), length(grid) * 2L)     # two variables
@@ -486,6 +645,13 @@ test_that('times= resolves the decomposition over the window', {
   # and it is monotone here, which is what a relaxation looks like.
   series <- out$between[out$variable == 'eta1'][order(unique(out$time))]
   expect_true(all(diff(series) >= 0))
+  # And at parameter draws, each time point its own interval.
+  overtime <- ctVarianceDecomposition(fit, times = grid, npersons = 50,
+    nsamples = 10)
+  draws <- attr(overtime, 'draws')
+  expect_equal(draws[, , 'between'] + draws[, , 'within'], draws[, , 'total'])
+  expect_true('time' %in% names(attr(overtime, 'intervals')))
+  expect_output(print(overtime), '97.5%')
 })
 
 test_that('the two modes agree about the part they share', {
@@ -495,9 +661,10 @@ test_that('the two modes agree about the part they share', {
   # the other a time series of variances -- which is the whole reason both
   # exist.
   set.seed(31)
-  aggregate <- ctVarianceDecomposition(fit, npersons = 300)
+  aggregate <- ctVarianceDecomposition(fit, npersons = 300, nsamples = 0)
   set.seed(31)
-  resolved <- ctVarianceDecomposition(fit, times = 'asdata', npersons = 300)
+  resolved <- ctVarianceDecomposition(fit, times = 'asdata', npersons = 300,
+    nsamples = 0)
   bytime <- tapply(resolved$within.stochastic[resolved$variable == 'eta1'],
     resolved$time[resolved$variable == 'eta1'], mean)
   expect_equal(mean(bytime),
@@ -535,7 +702,8 @@ test_that('the decomposition holds together on any design shape', {
     }
     f <- suppressWarnings(suppressMessages(ctFit(dat, estmodel,
       backend = 'julia', cores = 1, verbose = 0)))
-    out <- suppressMessages(ctVarianceDecomposition(f, npersons = 60))
+    out <- suppressMessages(ctVarianceDecomposition(f, npersons = 60,
+      nsamples = 0))
     expect_equal(out$between + out$within, out$total, label = shape)
     expect_false(anyNA(out$total))
     expect_true(all(out$within.stochastic > 0))
@@ -560,9 +728,9 @@ test_that('the two representations of individual differences agree', {
   # its posterior draws), where both are the same deterministic quantity.
   fits <- .vd_intoverpop_fits()
   augmented <- .vd_modes_only(suppressMessages(
-    ctVarianceDecomposition(fits$augmented, persons = 'estimated')))
+    ctVarianceDecomposition(fits$augmented, persons = 'estimated', nsamples = 0)))
   laplace <- .vd_modes_only(suppressMessages(
-    ctVarianceDecomposition(fits$laplace, persons = 'estimated')))
+    ctVarianceDecomposition(fits$laplace, persons = 'estimated', nsamples = 0)))
 
   expect_gt(min(augmented$between), 0)
   expect_gt(min(laplace$between), 0)
@@ -597,9 +765,9 @@ test_that('the two representations agree with a TI predictor', {
     verbose = 0)
   expect_length(ctsem:::.ctBackendSpec(fits$laplace)$ti_effects$parameter, 2L)
   augmented <- .vd_modes_only(suppressMessages(
-    ctVarianceDecomposition(fits$augmented, persons = 'estimated')))
+    ctVarianceDecomposition(fits$augmented, persons = 'estimated', nsamples = 0)))
   laplace <- .vd_modes_only(suppressMessages(
-    ctVarianceDecomposition(fits$laplace, persons = 'estimated')))
+    ctVarianceDecomposition(fits$laplace, persons = 'estimated', nsamples = 0)))
   for (part in c('between', 'within.deterministic', 'within.stochastic',
     'within.measurement', 'total')) {
     expect_equal(laplace[[part]], augmented[[part]], tolerance = 1e-4,
@@ -615,17 +783,19 @@ test_that('drawing persons agrees across representations too', {
   drawn <- lapply(fits, function(f) {
     set.seed(29)
     suppressMessages(ctVarianceDecomposition(f, persons = 'model',
-      npersons = 800))
+      npersons = 800, nsamples = 0))
   })
   for (part in c('between', 'within.stochastic', 'within.measurement',
     'total')) {
     expect_equal(drawn$laplace[[part]], drawn$augmented[[part]],
       tolerance = 0.12, label = paste('drawn', part))
   }
-  # And drawing is not shrunk, so it exceeds what the modes give.
-  estimated <- suppressMessages(
-    ctVarianceDecomposition(fits$laplace, persons = 'estimated'))
-  expect_gt(min(drawn$laplace$between), min(estimated$between))
+  # And drawing is not shrunk, so it exceeds what the modes give. (Plausible
+  # values, the estimated persons' default, have the population's spread, and
+  # came out either side of the drawn persons by seed.)
+  modes <- .vd_modes_only(suppressMessages(
+    ctVarianceDecomposition(fits$laplace, persons = 'estimated', nsamples = 0)))
+  expect_gt(min(drawn$laplace$between), min(modes$between))
 })
 
 test_that('the random effect structure reads the same from either representation', {
@@ -675,16 +845,22 @@ test_that('a level above the subject gets its own between column', {
   fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = 'julia',
     intoverpop = 'laplace', cores = 1, verbose = 0)))
 
-  out <- suppressMessages(ctVarianceDecomposition(fit))
+  out <- suppressMessages(ctVarianceDecomposition(fit, nsamples = 40))
   expect_true(all(c('between.id', 'between.study') %in% names(out)))
-  # The levels are orthogonal by construction, so they add up to `between`.
-  expect_equal(out$between.id + out$between.study, out$between)
-  expect_equal(out$between + out$within, out$total)
-  expect_equal(out$prop.between.id + out$prop.between.study, out$prop.between)
+  # The levels are orthogonal by construction, so they add up to `between`, at
+  # every parameter draw.
+  draws <- attr(out, 'draws')
+  expect_equal(draws[, , 'between.id'] + draws[, , 'between.study'],
+    draws[, , 'between'])
+  expect_equal(draws[, , 'between'] + draws[, , 'within'], draws[, , 'total'])
+  expect_equal(draws[, , 'prop.between.id'] + draws[, , 'prop.between.study'],
+    draws[, , 'prop.between'])
   # Two observations of one person share both levels, two persons of one study
   # the study alone.
   expect_equal(out$icc.id, out$icc)
-  expect_equal(out$icc.study, out$between.study / out$total)
+  expect_equal(draws[, , 'icc.study'], draws[, , 'between.study'] /
+    draws[, , 'total'])
+  expect_true('icc.study' %in% attr(out, 'intervals')$quantity)
   expect_output(print(out), 'icc.study')
   expect_true(all(out$between.study >= 0))
   expect_true(all(out$between.id >= 0))
@@ -703,20 +879,22 @@ test_that('a level above the subject gets its own between column', {
   # (`out` is drawn too -- 'model' is the julia default -- so the comparison
   # is with the modes, not with it.)
   modes <- .vd_modes_only(suppressMessages(ctVarianceDecomposition(fit,
-    persons = 'estimated')))
+    persons = 'estimated', nsamples = 0)))
   drawn <- suppressMessages(ctVarianceDecomposition(fit, persons = 'model',
-    npersons = 400))
+    npersons = 400, nsamples = 0))
   expect_true(all(c('between.id', 'between.study') %in% names(drawn)))
   expect_equal(drawn$between.id + drawn$between.study, drawn$between)
   expect_equal(drawn$between + drawn$within, drawn$total)
   expect_gt(min(drawn$between.id), min(modes$between.id))
   # Plausible values are drawn jointly over a unit's levels, so each level's
   # share is that level's part of one draw: the levels still add up, and the
-  # subject level is no longer shrunk the way its modes are.
+  # subject level is no longer shrunk the way its modes are. Here at parameter
+  # draws, each with its own plausible values.
   estimated <- suppressMessages(ctVarianceDecomposition(fit,
-    persons = 'estimated', npersons = 400))
-  expect_equal(estimated$between.id + estimated$between.study,
-    estimated$between)
+    persons = 'estimated', npersons = 400, nsamples = 40))
+  draws <- attr(estimated, 'draws')
+  expect_equal(draws[, , 'between.id'] + draws[, , 'between.study'],
+    draws[, , 'between'])
   expect_gt(min(estimated$between.id), min(modes$between.id))
 })
 
@@ -725,8 +903,13 @@ test_that('a stan fit works through the estimated route and refuses the drawn on
   skip_on_32bit()
   out <- expect_message(ctVarianceDecomposition(ctstantestfit),
     "persons='estimated'")
-  expect_equal(out$between + out$within, out$total)
+  # At each of the fit's draws, its subjects' matrices at that draw.
+  expect_gt(attr(out, 'nsamples'), 1L)
+  draws <- attr(out, 'draws')
+  expect_equal(draws[, , 'between'] + draws[, , 'within'], draws[, , 'total'])
   expect_true(all(out$total > 0))
+  point <- suppressMessages(ctVarianceDecomposition(ctstantestfit, nsamples = 0))
+  expect_equal(point$between + point$within, point$total)
   expect_error(ctVarianceDecomposition(ctstantestfit, persons = 'model'),
     "needs a backend='julia' fit")
 })

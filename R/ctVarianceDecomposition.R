@@ -48,10 +48,24 @@
 # evaluated" section exists to stop. Such a fit is refused by name, through the
 # same detector every other reporting function uses.
 #
-# Both backends are served from one body. Everything read here --
-# `ctExtract(subjectMatrices=TRUE)`, the design accessors in
-# R/ctBackendKalman.R, `.ctFitConditionalCells()` -- already means the same
-# thing on each.
+# Uncertainty. The decomposition is a function of the parameters, so it is
+# computed at each of a set of the fit's parameter draws (normal approximation
+# draws on an optimised fit, posterior draws on a sampled one), and each
+# quantity is reported as the median of its own draws, with its 2.5% and 97.5%
+# quantiles beside it. A quantity built from other quantities' medians would
+# not be the median of anything, so the parts' medians need not add up to the
+# total's. Every person at every draw runs the same recursion on matrices of
+# the same size, so it runs over all of them at once (the batched arithmetic
+# below), and the persons are the same at every draw: the error of drawing them
+# is then nearly the same at each draw, and moves the draws together rather
+# than widening their spread. Before the batching, one call at the estimate
+# took 10 s on the book's RI-CLPM (dev3), nearly all of it one engine call per
+# person for their initial means.
+#
+# Both backends are served from one body. Everything read here -- the
+# parameter matrices from the engine, stan's saved subject matrices, the design
+# accessors in R/ctBackendKalman.R, `.ctFitConditionalCells()` -- already means
+# the same thing on each.
 
 
 # Gauss-Hermite nodes and weights for a standard normal ------------------------
@@ -76,139 +90,314 @@
 }
 
 
-# One interval's transition, intercept and innovation covariance --------------
+# Batched small-matrix arithmetic ---------------------------------------------
 #
-# The intercept uses the block exponential rather than ctsem's own
-# `asymCINT + expm(DRIFT dt) (state - asymCINT)` form. The two agree wherever
-# both are defined -- expm([[A, c], [0, 0]] dt) has the integral
-# int_0^dt expm(A s) ds %*% c in its top right block -- and this one is also
-# defined when DRIFT is singular, where asymCINT is not.
-#
-# The innovation covariance is `.ctNetworkInnovation()` (R/ctGraph.R), Van
-# Loan's block exponential, for the same reason: it needs no stationarity
-# assumption, where the engine's `asymDIFFUSIONcov - eJAx asymDIFFUSIONcov eJAx'`
-# does.
-.ctVarDecompStep <- function(drift, diffusioncov, cint, dt, continuoustime) {
-  n <- nrow(drift)
-  if (continuoustime) {
-    block <- rbind(cbind(drift, cint), matrix(0, 1L, n + 1L)) * dt
-    e <- as.matrix(expm::expm(block))
-    transition <- e[seq_len(n), seq_len(n), drop = FALSE]
-    intercept <- e[seq_len(n), n + 1L, drop = FALSE]
-  } else {
-    steps <- as.integer(round(dt))
-    if (steps < 1L) stop(call. = FALSE,
-      'A discrete time model needs whole number time steps; found an interval of ', dt, '.')
-    transition <- diag(n)
-    intercept <- matrix(0, n, 1L)
-    for (s in seq_len(steps)) {
-      intercept <- drift %*% intercept + cint
-      transition <- drift %*% transition
-    }
+# An array x[k, i, j] holds K matrices -- one per (draw, person) trajectory, or
+# one per distinct interval -- and each operation below is a few vector
+# operations of length K times the matrix size. Every trajectory runs the same
+# recursion on matrices of the same size, so running them together costs R's
+# per-call overhead once rather than once a person and draw. Nothing in base R
+# or the packages ctsem depends on multiplies stacks of matrices.
+
+# a: K x p x q, b: K x q x r; K x p x r.
+.ctVarDecompMul <- function(a, b) {
+  da <- dim(a)
+  K <- da[1L]; p <- da[2L]; q <- da[3L]; r <- dim(b)[3L]
+  # Entry (k, i, l) of the result reads b[k, j, l] for every i.
+  index <- rep(seq_len(K), p * r) + K * rep(seq_len(r) - 1L, each = K * p)
+  out <- numeric(K * p * r)
+  for (j in seq_len(q)) {
+    out <- out + as.vector(a[, , j]) * as.vector(b[, j, ])[index]
   }
-  list(transition = transition, intercept = intercept,
-    innovation = .ctNetworkInnovation(drift, diffusioncov, dt, continuoustime))
+  array(out, c(K, p, r))
+}
+
+# a: K x p x q, x: K x q; K x p.
+.ctVarDecompMulVec <- function(a, x) {
+  d <- dim(a)
+  out <- numeric(d[1L] * d[2L])
+  for (j in seq_len(d[3L])) out <- out + as.vector(a[, , j]) * x[, j]
+  matrix(out, d[1L], d[2L])
+}
+
+.ctVarDecompTr <- function(a) aperm(a, c(1L, 3L, 2L))
+
+.ctVarDecompSym <- function(a) (a + .ctVarDecompTr(a)) / 2
+
+# A P A', symmetrised as the unbatched recursion did after every row.
+.ctVarDecompSandwich <- function(a, p) {
+  .ctVarDecompSym(.ctVarDecompMul(.ctVarDecompMul(a, p), .ctVarDecompTr(a)))
+}
+
+.ctVarDecompEye <- function(K, n) array(rep(as.vector(diag(n)), each = K), c(K, n, n))
+
+# Each matrix's diagonal, K x n.
+.ctVarDecompDiag <- function(a) {
+  d <- dim(a)
+  i <- rep(seq_len(d[2L]), each = d[1L])
+  matrix(a[cbind(rep(seq_len(d[1L]), d[2L]), i, i)], d[1L], d[2L])
+}
+
+# diag(L P L'), K x m.
+.ctVarDecompQuadDiag <- function(l, p) {
+  matrix(rowSums(.ctVarDecompMul(l, p) * l, dims = 2L), dim(l)[1L], dim(l)[2L])
+}
+
+# Each matrix's 1-norm.
+.ctVarDecompNorm <- function(a) {
+  sums <- matrix(rowSums(aperm(abs(a), c(1L, 3L, 2L)), dims = 2L), dim(a)[1L])
+  do.call(pmax, as.data.frame(sums))
+}
+
+# The exponential of matrices whose 1-norm is at most a half, by Taylor
+# series: the remainder after degree 14 is under 0.5^15 / 15!, about 2e-17.
+# `.ctVarDecompSteps()` scales every interval down to there first.
+.ctVarDecompExpmSmall <- function(x, degree = 14L) {
+  eye <- .ctVarDecompEye(dim(x)[1L], dim(x)[2L])
+  out <- eye
+  for (j in rev(seq_len(degree))) out <- eye + .ctVarDecompMul(x, out) / j
+  out
 }
 
 
-# The marginal moments of one person's trajectory over their own rows ---------
+# Each interval's transition, intercept and innovation covariances ------------
+#
+# For K intervals at once: `drift` K x n x n, `cint` K x n, `diffusions` a list
+# of K x n x n (the whole DIFFUSIONcov, and with `sources` each source's share
+# of it), `dt` length K. Returns the transition K x n x n, the intercept K x n
+# and one innovation covariance per diffusion.
+#
+# Continuous time is scaling and squaring of the moments themselves. Over an
+# interval short enough that every block below has norm at most a half, the
+# block exponentials give the step to rounding: expm([[A, c], [0, 0]] t), whose
+# top right block is int_0^t expm(A s) ds c and so is defined when DRIFT is
+# singular, where asymCINT is not; and Van Loan's expm([[A, Q], [0, -A']] t)
+# for the innovation, as `.ctNetworkInnovation()` (R/ctGraph.R) computes it,
+# needing no stationarity assumption. An interval twice as long is two of them
+# in a row,
+#
+#   A <- A A,   b <- A b + b,   Q <- A Q A' + Q,
+#
+# which is the moment recursion over two equal intervals, so the doubling
+# carries only the process's own decay. Exponentiating the Van Loan block over
+# the whole interval instead carries expm(-A' dt), which grows as fast as the
+# process decays.
+#
+# Discrete time composes the one-step moments the interval's number of times.
+.ctVarDecompSteps <- function(drift, cint, diffusions, dt, continuoustime) {
+  K <- dim(drift)[1L]
+  n <- dim(drift)[2L]
+  latent <- seq_len(n)
+  if (!continuoustime) {
+    steps <- as.integer(round(dt))
+    if (any(steps < 1L)) stop(call. = FALSE,
+      'A discrete time model needs whole number time steps; found an interval of ',
+      dt[steps < 1L][1L], '.')
+    transition <- .ctVarDecompEye(K, n)
+    intercept <- matrix(0, K, n)
+    innovation <- lapply(diffusions, function(q) array(0, dim(q)))
+    for (j in seq_len(max(steps))) {
+      i <- which(steps >= j)
+      a <- drift[i, , , drop = FALSE]
+      for (g in seq_along(innovation)) {
+        innovation[[g]][i, , ] <- .ctVarDecompSandwich(a,
+          innovation[[g]][i, , , drop = FALSE]) + diffusions[[g]][i, , , drop = FALSE]
+      }
+      intercept[i, ] <- .ctVarDecompMulVec(a, intercept[i, , drop = FALSE]) +
+        cint[i, , drop = FALSE]
+      transition[i, , ] <- .ctVarDecompMul(a, transition[i, , , drop = FALSE])
+    }
+    return(list(transition = transition, intercept = intercept,
+      innovation = innovation))
+  }
+
+  # A bound on every block's norm, and the halvings that bring it under a half.
+  size <- dt * (.ctVarDecompNorm(drift) + .ctVarDecompNorm(.ctVarDecompTr(drift)) +
+    rowSums(abs(cint)) + do.call(pmax, c(lapply(diffusions, .ctVarDecompNorm), 0)))
+  halvings <- pmax(0, ceiling(log2(size / 0.5)))
+  halvings[!is.finite(halvings)] <- 0
+  short <- dt / 2^halvings
+
+  block <- array(0, c(K, n + 1L, n + 1L))
+  block[, latent, latent] <- drift * short
+  block[, latent, n + 1L] <- cint * short
+  e <- .ctVarDecompExpmSmall(block)
+  transition <- e[, latent, latent, drop = FALSE]
+  intercept <- matrix(e[, latent, n + 1L], K, n)
+  innovation <- lapply(diffusions, function(q) {
+    vanloan <- array(0, c(K, 2L * n, 2L * n))
+    vanloan[, latent, latent] <- drift * short
+    vanloan[, latent, n + latent] <- q * short
+    vanloan[, n + latent, n + latent] <- -.ctVarDecompTr(drift) * short
+    e <- .ctVarDecompExpmSmall(vanloan)
+    .ctVarDecompSym(.ctVarDecompMul(e[, latent, n + latent, drop = FALSE],
+      .ctVarDecompTr(e[, latent, latent, drop = FALSE])))
+  })
+  for (j in seq_len(max(halvings, 0))) {
+    i <- which(halvings >= j)
+    a <- transition[i, , , drop = FALSE]
+    for (g in seq_along(innovation)) {
+      before <- innovation[[g]][i, , , drop = FALSE]
+      innovation[[g]][i, , ] <- .ctVarDecompSandwich(a, before) + before
+    }
+    intercept[i, ] <- .ctVarDecompMulVec(a, intercept[i, , drop = FALSE]) +
+      intercept[i, , drop = FALSE]
+    transition[i, , ] <- .ctVarDecompMul(a, a)
+  }
+  list(transition = transition, intercept = intercept, innovation = innovation)
+}
+
+
+# Which trajectories share their dynamics -------------------------------------
+#
+# One group per distinct row of `key` (each trajectory's DRIFT, DIFFUSIONcov
+# and CINT), so an interval's step is computed once for every trajectory that
+# has the same matrices: once a draw where only intercepts vary between
+# persons, once a person and draw where the dynamics do. Rows are matched by a
+# projection, checked exactly, and by their text where the check fails.
+.ctVarDecompGroups <- function(key) {
+  if (!nrow(key)) return(integer())
+  hash <- as.vector(key %*% (1 / sqrt(seq_len(ncol(key)) + 0.37)))
+  group <- match(hash, unique(hash))
+  first <- match(seq_len(max(group)), group)
+  if (isTRUE(all(key == key[first[group], , drop = FALSE]))) return(group)
+  text <- do.call(paste, c(as.data.frame(key), sep = '\r'))
+  match(text, unique(text))
+}
+
+
+# The marginal moments of every trajectory over its rows -----------------------
 #
 # No data enters: these are the model's moments given that person's parameters,
 # which is what a decomposition of the model's implied variance needs. A
 # smoothed trajectory would answer a different question and would be shrunk
 # toward the observations.
 #
-# Steps are cached by interval. Most designs have a handful of distinct
-# intervals and each one costs two matrix exponentials.
-.ctVarDecompPersonMoments <- function(mats, times, tdpreds, continuoustime,
-  sources = NULL) {
-  nlatent <- nrow(mats$DRIFT)
-  nmanifest <- nrow(mats$LAMBDA)
-  nrows <- length(times)
-  latentmean <- matrix(0, nrows, nlatent)
-  latentvar <- matrix(0, nrows, nlatent)
-  linearmean <- matrix(0, nrows, nmanifest)
-  linearvar <- matrix(0, nrows, nmanifest)
-  state <- as.numeric(mats$T0MEANS)
-  cov <- mats$T0cov
-  cache <- list()
-  # With `sources`, the state covariance kept apart by where it came from: the
-  # initial state, and each group of latents' innovations (`.ctVarDecompSources`).
-  # They add up because the groups' innovations are independent and the
-  # transition is linear. Beside each, the sum over pairs of rows of the
-  # state's covariance, `K_t = P_t + A_t K_{t-1}` being a row's covariance with
-  # every row before it and itself, which is what the variance of the record's
-  # mean is made of.
+# A trajectory is one person at one parameter draw. `mats` holds each one's
+# matrices, K x r x c arrays with the draw running fastest (trajectory
+# d + ndraws (p - 1)), and `times` and `tdpreds` each person's rows. Row r of
+# every trajectory with at least r rows advances together, and each step is
+# computed once for each distinct pair of dynamics group and interval.
+#
+# `covariance = FALSE` carries the means alone, which is all the outer levels
+# need on the latent scale. With `sources`, the state covariance is also kept
+# apart by where it came from: the initial state, and each group of latents'
+# innovations (`.ctVarDecompSources`). They add up because the groups'
+# innovations are independent and the transition is linear. Beside each, the
+# sum over pairs of rows of the state's covariance, `K_t = P_t + A_t K_{t-1}`
+# being a row's covariance with every row before it and itself, which is what
+# the variance of the record's mean is made of.
+.ctVarDecompMoments <- function(mats, ndraws, times, tdpreds, continuoustime,
+  covariance = TRUE, sources = NULL) {
+  B <- dim(mats$DRIFT)[1L]
+  n <- dim(mats$DRIFT)[2L]
+  rows <- lengths(times)
+  owner <- rep(seq_along(times), each = ndraws)
+  count <- rows[owner]
+  maxrows <- max(rows)
+  active <- lapply(seq_len(maxrows), function(r) which(count >= r))
+  grid <- matrix(NA_real_, length(times), maxrows)
+  grid[cbind(rep(seq_along(times), rows), sequence(rows))] <- unlist(times)
   split <- length(sources) > 0L
-  if (split) {
-    part <- c(list(initial = mats$T0cov), lapply(sources, function(s)
-      matrix(0, nlatent, nlatent)))
-    carried <- lapply(part, function(x) matrix(0, nlatent, nlatent))
-    pairs <- carried
-    partlatent <- array(0, c(nrows, nlatent, length(part)))
-    partlinear <- array(0, c(nrows, nmanifest, length(part)))
-    masked <- lapply(sources, function(s) {
-      d <- matrix(0, nlatent, nlatent)
-      d[s, s] <- mats$DIFFUSIONcov[s, s]
-      d
-    })
+
+  # Every interval each trajectory steps over, by dynamics group.
+  group <- .ctVarDecompGroups(cbind(matrix(mats$DRIFT, B),
+    matrix(mats$DIFFUSIONcov, B), matrix(mats$CINT, B)))
+  ngroup <- max(group, 1L)
+  later <- seq_len(maxrows)[-1L]
+  gaps <- lapply(later, function(r) {
+    b <- active[[r]]
+    grid[owner[b], r] - grid[owner[b], r - 1L]
+  })
+  intervals <- unique(unlist(gaps))
+  keys <- lapply(seq_along(later), function(i)
+    group[active[[later[i]]]] + ngroup * (match(gaps[[i]], intervals) - 1))
+  if (length(later)) {
+    allkeys <- unlist(keys)
+    table <- unique(allkeys)
+    first <- unlist(active[later])[match(table, allkeys)]
+    diffusions <- if (covariance || split) {
+      c(list(mats$DIFFUSIONcov[first, , , drop = FALSE]),
+        if (split) lapply(sources, function(s) {
+          d <- array(0, c(length(first), n, n))
+          d[, s, s] <- mats$DIFFUSIONcov[first, s, s, drop = FALSE]
+          d
+        }))
+    } else list()
+    steps <- .ctVarDecompSteps(mats$DRIFT[first, , , drop = FALSE],
+      matrix(mats$CINT[first, , , drop = FALSE], length(first), n), diffusions,
+      intervals[(table - 1) %/% ngroup + 1], continuoustime)
   }
-  for (ri in seq_len(nrows)) {
-    transition <- NULL
-    if (ri > 1L) {
-      dt <- times[ri] - times[ri - 1L]
-      key <- format(dt, digits = 15L)
-      step <- cache[[key]]
-      if (is.null(step)) {
-        step <- .ctVarDecompStep(mats$DRIFT, mats$DIFFUSIONcov, mats$CINT, dt,
-          continuoustime)
-        if (split) step$parts <- lapply(masked, function(d) .ctVarDecompStep(
-          mats$DRIFT, d, mats$CINT, dt, continuoustime)$innovation)
-        cache[[key]] <- step
+
+  state <- matrix(mats$T0MEANS, B, n)
+  cov <- if (covariance) .ctVarDecompSym(mats$T0cov)
+  if (split) {
+    part <- c(list(.ctVarDecompSym(mats$T0cov)),
+      lapply(unname(sources), function(s) array(0, c(B, n, n))))
+    carried <- lapply(part, function(x) array(0, c(B, n, n)))
+    pairs <- carried
+  }
+  shifted <- !is.null(tdpreds) && !is.null(mats$TDPREDEFFECT)
+  out <- vector('list', maxrows)
+  for (r in seq_len(maxrows)) {
+    b <- active[[r]]
+    if (r > 1L) {
+      k <- match(keys[[r - 1L]], table)
+      a <- steps$transition[k, , , drop = FALSE]
+      state[b, ] <- .ctVarDecompMulVec(a, state[b, , drop = FALSE]) +
+        steps$intercept[k, , drop = FALSE]
+      if (covariance) cov[b, , ] <- .ctVarDecompSandwich(a,
+        cov[b, , , drop = FALSE]) + steps$innovation[[1L]][k, , , drop = FALSE]
+      if (split) for (g in seq_along(part)) {
+        part[[g]][b, , ] <- .ctVarDecompSandwich(a, part[[g]][b, , , drop = FALSE]) +
+          if (g > 1L) steps$innovation[[g]][k, , , drop = FALSE] else 0
+        carried[[g]][b, , ] <- .ctVarDecompMul(a, carried[[g]][b, , , drop = FALSE])
       }
-      transition <- step$transition
-      state <- as.numeric(step$transition %*% state + step$intercept)
-      cov <- step$transition %*% cov %*% t(step$transition) + step$innovation
     }
     if (split) for (g in seq_along(part)) {
-      if (!is.null(transition)) {
-        part[[g]] <- transition %*% part[[g]] %*% t(transition) +
-          if (g > 1L) step$parts[[g - 1L]] else 0
-        carried[[g]] <- transition %*% carried[[g]]
-      }
-      part[[g]] <- (part[[g]] + t(part[[g]])) / 2
-      carried[[g]] <- carried[[g]] + part[[g]]
-      pairs[[g]] <- pairs[[g]] + carried[[g]] + t(carried[[g]]) - part[[g]]
-      partlatent[ri, , g] <- diag(part[[g]])
-      partlinear[ri, , g] <- diag(mats$LAMBDA %*% part[[g]] %*% t(mats$LAMBDA))
+      carried[[g]][b, , ] <- carried[[g]][b, , , drop = FALSE] +
+        part[[g]][b, , , drop = FALSE]
+      pairs[[g]][b, , ] <- pairs[[g]][b, , , drop = FALSE] +
+        carried[[g]][b, , , drop = FALSE] +
+        .ctVarDecompTr(carried[[g]][b, , , drop = FALSE]) - part[[g]][b, , , drop = FALSE]
     }
     # A time dependent predictor is an instantaneous shift at the observed row,
     # applied after the time update -- matching the filter, which does
     # `state[1:nlatent] += (TDPREDEFFECT * tdpreds[rowi])'` at that point.
-    if (!is.null(tdpreds) && !is.null(mats$TDPREDEFFECT)) {
-      state <- state + as.numeric(mats$TDPREDEFFECT %*% tdpreds[ri, ])
+    if (shifted) {
+      persons <- unique(owner[b])
+      values <- matrix(vapply(persons, function(p) tdpreds[[p]][r, ],
+        numeric(ncol(tdpreds[[1L]]))), ncol = ncol(tdpreds[[1L]]), byrow = TRUE)
+      state[b, ] <- state[b, , drop = FALSE] + .ctVarDecompMulVec(
+        mats$TDPREDEFFECT[b, , , drop = FALSE],
+        values[rep(seq_along(persons), each = ndraws), , drop = FALSE])
     }
-    cov <- (cov + t(cov)) / 2
-    latentmean[ri, ] <- state
-    latentvar[ri, ] <- diag(cov)
-    linearmean[ri, ] <- as.numeric(mats$LAMBDA %*% state + mats$MANIFESTMEANS)
-    linearvar[ri, ] <- diag(mats$LAMBDA %*% cov %*% t(mats$LAMBDA))
+    lambda <- mats$LAMBDA[b, , , drop = FALSE]
+    out[[r]] <- list(index = b, latentmean = state[b, , drop = FALSE],
+      linearmean = .ctVarDecompMulVec(lambda, state[b, , drop = FALSE]) +
+        matrix(mats$MANIFESTMEANS[b, , , drop = FALSE], length(b)))
+    if (covariance) {
+      out[[r]]$latentvar <- .ctVarDecompDiag(cov[b, , , drop = FALSE])
+      out[[r]]$linearvar <- .ctVarDecompQuadDiag(lambda, cov[b, , , drop = FALSE])
+    }
+    if (split) {
+      out[[r]]$partlatent <- vapply(part, function(x)
+        .ctVarDecompDiag(x[b, , , drop = FALSE]), matrix(0, length(b), n))
+      out[[r]]$partlinear <- vapply(part, function(x) .ctVarDecompQuadDiag(lambda,
+        x[b, , , drop = FALSE]), matrix(0, length(b), dim(lambda)[2L]))
+    }
   }
-  out <- list(latentmean = latentmean, latentvar = latentvar,
-    linearmean = linearmean, linearvar = linearvar)
+  result <- list(rows = out)
   if (split) {
     # The record mean's variance from each part: the sum over pairs of rows
     # over the number of pairs.
-    out$partlatent <- partlatent
-    out$partlinear <- partlinear
-    out$levellatent <- vapply(pairs, function(p) diag(p) / nrows^2,
-      numeric(nlatent))
-    out$levellinear <- vapply(pairs, function(p)
-      diag(mats$LAMBDA %*% p %*% t(mats$LAMBDA)) / nrows^2, numeric(nmanifest))
-    out$levellatent <- matrix(out$levellatent, nlatent)
-    out$levellinear <- matrix(out$levellinear, nmanifest)
+    result$levellatent <- vapply(pairs, function(p) .ctVarDecompDiag(p) / count^2,
+      matrix(0, B, n))
+    result$levellinear <- vapply(pairs, function(p)
+      .ctVarDecompQuadDiag(mats$LAMBDA, p) / count^2,
+      matrix(0, B, dim(mats$LAMBDA)[2L]))
   }
-  out
+  result
 }
 
 # `sources` resolved against the model: a named list of latent names, each a
@@ -260,8 +449,9 @@
 #
 # On the latent scale E[y|eta] is the linear predictor itself, so `expected` and
 # `varmean` are what the recursion already produced and `condvar` is the
-# measurement variance: MANIFESTcov for a Gaussian indicator, and pi^2/3 for a
-# binary or ordinal one, the logistic variance implied by the threshold form
+# measurement variance: MANIFESTcov for a Gaussian indicator (one value per
+# trajectory, or one for all), and pi^2/3 for a binary or ordinal one, the
+# logistic variance implied by the threshold form
 # P(y <= k | eta) = inv_logit(tau_k - eta).
 #
 # On the response scale the link is integrated over the row's own normal
@@ -269,7 +459,7 @@
 .ctVarDecompMeasurement <- function(mean, var, type, manifestvar, scale, gh) {
   if (type == 0L) {
     return(list(expected = mean, varmean = var,
-      condvar = rep(manifestvar, length(mean))))
+      condvar = rep_len(manifestvar, length(mean))))
   }
   if (identical(scale, 'latent')) {
     return(list(expected = mean, varmean = var,
@@ -309,16 +499,52 @@
 }
 
 
-# Person sources --------------------------------------------------------------
+# Parameter draws -------------------------------------------------------------
 #
-# Everything below produces the same thing, so that one body computes the
-# decomposition from it:
+# The draws each quantity is computed at: `nsamples` of the fit's own, evenly
+# spaced as ctExtract(nsamples = ) takes them, or the estimate alone when
+# intervals are turned off, when the fit has no draws, or when `pointonly`
+# gives the reason a route cannot use them.
+.ctVarDecompDraws <- function(fit, nsamples, pointonly = NULL) {
+  if (length(nsamples) != 1L || is.na(nsamples) || nsamples < 0) {
+    stop('nsamples must be 0, for the estimate without intervals, or a number ',
+      'of parameter draws.', call. = FALSE)
+  }
+  julia <- .ctFitIsJulia(fit)
+  point <- list(raw = matrix(as.numeric(if (julia) fit$estimate$raw else
+    fit$stanfit$rawest), 1L), rows = NULL, intervals = FALSE)
+  if (nsamples < 1) return(point)
+  if (!is.null(pointonly)) {
+    message(pointonly)
+    return(point)
+  }
+  samples <- if (julia) fit$estimate$rawposterior else fit$stanfit$rawposterior
+  if (is.null(samples) || length(dim(samples)) != 2L || nrow(samples) < 2L) {
+    message('This fit has no parameter draws, so values are at the estimate, ',
+      'without intervals.')
+    return(point)
+  }
+  rows <- unique(round(seq(1, nrow(samples), length.out =
+    min(nrow(samples), as.integer(nsamples)))))
+  list(raw = matrix(as.numeric(samples[rows, , drop = FALSE]), length(rows)),
+    rows = rows, intervals = TRUE)
+}
+
+
+# Persons ---------------------------------------------------------------------
 #
-#   persons  a list, each entry a person's design `rows`, the `unit` of each
-#            random effect level they belong to, and `mats` -- their model
-#            matrices with the effects of each level and every level outside it
-#            in turn, innermost first, the last entry being the population's
-#   levels   the level names, innermost first, possibly none
+# Who the persons are is decided once, with every random draw it needs
+# (`.ctVarDecompPlan()`), and their matrices are built at each chunk of
+# parameter draws (`.ctVarDecompMaterialise()`). A chunk is a batch:
+#
+#   rows    each person's design rows
+#   unit    persons x levels: the unit of each random effect level a person
+#           belongs to
+#   mats    one entry per step, each a named list of arrays over the
+#           trajectories, draw fastest: the matrices with the effects of that
+#           level and every level outside it, innermost first, the last entry
+#           being the population's
+#   ndraws  the draws in the chunk
 #
 # A level's own contribution is then the difference between successive entries
 # of `mats`, which is what makes the between person variance a sum over levels
@@ -327,40 +553,20 @@
 # occasions have different time-averaged expected values even with identical
 # parameters, and subtracting the population value at that same design removes
 # it rather than reporting it as an individual difference.
-
-# Trim the augmented state out of one person's matrices.
 #
-# The subject and population matrices are already over the real latent
-# processes -- except the T0 pair, which keeps the carrier rows because that is
-# where the random effects live -- so those are cut here. The par-matrices
-# route is asked for `trim = FALSE` so that the carrier block can be read
-# whole, and is cut by the same rule .ctBackendTrimAugmented() applies.
-.ctVarDecompTrim <- function(mats, nlatent, augmented) {
-  if (augmented) {
-    for (name in intersect(names(mats), c('DRIFT', 'DIFFUSIONcov'))) {
-      mats[[name]] <- mats[[name]][seq_len(nlatent), seq_len(nlatent), drop = FALSE]
-    }
-    for (name in intersect(names(mats), c('CINT', 'TDPREDEFFECT'))) {
-      mats[[name]] <- mats[[name]][seq_len(nlatent), , drop = FALSE]
-    }
-    if (!is.null(mats$LAMBDA)) mats$LAMBDA <- mats$LAMBDA[, seq_len(nlatent), drop = FALSE]
-  }
-  mats$T0MEANS <- mats$T0MEANS[seq_len(nlatent), , drop = FALSE]
-  mats$T0cov <- mats$T0cov[seq_len(nlatent), seq_len(nlatent), drop = FALSE]
-  mats
-}
+# Each subject's design is used `round(npersons / nsubjects)` times, at least
+# once, so every design counts equally.
 
-# Subject matrices at the point estimate, for whichever backend.
-.ctVarDecompSubjectMatrices <- function(fit) {
-  if (.ctFitIsJulia(fit)) {
-    point <- fit
-    point$estimate$rawposterior <- NULL
-    return(ctExtract(point, subjectMatrices = TRUE))
-  }
-  suppressMessages(stan_constrainsamples(sm = fit$stanmodel,
-    standata = fit$standata, samples = matrix(fit$stanfit$rawest, nrow = 1L),
-    cores = 1L, savescores = FALSE, savesubjectmatrices = TRUE,
-    dokalman = TRUE, onlyfirstrow = FALSE, pcovn = 5))
+# Standard normal draws, n x k, standardised to exactly zero mean and identity
+# covariance over the rows where there are enough rows: the persons drawn then
+# have the population's mean and covariance exactly, so a between person
+# variance that is linear in the effects with the same weights for everyone
+# (random intercepts) has no sampling error, and others less.
+.ctVarDecompNormals <- function(n, k) {
+  z <- matrix(stats::rnorm(n * k), n, k)
+  if (k < 1L || n < k + 2L) return(z)
+  z <- sweep(z, 2L, colMeans(z))
+  z %*% solve(chol(crossprod(z) / (n - 1L)))
 }
 
 .ctVarDecompNeeded <- c('DRIFT', 'DIFFUSIONcov', 'CINT', 'LAMBDA',
@@ -375,169 +581,399 @@
   (nlatent + 1L):augmented
 }
 
-# One person's matrices, materialised at a carrier vector. julia only -- this is
-# the route stan cannot take, and the caller has already said so.
+# Trim the augmented state out of matrices, each an array with one leading
+# entry per trajectory.
 #
-# Messages suppressed, and said once by the print method instead. This is
-# called once per person -- up to npersons times -- and each call otherwise
-# announces which cells are state dependent and where they were evaluated, so a
-# single decomposition printed the same paragraph four hundred times.
-.ctVarDecompPersonAt <- function(fit, tipreds, state, nlatent) {
-  # filterstate=, not state=: the carrier entries are this person's random
-  # effects and are the whole point of materialising here.
-  drawn <- suppressMessages(ctBackendParMatrices(fit, tipreds = tipreds,
-    filterstate = state, trim = FALSE))
-  mats <- list()
-  for (name in .ctVarDecompNeeded) {
-    if (!is.null(drawn[[name]])) mats[[name]] <- as.matrix(drawn[[name]])
-  }
-  .ctVarDecompTrim(mats, nlatent, augmented = TRUE)
-}
-
-# A square root of a covariance block that may be singular -- a parameter with
-# no random effect has a zero row and column, and chol() refuses those. The
-# symmetric one (`.ctSymRoot()`): persons are drawn through it, and an
-# eigenvector root moves with the signs LAPACK returns.
-.ctVarDecompCholesky <- function(cov) .ctSymRoot(cov)
-
-# One subject's matrices, pulled out of a level's subject-matrix arrays.
-.ctVarDecompFromArrays <- function(matrices, si, nlatent, augmented = FALSE,
-  fallback = NULL) {
-  mats <- list()
-  for (name in .ctVarDecompNeeded) {
-    value <- matrices[[paste0('subj_', name)]]
-    if (!is.null(value)) {
-      mats[[name]] <- array(value[1L, si, , ], dim = dim(value)[3:4])
-      next
+# The subject and population matrices are already over the real latent
+# processes -- except the T0 pair, which keeps the carrier rows because that is
+# where the random effects live -- so those are cut here. Matrices
+# materialised at a carrier state are untrimmed, so that the carrier block can
+# be read whole, and are cut by the same rule .ctBackendTrimAugmented()
+# applies.
+.ctVarDecompTrim <- function(mats, nlatent, augmented) {
+  keep <- seq_len(nlatent)
+  if (augmented) {
+    for (name in intersect(names(mats), c('DRIFT', 'DIFFUSIONcov'))) {
+      mats[[name]] <- mats[[name]][, keep, keep, drop = FALSE]
     }
-    # Stan allocates a per-subject array for a matrix exactly when that
-    # matrix's specification varies by subject (the `savesubjectmatrices &&
-    # (sum(whenmat[..]) || statedep[..])` gate in R/ctModelWriter.R), so a
-    # matrix with no `subj_` entry is one that is the same for everyone and
-    # `pop_` is its value. Reading `subj_` alone left LAMBDA and the
-    # measurement matrices missing for every model that does not vary them.
-    value <- (if (is.null(fallback)) matrices else fallback)[[paste0('pop_', name)]]
-    if (is.null(value)) next
-    mats[[name]] <- array(value[1L, , ], dim = dim(value)[2:3])
+    for (name in intersect(names(mats), c('CINT', 'TDPREDEFFECT'))) {
+      mats[[name]] <- mats[[name]][, keep, , drop = FALSE]
+    }
+    if (!is.null(mats$LAMBDA)) mats$LAMBDA <- mats$LAMBDA[, , keep, drop = FALSE]
   }
-  .ctVarDecompTrim(mats, nlatent, augmented = augmented)
+  mats$T0MEANS <- mats$T0MEANS[, keep, , drop = FALSE]
+  mats$T0cov <- mats$T0cov[, keep, keep, drop = FALSE]
+  mats
 }
 
-
-# The model's own initial state, not the filter's estimate of it.
-#
-# `subj_T0MEANS` carries the *smoothed* initial state in its dynamic rows on
-# both julia representations -- measured at sd 0.91 across subjects for a model
-# that fixes T0MEANS at zero. Starting a marginal recursion there while also
-# carrying the full prior T0 covariance counts the initial spread twice and
-# reports it as the mean path moving: on one fixture it made the deterministic
-# within person term eight times what the other representation gave.
-#
-# The augmented route never had the problem, because it materialises a person's
-# matrices at their carrier vector rather than reading them off the filter. This
-# is the same correction for the route that does read them. Stan is unaffected:
-# it saves a per-subject matrix only where the specification varies by subject,
-# so a fixed T0MEANS falls back to `pop_T0MEANS`, which is the model's.
-#
-# T0MEANS varies by person when a TI predictor moves it, too, and then the
-# population value is nobody's.
-.ctVarDecompModelT0 <- function(fit, levels) {
-  varying <- unique(unlist(lapply(levels, function(x) x$params)))
-  table <- .ctBackendSpec(fit)$parameter_table
-  shifted <- table$param[table$parnumber %in% .ctBackendSpec(fit)$ti_effects$parameter]
-  pars <- .ctFitModelObject(fit)$pars
-  t0pars <- if (is.null(pars)) character() else
-    as.character(pars$param[pars$matrix %in% 'T0MEANS'])
-  list(population = suppressMessages(ctBackendParMatrices(fit, trim = FALSE))$T0MEANS,
-    varies = any(c(varying, shifted) %in% t0pars))
+# The flat positions of the named matrices in the engine's layout, and the
+# engine's columns at those positions as one array per matrix: columns x rows
+# x columns of the matrix.
+.ctVarDecompFlatRows <- function(layout, names) {
+  unlist(lapply(names, function(name) {
+    i <- match(name, layout$matrix)
+    layout$offset[i] + seq_len(layout$nrow[i] * layout$ncol[i])
+  }))
 }
 
-# Subject `si`'s TI predictors as `ctBackendParMatrices()` takes them, or NULL
-# for a model with none.
-.ctVarDecompTIpredRow <- function(fit) {
-  tipreds <- if (length(.ctFitModelObject(fit)$TIpredNames))
+.ctVarDecompFlatArrays <- function(flat, layout, names) {
+  out <- list()
+  at <- 0L
+  for (name in names) {
+    i <- match(name, layout$matrix)
+    size <- layout$nrow[i] * layout$ncol[i]
+    out[[name]] <- array(t(flat[at + seq_len(size), , drop = FALSE]),
+      c(ncol(flat), layout$nrow[i], layout$ncol[i]))
+    at <- at + size
+  }
+  out
+}
+
+# Arrays for some trajectories written into arrays over all of them.
+.ctVarDecompScatter <- function(into, at, mats, total) {
+  for (name in names(mats)) {
+    if (is.null(into[[name]])) into[[name]] <- array(NA_real_,
+      c(total, dim(mats[[name]])[-1L]))
+    into[[name]][at, , ] <- mats[[name]]
+  }
+  into
+}
+
+# The model matrices at raw vectors and whole filter states, a column each.
+# `.ctBackendParMatricesFlat()` takes either a state of the latent processes a
+# column, or one whole filter state for every column; a carrier person needs
+# their own carrier values at every draw.
+.ctVarDecompAtStates <- function(fit, raw, states, tipreds, rows) {
+  storage.mode(raw) <- 'double'
+  storage.mode(states) <- 'double'
+  module <- .ctJuliaModule(.ctBackendSpec(fit)$project)
+  arguments <- list(.ctJuliaObjective(fit), .ctJuliaPut(raw), time = 0, dt = 0,
+    state = .ctJuliaPut(states), rows = .ctJuliaVector(as.integer(rows)))
+  if (length(tipreds)) arguments$tipreds <- .ctJuliaVector(as.numeric(tipreds))
+  result <- .ctBackendJuliaValue(do.call(module$ctsem_parameter_matrices, arguments))
+  matrix(as.numeric(result), nrow = length(rows))
+}
+
+# Who the persons are, and every random draw that makes them. The persons are
+# each subject's design `replicates` times over, and they and their draws are
+# the same at every parameter draw.
+.ctVarDecompPlan <- function(fit, design, nlatent, persons, npersons, subjects,
+  levels, drawrows = NULL) {
+  julia <- .ctFitIsJulia(fit)
+  nlevels <- length(levels)
+  coordinates <- julia && .ctSpecEffectsAreCoordinates(.ctBackendSpec(fit))
+  route <- if (!julia) 'stan' else if (coordinates) 'coordinate' else 'carrier'
+  plan <- list(route = route, persons = persons, nlatent = nlatent,
+    nlevels = nlevels)
+
+  if (identical(route, 'coordinate')) {
+    # A joint sample that kept its draws of the effects pairs each parameter
+    # draw with its own, as `.ctBackendPlausibleValues()` does. At the
+    # estimate there is no draw to pair.
+    saved <- fit$sample$effects
+    plan$saved <- identical(persons, 'estimated') && length(drawrows) > 0L &&
+      identical(fit$sample$target, 'joint') && length(fit$sample$effect_mean) > 0L &&
+      !is.null(saved) && nrow(saved) == nrow(.ctBackendRawSamples(fit))
+  }
+  replicates <- if (!julia || isTRUE(plan$saved)) 1L else
+    max(1L, as.integer(round(npersons / length(subjects))))
+  plan$replicates <- replicates
+  plan$subjects <- rep(subjects, replicates)
+  copy <- rep(seq_len(replicates), each = length(subjects))
+  plan$copy <- copy
+  plan$rows <- lapply(plan$subjects, function(si) which(design$subject == si))
+  npeople <- length(plan$subjects)
+
+  # Time independent predictors, a call to the engine for each distinct row.
+  tipreds <- if (julia && length(.ctFitModelObject(fit)$TIpredNames))
     .ctFitTIpredData(fit) else NULL
-  function(si) if (!is.null(tipreds)) as.numeric(tipreds[si, ]) else NULL
-}
+  if (is.null(tipreds)) {
+    plan$group <- rep(1L, npeople)
+    plan$tipreds <- list(NULL)
+  } else {
+    key <- do.call(paste, c(as.data.frame(tipreds[plan$subjects, , drop = FALSE]),
+      sep = '\r'))
+    plan$group <- match(key, unique(key))
+    plan$tipreds <- lapply(match(seq_len(max(plan$group)), plan$group),
+      function(p) as.numeric(tipreds[plan$subjects[p], ]))
+  }
 
-# Augmented fits: a person is a carrier vector --------------------------------
-#
-# An individually varying parameter is carried as a latent state with no drift
-# and no diffusion, so a person *is* a carrier vector and
-# `ctBackendParMatrices()` materialises their matrices at it, applying every
-# transform through the same engine code the likelihood uses rather than
-# reimplementing one here. persons='model' draws the vector from the population
-# distribution (the carrier block of the augmented T0MEANS and T0cov, shifted
-# by that person's time independent predictors); persons='estimated' reads each
-# subject's own carrier values off the filter instead, at plausible values: the
-# smoothed value plus a draw from the posterior the fit stored
-# (`.ctVarDecompCarrierNoise()`), so the spread over persons is not shrunk.
-.ctVarDecompCarrierPersons <- function(fit, design, nlatent, source, npersons,
-  subjects, levels) {
+  if (identical(route, 'coordinate')) {
+    structure <- .ctFitRandomEffectLevels(fit)
+    plan$unit <- matrix(vapply(seq_len(nlevels), function(l)
+      as.integer(structure[[l]]$units[plan$subjects] +
+        (copy - 1L) * structure[[l]]$nunits), integer(npeople)), npeople, nlevels)
+    plan$position <- .ctVarDecompPositions(fit, levels)
+    if (identical(persons, 'model')) plan$normals <- lapply(seq_len(nlevels),
+      function(l) .ctVarDecompNormals(structure[[l]]$nunits * replicates,
+        length(plan$position[[l]])))
+    return(plan)
+  }
+  # One level at most here, whose units are the persons.
+  plan$unit <- matrix(rep(seq_len(npeople), nlevels), npeople, nlevels)
+  if (identical(route, 'stan')) return(plan)
+
+  # An individually varying parameter is carried as a latent state with no
+  # drift and no diffusion, so a person *is* a carrier vector and the engine
+  # materialises their matrices at it, applying every transform through the
+  # same code the likelihood uses. persons='model' draws the vector from the
+  # population distribution (the carrier block of the augmented T0MEANS and
+  # T0cov, shifted by that person's time independent predictors);
+  # persons='estimated' reads each subject's own carrier values off the filter
+  # instead, at plausible values: the smoothed value plus a draw from the
+  # posterior the fit stored (`.ctVarDecompCarrierNoise()`), so the spread
+  # over persons is not shrunk.
   carrier <- .ctVarDecompCarrier(fit, nlatent)
   # The model says it has individual differences and this route cannot see
   # them. Refused rather than returned, because what it would return is a
   # between person variance of zero, which is what a model with no individual
   # differences correctly returns -- so nothing downstream could tell the two
   # apart.
-  if (!length(carrier) && length(levels)) {
+  if (!length(carrier) && nlevels) {
     stop('This fit declares individually varying parameters and they are ',
       'neither carrier states nor separate coordinates, so no route here can ',
       'see them and the between person variance would come out at zero. This ',
       'is a bug rather than a limitation of the model -- please report the fit.',
       call. = FALSE)
   }
-  tipredrow <- .ctVarDecompTIpredRow(fit)
-
-  donors <- if (identical(source, 'model') && length(carrier))
-    subjects[sample.int(length(subjects), npersons, replace = TRUE)] else
-    if (length(carrier)) rep(subjects, max(1L, ceiling(npersons /
-      length(subjects)))) else subjects
-
-  estimated <- if (identical(source, 'estimated') && length(carrier)) {
-    .ctVarDecompSubjectMatrices(fit)$subj_T0MEANS
-  }
-  noise <- if (identical(source, 'estimated') && length(carrier))
-    .ctVarDecompCarrierNoise(fit, donors, carrier)
-
-  # One population fetch per donor subject actually used: the augmented T0
-  # block depends on the parameters and on that subject's predictors, and on
-  # nothing else. The population matrices are the outer step for every person
-  # with that donor, so they are materialised once too.
-  population <- list()
-  outer <- list()
-  for (si in unique(donors)) {
-    key <- as.character(si)
-    population[[key]] <- suppressMessages(ctBackendParMatrices(fit,
-      tipreds = tipredrow(si), trim = FALSE))
-    outer[[key]] <- .ctVarDecompPersonAt(fit, tipredrow(si),
-      as.numeric(population[[key]]$T0MEANS), nlatent)
-  }
-
-  lapply(seq_along(donors), function(index) {
-    si <- donors[index]
-    key <- as.character(si)
-    base <- population[[key]]
-    state <- as.numeric(base$T0MEANS)
-    inner <- if (!length(carrier)) outer[[key]] else {
-      if (identical(source, 'model')) {
-        root <- .ctVarDecompCholesky(base$T0cov[carrier, carrier, drop = FALSE])
-        state[carrier] <- state[carrier] +
-          as.numeric(root %*% stats::rnorm(length(carrier)))
-      } else state[carrier] <- as.numeric(estimated[1L, si, carrier, 1L]) +
-        noise[index, ]
-      .ctVarDecompPersonAt(fit, tipredrow(si), state, nlatent)
+  plan$carrier <- carrier
+  if (length(carrier)) {
+    if (identical(persons, 'model')) {
+      plan$normals <- .ctVarDecompNormals(npeople, length(carrier))
+    } else {
+      smoothed <- .ctVarDecompSubjectMatrices(fit)$subj_T0MEANS
+      plan$states <- matrix(smoothed[1L, plan$subjects, carrier, 1L], npeople) +
+        .ctVarDecompCarrierNoise(fit, plan$subjects, carrier)
     }
-    list(rows = which(design$subject == si), unit = index,
-      mats = if (length(levels)) list(inner, outer[[key]]) else list(inner))
+  }
+  plan
+}
+
+# Each person's matrices at a chunk of parameter draws (`raw`, draws x
+# parameters, the fit's rows `drawrows` of its draws, or the estimate).
+.ctVarDecompMaterialise <- function(plan, fit, raw, drawrows = NULL) {
+  switch(plan$route,
+    stan = .ctVarDecompStanMats(plan, fit, raw),
+    carrier = .ctVarDecompCarrierMats(plan, fit, raw),
+    coordinate = .ctVarDecompCoordinateMats(plan, fit, raw, drawrows))
+}
+
+# The batch from per-step matrices.
+.ctVarDecompBatch <- function(plan, mats, ndraws) {
+  list(rows = plan$rows, unit = plan$unit, ndraws = ndraws, mats = mats)
+}
+
+# The needed matrices this model's engine layout has.
+.ctVarDecompLayoutNeeds <- function(layout) {
+  intersect(.ctVarDecompNeeded, layout$matrix)
+}
+
+
+# Coordinate fits: a person is an effect vector --------------------------------
+#
+# `intoverpop='laplace'`, `'variational'` and `'none'` keep the random effects
+# as coordinates rather than states, so there is no carrier to materialise at.
+# A person is instead a raw parameter vector per level of effects: the
+# population vector shifted by the effects of that level and every level
+# outside it, at the effects' positions in the raw vector, which the engine
+# then materialises with the subject's time independent predictors. The vector
+# is the one before TI-predictor effects, which the engine adds from the
+# subject's own predictors.
+#
+# persons='model' draws each unit's effects from its level's population
+# covariance at each parameter draw, from standard normals drawn once:
+# `root %*% z`, the root symmetric (`.ctSymRoot()`) so that it moves smoothly
+# with the parameters. The draw is per *unit*: every subject in a study shares
+# its study effect. persons='estimated' uses plausible values -- each unit's
+# mode plus a draw from its effects' posterior given its data, drawn jointly
+# over the unit's levels with one seed for every level's call, so the
+# differences split one draw. At a parameter draw the mode is the one
+# linearised around the estimate, as everything else reporting plausible values
+# at draws takes it (`ctsem_laplace_subject_values(conditional = TRUE)`); a
+# joint sample that kept its effect draws pairs each parameter draw with its
+# own.
+
+# Where each level's effects sit in the raw vector: the level's declared
+# `re_index`, checked at the estimate against what the engine's own subject
+# vectors move. A level's own contribution to a subject's vector is the
+# difference between the values built from level l outward and from level l+1
+# outward, nonzero only at that level's positions.
+.ctVarDecompPositions <- function(fit, levels) {
+  spec <- .ctBackendSpec(fit)
+  module <- .ctJuliaModule(spec$project)
+  objective <- .ctJuliaObjective(fit, layer = TRUE)
+  raw <- .ctJuliaNumericVector(as.numeric(fit$estimate$raw))
+  nlevels <- length(levels)
+  values <- lapply(seq_len(nlevels + 1L), function(l)
+    as.matrix(.ctBackendJuliaValue(module$ctsem_laplace_subject_values(
+      objective, raw, from_level = as.integer(l), ti_effects = FALSE))))
+  lapply(seq_len(nlevels), function(l) {
+    declared <- as.integer(spec$laplace$levels[[l]]$re_index)
+    found <- which(apply(abs(values[[l]] - values[[l + 1L]]) > 1e-10, 2L, any))
+    # An effect that is estimated at exactly zero moves nothing, so `found` can
+    # be a subset of `declared`; the other way round would mean the level
+    # shifts a parameter it does not declare, and this route would be placing
+    # draws in the wrong coordinates.
+    if (length(setdiff(found, declared))) {
+      stop("The random effects of level '", levels[l], "' move raw parameters ",
+        paste(setdiff(found, declared), collapse = ', '), ' that the level ',
+        'does not declare, so a drawn effect cannot be placed. This is a bug ',
+        '-- please report the fit.', call. = FALSE)
+    }
+    declared
   })
 }
 
+# Plausible values of every subject at each row of `at`, one array per level
+# (draws x subjects x parameters, all levels from the same joint draws): from
+# `effects`, a joint sample's saved effect draws, where given.
+.ctVarDecompCoordinateDraws <- function(fit, objective, at, nlevels,
+  effects = NULL) {
+  module <- .ctJuliaModule(.ctBackendSpec(fit)$project)
+  seed <- sample.int(.Machine$integer.max, 1L)
+  nsubjects <- length(.ctBackendSpec(fit)$subject_starts)
+  width <- ncol(.ctBackendRawFull(fit, at[1L, , drop = FALSE]))
+  draws <- .ctJuliaPut(at)
+  lapply(seq_len(nlevels), function(l) {
+    value <- if (!is.null(effects)) {
+      module$ctsem_laplace_subject_values(objective, draws, .ctJuliaPut(effects),
+        ti_effects = FALSE, from_level = as.integer(l))
+    } else module$ctsem_laplace_subject_values(objective, draws,
+      .ctJuliaNumericVector(as.numeric(fit$estimate$raw)), conditional = TRUE,
+      seed = as.integer(seed), from_level = as.integer(l), ti_effects = FALSE)
+    array(as.numeric(.ctBackendJuliaValue(value)), c(nrow(at), nsubjects, width))
+  })
+}
+
+.ctVarDecompCoordinateMats <- function(plan, fit, raw, drawrows) {
+  layout <- .ctBackendSummaryLayout(fit)
+  names <- .ctVarDecompLayoutNeeds(layout)
+  rows <- .ctVarDecompFlatRows(layout, names)
+  full <- .ctBackendRawFull(fit, raw)
+  ndraws <- nrow(full)
+  npeople <- length(plan$rows)
+  nlevels <- plan$nlevels
+  draw <- rep(seq_len(ndraws), npeople)
+  person <- rep(seq_len(npeople), each = ndraws)
+  population <- .ctBackendParMatricesFlat(fit, t(full))
+
+  # Each trajectory's raw vector at each level, innermost first, built outward
+  # in so that level l carries the effects of l and everything outside it.
+  values <- vector('list', nlevels)
+  if (identical(plan$persons, 'model')) {
+    cumulative <- full[draw, , drop = FALSE]
+    for (l in rev(seq_len(nlevels))) {
+      at <- plan$position[[l]]
+      if (length(at)) {
+        covariance <- .ctBackendRawPopCovMatrix(layout, population,
+          if (l == 1L) 'rawpopcov' else paste0('rawpopcov_', l))
+        z <- plan$normals[[l]]
+        nunits <- nrow(z)
+        shift <- matrix(0, ndraws * nunits, length(at))
+        for (d in seq_len(ndraws)) {
+          shift[d + ndraws * (seq_len(nunits) - 1L), ] <- z %*%
+            .ctSymRoot(matrix(covariance[d, , ], length(at), length(at)))
+        }
+        cumulative[, at] <- cumulative[, at, drop = FALSE] +
+          shift[draw + ndraws * (plan$unit[person, l] - 1L), , drop = FALSE]
+      }
+      values[[l]] <- cumulative
+    }
+  } else if (nlevels) {
+    objective <- .ctJuliaObjective(fit, layer = TRUE)
+    replicates <- plan$replicates
+    at <- raw[rep(seq_len(ndraws), replicates), , drop = FALSE]
+    plausible <- .ctVarDecompCoordinateDraws(fit, objective, at, nlevels,
+      if (isTRUE(plan$saved)) fit$sample$effects[drawrows, , drop = FALSE])
+    pick <- draw + ndraws * (plan$copy[person] - 1L) +
+      ndraws * replicates * (plan$subjects[person] - 1L)
+    values <- lapply(plausible, function(p)
+      matrix(p, ndraws * replicates * dim(p)[2L])[pick, , drop = FALSE])
+  }
+
+  steps <- vector('list', nlevels + 1L)
+  for (s in seq_len(nlevels)) {
+    out <- list()
+    for (g in seq_along(plan$tipreds)) {
+      at <- which(plan$group[person] == g)
+      flat <- .ctBackendParMatricesFlat(fit, t(values[[s]][at, , drop = FALSE]),
+        tipreds = plan$tipreds[[g]], rows = rows)
+      out <- .ctVarDecompScatter(out, at, .ctVarDecompFlatArrays(flat, layout, names),
+        length(draw))
+    }
+    steps[[s]] <- out
+  }
+  # The population's, at each draw and predictor row.
+  out <- list()
+  for (g in seq_along(plan$tipreds)) {
+    flat <- if (is.null(plan$tipreds[[g]])) population[rows, , drop = FALSE] else
+      .ctBackendParMatricesFlat(fit, t(full), tipreds = plan$tipreds[[g]], rows = rows)
+    at <- which(plan$group[person] == g)
+    out <- .ctVarDecompScatter(out, at, lapply(.ctVarDecompFlatArrays(flat, layout,
+      names), function(x) x[draw[at], , , drop = FALSE]), length(draw))
+  }
+  steps[[nlevels + 1L]] <- out
+  .ctVarDecompBatch(plan, lapply(steps, .ctVarDecompTrim, plan$nlatent,
+    augmented = FALSE), ndraws)
+}
+
+
+# Augmented fits: a person is a carrier vector ---------------------------------
+.ctVarDecompCarrierMats <- function(plan, fit, raw) {
+  layout <- .ctBackendSummaryLayout(fit)
+  names <- .ctVarDecompLayoutNeeds(layout)
+  rows <- .ctVarDecompFlatRows(layout, names)
+  full <- .ctBackendRawFull(fit, raw)
+  ndraws <- nrow(full)
+  npeople <- length(plan$rows)
+  draw <- rep(seq_len(ndraws), npeople)
+  person <- rep(seq_len(npeople), each = ndraws)
+  carrier <- plan$carrier
+  inner <- outer <- list()
+  for (g in seq_along(plan$tipreds)) {
+    at <- which(plan$group[person] == g)
+    # The augmented T0 block depends on the parameters and on the predictors,
+    # and on nothing else.
+    population <- .ctVarDecompFlatArrays(.ctBackendParMatricesFlat(fit, t(full),
+      tipreds = plan$tipreds[[g]], rows = rows), layout, names)
+    outer <- .ctVarDecompScatter(outer, at, lapply(population, function(x)
+      x[draw[at], , , drop = FALSE]), length(draw))
+    if (!length(carrier)) next
+    states <- matrix(population$T0MEANS[draw[at], , 1L], length(at))
+    if (identical(plan$persons, 'model')) {
+      for (d in seq_len(ndraws)) {
+        here <- which(draw[at] == d)
+        root <- .ctSymRoot(matrix(population$T0cov[d, carrier, carrier],
+          length(carrier), length(carrier)))
+        states[here, carrier] <- states[here, carrier, drop = FALSE] +
+          plan$normals[person[at[here]], , drop = FALSE] %*% root
+      }
+    } else states[, carrier] <- plan$states[person[at], , drop = FALSE]
+    flat <- .ctVarDecompAtStates(fit, t(full[draw[at], , drop = FALSE]), t(states),
+      plan$tipreds[[g]], rows)
+    inner <- .ctVarDecompScatter(inner, at, .ctVarDecompFlatArrays(flat, layout,
+      names), length(draw))
+  }
+  if (!length(carrier)) inner <- outer
+  inner <- .ctVarDecompTrim(inner, plan$nlatent, augmented = TRUE)
+  outer <- .ctVarDecompTrim(outer, plan$nlatent, augmented = TRUE)
+  .ctVarDecompBatch(plan, if (plan$nlevels) list(inner, outer) else list(inner),
+    ndraws)
+}
+
+# Subject matrices at the estimate, for the carrier route's estimated persons.
+.ctVarDecompSubjectMatrices <- function(fit) {
+  point <- fit
+  point$estimate$rawposterior <- NULL
+  ctExtract(point, subjectMatrices = TRUE)
+}
 
 # A draw from each donor's stored posterior (`fit$randomeffects`), in the
 # filter's state units at the carrier positions: donors x carriers. The
 # posterior is stored in raw units, the state's departure over its
-# state-to-raw factor, which is multiplied back here.
+# state-to-raw factor, which is multiplied back here. Drawn through the
+# symmetric root (`.ctSymRoot()`), which a parameter with no random effect --
+# a zero row and column -- does not stop, as chol() would.
 .ctVarDecompCarrierNoise <- function(fit, donors, carrier) {
   entry <- fit$randomeffects[[1L]]
   if (is.null(entry)) stop("This fit carries no posterior of its subjects' ",
@@ -554,7 +990,7 @@
   covs <- .ctRandomEffectsCov(entry)
   out <- matrix(0, length(donors), length(carrier))
   for (index in seq_along(donors)) {
-    root <- .ctVarDecompCholesky(covs[donors[index], , ])
+    root <- .ctSymRoot(covs[donors[index], , ])
     out[index, position] <- scale * as.numeric(root %*%
       stats::rnorm(length(entry$param)))
   }
@@ -562,155 +998,34 @@
 }
 
 
-# Coordinate fits: a person is an effect vector -------------------------------
-#
-# `draws` sets of plausible values for every subject, one array per
-# `from_level` (1 to nlevels + 1, the last the population's), each
-# draws x subjects x parameters and all from the same joint draws.
-.ctVarDecompCoordinateDraws <- function(fit, objective, draws, nlevels, dims) {
-  module <- .ctJuliaModule(.ctBackendSpec(fit)$project)
-  raw <- as.numeric(fit$estimate$raw)
-  seed <- sample.int(.Machine$integer.max, 1L)
-  at <- .ctJuliaPut(matrix(raw, draws, length(raw), byrow = TRUE))
-  lapply(seq_len(nlevels + 1L), function(l) array(as.numeric(
-    .ctBackendJuliaValue(module$ctsem_laplace_subject_values(objective, at,
-      .ctJuliaNumericVector(raw), conditional = TRUE, seed = as.integer(seed),
-      from_level = as.integer(l), ti_effects = FALSE))), c(draws, dims)))
-}
-
-#
-# `intoverpop='laplace'` and `intoverpop='none'` keep the random effects as
-# coordinates rather than states, so there is no carrier to materialise at.
-# What the engine offers instead is `subject_values`: one raw parameter vector
-# per subject, which `ctsem_kalman` uses in place of the fitted ones. It is the
-# vector before TI-predictor effects, which the filter and
-# `ctBackendParMatrices()` each add from the subject's own predictors. A level's
-# own contribution to that vector is the difference between the values built
-# from level l outward and from level l+1 outward, and it is nonzero only at
-# that level's `re_index` -- checked below rather than assumed.
-#
-# So persons='estimated' uses those differences at plausible values -- each
-# unit's mode plus a draw from its effects' posterior given its data, drawn
-# jointly over the unit's levels with one seed for every level's call, so the
-# differences split one draw -- and persons='model' replaces each with a draw
-# from the level's own population covariance. The draw is per *unit*: every
-# subject in a study shares its study effect. Cost is one engine call per level
-# (per redraw for 'model'), whatever the number of persons, because a whole set
-# of subjects is materialised at once.
-.ctVarDecompCoordinatePersons <- function(fit, design, nlatent, source,
-  npersons, subjects, levels) {
-  spec <- .ctBackendSpec(fit)
-  module <- .ctJuliaModule(spec$project)
-  objective <- .ctJuliaObjective(fit, layer = TRUE)
-  raw <- .ctJuliaNumericVector(as.numeric(fit$estimate$raw))
-  nlevels <- length(levels)
-  structure <- .ctFitRandomEffectLevels(fit)
-
-  values <- lapply(seq_len(nlevels + 1L), function(l)
-    as.matrix(.ctBackendJuliaValue(module$ctsem_laplace_subject_values(
-      objective, raw, from_level = as.integer(l), ti_effects = FALSE))))
-
-  # Each level's contribution, and where it sits in the raw vector.
-  contribution <- lapply(seq_len(nlevels), function(l) values[[l]] - values[[l + 1L]])
-  position <- lapply(seq_len(nlevels), function(l) {
-    declared <- as.integer(spec$laplace$levels[[l]]$re_index)
-    found <- which(apply(abs(contribution[[l]]) > 1e-10, 2L, any))
-    # An effect that is estimated at exactly zero moves nothing, so `found` can
-    # be a subset of `declared`; the other way round would mean the level
-    # shifts a parameter it does not declare, and this route would be placing
-    # draws in the wrong coordinates.
-    if (length(setdiff(found, declared))) {
-      stop("The random effects of level '", levels[l], "' move raw parameters ",
-        paste(setdiff(found, declared), collapse = ', '), ' that the level ',
-        'does not declare, so a drawn effect cannot be placed. This is a bug ',
-        '-- please report the fit.', call. = FALSE)
-    }
-    declared
-  })
-
-  draws <- max(1L, ceiling(npersons / length(subjects)))
-  plausible <- if (identical(source, 'estimated'))
-    .ctVarDecompCoordinateDraws(fit, objective, draws, nlevels,
-      dim(values[[1L]]))
-  roots <- if (identical(source, 'model')) lapply(seq_len(nlevels), function(l)
-    .ctVarDecompCholesky(as.matrix(.ctBackendJuliaValue(
-      module$ctsem_laplace_popcov(objective, raw, as.integer(l)))))) else NULL
-
-  # The initial state comes from the model rather than from the filter's
-  # estimate of it; see .ctVarDecompModelT0(). Where T0MEANS itself varies by
-  # person there is no single value and each person's own is materialised,
-  # which costs an engine call per person rather than one in total.
-  t0 <- .ctVarDecompModelT0(fit, structure)
-  tipredrow <- .ctVarDecompTIpredRow(fit)
-
-  persons <- list()
-  for (drawi in seq_len(draws)) {
-    # The values at each step, innermost first. Built outward-in so that step s
-    # carries the effects of level s and everything outside it, which is what
-    # `randomEffects=` means and what the differencing below expects.
-    step <- vector('list', nlevels + 1L)
-    step[[nlevels + 1L]] <- values[[nlevels + 1L]]
-    for (l in rev(seq_len(nlevels))) {
-      shift <- if (identical(source, 'estimated'))
-        matrix(plausible[[l]][drawi, , ] - plausible[[l + 1L]][drawi, , ],
-          nrow(values[[l]])) else {
-        units <- structure[[l]]$units
-        perunit <- matrix(stats::rnorm(structure[[l]]$nunits * ncol(roots[[l]])),
-          structure[[l]]$nunits)
-        drawn <- perunit %*% t(roots[[l]])
-        out <- matrix(0, nrow(values[[l]]), ncol(values[[l]]))
-        out[, position[[l]]] <- drawn[units, , drop = FALSE]
-        out
-      }
-      step[[l]] <- step[[l + 1L]] + shift
-    }
-    matrices <- lapply(step, function(v) .ctVarDecompLevelMatrices(fit, v))
-    for (si in subjects) {
-      mats <- lapply(seq_along(matrices), function(s) {
-        m <- .ctVarDecompFromArrays(matrices[[s]], si, nlatent)
-        m$T0MEANS <- if (t0$varies) {
-          suppressMessages(ctBackendParMatrices(fit, raw = step[[s]][si, ],
-            tipreds = tipredrow(si), trim = FALSE))$T0MEANS[seq_len(nlatent), ,
-            drop = FALSE]
-        } else t0$population[seq_len(nlatent), , drop = FALSE]
-        m
-      })
-      persons[[length(persons) + 1L]] <- list(
-        rows = which(design$subject == si),
-        unit = vapply(structure, function(x) x$units[si], integer(1L)) +
-          (drawi - 1L) * vapply(structure, function(x) x$nunits, integer(1L)),
-        mats = mats)
-    }
-  }
-  persons
-}
-
-# Subject matrices at supplied per-subject parameter vectors.
-.ctVarDecompLevelMatrices <- function(fit, subjectvalues) {
-  spec <- .ctBackendSpec(fit)
-  module <- .ctJuliaModule(spec$project)
-  scores <- .ctBackendJuliaValue(module$ctsem_kalman(.ctJuliaObjective(fit, layer = TRUE),
-    .ctJuliaNumericVector(as.numeric(fit$estimate$raw)),
-    from_level = 1L, subject_matrices = TRUE,
-    fields = .ctJuliaVector('subject_loglik'),
-    subject_values = .ctJuliaPut(subjectvalues)))
-  flat <- array(scores$subject_matrices, dim = c(1L, dim(scores$subject_matrices)))
-  .ctBackendSubjectMatrices(fit, flat)
-}
-
-
 # Stan fits: the subject matrices the filter saved -----------------------------
-.ctVarDecompStanPersons <- function(fit, design, nlatent, subjects, levels) {
-  extracted <- .ctVarDecompSubjectMatrices(fit)
-  population <- .ctVarDecompFromArrays(
-    extracted[vapply(names(extracted), function(n) grepl('^pop_', n), logical(1L))],
-    1L, nlatent)
-  lapply(seq_along(subjects), function(index) {
-    si <- subjects[index]
-    inner <- .ctVarDecompFromArrays(extracted, si, nlatent)
-    list(rows = which(design$subject == si), unit = index,
-      mats = if (length(levels)) list(inner, population) else list(inner))
-  })
+#
+# At each draw, the subjects' matrices the filter saved at that draw's
+# parameters: estimated persons, attenuated by shrinkage. Stan allocates a
+# per-subject array for a matrix exactly when that matrix's specification
+# varies by subject (the `savesubjectmatrices && (sum(whenmat[..]) ||
+# statedep[..])` gate in R/ctModelWriter.R), so a matrix with no `subj_` entry
+# is the same for everyone and `pop_` is its value.
+.ctVarDecompStanMats <- function(plan, fit, raw) {
+  extracted <- suppressMessages(stan_constrainsamples(sm = fit$stanmodel,
+    standata = fit$standata, samples = raw, cores = 1L, savescores = FALSE,
+    savesubjectmatrices = TRUE, dokalman = TRUE, onlyfirstrow = FALSE, pcovn = 5))
+  ndraws <- dim(extracted$pop_DRIFT)[1L]
+  npeople <- length(plan$subjects)
+  inner <- outer <- list()
+  for (name in .ctVarDecompNeeded) {
+    population <- extracted[[paste0('pop_', name)]]
+    subject <- extracted[[paste0('subj_', name)]]
+    if (is.null(population)) next
+    outer[[name]] <- population[rep(seq_len(ndraws), npeople), , , drop = FALSE]
+    inner[[name]] <- if (is.null(subject)) outer[[name]] else
+      array(subject[, plan$subjects, , , drop = FALSE],
+        c(ndraws * npeople, dim(subject)[3:4]))
+  }
+  inner <- .ctVarDecompTrim(inner, plan$nlatent, augmented = FALSE)
+  outer <- .ctVarDecompTrim(outer, plan$nlatent, augmented = FALSE)
+  .ctVarDecompBatch(plan, if (plan$nlevels) list(inner, outer) else list(inner),
+    ndraws)
 }
 
 
@@ -791,16 +1106,18 @@
 # One body over whatever the person source produced, which is why the three
 # representations of individual differences do not each need their own.
 #
-# A person contributes the average over its own rows, so persons count equally
-# however many observations each has -- the estimand is over persons, and
-# weighting by row count would make a frequently measured subject a bigger
-# share of the population. The time term uses the population variance over that
+# Each trajectory's moments are collapsed over its rows, then averaged over the
+# persons at each draw. The time term uses the population variance over a
 # person's rows, because those rows are the design rather than a sample from
 # anything; a level's between term uses the sample variance over that level's
 # units, which is an estimate of a population variance.
-.ctVarDecompMomentComponents <- function(fit, design, persons, levels, nlatent,
-  latents, type, scale, gh, continuoustime, nmanifest, times = NULL,
-  sources = NULL) {
+#
+# Returns, for D draws, V variables and T times (one without `times`): arrays
+# D x V x T for `between`, `within.stochastic` and `within.measurement`,
+# D x V for `within.deterministic`, `levels` D x levels x V x T, and the
+# sources' D x V x T and D x V.
+.ctVarDecompMomentComponents <- function(batch, design, levels, nlatent, latents,
+  type, scale, gh, continuoustime, nmanifest, times = NULL, sources = NULL) {
 
   # `times` turns the window average into a decomposition at each point on a
   # common grid. Every person is then evaluated at the same times rather than
@@ -813,111 +1130,178 @@
   # one instant a person's mean path is a number, not a spread.
   bytime <- !is.null(times)
   ntime <- if (bytime) length(times) else 1L
-  collapse <- function(x) if (bytime) x else mean(x)
-
+  ndraws <- batch$ndraws
+  npeople <- length(batch$rows)
   nvar <- nmanifest + if (latents) nlatent else 0L
-  nsteps <- if (length(levels)) length(levels) + 1L else 1L
-  value <- lapply(seq_len(nsteps), function(...)
-    array(NA_real_, c(length(persons), nvar, ntime)))
-  persondet <- matrix(NA_real_, length(persons), nvar)
-  personstoch <- array(NA_real_, c(length(persons), nvar, ntime))
-  personmeas <- array(0, c(length(persons), nvar, ntime))
-  nparts <- if (length(sources)) length(sources) + 1L else 0L
-  personpart <- array(0, c(length(persons), nvar, ntime, max(nparts, 1L)))
-  personlevel <- array(0, c(length(persons), nvar, max(nparts, 1L)))
+  persontimes <- lapply(batch$rows, function(rows) if (bytime) times else
+    design$time[rows])
+  persontd <- if (!bytime && !is.null(design$tdpreds)) lapply(batch$rows,
+    function(rows) design$tdpreds[rows, , drop = FALSE])
+  response <- identical(scale, 'response') && any(type != 0L)
 
-  for (index in seq_along(persons)) {
-    person <- persons[[index]]
-    rows <- person$rows
-    at <- if (bytime) times else design$time[rows]
-    tdpreds <- if (!bytime && !is.null(design$tdpreds))
-      design$tdpreds[rows, , drop = FALSE] else NULL
-    for (s in seq_len(nsteps)) {
-      mats <- person$mats[[s]]
-      moments <- .ctVarDecompPersonMoments(mats, at, tdpreds, continuoustime,
-        sources = if (s == 1L) sources)
-      if (s == 1L && nparts) {
-        # Rows by variables, as a time series per variable or its mean.
-        perrow <- function(x) if (bytime) t(x) else colMeans(x)
-        for (g in seq_len(nparts)) {
-          personpart[index, seq_len(nmanifest), , g] <-
-            perrow(matrix(moments$partlinear[, , g], length(at)))
-          personlevel[index, seq_len(nmanifest), g] <- moments$levellinear[, g]
-          if (latents) {
-            personpart[index, nmanifest + seq_len(nlatent), , g] <-
-              perrow(matrix(moments$partlatent[, , g], length(at)))
-            personlevel[index, nmanifest + seq_len(nlatent), g] <-
-              moments$levellatent[, g]
-          }
-        }
-      }
-      for (vi in seq_len(nmanifest)) {
-        measured <- .ctVarDecompMeasurement(moments$linearmean[, vi],
-          moments$linearvar[, vi], type[vi], mats$MANIFESTcov[vi, vi], scale, gh)
-        value[[s]][index, vi, ] <- collapse(measured$expected)
-        # The within person terms belong to the person's own trajectory, so
-        # they come from the innermost step; the outer ones only supply the
-        # level means that the between terms are differences of.
-        if (s == 1L) {
-          if (!bytime) persondet[index, vi] <- .ctVarDecompPopVar(measured$expected)
-          personstoch[index, vi, ] <- collapse(measured$varmean)
-          personmeas[index, vi, ] <- collapse(measured$condvar)
-        }
-      }
-      if (latents) for (li in seq_len(nlatent)) {
-        vi <- nmanifest + li
-        value[[s]][index, vi, ] <- collapse(moments$latentmean[, li])
-        if (s == 1L) {
-          if (!bytime) persondet[index, vi] <- .ctVarDecompPopVar(moments$latentmean[, li])
-          personstoch[index, vi, ] <- collapse(moments$latentvar[, li])
-        }
-      }
-    }
+  value <- vector('list', length(batch$mats))
+  for (s in seq_along(batch$mats)) {
+    # The within person terms belong to the person's own trajectory, so they
+    # come from the innermost step; the outer ones only supply the level means
+    # that the between terms are differences of.
+    mats <- batch$mats[[s]]
+    moments <- .ctVarDecompMoments(mats, ndraws, persontimes, persontd,
+      continuoustime, covariance = s == 1L || response,
+      sources = if (s == 1L) sources)
+    stats <- .ctVarDecompRowStats(moments, mats, ndraws, lengths(persontimes),
+      type, scale, gh, nmanifest, nlatent, latents, bytime, within = s == 1L)
+    value[[s]] <- stats$value
+    if (s == 1L) inner <- stats
+  }
+
+  # Trajectories x ... to draws x ..., averaged over the persons.
+  perdraw <- function(x) {
+    d <- dim(x)
+    colMeans(aperm(array(x, c(ndraws, npeople, d[-1L])),
+      c(2L, 1L, seq_along(d)[-1L] + 1L)))
   }
 
   # Each level's own departure from the level outside it, varied over that
   # level's units so that a study with more subjects in it still counts once.
-  contribution <- if (!length(levels)) NULL else {
-    out <- array(0, c(length(levels), nvar, ntime),
-      dimnames = list(levels, NULL, NULL))
+  contribution <- NULL
+  if (length(levels)) {
+    contribution <- array(0, c(ndraws, length(levels), nvar, ntime),
+      dimnames = list(NULL, levels, NULL, NULL))
     for (l in seq_along(levels)) {
-      unit <- vapply(persons, function(p) as.numeric(p$unit[l]), numeric(1L))
-      for (ti in seq_len(ntime)) for (vi in seq_len(nvar)) {
-        d <- as.numeric(tapply(value[[l]][, vi, ti] - value[[l + 1L]][, vi, ti],
-          unit, mean))
-        out[l, vi, ti] <- if (length(d) > 1L) stats::var(d) else 0
-      }
+      difference <- matrix(aperm(array(value[[l]] - value[[l + 1L]],
+        c(ndraws, npeople, nvar, ntime)), c(2L, 1L, 3L, 4L)), npeople)
+      unit <- batch$unit[, l]
+      means <- rowsum(difference, unit) / as.vector(rowsum(rep(1, npeople), unit))
+      nunits <- nrow(means)
+      contribution[, l, , ] <- if (nunits > 1L)
+        colSums((means - rep(colMeans(means), each = nunits))^2) / (nunits - 1L)
+      else 0
     }
-    out
   }
-
-  flat <- function(x) if (bytime) x else as.numeric(x)
-  between <- if (is.null(contribution)) array(0, c(nvar, ntime)) else
-    apply(contribution, c(2L, 3L), sum)
   out <- list(
-    between = flat(matrix(between, nvar, ntime)),
-    levels = if (is.null(contribution)) NULL else
-      if (bytime) contribution else matrix(contribution, length(levels), nvar,
-        dimnames = list(levels, NULL)),
-    within.stochastic = flat(apply(personstoch, c(2L, 3L), mean)),
-    within.measurement = flat(apply(personmeas, c(2L, 3L), mean)),
-    npersons = length(persons), times = times)
+    between = if (is.null(contribution)) array(0, c(ndraws, nvar, ntime)) else
+      array(apply(contribution, c(1L, 3L, 4L), sum), c(ndraws, nvar, ntime)),
+    levels = contribution,
+    within.stochastic = perdraw(inner$stochastic),
+    within.measurement = perdraw(inner$measurement),
+    npersons = npeople)
   # The deterministic term is the variance over t and has no per-instant form.
-  if (!bytime) out$within.deterministic <- colMeans(persondet)
+  if (!bytime) out$within.deterministic <- perdraw(inner$deterministic)
   # Each source's share of the stochastic term, and over the window how much of
   # it is the record's mean: what does not move within a record.
-  if (nparts) {
-    partnames <- c("initial", names(sources))
-    out$sources <- lapply(seq_len(nparts), function(g)
-      flat(apply(personpart[, , , g, drop = FALSE], c(2L, 3L), mean)))
+  if (length(sources)) {
+    partnames <- c('initial', names(sources))
+    out$sources <- lapply(seq_along(partnames), function(g)
+      array(perdraw(inner$parts[, , , g, drop = FALSE]), c(ndraws, nvar, ntime)))
     names(out$sources) <- partnames
     if (!bytime) {
-      out$sourcelevels <- lapply(seq_len(nparts), function(g)
-        colMeans(matrix(personlevel[, , g], length(persons))))
+      out$sourcelevels <- lapply(seq_along(partnames), function(g)
+        matrix(perdraw(inner$partlevels[, , g, drop = FALSE]), ndraws, nvar))
       names(out$sourcelevels) <- partnames
     }
   }
   out
+}
+
+# Each trajectory's moments collapsed over its rows, through the measurement
+# model: trajectories x variables x times (one without a common grid), and with
+# `within` the within person terms too.
+.ctVarDecompRowStats <- function(moments, mats, ndraws, rowcounts, type, scale,
+  gh, nmanifest, nlatent, latents, bytime, within) {
+  nvar <- nmanifest + if (latents) nlatent else 0L
+  ntrajectory <- dim(mats$DRIFT)[1L]
+  count <- rep(rowcounts, each = ndraws)
+  ntime <- if (bytime) length(moments$rows) else 1L
+  manifest <- seq_len(nmanifest)
+  latent <- nmanifest + seq_len(nlatent)
+  value <- array(0, c(ntrajectory, nvar, ntime))
+  nparts <- if (within && !is.null(moments$levellatent))
+    dim(moments$levellatent)[3L] else 0L
+  if (within) {
+    stochastic <- measurement <- value
+    expected <- vector('list', length(moments$rows))
+    if (nparts) parts <- array(0, c(ntrajectory, nvar, ntime, nparts))
+  }
+  for (r in seq_along(moments$rows)) {
+    row <- moments$rows[[r]]
+    b <- row$index
+    t <- if (bytime) r else 1L
+    rowvalue <- varmean <- condvar <- matrix(0, length(b), nvar)
+    for (vi in manifest) {
+      measured <- .ctVarDecompMeasurement(row$linearmean[, vi],
+        if (!is.null(row$linearvar)) row$linearvar[, vi], type[vi],
+        mats$MANIFESTcov[b, vi, vi], scale, gh)
+      rowvalue[, vi] <- measured$expected
+      if (within) {
+        varmean[, vi] <- measured$varmean
+        condvar[, vi] <- measured$condvar
+      }
+    }
+    if (latents) {
+      rowvalue[, latent] <- row$latentmean
+      if (within) varmean[, latent] <- row$latentvar
+    }
+    value[b, , t] <- value[b, , t] + rowvalue
+    if (within) {
+      stochastic[b, , t] <- stochastic[b, , t] + varmean
+      measurement[b, , t] <- measurement[b, , t] + condvar
+      expected[[r]] <- rowvalue
+      if (nparts) {
+        parts[b, manifest, t, ] <- parts[b, manifest, t, ] + as.vector(row$partlinear)
+        if (latents) parts[b, latent, t, ] <- parts[b, latent, t, ] +
+          as.vector(row$partlatent)
+      }
+    }
+  }
+  out <- list()
+  if (!bytime) {
+    value[, , 1L] <- value[, , 1L] / count
+    if (within) {
+      stochastic[, , 1L] <- stochastic[, , 1L] / count
+      measurement[, , 1L] <- measurement[, , 1L] / count
+      if (nparts) for (g in seq_len(nparts)) parts[, , 1L, g] <- parts[, , 1L, g] / count
+      # The variance of the expected value over the person's own rows.
+      mean <- matrix(value[, , 1L], ntrajectory)
+      deterministic <- matrix(0, ntrajectory, nvar)
+      for (r in seq_along(moments$rows)) {
+        b <- moments$rows[[r]]$index
+        deterministic[b, ] <- deterministic[b, , drop = FALSE] +
+          (expected[[r]] - mean[b, , drop = FALSE])^2
+      }
+      out$deterministic <- deterministic / count
+    }
+  }
+  out$value <- value
+  if (within) {
+    out$stochastic <- stochastic
+    out$measurement <- measurement
+    if (nparts) {
+      out$parts <- parts
+      out$partlevels <- array(0, c(ntrajectory, nvar, nparts))
+      out$partlevels[, manifest, ] <- moments$levellinear
+      if (latents) out$partlevels[, latent, ] <- moments$levellatent
+    }
+  }
+  out
+}
+
+# Chunks' components, bound along their draws.
+.ctVarDecompBindDraws <- function(chunks) {
+  if (length(chunks) == 1L) return(chunks[[1L]])
+  bind <- function(parts) {
+    first <- parts[[1L]]
+    if (is.null(first)) return(NULL)
+    if (is.list(first)) {
+      out <- lapply(seq_along(first), function(i) bind(lapply(parts, `[[`, i)))
+      names(out) <- names(first)
+      return(out)
+    }
+    if (is.null(dim(first))) return(first)
+    stacked <- do.call(rbind, lapply(parts, function(x) matrix(x, dim(x)[1L])))
+    array(stacked, c(nrow(stacked), dim(first)[-1L]),
+      dimnames = if (!is.null(dimnames(first))) c(list(NULL), dimnames(first)[-1L]))
+  }
+  bind(chunks)
 }
 
 
@@ -927,7 +1311,8 @@
 # run: the transition is a different transition at every point the trajectory
 # visits. The engine draws the trajectory instead, through the same state pass
 # `ctGenerate(intoverstates = FALSE)` uses, and the decomposition is taken over
-# the draws.
+# the draws. It is computed at the estimate only: at every parameter draw it
+# would be a simulation of its own.
 #
 # The one thing that needs care is that each person must be given *several*
 # paths, not one. With a single path per person the average over that person's
@@ -1042,14 +1427,14 @@
       for (vi in seq_len(nvar)) {
         latentonly <- vi > nmanifest
         g <- if (latentonly) dynamic[[vi - nmanifest]] else {
-          linear <- matrix(mats$MANIFESTMEANS[vi, 1L], npaths, length(rows))
+          linear <- matrix(mats$MANIFESTMEANS[1L, vi, 1L], npaths, length(rows))
           for (li in seq_len(nlatent)) {
-            linear <- linear + mats$LAMBDA[vi, li] * dynamic[[li]]
+            linear <- linear + mats$LAMBDA[1L, vi, li] * dynamic[[li]]
           }
           linear
         }
-        conditional <- if (latentonly) 0 else
-          .ctVarDecompSimulatedCondVar(g, type[vi], mats$MANIFESTcov[vi, vi], scale)
+        conditional <- if (latentonly) 0 else .ctVarDecompSimulatedCondVar(g,
+          type[vi], mats$MANIFESTcov[1L, vi, vi], scale)
         if (!latentonly && !identical(scale, 'latent') && type[vi] != 0L) {
           g <- stats::plogis(g)
         }
@@ -1066,14 +1451,35 @@
     }
   }
 
+  # As the moment route returns them, for the one draw that is the estimate.
+  single <- function(x) array(x, c(1L, nvar, 1L))
   list(
-    between = if (npeople > 1L)
+    between = single(if (npeople > 1L)
       pmax(apply(personmean, 2L, stats::var) - colMeans(betweencorrection), 0)
-      else rep(0, nvar),
-    within.deterministic = pmax(colMeans(persondet) - colMeans(detcorrection), 0),
-    within.stochastic = colMeans(personstoch),
-    within.measurement = colMeans(personmeas),
+      else rep(0, nvar)),
+    within.deterministic = matrix(pmax(colMeans(persondet) -
+      colMeans(detcorrection), 0), 1L),
+    within.stochastic = single(colMeans(personstoch)),
+    within.measurement = single(colMeans(personmeas)),
     npersons = npeople)
+}
+
+# One person's matrices, materialised at a whole filter state, as arrays with
+# a single leading entry. julia only. Messages suppressed, and said once by the
+# print method instead: called once per person, each call otherwise announces
+# which cells are state dependent and where they were evaluated.
+.ctVarDecompPersonAt <- function(fit, tipreds, state, nlatent) {
+  # filterstate=, not state=: the carrier entries are this person's random
+  # effects and are the whole point of materialising here.
+  drawn <- suppressMessages(ctBackendParMatrices(fit, tipreds = tipreds,
+    filterstate = state, trim = FALSE))
+  mats <- list()
+  for (name in .ctVarDecompNeeded) {
+    if (is.null(drawn[[name]])) next
+    value <- as.matrix(drawn[[name]])
+    mats[[name]] <- array(value, c(1L, dim(value)))
+  }
+  .ctVarDecompTrim(mats, nlatent, augmented = TRUE)
 }
 
 # Does the engine's state generation actually draw the carrier states?
@@ -1115,6 +1521,68 @@
 }
 
 
+# The returned table ----------------------------------------------------------
+#
+# Every column at every draw, draws x rows, from the components: the parts,
+# then what is built from them, each built at its own draw.
+.ctVarDecompColumns <- function(components, parts) {
+  flat <- function(x) matrix(x, dim(x)[1L])
+  columns <- lapply(stats::setNames(parts, parts), function(part)
+    flat(components[[part]]))
+  # One column per random effect level, where there is more than one: with a
+  # single level it would repeat `between` under another name.
+  levels <- components$levels
+  if (!is.null(levels) && dim(levels)[2L] > 1L) {
+    for (l in seq_len(dim(levels)[2L])) {
+      columns[[paste0('between.', dimnames(levels)[[2L]][l])]] <-
+        flat(levels[, l, , , drop = FALSE])
+    }
+  }
+  # The stochastic term by source, and the part of each that is the record's
+  # mean, after the parts they split.
+  for (g in names(components$sources)) {
+    columns[[paste0('within.stochastic.', g)]] <- flat(components$sources[[g]])
+  }
+  for (g in names(components$sourcelevels)) {
+    columns[[paste0('level.', g)]] <- flat(components$sourcelevels[[g]])
+  }
+  columns$within <- Reduce(`+`, columns[setdiff(parts, 'between')])
+  columns$total <- columns$between + columns$within
+  # Each part followed by the parts it splits: the levels after `between`, the
+  # sources and their record levels after `within.stochastic`.
+  levelcols <- grep('^between\\.', names(columns), value = TRUE)
+  variances <- c('between', levelcols,
+    setdiff(parts, c('between', 'within.measurement')),
+    grep('^(within\\.stochastic\\.|level\\.)', names(columns), value = TRUE),
+    'within.measurement', 'within', 'total')
+  # A variable with no variance at all has no proportions, and NA says that
+  # where 0/0 would print NaN. A constant auxiliary state is the case: a
+  # higher order model's carried coordinate contributes nothing to anything.
+  share <- function(part, whole) ifelse(whole > 0, part / whole, NA_real_)
+  for (part in setdiff(variances, 'total')) {
+    columns[[paste0('prop.', part)]] <- share(columns[[part]], columns$total)
+  }
+  # Intraclass correlations. `icc` is the between person share of the total,
+  # and `icc.process` the same with measurement error left out of the total. A
+  # level's is the share of that level and every level above it: what two
+  # observations sharing a unit of that level and no inner one have in common
+  # (Snijders & Bosker's definition), so the innermost level's is `icc`.
+  columns$icc <- share(columns$between, columns$total)
+  columns$icc.process <- share(columns$between,
+    columns$total - columns$within.measurement)
+  if ('between.process' %in% levelcols) stop("A random effect level is called ",
+    "'process', which would name its intraclass correlation as icc.process does. ",
+    'Rename that id column.', call. = FALSE)
+  for (l in seq_along(levelcols)) {
+    columns[[sub('^between', 'icc', levelcols[l])]] <- share(
+      Reduce(`+`, columns[levelcols[l:length(levelcols)]]), columns$total)
+  }
+  order <- c(variances, paste0('prop.', setdiff(variances, 'total')), 'icc',
+    'icc.process', sub('^between', 'icc', levelcols))
+  columns[order]
+}
+
+
 #' Decompose model implied variance into between person, process and measurement
 #'
 #' Splits the variance each indicator of a fitted model implies into a between
@@ -1122,7 +1590,8 @@
 #' person part from measurement error. The process part is further split into
 #' the contribution of the system noise and that of the mean path changing
 #' over time. Each part is also given as a proportion of the total, along with
-#' intraclass correlations.
+#' intraclass correlations. Each value is computed at a set of the fit's
+#' parameter draws, giving intervals.
 #'
 #' @param fit fit object as generated by \code{\link{ctFit}}, from either
 #'   backend.
@@ -1156,9 +1625,18 @@
 #'   has no \code{within.deterministic} column, since that term is the variance
 #'   of the mean path over time. Not available with \code{method='simulation'}
 #'   or with time dependent predictors.
-#' @param npersons Number of persons to draw when \code{persons='model'}.
-#'   With \code{persons='estimated'} on a julia fit, each subject gets enough
-#'   draws to make at least this many persons in total.
+#' @param npersons Number of persons for the between person variance, at each
+#'   parameter draw. Each subject's observation times are used
+#'   \code{round(npersons / N)} times for N subjects, and at least once. With
+#'   \code{persons='model'} each use gets its own draw of random effects from
+#'   the population distribution, and with \code{persons='estimated'} on a
+#'   julia fit its own draw from the subject's posterior.
+#' @param nsamples Number of parameter draws to compute the decomposition at.
+#'   Each value is the median of that quantity over the draws, and its 2.5\%
+#'   and 97.5\% quantiles give an interval. 0 computes the decomposition once
+#'   at the estimate, without intervals. \code{method='simulation'}, and
+#'   \code{persons='estimated'} on an \code{intoverpop='augmented'} fit, give
+#'   values at the estimate only.
 #' @param latents If TRUE, also decompose the latent processes, which have no
 #'   measurement component.
 #' @param quadpoints Gauss-Hermite nodes used when \code{scale='response'}.
@@ -1204,6 +1682,14 @@
 #'   \code{MANIFESTMEANS}, \code{MANIFESTVAR}) are not supported by either
 #'   method.
 #'
+#'   \strong{Intervals.} The decomposition is computed at each of
+#'   \code{nsamples} draws of the fit's parameters: draws from the normal
+#'   approximation for an optimised fit, and posterior draws for a sampled
+#'   one. Each value in the returned table is the median of that quantity over
+#'   the draws. Each median is taken separately, so the medians of the parts
+#'   need not add up to the median of the total, though at each draw they add
+#'   up exactly. The same persons are used at every draw.
+#'
 #'   \strong{Random effect levels.} A model with a grouping level above the
 #'   subject (\code{id = c('subject','study')} in \code{\link{ctModel}}),
 #'   fitted with \code{intoverpop='laplace'} or sampled, gets one
@@ -1246,9 +1732,13 @@
 #'   \code{level.<source>} columns where they apply, a \code{prop.} column for
 #'   each of these giving it as a proportion of \code{total}, and the
 #'   intraclass correlations \code{icc}, \code{icc.process} and
-#'   \code{icc.<level>}. The population the between column refers to, the
-#'   scale, and the number of persons are recorded as attributes and shown by
-#'   \code{print}.
+#'   \code{icc.<level>}. With \code{nsamples} above 0 each value is a median
+#'   over parameter draws, \code{attr(x, 'intervals')} is a data frame with
+#'   the 2.5\%, 50\% and 97.5\% quantiles of every column for every variable,
+#'   and \code{attr(x, 'draws')} holds the values at each draw, an array of
+#'   draws by rows by columns. The population the between column refers to,
+#'   the scale, and the number of persons and draws are recorded as attributes
+#'   and shown by \code{print}.
 #'
 #' @seealso \code{\link{ctSummaryMatrices}} for the matrices this is built
 #'   from, and \code{\link{ctStateDependencePlot}} for a model whose dynamics
@@ -1261,8 +1751,8 @@
 #' @export
 ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulation'),
   persons = c('auto', 'model', 'estimated'), scale = c('latent', 'response'),
-  times = NULL, npersons = 200L, npaths = 20L, latents = TRUE, quadpoints = 21L,
-  subjects = 'all', realid = TRUE, sources = NULL) {
+  times = NULL, npersons = 200L, npaths = 20L, nsamples = 200L, latents = TRUE,
+  quadpoints = 21L, subjects = 'all', realid = TRUE, sources = NULL) {
 
   # `ctFit`, which both backends' fits carry, rather than naming the two
   # classes: this asks whether the argument is a fit at all, not which backend
@@ -1357,6 +1847,19 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
   nmanifest <- length(manifestNames)
   levels <- vapply(.ctFitRandomEffectLevels(fit), function(x) x$name,
     character(1L))
+
+  # The parameter draws. Two routes compute at the estimate only, and say so.
+  carrierestimated <- .ctFitIsJulia(fit) && !coordinates &&
+    identical(persons, 'estimated') &&
+    length(.ctVarDecompCarrier(fit, nlatent)) > 0L
+  draws <- .ctVarDecompDraws(fit, nsamples, pointonly =
+    if (identical(method, 'simulation')) paste0("Values are at the estimate, ",
+      "without intervals: method='simulation' would need a simulation at every ",
+      'parameter draw.')
+    else if (carrierestimated) paste0("Values are at the estimate, without ",
+      "intervals: persons='estimated' on an augmented fit draws each subject's ",
+      'effects from a posterior the fit stored at its estimate.'))
+
   components <- if (identical(method, 'simulation')) {
     if (identical(persons, 'estimated')) {
       stop("method='simulation' draws its persons from the population ",
@@ -1368,21 +1871,23 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
     .ctVarDecompSimulation(fit, design, nlatent, latents, type, scale,
       as.integer(npersons), as.integer(npaths), nmanifest, wanted)
   } else {
-    people <- if (!.ctFitIsJulia(fit)) {
-      .ctVarDecompStanPersons(fit, design, nlatent, wanted, levels)
-    } else if (coordinates) {
-      .ctVarDecompCoordinatePersons(fit, design, nlatent, persons,
-        as.integer(npersons), wanted, levels)
-    } else {
-      .ctVarDecompCarrierPersons(fit, design, nlatent, persons,
-        as.integer(npersons), wanted, levels)
-    }
-    people <- people[vapply(people, function(p) length(p$rows) > 0L, logical(1L))]
-    if (!length(people)) stop('No usable persons.', call. = FALSE)
+    plan <- .ctVarDecompPlan(fit, design, nlatent, persons, as.integer(npersons),
+      wanted, levels, draws$rows)
     gh <- if (identical(scale, 'response')) .ctVarDecompGaussHermite(quadpoints) else NULL
-    .ctVarDecompMomentComponents(fit, design, people, levels, nlatent, latents,
-      type, scale, gh, continuoustime, nmanifest, times = times,
-      sources = .ctVarDecompSources(fit, sources, nlatent))
+    # Draws in chunks small enough that every person's matrices at every draw
+    # of a chunk stay a few tens of megabytes.
+    width <- max(nlatent, nmanifest, length(plan$carrier) + nlatent)
+    per <- max(1L, floor(2e6 / (length(plan$rows) * width^2 *
+      (length(levels) + 1L))))
+    ndraws <- nrow(draws$raw)
+    chunks <- split(seq_len(ndraws), ceiling(seq_len(ndraws) / per))
+    sources <- .ctVarDecompSources(fit, sources, nlatent)
+    .ctVarDecompBindDraws(lapply(chunks, function(index) {
+      batch <- .ctVarDecompMaterialise(plan, fit, draws$raw[index, , drop = FALSE],
+        draws$rows[index])
+      .ctVarDecompMomentComponents(batch, design, levels, nlatent, latents, type,
+        scale, gh, continuoustime, nmanifest, times = times, sources = sources)
+    }))
   }
 
   variables <- c(manifestNames, if (latents) latentNames)
@@ -1391,82 +1896,64 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
   parts <- if (bytime) c('between', 'within.stochastic', 'within.measurement')
     else c('between', 'within.deterministic', 'within.stochastic',
       'within.measurement')
+  columns <- .ctVarDecompColumns(components, parts)
+
+  # A draw the model cannot be evaluated at -- an explosive drift far in a
+  # normal approximation's tail, say -- is left out of the draws, and said.
+  if (isTRUE(draws$intervals)) {
+    usable <- apply(is.finite(columns$total), 1L, all)
+    if (!any(usable)) stop('No parameter draw gave a decomposition. Use ',
+      'nsamples = 0 for the estimate alone.', call. = FALSE)
+    if (!all(usable)) {
+      message(sum(!usable), ' of ', length(usable), ' parameter draws gave no ',
+        'decomposition and were left out.')
+      columns <- lapply(columns, function(x) x[usable, , drop = FALSE])
+    }
+  }
 
   out <- if (!bytime) {
     data.frame(variable = variables, type = kinds, stringsAsFactors = FALSE)
   } else {
     # One row per (time, variable), times varying slowest so that each block of
-    # the printed frame is one instant.
+    # the printed frame is one instant. The components run variables fastest
+    # within a time, so column major order is already the row order --
+    # transposing it interleaves the two and produces a table where every row
+    # sums correctly and no row is about the variable it names.
     data.frame(time = rep(times, each = length(variables)),
       variable = rep(variables, length(times)),
       type = rep(kinds, length(times)), stringsAsFactors = FALSE)
   }
-  # `components[[part]]` is variables by times, and the frame above runs
-  # variables fastest within a time, so column major order is already the row
-  # order -- transposing it interleaves the two and produces a table where
-  # every row sums correctly and no row is about the variable it names.
-  for (part in parts) {
-    out[[part]] <- if (bytime) as.numeric(components[[part]]) else
-      components[[part]]
-  }
-  # One column per random effect level, where there is more than one: with a
-  # single level it would repeat `between` under another name.
-  if (!is.null(components$levels) && dim(components$levels)[1L] > 1L) {
-    for (l in dimnames(components$levels)[[1L]]) {
-      out[[paste0('between.', l)]] <- if (bytime)
-        as.numeric(components$levels[l, , , drop = TRUE]) else
-        components$levels[l, ]
-    }
-  }
-  # The stochastic term by source, and the part of each that is the record's
-  # mean, after the parts they split.
-  if (!is.null(components$sources)) {
-    for (g in names(components$sources)) {
-      out[[paste0('within.stochastic.', g)]] <- as.numeric(components$sources[[g]])
-    }
-    if (!is.null(components$sourcelevels)) for (g in names(components$sourcelevels)) {
-      out[[paste0('level.', g)]] <- as.numeric(components$sourcelevels[[g]])
-    }
-  }
-  out$within <- rowSums(as.data.frame(out[setdiff(parts, 'between')]))
-  out$total <- out$between + out$within
-  # Each part followed by the parts it splits: the levels after `between`, the
-  # sources and their record levels after `within.stochastic`.
-  levelcols <- grep('^between\\.', names(out), value = TRUE)
-  variances <- c('between', levelcols,
-    setdiff(parts, c('between', 'within.measurement')),
-    grep('^(within\\.stochastic\\.|level\\.)', names(out), value = TRUE),
-    'within.measurement', 'within', 'total')
-  out <- out[c(intersect(c('time', 'variable', 'type'), names(out)), variances)]
-  # A variable with no variance at all has no proportions, and NA says that
-  # where 0/0 would print NaN. A constant auxiliary state is the case: a
-  # higher order model's carried coordinate contributes nothing to anything.
-  share <- function(part, whole) ifelse(whole > 0, part / whole, NA_real_)
-  for (part in setdiff(variances, 'total')) {
-    out[[paste0('prop.', part)]] <- share(out[[part]], out$total)
-  }
-  # Intraclass correlations. `icc` is the between person share of the total,
-  # and `icc.process` the same with measurement error left out of the total. A
-  # level's is the share of that level and every level above it: what two
-  # observations sharing a unit of that level and no inner one have in common
-  # (Snijders & Bosker's definition), so the innermost level's is `icc`.
-  out$icc <- share(out$between, out$total)
-  out$icc.process <- share(out$between, out$total - out$within.measurement)
-  if ('between.process' %in% levelcols) stop("A random effect level is called ",
-    "'process', which would name its intraclass correlation as icc.process does. ",
-    'Rename that id column.', call. = FALSE)
-  for (l in seq_along(levelcols)) {
-    out[[sub('^between', 'icc', levelcols[l])]] <- share(
-      rowSums(as.data.frame(out[levelcols[l:length(levelcols)]])), out$total)
+  keys <- out
+  for (name in names(columns)) {
+    value <- columns[[name]]
+    out[[name]] <- if (nrow(value) == 1L) as.numeric(value) else
+      apply(value, 2L, stats::median)
   }
   rownames(out) <- NULL
 
+  if (isTRUE(draws$intervals)) {
+    probs <- c(0.025, 0.5, 0.975)
+    intervals <- do.call(rbind, lapply(names(columns), function(name) {
+      quantiles <- matrix(t(apply(columns[[name]], 2L, stats::quantile,
+        probs = probs, na.rm = TRUE, names = FALSE)), ncol = length(probs))
+      colnames(quantiles) <- paste0(100 * probs, '%')
+      cbind(keys, quantity = name, as.data.frame(quantiles, check.names = FALSE),
+        stringsAsFactors = FALSE)
+    }))
+    rownames(intervals) <- NULL
+    attr(out, 'intervals') <- intervals
+    attr(out, 'draws') <- array(unlist(columns, use.names = FALSE),
+      c(nrow(columns$total), nrow(out), length(columns)),
+      dimnames = list(NULL, NULL, names(columns)))
+  }
+  attr(out, 'nsamples') <- if (isTRUE(draws$intervals)) nrow(columns$total) else 0L
   attr(out, 'method') <- method
   attr(out, 'persons') <- persons
   # The julia routes give estimated persons at plausible values; stan's are its
   # modes.
   attr(out, 'plausible') <- identical(persons, 'estimated') && .ctFitIsJulia(fit)
   attr(out, 'scale') <- scale
+  attr(out, 'nongaussian') <- any(type != 0L)
   attr(out, 'npersons') <- components$npersons
   attr(out, 'npaths') <- if (identical(method, 'simulation')) as.integer(npaths)
   attr(out, 'continuoustime') <- continuoustime
@@ -1489,10 +1976,11 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
 print.ctVarianceDecomposition <- function(x, digits = 3L, ...) {
   bytime <- isTRUE(attr(x, 'bytime'))
   frame <- as.data.frame(x)
-  # The named columns, rounded, beside the time and variable each row is about.
-  show <- function(columns, labels = columns) {
-    keys <- intersect(c('time', 'variable'), names(frame))
-    table <- frame[c(keys, columns)]
+  # The named columns of `table`, rounded, beside the time and variable each
+  # row is about.
+  show <- function(table, columns, labels = columns) {
+    keys <- intersect(c('time', 'variable'), names(table))
+    table <- table[c(keys, columns)]
     numeric <- vapply(table, is.numeric, logical(1L))
     table[numeric] <- lapply(table[numeric], round, digits)
     names(table) <- c(keys, labels)
@@ -1503,33 +1991,51 @@ print.ctVarianceDecomposition <- function(x, digits = 3L, ...) {
   levelcols <- grep('^between\\.', names(frame), value = TRUE)
   sourcecols <- grep('^within\\.stochastic\\.', names(frame), value = TRUE)
   recordcols <- grep('^level\\.', names(frame), value = TRUE)
-  iccs <- c('icc', 'icc.process', sub('^between', 'icc', levelcols))
+  # icc.process is icc where there is no measurement error at all.
+  measured <- any(frame$within.measurement > 0, na.rm = TRUE)
+  iccs <- c('icc', if (measured) 'icc.process', sub('^between', 'icc', levelcols))
+  intervals <- attr(x, 'intervals')
+  nsamples <- attr(x, 'nsamples')
 
   cat('Model implied variance decomposition\n\n')
-  show(c(if (!bytime) 'type', parts, 'total'))
+  show(frame, c(if (!bytime) 'type', parts, 'total'))
   cat('\nProportions of the total\n')
-  show(paste0('prop.', c(parts, 'within')), c(parts, 'within'))
+  show(frame, paste0('prop.', c(parts, 'within')), c(parts, 'within'))
   if (length(levelcols)) {
     cat('\nBetween person variance by level, and as a proportion of the total\n')
-    show(c(levelcols, paste0('prop.', levelcols)))
+    show(frame, c(levelcols, paste0('prop.', levelcols)))
   }
   if (length(sourcecols)) {
     cat('\nStochastic within person variance by source, as proportions of the total\n')
-    show(paste0('prop.', sourcecols), sub('^within\\.stochastic\\.', '', sourcecols))
+    show(frame, paste0('prop.', sourcecols), sub('^within\\.stochastic\\.', '', sourcecols))
   }
   if (length(recordcols)) {
     cat("\nOf which in a person's average over their record\n")
-    show(paste0('prop.', recordcols), sub('^level\\.', '', recordcols))
+    show(frame, paste0('prop.', recordcols), sub('^level\\.', '', recordcols))
   }
-  cat('\nIntraclass correlations\n')
-  show(iccs)
+  if (is.null(intervals)) {
+    cat('\nIntraclass correlations\n')
+    show(frame, c(if (!bytime) 'type', iccs))
+  } else {
+    cat('\nIntraclass correlations, medians and 95% intervals\n')
+    for (icc in iccs) {
+      cat('\n', icc, '\n', sep = '')
+      show(intervals[intervals$quantity == icc, , drop = FALSE],
+        c(if (!bytime) 'type', '2.5%', '50%', '97.5%'))
+    }
+  }
 
-  cat('\nicc is the proportion of the total between persons, and icc.process ',
-    'the same proportion with measurement error left out of the total.\n',
-    sep = '')
-  if (length(levelcols)) cat(paste(iccs[-(1:2)], collapse = ', '), ' include ',
-    'the between person variance of their own level and every level above it.\n',
-    sep = '')
+  cat('\nicc is the proportion of the total between persons',
+    if (measured) ', and icc.process the same proportion with measurement error left out of the total',
+    '.\n', sep = '')
+  if (length(levelcols)) cat(paste(iccs[-seq_len(1L + measured)], collapse = ', '),
+    ' include the between person variance of their own level and every level ',
+    'above it.\n', sep = '')
+  if (isTRUE(nsamples > 0L)) {
+    cat('Values are medians over ', nsamples, ' parameter draws, each ',
+      'quantity taken separately, so the parts need not add up to the total ',
+      'exactly.\n', sep = '')
+  } else cat('Values are at the estimate, without intervals.\n')
   if (bytime) {
     cat('At one time point there is no deterministic within person term: it ',
       'is the variance of the mean path over time, so it exists only in the ',
@@ -1542,7 +2048,7 @@ print.ctVarianceDecomposition <- function(x, digits = 3L, ...) {
     if (identical(attr(x, 'method'), 'simulation'))
       paste0(', ', attr(x, 'npaths'), ' paths per person') else '', '.\n', sep = '')
   cat('Between person variance refers to ', .ctVarDecompPersonsLabel(x),
-    '.\n', sep = '')
+    if (isTRUE(nsamples > 0L)) ' at each draw', '.\n', sep = '')
   cat('Within person variance is over each person\'s own observation times; ',
     'the deterministic part is the mean path moving.\n', sep = '')
   if (identical(attr(x, 'method'), 'simulation')) {
@@ -1551,9 +2057,11 @@ print.ctVarianceDecomposition <- function(x, digits = 3L, ...) {
       'measurement model does not depend on the state, which was checked.\n',
       sep = '')
   }
-  if (identical(attr(x, 'scale'), 'latent')) {
-    cat("Non-Gaussian indicators are decomposed on the latent response scale ",
-      '(measurement variance pi^2/3).\n', sep = '')
-  } else cat('Non-Gaussian indicators are decomposed on the response scale.\n')
+  if (isTRUE(attr(x, 'nongaussian'))) {
+    if (identical(attr(x, 'scale'), 'latent')) {
+      cat("Non-Gaussian indicators are decomposed on the latent response scale ",
+        '(measurement variance pi^2/3).\n', sep = '')
+    } else cat('Non-Gaussian indicators are decomposed on the response scale.\n')
+  }
   invisible(x)
 }
