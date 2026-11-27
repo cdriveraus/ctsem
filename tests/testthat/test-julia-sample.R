@@ -1017,8 +1017,11 @@ test_that("a marginal target's default sampler is chosen by the fit's check", {
   expect_identical(name(NULL, joint = FALSE, named = 3L, nutsonly = TRUE), "nuts")
   expect_identical(name("nuts", joint = FALSE, named = 3L), "nuts")
   expect_identical(name("smc", joint = FALSE), "smc")
-  # What counts as asking for NUTS: its chain count, warmup or starting step,
-  # or a setting of its warmup metric; not the draws, which SMC reads too.
+  # What counts as asking for NUTS: its warmup or starting step, or a setting
+  # of its warmup metric; not the draws, which SMC reads too, nor the chain
+  # count, which the map and SAEM's kernel read too and which 3.x scripts
+  # set (`ctFit(chains = 4)` gave the book's N = 1 model NUTS, which did not
+  # converge there, where its check had chosen SMC).
   nutsctl <- ctsem:::.ctBackendNutsControls
   asked <- ctsem:::.ctBackendNutsAsked
   expect_identical(nutsctl(list()), character(0))
@@ -1026,8 +1029,14 @@ test_that("a marginal target's default sampler is chosen by the fit's check", {
   expect_identical(nutsctl(list(stepsize = 0.1, warmup = 50, chains = NULL)),
     c("warmup", "stepsize"))
   expect_false(asked(list(draws = 400, minESS = 100, particles = 40)))
-  expect_true(asked(list(chains = 2)))
+  expect_false(asked(list(chains = 2)))
+  expect_true(asked(list(chains = 2, warmup = 100)))
   expect_true(asked(list(adapt_metric = TRUE)))
+  # A chain count where SMC runs is said to be unused; elsewhere it applies.
+  expect_warning(ctsem:::.ctSampleChainsUnused("smc"),
+    "chains is not used by tempered SMC", fixed = TRUE)
+  expect_no_warning(ctsem:::.ctSampleChainsUnused("nuts"))
+  expect_no_warning(ctsem:::.ctSampleChainsUnused("map"))
   # ctFit(optimize = FALSE) folds its own resolved chains into every control,
   # and says which the caller set instead.
   expect_false(asked(list(chains = 4, warmup = 200), nutsgiven = character(0)))
@@ -1081,10 +1090,11 @@ test_that("tempered SMC samples the marginal posterior through the same assembly
   expect_error(ctFitUncertainty(fit, method = "sample", intoverpop = "laplace",
     control = list(sampler = "smc", settleTol = 0.1)),
     "sampler = 'nuts'", fixed = TRUE)
-  # As are NUTS's own counts beside it, which SMC would otherwise ignore.
+  # As are NUTS's own warmup and step beside it, which SMC would otherwise
+  # ignore. A chain count beside it is only said to be unused (above).
   expect_error(ctFitUncertainty(fit, method = "sample", intoverpop = "laplace",
-    control = list(sampler = "smc", chains = 2)),
-    "control$chains is a setting of NUTS", fixed = TRUE)
+    control = list(sampler = "smc", warmup = 50)),
+    "control$warmup is a setting of NUTS", fixed = TRUE)
 })
 
 test_that("a sampled fit keeps the exact Hessian it was built from", {
@@ -1614,16 +1624,23 @@ test_that("the summary's opening line says whether the chains agreed", {
 
   good <- note(healthy)
   expect_match(good, "2 chains x 400 draws")
-  expect_match(good, "Worst R-hat")
+  expect_match(good, "The chains converged: worst R-hat", fixed = TRUE)
   expect_false(grepl("have not converged", good, fixed = TRUE))
 
   bad <- note(broken)
   expect_match(bad, "have not converged", fixed = TRUE)
   expect_match(bad, "(a)", fixed = TRUE)
 
-  # A divergence alone is enough, whatever R-hat says.
-  expect_match(note(healthy, divergent = 3L), "3 divergent transitions", fixed = TRUE)
-  expect_match(note(healthy, divergent = 3L), "have not converged", fixed = TRUE)
+  # Divergences are given as a share of the transitions, beside a verdict that
+  # is R-hat's: one in 5,764 with every R-hat at 1.005 read as "not converged"
+  # on the book's N = 1 model.
+  diverged <- note(healthy, divergent = 3L)
+  expect_match(diverged, "3 of 800 transitions (0.38%) diverged", fixed = TRUE)
+  expect_match(diverged, "The chains converged", fixed = TRUE)
+  expect_false(grepl("have not converged", diverged, fixed = TRUE))
+  expect_match(ctsem:::.ctSampleTargetText(list(target_accept = c(0.9, 0.95))),
+    "at target_accept 0.9-0.95", fixed = TRUE)
+  expect_identical(ctsem:::.ctSampleTargetText(list()), "")
 })
 
 test_that("a sampled fit reports n_eff and Rhat where a ctStanFit does, and an optimised one does not", {

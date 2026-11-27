@@ -123,17 +123,21 @@ test_that("divergences at the correlation bound are reported and leave the verdi
   expect_match(v$problems, "5 of 400 transitions stopped at the random-effect correlation bound")
   expect_message(expect_no_warning(ctsem:::.ctSampleWarn(diag(5L, 5L))),
     "correlation bound: the posterior reaches it")
-  # Any other divergence fails it as before, and is the one warned about.
+  # Any other divergence is a problem and is warned about, as a share of the
+  # transitions; whether the chains converged is R-hat's to say.
   v <- verdict(diag(5L, 3L))
-  expect_false(v$converged)
+  expect_true(v$converged)
   expect_match(v$problems[1L], "^2 of 400 transitions diverged$")
   expect_warning(suppressMessages(ctsem:::.ctSampleWarn(diag(5L, 3L))),
-    "^2 of 400 transitions diverged")
+    "^2 of 400 transitions \\(0.5%\\) diverged")
+  expect_false(verdict(utils::modifyList(diag(5L, 3L),
+    list(rhat = c(a = 1.05, b = 1.002))))$converged)
   # A fit sampled before the bound was recorded, or by a sampler that does not
-  # place its divergences, counts every one against the verdict.
+  # place its divergences, counts every one as a divergence.
   old <- diag(5L, 0L)
   old$divergent_bound <- NULL
-  expect_false(verdict(old)$converged)
+  expect_true(verdict(old)$converged)
+  expect_match(verdict(old)$problems[1L], "^5 of 400 transitions diverged$")
   expect_identical(ctsem:::.ctSampleDivergent(old), 5L)
   expect_identical(ctsem:::.ctSampleDivergentBound(old), 0L)
   # Where the draws' covariance points below its number of effects, the
@@ -165,13 +169,26 @@ test_that("a sampler with no R-hat is not judged or reported by one", {
     ess_tail = c(a = 280, b = 260), saturated = 0L, max_depth = 10L,
     unidentified = character(0), ess_target = 200, rhat_target = Inf,
     stepsize = 0.5, ebfmi = 1, nstages = 3L, nparticles = 97L)
+  # Converged where its tempering reached the posterior; its divergences are
+  # a problem beside that.
   v <- ctsem:::.ctSampleDiagnosis(smc)
-  expect_false(v$converged)
+  expect_true(v$converged)
   expect_false(any(grepl("R-hat", v$problems)))
-  expect_true(ctsem:::.ctSampleDiagnosis(utils::modifyList(smc,
-    list(divergent = 0L)))$converged)
+  expect_match(v$problems[1L], "72 of 2425 transitions diverged", fixed = TRUE)
+  expect_false(ctsem:::.ctSampleDiagnosis(utils::modifyList(smc,
+    list(stage_beta = c(0.5, 0.9))))$converged)
+  # The warning gives the share, the target the run ended at, and the next
+  # target to try; past 0.99 it points away from shorter steps.
+  expect_warning(ctsem:::.ctSampleWarn(utils::modifyList(smc,
+    list(target_accept = rep(0.95, 97L))), randomeffects = FALSE),
+    paste0("72 of 2425 transitions (3%) diverged, at target_accept 0.95. The ",
+      "draws may under-represent the region the sampler could not follow. A ",
+      "higher target shortens the steps and usually removes them: ",
+      "sampleControl = list(target_accept = 0.99)"), fixed = TRUE)
   expect_warning(ctsem:::.ctSampleWarn(smc, randomeffects = FALSE),
-    "could not reach. Raising target_accept", fixed = TRUE)
+    "target_accept = 0.95)", fixed = TRUE)
+  expect_match(ctsem:::.ctSampleDivergentRemedy(list(target_accept = 0.99)),
+    "already short", fixed = TRUE)
   expect_warning(ctsem:::.ctSampleWarn(smc), "population standard deviation")
   # The summary's line names the divergences, not an R-hat it does not have.
   fit <- list(sample = smc,
@@ -179,9 +196,11 @@ test_that("a sampler with no R-hat is not judged or reported by one", {
   section <- data.frame(Rhat = c(NA, NA), n_eff = c(300, 250),
     row.names = c("a", "b"))
   note <- ctsem:::.ctBackendSampleNote(fit, list(section), 97L)
-  expect_false(grepl("R-hat", note))
-  expect_match(note, "72 divergent transitions. The draws may under-represent",
+  expect_false(grepl("Worst R-hat|R-hat above|converged", note))
+  expect_match(note, "Tempered SMC, which reports no R-hat; smallest n_eff 250 (b)",
     fixed = TRUE)
+  expect_match(note, paste0("72 of 2425 transitions (3%) diverged, so the draws ",
+    "may under-represent where that happened"), fixed = TRUE)
   # Its print shows effective sizes without an R-hat column.
   printed <- capture.output(print(structure(smc, class = "ctSampleDiagnostics")))
   expect_true(any(grepl("smallest effective sample size", printed)))

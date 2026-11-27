@@ -2292,6 +2292,7 @@ function _ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVect
     return merge(_sample_result(pooled; nchains=nchains, ndraws=total, npar=npar,
             ndim=npar + neffects, maxdepth=Int(maxdepth),
             stepsize=[ch.eps for ch in chains],
+            target_accept=fill(Float64(target_accept), nchains),
             warmup_divergent=[ch.warmup_divergent for ch in chains], trace=run.trace,
             saved_effects=save_effects,
             effects=_effect_summary(effect_sum, effect_sq, effect_cross, nall, blocks),

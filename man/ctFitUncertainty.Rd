@@ -371,10 +371,11 @@ A marginal posterior is sampled by tempered sequential Monte Carlo
 (\code{'smc'}) where the interval check found that the posterior departs
 from the Hessian's normal approximation, and otherwise by NUTS
 (\code{'nuts'}), whose metric is set from the checked widths. If the fit
-has no interval check, one is made first. Setting \code{chains},
-\code{warmup}, \code{stepsize}, \code{adapt_metric}, \code{adapt_effects}
-or \code{settleTol} selects NUTS, and \code{sampler = 'smc'} together with
-\code{chains}, \code{warmup} or \code{stepsize} is an error. Tempered SMC
+has no interval check, one is made first. Setting \code{warmup},
+\code{stepsize}, \code{adapt_metric}, \code{adapt_effects} or
+\code{settleTol} selects NUTS, and \code{sampler = 'smc'} together with
+\code{warmup} or \code{stepsize} is an error. \code{chains} selects no
+sampler: it is not used by SMC, with a warning. Tempered SMC
 moves \code{particles} (200) draws from the normal approximation to the
 posterior in stages, then runs as many further chains as the effective
 sample size target needs. It is for posteriors that NUTS, started from the
