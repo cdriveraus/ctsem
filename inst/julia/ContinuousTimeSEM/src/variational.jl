@@ -79,7 +79,9 @@ Laplace objective underneath), which integrates nested units block by block.
 """
 
 export ctsem_variational, ctsem_variational_info, ctsem_variational_reset!,
-    ctsem_variational_choose!, ctsem_set_variational_predict!
+    ctsem_variational_choose!, ctsem_set_variational_predict!,
+    ctsem_set_variational_correct!, ctsem_variational_tangent,
+    ctsem_variational_tangent_evaluate
 
 # ---- the shaped family (one block, at most three coordinates) ----------------------
 
@@ -904,6 +906,7 @@ function _vf_solve(V, U::Int, ctx::_VCtx, lam0::Vector{Float64})
     end
     converged = lay.p == 0
     it = 0
+    step = nothing
     while !converged
         M = _vf_assemble(lay, [-H for H in e.Hm], e.Hneg)
         D, shifted = _vf_block_step(M, lay.pblocks, e.g)
@@ -913,6 +916,7 @@ function _vf_solve(V, U::Int, ctx::_VCtx, lam0::Vector{Float64})
         if dec / 2 < V.tol
             if !shifted
                 converged = true
+                step = D
                 break
             end
             v = _vf_saddle_direction(lay, M)
@@ -948,7 +952,7 @@ function _vf_solve(V, U::Int, ctx::_VCtx, lam0::Vector{Float64})
         lam, e = lam1, e1
     end
     return (lam=lam, e=e, converged=converged, gpasses=gp, hpasses=hp,
-        shares=_vf_shares(lay, e), iterations=it, capped=it >= V.maxit)
+        shares=_vf_shares(lay, e), iterations=it, capped=it >= V.maxit, step=step)
 end
 
 # The shares a solve hands to the held one: each member's negated curvature,
@@ -980,8 +984,10 @@ function _vf_solve_held(V, U::Int, ctx::_VCtx, lam0::Vector{Float64},
         e = _vf_unit_terms(V, U, ctx, lam, false)
         gp += e.gpasses
     end
+    # Why it gave way to the formed curvature (`_VF_GAVE_WAY`).
+    why = 4
+    it = 0
     if isfinite(e.B)
-        it = 0
         while true
             shaped = lay.shaped !== nothing
             shaped && length(shares) != length(lay.members) + 1 && break
@@ -991,10 +997,10 @@ function _vf_solve_held(V, U::Int, ctx::_VCtx, lam0::Vector{Float64},
             dec = dot(e.g, D)
             if dec / 2 < V.tol && !shifted
                 return (lam=lam, e=e, converged=true, gpasses=gp, hpasses=0, shares=shares,
-                    formed=false, iterations=0, capped=false)
+                    formed=false, iterations=0, capped=false, held=it, why=0, step=D)
             end
-            (it == 0 && dec / 2 > V.refresh) && break
-            it >= V.quasi && break
+            (it == 0 && dec / 2 > V.refresh) && (why = 1; break)
+            it >= V.quasi && (why = 2; break)
             it += 1
             big = maximum(abs, D)
             big > 5 && (D .*= 5 / big)
@@ -1013,7 +1019,7 @@ function _vf_solve_held(V, U::Int, ctx::_VCtx, lam0::Vector{Float64},
                 end
                 alpha /= 2
             end
-            (accepted && alpha >= 0.25) || break
+            (accepted && alpha >= 0.25) || (why = 3; break)
             for (mi, mem) in enumerate(lay.members)
                 _vf_sr1!(shares[mi], lam1[mem.plist] .- lam[mem.plist], e.gm[mi] .- e1.gm[mi])
             end
@@ -1024,8 +1030,15 @@ function _vf_solve_held(V, U::Int, ctx::_VCtx, lam0::Vector{Float64},
     r = _vf_solve(V, U, ctx, lam)
     return (lam=r.lam, e=r.e, converged=r.converged, gpasses=r.gpasses + gp,
         hpasses=r.hpasses, shares=r.shares, formed=true, iterations=r.iterations,
-        capped=r.capped)
+        capped=r.capped, held=it, why=why, step=r.step)
 end
+
+"""Why a unit's solve formed its curvature, as counted in `fallbacks`
+(`ctsem_variational_info`): the held start's decrement was above `refresh`,
+`quasi` held steps did not converge, a held step was cut below a quarter, the
+held curvature gave no step or the start could not be evaluated, or the unit
+had no held curvature yet."""
+const _VF_GAVE_WAY = ("refresh", "quasi", "cut", "nostep", "none")
 
 # ---- the objective ---------------------------------------------------------------------
 
@@ -1061,6 +1074,9 @@ mutable struct CTSEMVariational{L} <: CTSEMOptimisable
     # Exact solves' Newton iterations, and those that stopped at `maxit`.
     exact_iterations::Int
     exact_capped::Int
+    # Held steps, and why a unit's solve formed its curvature (`_VF_GAVE_WAY`).
+    held_steps::Int
+    fallbacks::Vector{Int}
     lbfgs::Union{Nothing,CTSEMLBFGSMemory}
     # Units whose family is chosen by need (`family = "auto"`, one block of two
     # or three coordinates): Gaussian, tried with the bending family where a
@@ -1078,6 +1094,10 @@ mutable struct CTSEMVariational{L} <: CTSEMOptimisable
     dlam::Any
     theta_acc::Vector{Float64}
     theta_trial::Vector{Float64}
+    # Where the last Hessian was formed, the approximations it solved there
+    # and their derivative: the tangent density's base
+    # (`ctsem_variational_tangent`), `nothing` where `dlam` is.
+    tangent_base::Any
 end
 
 """
@@ -1124,17 +1144,18 @@ function ctsem_variational(laplace::CTSEMLaplaceObjective; family::AbstractStrin
         [Matrix{Float64}[] for _ in layouts], [zeros(l.p) for l in layouts],
         [Matrix{Float64}[] for _ in layouts], false, false, false, Float64(tol),
         Float64(kappa), Int(quasi), Float64(refresh), Int(maxit), fill(NaN, n), 0, 0, 0, 0,
-        0, 0, nothing, pending, Float64(need), (copy(layouts), copy(pending)), nothing,
-        Float64[], Float64[])
+        0, 0, 0, zeros(Int, length(_VF_GAVE_WAY)), nothing, pending, Float64(need), (copy(layouts), copy(pending)), nothing,
+        Float64[], Float64[], nothing)
 end
 
 function _vf_unit!(V::CTSEMVariational, ctx::_VCtx, U::Int, unit::Vector{Float64},
     GE::Matrix{Float64}, gps::Vector{Int}, hps::Vector{Int}, formed::Vector{Bool},
-    its::Vector{Int}, caps::Vector{Bool})
+    its::Vector{Int}, caps::Vector{Bool}, held::Vector{Int}, why::Vector{Int})
     r = if isempty(V.shares[U])
         s = _vf_solve(V, U, ctx, V.lam[U])
         (lam=s.lam, e=s.e, gpasses=s.gpasses, hpasses=s.hpasses, shares=s.shares,
-            formed=true, iterations=s.iterations, capped=s.capped)
+            formed=true, iterations=s.iterations, capped=s.capped, held=0,
+            why=length(_VF_GAVE_WAY), step=s.step)
     elseif V.dlam !== nothing && _VF_PREDICT[] && length(V.theta_acc) == size(V.dlam[U], 2)
         # The accepted approximation moved by its derivative from the last
         # Hessian: near where that was formed, off the solved one by the
@@ -1153,11 +1174,22 @@ function _vf_unit!(V::CTSEMVariational, ctx::_VCtx, U::Int, unit::Vector{Float64
     formed[U] = r.formed
     its[U] = r.iterations
     caps[U] = r.capped
+    held[U] = r.held
+    why[U] = r.why
     isfinite(r.e.B) || return false
     V.lam_trial[U] = r.lam
     V.shares_trial[U] = r.shares
     unit[U] = r.e.B
     GE[:, U] .= r.e.GE
+    # A solve that stopped on its tolerance is short of the optimum by its
+    # last step `D = M^-1 g`: the bound there is higher by `g'D / 2`, and the
+    # envelope gradient moves by `B_tl D = dlam' g` (`dlam = M^-1 B_lt`).
+    if _VF_CORRECT[] && r.step !== nothing && V.dlam !== nothing &&
+       length(V.theta_acc) == size(V.dlam[U], 2)
+        n = length(V.theta_acc)
+        unit[U] += dot(r.e.g, r.step) / 2
+        view(GE, 1:n, U) .+= transpose(V.dlam[U]) * r.e.g
+    end
     return true
 end
 
@@ -1205,14 +1237,20 @@ function ctsem_variational_evaluate(V::CTSEMVariational, values::AbstractVector;
     formed = fill(false, nunits)
     its = zeros(Int, nunits)
     caps = fill(false, nunits)
+    held = zeros(Int, nunits)
+    why = zeros(Int, nunits)
     ok = _laplace_parallel(laplace, 1:nunits) do U
-        return _vf_unit!(V, ctx, U, unit, GE, gps, hps, formed, its, caps)
+        return _vf_unit!(V, ctx, U, unit, GE, gps, hps, formed, its, caps, held, why)
     end
     V.gradient_passes += sum(gps)
     V.curvature_passes += sum(hps)
     V.curvature_formed += count(formed)
     V.exact_iterations += sum(its)
     V.exact_capped += count(caps)
+    V.held_steps += sum(held)
+    for k in eachindex(V.fallbacks)
+        V.fallbacks[k] += count(==(k), why)
+    end
     (ok && all(isfinite, unit)) || return bad
     V.has_trial = true
     V.unit_value = unit
@@ -1236,6 +1274,8 @@ function ctsem_variational_info(V::CTSEMVariational)
     return (evaluations=V.evaluations, gradient_passes=V.gradient_passes,
         curvature_passes=V.curvature_passes, curvature_formed=V.curvature_formed,
         exact_iterations=V.exact_iterations, exact_capped=V.exact_capped,
+        held_steps=V.held_steps,
+        fallbacks=copy(V.fallbacks), fallback_reasons=collect(String, _VF_GAVE_WAY),
         units=length(lay), dims=[l.d for l in lay], parameters=[l.p for l in lay],
         blocks=[length(l.pblocks) for l in lay],
         nodes=[sum(length(m.w) for m in l.members; init=0) for l in lay],
@@ -1305,6 +1345,7 @@ function _ctsem_take_search_modes!(V::CTSEMVariational, x::AbstractVector, found
     end
     units == 0 && return (change=0.0, units=0, joined=0)
     V.dlam = nothing
+    V.tangent_base = nothing
     return (change=change, units=units, joined=units)
 end
 
@@ -1349,10 +1390,12 @@ function ctsem_variational_reset!(V::CTSEMVariational)
     V.running = false
     V.lbfgs = nothing
     V.dlam = nothing
+    V.tangent_base = nothing
     V.theta_acc = Float64[]
     V.theta_trial = Float64[]
     V.evaluations = V.gradient_passes = V.curvature_passes = V.curvature_formed = 0
-    V.exact_iterations = V.exact_capped = 0
+    V.exact_iterations = V.exact_capped = V.held_steps = 0
+    fill!(V.fallbacks, 0)
     return nothing
 end
 
@@ -1499,10 +1542,22 @@ function ctsem_hessian(V::CTSEMVariational, values::AbstractVector; chunk::Integ
         H[js, js] .+= wts[U] .* (transpose(Blt[U][:, js]) * D[U][:, js])
     end
     V.dlam = D
+    V.tangent_base = (theta=x, lam=lam, D=D)
     return (H .+ transpose(H)) ./ 2
 end
 
 const _VF_PREDICT = Ref(true)
+
+"""
+Whether a unit's solve that stopped on its tolerance has its value and
+envelope gradient corrected by its last step (`_vf_unit!`). The oracle for
+the correction: off, they are the bound's at the solve's last point.
+`ctsem_set_variational_correct!` sets it.
+"""
+const _VF_CORRECT = Ref(true)
+
+"""Set whether stopped solves are corrected by their last step."""
+ctsem_set_variational_correct!(on::Bool) = (_VF_CORRECT[] = on; nothing)
 
 """
     ctsem_set_variational_predict!(on)
@@ -1603,8 +1658,14 @@ ctsem_laplace_optimize(V::CTSEMVariational, start::AbstractVector;
 ctsem_laplace_hessian(V::CTSEMVariational, values::AbstractVector; step::Real=1e-4,
     kwargs...) = ctsem_hessian(V, values; step=step)
 
-ctsem_laplace_evaluate(V::CTSEMVariational, values::AbstractVector; gradient::Bool=true,
-    kwargs...) = ctsem_variational_evaluate(V, values; gradient=gradient)
+# A coreset or the units' scores are not taken here: refused by name rather
+# than dropped, which would hand a caller the full objective as its coreset's.
+function ctsem_laplace_evaluate(V::CTSEMVariational, values::AbstractVector;
+    gradient::Bool=true, nested_gradient::Bool=false, coreset=nothing, scores=nothing)
+    (coreset === nothing && scores === nothing) || throw(ArgumentError(
+        "the variational objective takes no coreset or units' scores here"))
+    return ctsem_variational_evaluate(V, values; gradient=gradient)
+end
 
 # The readers of the effects, the plans made before a fit (substeps,
 # relinearisation), generation, and the random-effects check whose integral a
@@ -1651,4 +1712,118 @@ function ctsem_laplace_check(V::CTSEMVariational, values::AbstractVector;
         scores=unit_scores ? Matrix(transpose(b.unit_gradient)) : nothing)
     return ctsem_laplace_check(V.laplace, x; unit_scores=unit_scores, against=against,
         kwargs...)
+end
+
+# ---- the tangent density --------------------------------------------------------------
+
+"""
+    CTSEMVariationalTangent
+
+The variational objective's tangent density at a point `theta_hat`: each
+unit's approximation moved along its derivative in the parameters from the
+one solved there, with no refit,
+
+    lam_U(theta) = lam_hat_U + D_U (theta - theta_hat),
+    T(theta) = log prior + sum_U w_U B_U(theta, lam_U(theta)).
+
+`B_U` is a bound at any `lam`, so `T <= f`, the solved bound. `lam_U(theta)`
+is off the solved approximation by the move's square, and that is a maximum
+of `B_U`, so `f - T` is of fourth order: the two agree at `theta_hat` in
+value, gradient and Hessian (`ctsem_hessian`'s). The gradient is the value's,
+`dB_U/dtheta + D_U' dB_U/dlam`, from one gradient pass a node with no solve,
+so no tolerance, start or earlier evaluation decides it, and where a unit's
+bound has more than one optimum `T` stays on the one solved at `theta_hat`.
+It is the density of the parameters under variational Bayes with each unit's
+approximation linear in them. A point where a moved approximation puts a
+node where a member cannot be evaluated is outside its support.
+
+`objective` is the variational objective, whose layouts and pool it reads;
+`lam`, `D` and `theta` are copies of its tangent base
+(`ctsem_variational_tangent`), so the density does not change as the
+objective is evaluated elsewhere.
+"""
+struct CTSEMVariationalTangent{O} <: CTSEMOptimisable
+    objective::O
+    lam::Vector{Vector{Float64}}
+    D::Vector{Matrix{Float64}}
+    theta::Vector{Float64}
+end
+
+"""
+    ctsem_variational_tangent(V, values)
+
+`V`'s tangent density at `values` (`CTSEMVariationalTangent`), from the
+approximations and derivative its last Hessian formed there, or from a
+Hessian formed now where the last was elsewhere.
+"""
+function ctsem_variational_tangent(V::CTSEMVariational, values::AbstractVector)
+    x = collect(Float64, values)
+    b = V.tangent_base
+    if b === nothing || b.theta != x
+        ctsem_hessian(V, x)
+        b = V.tangent_base
+        (b === nothing || b.theta != x) && throw(ErrorException(
+            "the variational objective's Hessian could not be formed where the tangent density was asked for"))
+    end
+    return CTSEMVariationalTangent(V, [copy(l) for l in b.lam], [copy(D) for D in b.D],
+        copy(b.theta))
+end
+
+"""
+    ctsem_variational_tangent_evaluate(T, values; gradient = true, units = false)
+
+The tangent density at `values` and its gradient, as
+`ctsem_variational_evaluate` returns them: per unit the bounds
+(`unit_loglik`) and, with `units`, each unit's gradient, its weight applied
+and the prior not.
+"""
+function ctsem_variational_tangent_evaluate(T::CTSEMVariationalTangent,
+    values::AbstractVector; gradient::Bool=true, units::Bool=false)
+    V = T.objective
+    laplace = V.laplace
+    npar = length(values)
+    n = length(T.theta)
+    npar == n || throw(ArgumentError("values has $npar parameters, the tangent density $n"))
+    nunits = length(V.layouts)
+    bad = (value=-Inf, gradient=zeros(npar), unit_loglik=fill(NaN, nunits),
+        unit_gradient=zeros(npar, units ? nunits : 0), converged=false)
+    ctx = try
+        _vf_ctx(laplace, values)
+    catch err
+        err isa InterruptException && rethrow()
+        nothing
+    end
+    ctx === nothing && return bad
+    nx = length(ctx.theta)
+    move = view(ctx.theta, 1:n) .- T.theta
+    unit = fill(NaN, nunits)
+    GE = zeros(nx, nunits)
+    ok = _laplace_parallel(laplace, 1:nunits) do U
+        D = T.D[U]
+        lam = isempty(D) ? copy(T.lam[U]) : T.lam[U] .+ D * move
+        e = _vf_unit_terms(V, U, ctx, lam, false)
+        isfinite(e.B) || return false
+        unit[U] = e.B
+        GE[:, U] .= e.GE
+        isempty(D) || (view(GE, 1:n, U) .+= transpose(D) * e.g)
+        return true
+    end
+    (ok && all(isfinite, unit)) || return bad
+    wts = [_laplace_unit_weight(laplace, U) for U in 1:nunits]
+    prior = _ctsem_log_prior(laplace.objective, ctx.theta)
+    gp = zeros(nx)
+    _ctsem_log_prior_gradient!(gp, laplace.objective, ctx.theta)
+    G = GE .* transpose(wts)
+    return (value=dot(wts, unit) + prior,
+        gradient=(vec(sum(G; dims=2)) .+ gp)[1:npar], unit_loglik=unit,
+        unit_gradient=units ? G[1:npar, :] : zeros(npar, 0), converged=true)
+end
+
+function ctsem_evaluate(T::CTSEMVariationalTangent, values::AbstractVector;
+    gradient::Bool=true, contributions::Bool=false, gradient_method=:adjoint)
+    r = ctsem_variational_tangent_evaluate(T, values; gradient=gradient)
+    value = r.converged ? r.value : NaN
+    contributions || return (value=value, gradient=r.gradient)
+    return (value=value, gradient=r.gradient,
+        subject_loglik=_vf_subject_values(T.objective, r.unit_loglik))
 end
