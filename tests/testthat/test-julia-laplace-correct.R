@@ -186,7 +186,10 @@ test_that("the refined fit's pool is the call's cores, not the fit's", {
 
 # `control$quadratureTolerance` sets how far the refined fit's rules may move
 # an estimate, and the climb hands it to the engine (`slope_bar`). Mocked at
-# the engine call, so nothing here needs Julia.
+# the engine call and at the bridge, which the estimate crosses
+# (`.ctJuliaNumericVector()`): with Julia on the machine an unmocked bridge
+# starts a session and the test passes, and on the CRAN-mode runner, which
+# has none, it errors. Any other call into Julia stops the test.
 test_that("the refined fit's tolerance reaches the climb", {
   s <- ctsem:::.ctLaplaceRefineSettings(list())
   expect_identical(s$slope_bar, 0.5)
@@ -196,7 +199,12 @@ test_that("the refined fit's tolerance reaches the climb", {
   expect_error(ctsem:::.ctLaplaceRefineSettings(list(quadratureTolerance = -1)),
     "quadratureTolerance")
   sent <- NULL
-  testthat::local_mocked_bindings(.ctJuliaGet = function(x) x)
+  testthat::local_mocked_bindings(
+    .ctJuliaGet = function(x) x,
+    .ctJuliaNumericVector = function(values) as.numeric(values),
+    .ctJuliaPut = function(...) stop("no Julia here"),
+    .ctJuliaEval = function(...) stop("no Julia here"),
+    .ctJuliaCall = function(...) stop("no Julia here"))
   module <- list(ctsem_laplace_placed_optimize = function(...) {
     sent <<- list(...)
     list()
