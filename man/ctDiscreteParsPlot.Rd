@@ -63,7 +63,8 @@ evaluated (with the necessary arguments such as ylab etc filled in). For modifyi
 \item{line}{What the line shows. \code{'estimate'} (the default) draws the
 effects at the fit's estimate when \code{x} carries them
 (\code{attr(x, 'estimate')}, for an optimised fit), and otherwise the
-middle of \code{quantiles}. \code{'median'} draws the middle of
+middle of \code{quantiles}. At the estimate the line has no simulation
+noise, and for an optimised fit it is close to the median of the draws. \code{'median'} draws the middle of
 \code{quantiles}. The band shows the quantiles of the draws.}
 }
 \value{

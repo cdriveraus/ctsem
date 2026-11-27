@@ -317,8 +317,13 @@ test_that("a fitted network's edges are the linearisation it says they are", {
   expect_true(attr(net, 'jacobian'))
   expect_message(ctNetwork(fit, dt = 1, state = 'asymptotic'),
     'these edges are a linearisation', fixed = TRUE)
-  jac <- apply(ctsem:::.ctBackendPopArrays(fit, state = state)$pop_JAx, c(2, 3),
+  # The Jacobian's medians over the draws, each at its own fixed point; a cell
+  # that is one parameter has its median at the estimate, which ctSummaryMatrices()
+  # gives in place of the draws' (test-ctCalcPerDraw.R).
+  jac <- suppressMessages(ctSummaryMatrices(fit, state = 'asymptotic'))$JAx
+  draws <- apply(ctsem:::.ctBackendPopArrays(fit, state = state)$pop_JAx, c(2, 3),
     stats::median)
+  expect_equal(unname(jac), unname(draws), tolerance = 0.05)
   expect_equal(unname(net$DRIFT), unname(jac))
   expect_gt(abs(net$DRIFT[1, 2]), 1e-3)
   expect_equal(unname(net$temporal), unname(as.matrix(Matrix::expm(jac))),
@@ -336,7 +341,10 @@ test_that("a fitted network's edges are the linearisation it says they are", {
 # eta1 + c1 and f2 = d21 eta1 + d22 eta2 + c2.
 .handJacobian <- function(fit, s) {
   pm <- summary(fit, parmatrices = FALSE, digits = 12)$popmeans
-  m <- stats::setNames(pm$mode, rownames(pm))
+  # The 50% column holds each parameter's estimate, its median under the
+  # fit's normal draws; a fit without draws has its estimate as the mean.
+  m <- stats::setNames(pm[[intersect(c("50%", "mean"), names(pm))[1L]]],
+    rownames(pm))
   matrix(c(m[['dr11']] * (1 + 0.2 * s[2]), m[['d21']],
     0.2 * m[['dr11']] * s[1], m[['d22']]), 2, 2)
 }

@@ -100,6 +100,12 @@ with the drift as a latent process, constant or changing over the session.
   gives the share of divergent transitions. Some models without random effects
   are sampled by sequential Monte Carlo, which runs as many chains as it needs
   and does not use `chains`.
+- The median of the draws (the `50%` column) is the point value. For a single
+  parameter of an optimised fit it is the estimate, without simulation noise.
+  `ctSummaryMatrices(fit)$estimate` gives the matrices at the estimate.
+- `ctCalcPerDraw()` computes a quantity from the model's matrices for each draw,
+  such as an explained variance or an indirect effect, and gives its median and
+  interval.
 
 ## Checking and improving models
 
