@@ -1262,17 +1262,18 @@
 # effect, on the layer.
 #' @keywords internal
 .ctBackendSampleObjective <- function(fit, target, sampler = NULL) {
-  if (isTRUE(target$state_explicit)) return(.ctJuliaJointObjective(fit, target$npar))
-  # A variational fit's joint target is the Laplace objective's of the same
-  # specification: the joint posterior holds no approximation of the
-  # effects, and the chains start at the variational estimate. Its marginal
-  # is the bound's, which no sampler takes.
-  if (.ctBackendVariational(fit$model_spec)) {
-    if (isTRUE(target$marginal)) stop("A variational fit's marginal cannot be ",
-      "sampled; intoverpop = 'none' samples the joint posterior.", call. = FALSE)
-    fit$model_spec$laplace$variational <- NULL
+  if (isTRUE(target$state_explicit)) .ctJuliaJointObjective(fit, target$npar) else {
+    # A variational fit's joint target is the Laplace objective's of the same
+    # specification: the joint posterior holds no approximation of the
+    # effects, and the chains start at the variational estimate. Its
+    # marginal is the bound's, which no sampler takes.
+    if (.ctBackendVariational(fit$model_spec)) {
+      if (isTRUE(target$marginal)) stop("A variational fit's marginal cannot be ",
+        "sampled; intoverpop = 'none' samples the joint posterior.", call. = FALSE)
+      fit$model_spec$laplace$variational <- NULL
+    }
+    .ctJuliaObjective(fit, layer = identical(sampler, "saem") && !isTRUE(target$marginal))
   }
-  .ctJuliaObjective(fit, layer = identical(sampler, "saem") && !isTRUE(target$marginal))
 }
 
 # How many draws per chain a run starts with and may extend to, given the count
