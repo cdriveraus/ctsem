@@ -234,6 +234,18 @@ end
         @test Q.sets[V][1].count == (c.family === :product ? c.nodes : c.points)
     end
     @test C._placed_choose!(Q, theta, zeros(1, 1)) == 0
+    # The slope check at the climb's start reads the gradients the choice
+    # formed on each unit's rule and the rule that measured it, and reaches
+    # what it would evaluating them again.
+    Q2 = _placed_from(laplace, theta)
+    known = Dict{Int,Tuple{Vector{Float64},Vector{Float64}}}()
+    C._placed_choose!(Q2, theta, H; bar=1e-3, known=known)
+    @test !isempty(known) && issubset(keys(known), Q2.placed)
+    ctsem_laplace_placed_evaluate(Q2, theta; gradient=false)
+    kept = C._placed_slope_check(Q2, theta, H; bar=0.0, known=known)
+    fresh = C._placed_slope_check(Q2, theta, H; bar=0.0)
+    @test kept.sd == fresh.sd
+    @test kept.units == fresh.units && kept.doublings == fresh.doublings
 end
 
 @testset "the localised Hessian is the difference of the exact gradient" begin
