@@ -5060,19 +5060,21 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # `spec$laplace$variational`) is the Laplace objective's units, each
   # integrated by its fitted bound (`ctsem_variational`, variational.jl): built
   # on the Laplace objective of the same specification, which it shares with
-  # the readers of the effects. `layer = TRUE` is that objective's layer.
+  # the readers of the effects. `layer = TRUE` is that objective's layer, built
+  # below from the specification without the bound.
   if (!is.null(spec$laplace$variational)) {
     settings <- spec$laplace$variational
     spec$laplace$variational <- NULL
-    if (isTRUE(layer)) return(.ctJuliaObjective(spec, layer = TRUE))
-    key <- digest::digest(list(.ctJuliaObjectiveKey(spec), "variational",
-      settings), algo = "sha256")
-    cached <- .ctJuliaCached(key)
-    if (!is.null(cached)) return(cached)
-    module <- .ctJuliaModule(spec$project)
-    objective <- do.call(module$ctsem_variational, c(list(.ctJuliaObjective(spec)),
-      lapply(settings, .ctJuliaMarshal)))
-    return(.ctJuliaCacheStore(key, objective))
+    if (!isTRUE(layer)) {
+      key <- digest::digest(list(.ctJuliaObjectiveKey(spec), "variational",
+        settings), algo = "sha256")
+      cached <- .ctJuliaCached(key)
+      if (!is.null(cached)) return(cached)
+      module <- .ctJuliaModule(spec$project)
+      objective <- do.call(module$ctsem_variational, c(list(.ctJuliaObjective(spec)),
+        lapply(settings, .ctJuliaMarshal)))
+      return(.ctJuliaCacheStore(key, objective))
+    }
   }
   # The fit's objective: where the subject filter integrates some effects
   # (`.ctJuliaLaplaceHybrid`: own variances, and a full-rank level's affine

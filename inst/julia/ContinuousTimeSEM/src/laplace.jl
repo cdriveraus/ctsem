@@ -2093,8 +2093,8 @@ function _laplace_parallel(f, items)
     # the refined fit's flagged units each start their points while every slot
     # is busy with other units, and the last few to finish ran their points on
     # one thread each while the rest of the pool waited: 10.8 of 16 cores busy
-    # on the map-spread analogue with ten dear units, 14.9 with this, and 3 of
-    # 16 on the hc-wellbeing refinement (dev2, 2026-11).
+    # on the map-spread analogue with ten dear units, 14.9 with this (dev2,
+    # 2026-11-26).
     done = 0
     while done < n
         if done <= n - 2 && !isempty(_LAPLACE_FREE)

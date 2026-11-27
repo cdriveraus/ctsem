@@ -264,29 +264,84 @@ the log of it stops being a perfectly ordinary number. The engine's own
 7.5e-08 *absolute*, which is no relative accuracy at all once `Phi` is 1e-20 --
 and a likelihood needs the relative kind.
 
-`logerfc` gives it directly and differentiably. Checked against the asymptotic
-expansion: at `z = -100` this returns -5005.524209 where the series gives
--5005.524209, and its first three derivatives are finite there, which the
-Laplace path needs because it differentiates this twice more.
+`logerfc` gives it directly. Checked against the asymptotic expansion: at
+`z = -100` this returns -5005.524209 where the series gives -5005.524209.
+
+At a dual or a trace jet its derivatives are its own, `λ` and `-λ (z + λ)`
+from `_mills_terms`, not `logerfc`'s rule, which takes
+`exp(-x^2 - logerfc(x))`: a difference of numbers of size `x^2`, off in the
+ninth digit at `z = -1e4` and the sixth at `-1e5`. The binary rule in the
+logistic variable sums such derivatives over nodes that cancel, and forward
+mode through it read the variance's slope in `b` 2% off at a predicted sd of
+1e4 and a thousandfold at 1e5, where the partials by hand, which take `λ`,
+were right.
 """
 @inline _norm_logcdf(z::Real) = logerfc(-z / sqrt(oftype(float(z), 2))) -
     log(oftype(float(z), 2))
+
+@inline function _norm_logcdf(z::ForwardDiff.Dual{Tg}) where {Tg}
+    x = ForwardDiff.value(z)
+    lΦ = _norm_logcdf(x)
+    λ, _, _, _ = _mills_terms(x, lΦ)
+    return ForwardDiff.Dual{Tg}(lΦ, λ * ForwardDiff.partials(z))
+end
+
+@inline function _norm_logcdf(z::CTSEMTraceJet)
+    lΦ = _norm_logcdf(z.v)
+    λ, g, _, _ = _mills_terms(z.v, lΦ)
+    return _jet_chain(z, lΦ, λ, -λ * g)
+end
 
 """`log phi(z)`, the standard normal log density."""
 @inline _norm_logpdf(z::Real) = -z * z / 2 - log(sqrt(2 * oftype(float(z), pi)))
 
 """
-    _mills(z)
+    _mills_terms(c, logPhi=nothing)
 
-`phi(z) / Phi(z)`, the inverse Mills ratio, as the exponential of a difference
-of logarithms rather than a quotient.
+`(λ, g, W, Λ')` at `c`: the inverse Mills ratio `λ = phi(c) / Phi(c)`,
+`g = c + λ`, `W = 1 - λ g` and `Λ' = dΛ/dc` for `Λ = λ g`. A standard normal
+truncated above at `c` has mean `-λ` and variance `W`. `logPhi` is
+`log Phi(c)` where the caller has it.
 
-Formed directly, the quotient is `0/0` in the tail: both parts underflow at
-around `z = -38`, where the ratio itself is a perfectly well behaved `38.03`.
-Through the logarithms each part stays of moderate size and the exponential is
-taken of their difference, which tends to `log(-z)`.
+Above `_MILLS_CF_BELOW`, `λ` is the exponential of a difference of logarithms
+rather than a quotient, which is `0/0` from about `c = -38` where both parts
+underflow. `g` and `W` there are differences of nearly equal numbers, and
+further out they lose every digit: by `c = -1e4` `g` came out with the wrong
+sign, so that `Λ` was negative where it lies in `(0, 1)`, and the binary
+rule's curvature in the logistic variable with it (a `DomainError` at a
+predicted sd of 1e4). Below it all four come from Laplace's continued fraction
+`λ = t + 1/(t + 2/(t + 3/(t + ...)))`, `t = -c`, written so that no difference
+cancels: with `r_j = j / (t + r_{j+1})`, `g = 1 / (t + r_2)`,
+`W = g (r_2 - g)` and `Λ' = -λ g² r_2² (1 - r_3 (r_4 - r_3)) / 2`.
+`_MILLS_CF_TERMS` terms give each to roundoff from `t = 8`, where the two forms
+agree to about 1e-12 of `W`.
 """
-@inline _mills(z::Real) = exp(_norm_logpdf(z) - _norm_logcdf(z))
+@inline function _mills_terms(c::T, logPhi=nothing) where {T}
+    if !(_primal(c) < _MILLS_CF_BELOW)
+        lΦ = logPhi === nothing ? _norm_logcdf(c) : logPhi
+        λ = exp(_norm_logpdf(c) - lΦ)
+        g = c + λ
+        return (λ, g, 1 - λ * g, λ * (1 - g * (c + 2 * λ)))
+    end
+    t = -c
+    r = zero(T)
+    r4 = zero(T)
+    for j in _MILLS_CF_TERMS:-1:3
+        r = j / (t + r)
+        j == 4 && (r4 = r)
+    end
+    r3 = r
+    r2 = 2 / (t + r3)
+    g = 1 / (t + r2)
+    λ = t + g
+    return (λ, g, g * (r2 - g), -λ * g * g * r2 * r2 * (1 - r3 * (r4 - r3)) / 2)
+end
+
+"""Below this `c`, `_mills_terms` takes the continued fraction."""
+const _MILLS_CF_BELOW = -8.0
+
+"""Terms of `_mills_terms`'s continued fraction."""
+const _MILLS_CF_TERMS = 24
 
 """
     _logistic(x)
@@ -862,12 +917,14 @@ are written in (`_censored_partials!`).
 """
 @inline function _interval_terms(lo, hi)
     if lo === nothing
-        λ = _mills(hi)
-        return (_norm_logcdf(hi), -λ, hi * λ + λ * λ, zero(λ), λ)
+        lΦ = _norm_logcdf(hi)
+        λ, g, _, _ = _mills_terms(hi, lΦ)
+        return (lΦ, -λ, λ * g, zero(λ), λ)
     elseif hi === nothing
         b = -lo
-        λ = _mills(b)
-        return (_norm_logcdf(b), λ, b * λ + λ * λ, λ, zero(λ))
+        lΦ = _norm_logcdf(b)
+        λ, g, _, _ = _mills_terms(b, lΦ)
+        return (lΦ, λ, λ * g, λ, zero(λ))
     end
     flip = lo + hi > 0
     a, b = flip ? (-hi, -lo) : (lo, hi)
@@ -1879,7 +1936,7 @@ which a Gaussian rule resolves only when `s` is small. The second is the
 logistic density, of unit width, times `Phi` of width `s`, which is smooth on
 its posterior's scale when `s` is large. Given `V = v`, `x` is `N(m, s²)`
 truncated below at `v`, whose moments are closed form: with `c = (m - v)/s`
-and `λ = phi(c)/Phi(c)` (`_mills`), mean `m + sλ` and variance
+and `λ = phi(c)/Phi(c)` (`_mills_terms`), mean `m + sλ` and variance
 `s²(1 - Λ)`, `Λ = λ(c + λ)`. So
 
     offset = s <λ>,   variance = s² (<1 - Λ> + Var(λ))
@@ -1904,12 +1961,15 @@ function _binary_vquadrature(m::T, s::T, partials::Bool) where {T}
     nodes, weights = _binary_vrule()
     vm, C, converged = _binary_vmode(m, s)
     zeropart = (zero(T), zero(T), zero(T), zero(T), zero(T), zero(T))
+    # `f` is strictly concave, so `C` is positive except where its terms
+    # underflow together (a predicted sd past 1e154) or an input is not finite.
+    _primal(C) > 0 || return (T(-Inf), zero(T), s * s, false, zeropart)
     σ = sqrt(2 / C)
     is = inv(s)
     b = s * s
     # The mode's own quantities, for the partials and for `Var(λ)`'s centre.
     cm = (m - vm) * is
-    λm = _mills(cm)
+    λm, gm, _, Λpm = _mills_terms(cm)
     Z = zero(T)
     S1 = zero(T)
     S2 = zero(T)
@@ -1919,8 +1979,7 @@ function _binary_vquadrature(m::T, s::T, partials::Bool) where {T}
     # move of `c` as the node's factor: `∂c/∂m = 1/s`, `∂c/∂b = -c/2b`.
     dvm = dvb = ρm = ρb = zero(T)
     if partials
-        Λm = λm * (cm + λm)
-        Λpm = λm * (1 - (cm + λm) * (cm + 2 * λm))
+        Λm = λm * gm
         pv = _logistic(vm)
         pn = _logistic(-vm)
         ψ = pv * pn
@@ -1955,16 +2014,14 @@ function _binary_vquadrature(m::T, s::T, partials::Bool) where {T}
             emax = e
         end
         u = T(weights[i]) * exp(e - emax)
-        λ = exp(_norm_logpdf(c) - lΦ)
+        λ, g, W, Λp = _mills_terms(c, lΦ)
         d = λ - λm
-        W = 1 - λ * (c + λ)
         Z += u
         S1 += u * d
         S2 += u * d * d
         SW += u * W
         if partials
-            Λ = 1 - W
-            Λp = λ * (1 - (c + λ) * (c + 2 * λ))
+            Λ = λ * g
             th = _logistic(v) - _logistic(-v)
             Am = Am .+ _binary_vnode_sums(u, σ * t, dvm, ρm, is, -th, λ, d, W, Λ, Λp, is)
             Ab = Ab .+ _binary_vnode_sums(u, σ * t, dvb, ρb, is, -th, λ, d, W, Λ, Λp,
@@ -2036,10 +2093,10 @@ end
 """
 @inline function _binary_vslope(v::T, m::T, s::T) where {T}
     c = (m - v) / s
-    λ = _mills(c)
+    λ, g, _, _ = _mills_terms(c)
     pv = _logistic(v)
     pn = _logistic(-v)
-    return (pn - pv - λ / s, 2 * pv * pn + λ * (c + λ) / (s * s))
+    return (pn - pv - λ / s, 2 * pv * pn + λ * g / (s * s))
 end
 
 @inline _binary_vobjective(v, m, s) = _logistic_logpdf(v) + _norm_logcdf((m - v) / s)

@@ -36,6 +36,10 @@ while the engine compiles.
   a warning when they would move by a standard error or more.
   `intoverpop = 'quadrature'` then refines the fit, and
   `ctFitUncertainty(fit, 'sample')` samples the full posterior instead.
+- `intoverpop = 'variational'` (experimental) integrates the random effects
+  with an approximation to each subject's posterior that is fitted during the
+  optimisation. On some models this gives a higher log likelihood than the
+  Laplace approximation, and fits take about twice as long.
 - Random effects can be at multiple nested levels, such as people within
   couples: `id = c('person', 'couple')`, with each parameter's `indvarying`
   naming the levels it varies at. See the
