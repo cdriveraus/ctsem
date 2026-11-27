@@ -226,10 +226,11 @@
   }
   # A fit made with intoverpop = 'quadrature' named the Laplace route only
   # to refine it: its Laplace marginal is what the refinement found wanting, so
-  # sampling takes the joint, as for 'auto'.
+  # sampling takes the joint, as for 'auto'. A variational fit's bound is no
+  # density to sample, so it takes the joint too.
   requested <- as.character(requested)[1L]
   named <- length(requested) && !is.na(requested) &&
-    !requested %in% c("auto", "quadrature")
+    !requested %in% c("auto", "quadrature", "variational")
   switch(route, augmented = "augmented",
     laplace = if (named || isTRUE(exact)) "laplace" else "none", "none")
 }
@@ -1286,10 +1287,12 @@
     # A variational fit's joint target is the Laplace objective's of the same
     # specification: the joint posterior holds no approximation of the
     # effects, and the chains start at the variational estimate. Its
-    # marginal is the bound's, which no sampler takes.
+    # marginal is the bound's, which no sampler takes, except where the
+    # Laplace term is exact and the marginal is the exact posterior's.
     if (.ctBackendVariational(fit$model_spec)) {
-      if (isTRUE(target$marginal)) stop("A variational fit's marginal cannot be ",
-        "sampled; intoverpop = 'none' samples the joint posterior.", call. = FALSE)
+      if (isTRUE(target$marginal) && !isTRUE(fit$model_spec$laplace$quadratic))
+        stop("A variational fit's marginal cannot be sampled; intoverpop = 'none' ",
+          "samples the joint posterior.", call. = FALSE)
       fit$model_spec$laplace$variational <- NULL
     }
     .ctJuliaObjective(fit, layer = identical(sampler, "saem") && !isTRUE(target$marginal))

@@ -195,6 +195,17 @@ test_that("leave-one-out and the score tests read a variational fit's bound", {
   R <- ctsem:::.ctBackendRowScores(vf, est, diag(length(est)), 2)
   S <- ctsem:::.ctBackendScoreMatrix(vf, est, prior = FALSE)
   expect_lt(max(abs(rowsum(R, ctsem:::.ctFitRowSubject(vf)) - S)), 1e-3)
+  # The check's and the samplers' densities take a coreset of the bounds; a
+  # sample takes the joint; ctLaplaceCheck reads the integral against the
+  # bound.
+  lpg <- ctsem:::.ctCoresetLpg(vf, ctsem:::.ctBackendLpgFunc(vf, gradient = FALSE))
+  expect_true(is.function(attr(lpg, "cost")))
+  expect_identical(ctsem:::.ctBackendSampleRoute("laplace", requested = "variational"),
+    "none")
+  chk <- suppressWarnings(suppressMessages(ctLaplaceCheck(vf, cores = 2)))
+  expect_identical(chk$approximation, "variational")
+  expect_equal(chk$laplace, vf$estimate$loglik_lowerbound, tolerance = 1e-6)
+  expect_equal(chk$gap, chk$quadrature - chk$laplace)
 })
 
 # Persons in studies: a manifest mean that varies at both levels (a Gaussian

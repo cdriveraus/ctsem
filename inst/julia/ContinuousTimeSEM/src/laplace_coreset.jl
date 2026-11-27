@@ -99,7 +99,7 @@ coreset's weights, with
 `ctsem_unit_terms` is the leave-one-unit-out version, which raises on what a
 proposal's tails produce; this is for draws from a sampler.
 """
-function ctsem_coreset_terms(laplace::CTSEMLaplaceObjective, values::AbstractMatrix)
+function ctsem_coreset_terms(laplace::_CTSEMUnits, values::AbstractMatrix)
     ncol = size(values, 2)
     ncol >= 1 || throw(ArgumentError("values must have at least one column"))
     nunits = _coreset_units(laplace)
@@ -155,7 +155,7 @@ that many are held. `scored` in the result says which columns they are. One
 gradient evaluation a column, what the batch gradient costs; `-Inf`, NaN
 where a draw is unusable, by `_ctsem_probe_value_gradient`'s rule.
 """
-function ctsem_coreset_terms_gradient(laplace::CTSEMLaplaceObjective,
+function ctsem_coreset_terms_gradient(laplace::_CTSEMUnits,
     values::AbstractMatrix, scored::Union{Integer,AbstractVector})
     n, ncol = size(values)
     ncol >= 1 || throw(ArgumentError("values must have at least one column"))
@@ -204,7 +204,7 @@ end
 The log prior plus `sum(weights .* terms)` over `units` at each column of
 `values`, solving only those units (`CTSEMCoreset`); `-Inf` where unusable.
 """
-function ctsem_coreset_batch(laplace::CTSEMLaplaceObjective, values::AbstractMatrix,
+function ctsem_coreset_batch(laplace::_CTSEMUnits, values::AbstractMatrix,
     units::AbstractVector, weights::AbstractVector)
     ncol = size(values, 2)
     ncol >= 1 || throw(ArgumentError("values must have at least one column"))
@@ -226,7 +226,7 @@ row holds the values and the rest the gradients, as
 `ctsem_evaluate_batch_gradient` returns them; value `-Inf` and gradient NaN
 where unusable.
 """
-function ctsem_coreset_batch_gradient(laplace::CTSEMLaplaceObjective,
+function ctsem_coreset_batch_gradient(laplace::_CTSEMUnits,
     values::AbstractMatrix, units::AbstractVector, weights::AbstractVector)
     n, ncol = size(values)
     ncol >= 1 || throw(ArgumentError("values must have at least one column"))

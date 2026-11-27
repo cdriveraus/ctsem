@@ -1,9 +1,11 @@
 # Readers of a variational fit's objective per unit -----------------------------
 #
-# What reads the fit's objective unit by unit -- leave-one-out's unit terms --
-# reads each unit's bound, the term the fit maximised. None of it moves the
-# approximations the fit holds: each evaluation starts from them and leaves
-# them as it found them (`keep = false`).
+# What reads the fit's objective unit by unit -- leave-one-out's unit terms,
+# the score tests' row scores and Hessian columns, the samplers' coresets,
+# ctLaplaceCheck's gap -- reads each unit's bound, the term the fit
+# maximised. None of it moves the approximations the fit holds: each
+# evaluation starts from them and leaves them as it found them (`keep =
+# false`).
 
 """
     ctsem_unit_terms(V::CTSEMVariational, draws; subjects = nothing)
@@ -220,4 +222,71 @@ function ctsem_hessian_columns(V::CTSEMVariational, values::AbstractVector, colu
         H[:, k] .+= (view(gpp, 1:n) .- view(gpm, 1:n)) ./ (2 * h)
     end
     return H
+end
+
+# ---- a coreset of the units' bounds ------------------------------------------------------
+#
+# The importance sampler's and DAIS's coreset (`CTSEMISCoreset`) reads the
+# units' terms through the entry points of laplace_coreset.jl, which take the
+# variational objective as they take the Laplace one: each unit's bound, its
+# score on the bound, and a coreset of units evaluated alone. Draws are taken
+# one at a time, each draw's units on the pool, since an evaluation reads and
+# restores the approximations the objective holds. Before this the interval
+# check, 'checked', 'is' and DAIS evaluated every unit at every draw on a
+# variational fit.
+
+"""The objectives a coreset of units reads (`CTSEMISCoreset`, laplace_coreset.jl)."""
+const _CTSEMUnits = Union{CTSEMLaplaceObjective,CTSEMVariational}
+
+_ctsem_unit_shares(V::CTSEMVariational) = _ctsem_unit_shares(V.laplace)
+_smc_coreset_capable(V::CTSEMVariational) = length(V.layouts) >= 2
+
+function _coreset_column(V::CTSEMVariational, x::Vector{Float64}, gradient::Bool,
+    scores::Union{Nothing,Matrix{Float64}})
+    r = _laplace_coreset_try(V, x, gradient || scores !== nothing, nothing; scores=scores)
+    r === nothing && return nothing
+    return (value=r.value, total=_laplace_weighted_total(V.laplace, r.unit_loglik),
+        terms=r.unit_loglik, gradient=r.gradient)
+end
+
+"""
+    ctsem_laplace_correction(V::CTSEMVariational, values, hessian; nodes, step,
+        laplace_gradient)
+
+`ctLaplaceCheck`'s gap and correction on a variational fit: the units'
+integral by product quadrature on the Laplace objective the bound is built on,
+against the bound the fit maximised, and the step `-H^-1` times the gap's
+gradient. With `laplace_gradient` (a fit not at the bound's optimum) the
+bound's own gradient is added, so the step is the quadrature objective's.
+"""
+function ctsem_laplace_correction(V::CTSEMVariational, values::AbstractVector,
+    hessian::AbstractMatrix; nodes::Integer=5, step::Real=1e-3,
+    laplace_gradient::Bool=false)
+    theta = collect(Float64, values)
+    b = ctsem_variational_evaluate(V, theta; keep=false)
+    isfinite(b.value) || throw(ErrorException(
+        "the variational bound cannot be evaluated where the check was asked for"))
+    gap = _quadrature_gap_gradient(V.laplace, theta, nodes, step) .+
+        ctsem_laplace_evaluate(V.laplace, theta; gradient=true).gradient
+    laplace_gradient || (gap .-= b.gradient)
+    H = Symmetric((hessian .+ transpose(hessian)) ./ 2)
+    delta, dropped = _correction_step(H, gap)
+    quadrature = ctsem_laplace_quadrature(V.laplace, theta; nodes=nodes).value
+    return (delta=delta, corrected=theta .+ delta, gap_gradient=gap,
+        quadrature=quadrature, laplace=b.value, gap=quadrature - b.value,
+        nodes=Int(nodes), dropped_directions=dropped)
+end
+
+ctsem_laplace_quadrature(V::CTSEMVariational, args...; kwargs...) =
+    ctsem_laplace_quadrature(V.laplace, args...; kwargs...)
+
+function _laplace_coreset_each(V::CTSEMVariational, values::AbstractMatrix,
+    coreset::CTSEMCoreset, gradient::Bool)
+    ncol = size(values, 2)
+    results = Vector{Any}(nothing, ncol)
+    for j in 1:ncol
+        results[j] = _laplace_coreset_try(V, Vector{Float64}(view(values, :, j)),
+            gradient, coreset)
+    end
+    return results
 end

@@ -316,4 +316,43 @@ _vf_threelevel_gauss() = (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE;
         @test Hc ≈ Hfull[:, [1, 3]] rtol = 1e-4 atol = 1e-5
         @test V.dlam == dlam
     end
+
+    @testset "a coreset of the units' bounds" begin
+        # The samplers' coresets read the bounds through the Laplace route's
+        # entry points: the terms are the bounds, a coreset's value the prior
+        # plus its weighted bounds, its gradient their gradient.
+        laplace, values = _fresh_nonlinear()
+        V = ctsem_variational(laplace; tol=1e-12)
+        _VF.ctsem_variational_evaluate(V, values)
+        X = hcat(values, values .+ 0.03)
+        t = ctsem_coreset_terms(V, X)
+        u = ctsem_unit_terms(V, X)
+        @test t.unit_loglik ≈ u.unit_loglik atol = 1e-8
+        @test t.value ≈ u.value atol = 1e-8
+        units = [1, 3]
+        w = [2.0, 1.5]
+        b = ctsem_coreset_batch(V, X, units, w)
+        prior = [b[j] - sum(w .* u.unit_loglik[units, j]) for j in 1:2]
+        full = [u.value[j] - sum(u.unit_loglik[:, j]) for j in 1:2]
+        @test prior ≈ full atol = 1e-8
+        g = ctsem_coreset_batch_gradient(V, X, units, w)
+        @test g[1, :] ≈ b atol = 1e-8
+        cs = _VF._laplace_coreset(laplace, units, w)
+        r = _VF.ctsem_variational_evaluate(V, values; coreset=cs, keep=false)
+        @test g[2:end, 1] ≈ r.gradient atol = 1e-8
+        tg = ctsem_coreset_terms_gradient(V, X, 2)
+        S = tg.scores[:, :, findfirst(==(1), tg.scored)]
+        @test vec(sum(S; dims=1)) ≈ _VF.ctsem_variational_evaluate(V, values;
+            units=true, keep=false).unit_gradient * ones(size(S, 1)) atol = 1e-8
+        cs2 = ctsem_is_coreset(V)
+        @test cs2.N == length(V.layouts)
+        # ctLaplaceCheck's gap is the quadrature's integral less the bound
+        # (here within the quadrature's own error of zero).
+        H = ctsem_hessian(V, values)
+        c = ctsem_laplace_correction(V, values, H; nodes=9)
+        @test c.gap ≈ c.quadrature - c.laplace
+        @test c.laplace ≈ _VF.ctsem_variational_evaluate(V, values; gradient=false,
+            keep=false).value atol = 1e-10
+        @test abs(c.gap) < 0.01
+    end
 end

@@ -35,8 +35,9 @@
 #' direction.
 #'
 #' The gap is the quadrature log likelihood minus the Laplace log likelihood
-#' that the fit maximised. With \code{nodes = 1} the gap is zero wherever the
-#' curvature is at least the prior's.
+#' that the fit maximised, or on a fit with \code{intoverpop = 'variational'}
+#' minus its variational lower bound. With \code{nodes = 1} the gap is zero
+#' wherever the curvature is at least the prior's.
 #'
 #' The correction is a single Newton step, \code{delta = solve(-hessian,
 #' gradient of (quadrature - laplace))}, at the estimate. Compare it with the
@@ -208,6 +209,7 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
       "posterior without the approximation, for intervals to report."))
   out <- list(verdict = verdict,
     gap = gap, quadrature = quadrature, laplace = laplacevalue,
+    approximation = if (.ctBackendVariational(fit$model_spec)) "variational" else "laplace",
     gap_per_subject = gap / max(1L, nsubjects),
     nodes = as.integer(nodes), nsubjects = nsubjects,
     at = if (corrected) "corrected" else "laplace")
@@ -295,12 +297,15 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
 
 #' @export
 print.ctLaplaceCheck <- function(x, ...) {
-  cat("Laplace approximation check,", x$nodes, "quadrature nodes per effect\n")
+  variational <- identical(x$approximation, "variational")
+  cat(if (variational) "Variational approximation check," else "Laplace approximation check,",
+    x$nodes, "quadrature nodes per effect\n")
   if (identical(x$at, "corrected")) {
     cat("  at the fit's quadrature-corrected estimate; corrections are further ",
       "steps from it\n", sep = "")
   }
-  cat("  log marginal: laplace", format(x$laplace, digits = 8),
+  cat("  log marginal:", if (variational) "variational bound" else "laplace",
+    format(x$laplace, digits = 8),
     " quadrature", format(x$quadrature, digits = 8), "\n")
   # Through the shared formatter, so this comparison reads the same as the
   # curvature certification's and ctParticleLik()'s. One question -- how far is

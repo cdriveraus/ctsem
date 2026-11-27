@@ -68,8 +68,9 @@ quadrature nodes stay within the prior where the likelihood is flat in some
 direction.
 
 The gap is the quadrature log likelihood minus the Laplace log likelihood
-that the fit maximised. With \code{nodes = 1} the gap is zero wherever the
-curvature is at least the prior's.
+that the fit maximised, or on a fit with \code{intoverpop = 'variational'}
+minus its variational lower bound. With \code{nodes = 1} the gap is zero
+wherever the curvature is at least the prior's.
 
 The correction is a single Newton step, \code{delta = solve(-hessian,
 gradient of (quadrature - laplace))}, at the estimate. Compare it with the

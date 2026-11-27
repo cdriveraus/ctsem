@@ -254,7 +254,7 @@ The importance sampler's density with a coreset behind it: the training rows
 (`ctsem_is_coreset`).
 """
 mutable struct CTSEMISCoreset
-    laplace::CTSEMLaplaceObjective
+    laplace::_CTSEMUnits
     N::Int
     rows::_ISRows
     # The coreset in force: units, weights, intercept, and the expected round
@@ -327,7 +327,7 @@ normalised, which is what a draw's relevance is measured against
 (`_is_top`): over the whole run (`:run`, the importance sampler) or within
 each batch (`:batch`, DAIS).
 """
-function ctsem_is_coreset(laplace::CTSEMLaplaceObjective; top::Symbol=:run)
+function ctsem_is_coreset(laplace::_CTSEMUnits; top::Symbol=:run)
     top in (:run, :batch) || throw(ArgumentError("top must be :run or :batch, not :$top"))
     N = _coreset_units(laplace)
     secs = Dict(k => 0.0 for k in (:full, :coreset, :gradient_full, :gradient_coreset, :choose))
