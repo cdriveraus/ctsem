@@ -1081,17 +1081,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
         end
         _invoke_callback(callback, "tempering", round(Int, 100 * beta), 100,
             _smc_mean(filter(isfinite, lp)), sum(ndiv); force=beta >= 1.0)
-        # The next stage's step, and the final phase's after the last: for the
-        # highest acceptance target warmup raises to (`_ACCEPT_MAX`,
-        # sample_run.jl) where these moves diverged. The final chains have no
-        # warmup and run at the step the last stage sets, so this is where
-        # their divergences are prevented, and at once: on the ctsem book's
-        # N = 1 wearable model they ran 20-51 divergent transitions at the
-        # default target, 1-3 where one divergent stage raised it half way
-        # (to 0.9), and none at 0.95, at seven seeds.
-        if sum(ndiv) > 0 && tacc < _ACCEPT_MAX
-            tacc = _ACCEPT_MAX
-        end
+        # The next stage's step, and the final phase's after the last.
         step = _smc_next_step(step, sum(acc) / nok, tacc)
         # At the posterior the particles become the final chains' starts, and
         # every draw of a chain carries what these moves left owing at its
@@ -1140,12 +1130,19 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     # Each chain's particle, and the chains.
     start = Int[]
     held = Ref(_ChainResult[])
-    final_step = step
+    # Where any stage's moves diverged, the final chains run at the step for
+    # the highest target NUTS's warmup raises to (`_ACCEPT_MAX`,
+    # sample_run.jl), read off the last stage's acceptance as the stages' own
+    # steps are (`_smc_next_step`). They have no warmup in which to find it,
+    # and on the ctsem book's N = 1 wearable model they ran 20-51 divergent
+    # transitions at the default target and none at 0.95, at seven seeds.
+    # The stages keep the target they were given: raised there, each later
+    # stage's fixed count of moves went less far, and on an off-centre
+    # Gaussian the stages' log constant ended 3.3 nats out (test_smc.jl).
+    final_target = any(st.divergent > 0 for st in stages) ? max(tacc, _ACCEPT_MAX) : tacc
+    final_step = final_target == tacc ? step :
+        _smc_next_step(stages[end].step, stages[end].accept, final_target)
     final_metric = metric
-    # The target the final step was set for, assigned once: the stages'
-    # `tacc` is assigned on every raise, and the chains' closure below would
-    # box it.
-    final_target = tacc
     # The final chains run in the last stage's coordinates; every reader of
     # their draws reads them in theta (`_smc_theta_chains`).
     final_geo = geo
@@ -1280,7 +1277,7 @@ function ctsem_sample_smc(objective, values::AbstractVector;
     corrected_pool = (draws=draws, accept=accept, divergent=divergent, bound=bound,
         depth=depth, energy=energy)
     return merge(_sample_result(corrected_pool; nchains=nch, ndraws=nper, npar=npar,
-        ndim=npar, maxdepth=mdepth, stepsize=fill(step, nch),
+        ndim=npar, maxdepth=mdepth, stepsize=fill(final_step, nch),
         target_accept=fill(final_target, nch),
         warmup_divergent=zeros(Int, nch), trace=trace, diagnostics=diagnostics), (
         forward_gradients=ctsem_forward_gradients() - forward0,

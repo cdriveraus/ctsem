@@ -253,8 +253,9 @@ const _ACCEPT_MAX_RAISES = 3
 
 """The acceptance target after a warmup's raise on divergences: half way to
 one, at most `_ACCEPT_MAX`, so the default 0.8 reaches 0.95 in two raises,
-which a 200-draw warmup's two checks allow. Tempered SMC, whose final chains
-have no warmup, goes to `_ACCEPT_MAX` at once (sample_smc.jl)."""
+which a 200-draw warmup's two checks allow. Tempered SMC's final chains,
+which have no warmup, run at `_ACCEPT_MAX`'s step where any stage diverged
+(sample_smc.jl)."""
 _accept_raised(target::Float64) = min(_ACCEPT_MAX, 1 - (1 - target) / 2)
 
 """
