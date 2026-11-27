@@ -79,7 +79,8 @@ Laplace objective underneath), which integrates nested units block by block.
 """
 
 export ctsem_variational, ctsem_variational_info, ctsem_variational_reset!,
-    ctsem_variational_choose!, ctsem_set_variational_predict!
+    ctsem_variational_choose!, ctsem_set_variational_predict!,
+    ctsem_variational_snapshot, ctsem_variational_restore!
 
 # ---- the shaped family (one block, at most three coordinates) ----------------------
 
@@ -1198,7 +1199,20 @@ approximations; the result is the trial until the optimiser accepts it
 a first evaluation's approximations become the accepted ones.
 """
 function ctsem_variational_evaluate(V::CTSEMVariational, values::AbstractVector;
-    gradient::Bool=true, units::Bool=false)
+    gradient::Bool=true, units::Bool=false, coreset::Union{Nothing,CTSEMCoreset}=nothing,
+    keep::Bool=coreset === nothing)
+    if !keep
+        kept = (copy(V.lam_trial), copy(V.shares_trial), V.has_trial, copy(V.unit_value),
+            copy(V.theta_trial))
+        r = _vf_evaluate(V, values, gradient, units, coreset, false)
+        V.lam_trial, V.shares_trial, V.has_trial, V.unit_value, V.theta_trial = kept
+        return r
+    end
+    return _vf_evaluate(V, values, gradient, units, coreset, true)
+end
+
+function _vf_evaluate(V::CTSEMVariational, values::AbstractVector, gradient::Bool,
+    units::Bool, coreset::Union{Nothing,CTSEMCoreset}, keep::Bool)
     laplace = V.laplace
     npar = length(values)
     nunits = length(V.layouts)
@@ -1212,6 +1226,15 @@ function ctsem_variational_evaluate(V::CTSEMVariational, values::AbstractVector;
         nothing
     end
     ctx === nothing && return bad
+    # A coreset's units alone, each at the coreset's weight in place of its own.
+    us = coreset === nothing ? collect(1:nunits) : coreset.units
+    wts = if coreset === nothing
+        [_laplace_unit_weight(laplace, U) for U in 1:nunits]
+    else
+        w = zeros(nunits)
+        w[coreset.units] .= coreset.weights
+        w
+    end
     nx = length(ctx.theta)
     unit = fill(NaN, nunits)
     GE = zeros(nx, nunits)
@@ -1222,7 +1245,7 @@ function ctsem_variational_evaluate(V::CTSEMVariational, values::AbstractVector;
     caps = fill(false, nunits)
     held = zeros(Int, nunits)
     why = zeros(Int, nunits)
-    ok = _laplace_parallel(laplace, 1:nunits) do U
+    ok = _laplace_parallel(laplace, us) do U
         return _vf_unit!(V, ctx, U, unit, GE, gps, hps, formed, its, caps, held, why)
     end
     V.gradient_passes += sum(gps)
@@ -1234,19 +1257,49 @@ function ctsem_variational_evaluate(V::CTSEMVariational, values::AbstractVector;
     for k in eachindex(V.fallbacks)
         V.fallbacks[k] += count(==(k), why)
     end
-    (ok && all(isfinite, unit)) || return bad
-    V.has_trial = true
-    V.unit_value = unit
-    V.theta_trial = collect(Float64, values)
-    (!V.running && !V.accepted) && _vf_commit!(V)
-    wts = [_laplace_unit_weight(laplace, U) for U in 1:nunits]
+    (ok && all(U -> isfinite(unit[U]), us)) || return bad
+    if keep
+        V.has_trial = true
+        V.unit_value = unit
+        V.theta_trial = collect(Float64, values)
+        (!V.running && !V.accepted) && _vf_commit!(V)
+    end
     prior = _ctsem_log_prior(laplace.objective, ctx.theta)
     gp = zeros(nx)
     _ctsem_log_prior_gradient!(gp, laplace.objective, ctx.theta)
     G = GE .* transpose(wts)
-    return (value=dot(wts, unit) + prior,
+    return (value=sum(wts[U] * unit[U] for U in us; init=0.0) + prior,
         gradient=(vec(sum(G; dims=2)) .+ gp)[1:npar], unit_loglik=unit,
         unit_gradient=units ? G[1:npar, :] : zeros(npar, 0), converged=true)
+end
+
+# The overshoot probe's screen (`CTSEMProbeScreen`, laplace_coreset.jl) samples
+# the units' bounds: a few units at a time, with their weights, and every
+# unit's gradient at the estimate, none of it touching the trial the
+# optimiser holds. On AnomAuth's 800 persons the unscreened trials were 141 s
+# of a 227 s fit.
+_ctsem_probe_units(V::CTSEMVariational) = V
+_coreset_units(V::CTSEMVariational) = length(V.layouts)
+_laplace_unit_weight(V::CTSEMVariational, U::Integer) = _laplace_unit_weight(V.laplace, U)
+_laplace_coreset(V::CTSEMVariational, units::AbstractVector, weights::AbstractVector) =
+    _laplace_coreset(V.laplace, units, weights)
+_ctsem_screen_prior(V::CTSEMVariational, x::AbstractVector) = _ctsem_screen_prior(V.laplace, x)
+
+function _laplace_coreset_try(V::CTSEMVariational, x::Vector{Float64}, gradient::Bool,
+    coreset::Union{Nothing,CTSEMCoreset}; scores::Union{Nothing,Matrix{Float64}}=nothing)
+    r = try
+        ctsem_variational_evaluate(V, x; gradient=gradient, units=scores !== nothing,
+            coreset=coreset, keep=false)
+    catch err
+        _ctsem_must_propagate(err) && rethrow()
+        nothing
+    end
+    (r === nothing || !r.converged || !isfinite(r.value)) && return nothing
+    if scores !== nothing
+        scores .= transpose(r.unit_gradient)
+        all(isfinite, scores) || return nothing
+    end
+    return r
 end
 
 """Counts (evaluations, gradient and curvature passes a member's node, how
@@ -1377,6 +1430,53 @@ function ctsem_variational_reset!(V::CTSEMVariational)
     V.evaluations = V.gradient_passes = V.curvature_passes = V.curvature_formed = 0
     V.exact_iterations = V.exact_capped = V.held_steps = 0
     fill!(V.fallbacks, 0)
+    return nothing
+end
+
+"""
+    ctsem_variational_snapshot(V)
+    ctsem_variational_restore!(V, snapshot)
+
+`V`'s accepted state copied, and put back: each unit's family (its layout),
+approximation and held curvature, the point they were accepted at, the last
+Hessian's derivative of them and the units still to be tried with the
+bending family. For R to take back a stage it does not keep
+(`.ctBackendCorrectResult()`): the stages after an optimisation evaluate
+outside a run, from the accepted state, and without this they started from
+the rejected stage's. On AnomAuth a rejected run-off left the accepted
+approximations 80 raw units from the estimate, and the interval check's draws
+cost 0.63 s each against 0.036 from the estimate's. Restoring forgets the
+trial and L-BFGS's memory, which belong to the stage taken back.
+"""
+# Mutable, so the R bridge hands it back as a reference rather than
+# translating its layouts.
+mutable struct CTSEMVariationalSnapshot
+    state::Any
+end
+
+function ctsem_variational_snapshot(V::CTSEMVariational)
+    return CTSEMVariationalSnapshot((layouts=copy(V.layouts), lam=[copy(l) for l in V.lam],
+        shares=[[copy(S) for S in sh] for sh in V.shares], theta_acc=copy(V.theta_acc),
+        dlam=V.dlam === nothing ? nothing : [copy(D) for D in V.dlam],
+        pending=copy(V.pending), accepted=V.accepted))
+end
+
+function ctsem_variational_restore!(V::CTSEMVariational, kept::CTSEMVariationalSnapshot)
+    snapshot = kept.state
+    V.layouts = copy(snapshot.layouts)
+    V.pending = copy(snapshot.pending)
+    for U in eachindex(V.layouts)
+        V.lam[U] = copy(snapshot.lam[U])
+        V.shares[U] = [copy(S) for S in snapshot.shares[U]]
+        V.lam_trial[U] = copy(snapshot.lam[U])
+        V.shares_trial[U] = [copy(S) for S in snapshot.shares[U]]
+    end
+    V.theta_acc = copy(snapshot.theta_acc)
+    V.dlam = snapshot.dlam === nothing ? nothing : [copy(D) for D in snapshot.dlam]
+    V.accepted = snapshot.accepted
+    V.has_trial = false
+    V.running = false
+    V.lbfgs = nothing
     return nothing
 end
 

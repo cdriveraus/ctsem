@@ -464,12 +464,27 @@ evaluation. It evaluates nothing until its first trial.
 """
 function _ctsem_probe_screen(objective, minimizer::AbstractVector)
     _CTSEM_PROBE_SCREEN[] || return nothing
-    _ctsem_nunits(objective) >= 2 * _CTSEM_SCREEN_FIRST || return nothing
-    L = _ctsem_unit_sum(objective)
+    L = _ctsem_probe_units(objective)
     L === nothing && return nothing
+    _coreset_units(L) >= 2 * _CTSEM_SCREEN_FIRST || return nothing
     return CTSEMProbeScreen(L, collect(Float64, minimizer), nothing, Float64[],
         Float64[], NaN, NaN, falses(0, 0), zeros(0, 0))
 end
+
+"""
+    _ctsem_probe_units(objective)
+
+The objective as the sum over units the probe's screen samples: its
+`_ctsem_unit_sum`, and a variational objective itself, whose units' bounds it
+evaluates a few at a time without touching the trial (variational.jl). The
+screen asks of it `_coreset_units`, `_laplace_unit_weight`,
+`_laplace_coreset`, `_laplace_coreset_try` and `_ctsem_screen_prior`.
+"""
+_ctsem_probe_units(objective) = _ctsem_unit_sum(objective)
+
+"""The prior term at `x` of a sum over units the screen samples."""
+_ctsem_screen_prior(L::CTSEMLaplaceObjective, x::AbstractVector) =
+    _ctsem_log_prior(L.objective, _laplace_extend(L, x))
 
 """Forms `s`'s units' terms, scores and readers at its estimate, once, from one
 gradient with the units' scores (two where some parameter has readers and
@@ -505,7 +520,7 @@ function _ctsem_screen_ready!(s::CTSEMProbeScreen)
     s.terms = Float64[weights[U] == 0 ? 0.0 : weights[U] * r.unit_loglik[U] for U in 1:N]
     s.weights = weights
     s.value = r.value
-    s.prior = _ctsem_log_prior(L.objective, _laplace_extend(L, s.minimizer))
+    s.prior = _ctsem_screen_prior(L, s.minimizer)
     s.readers = readers
     s.scores = scores
     s.ready = true
@@ -573,8 +588,7 @@ end
 
 """Each of `units`' terms at `x`, NaN elsewhere, or `nothing` where one of
 them cannot be evaluated."""
-function _ctsem_screen_terms(L::CTSEMLaplaceObjective, x::Vector{Float64},
-        units::Vector{Int})
+function _ctsem_screen_terms(L, x::Vector{Float64}, units::Vector{Int})
     _CTSEM_OPCOUNT.overshoot_samples[] += 1
     _CTSEM_OPCOUNT.overshoot_units[] += length(units)
     r = _laplace_coreset_try(L, x, false,
@@ -607,8 +621,7 @@ function _ctsem_probe_trial(s::CTSEMProbeScreen, objective, x::Vector{Float64},
     affected = sum(sizes; init=0)
     # What no unit carries: the prior's change, and how far the estimate's own
     # value lies from the one the probe compares against.
-    shift = _ctsem_log_prior(L.objective, _laplace_extend(L, x)) - s.prior +
-        (s.value - value)
+    shift = _ctsem_screen_prior(L, x) - s.prior + (s.value - value)
     rng = Random.Xoshiro(hash(x))
     for h in strata
         shuffle!(rng, h)

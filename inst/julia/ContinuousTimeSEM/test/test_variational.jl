@@ -206,6 +206,59 @@ _vf_threelevel_gauss() = (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE;
         end
     end
 
+    @testset "the probe's screen samples the units' bounds" begin
+        # A coreset's units alone, at its weights, leaving the trial; every
+        # unit's weighted gradient as the scores; and the screen's trial
+        # value the full one where it takes every unit.
+        laplace, values = _fresh_nonlinear()
+        n = length(values)
+        nunits = length(laplace.units.members)
+        V = ctsem_variational(laplace; tol=1e-12)
+        full = _VF.ctsem_variational_evaluate(V, values)
+        prior = full.value - sum(full.unit_loglik)
+        trial = deepcopy(V.lam_trial)
+        cs = _VF._laplace_coreset(V, [2, 4], [1.0, 3.0])
+        sub = _VF._laplace_coreset_try(V, values, false, cs)
+        @test sub.unit_loglik[[2, 4]] ≈ full.unit_loglik[[2, 4]] atol = 1e-10
+        @test all(isnan, sub.unit_loglik[setdiff(1:nunits, [2, 4])])
+        @test sub.value ≈ full.unit_loglik[2] + 3 * full.unit_loglik[4] + prior atol = 1e-10
+        @test V.lam_trial == trial
+        S = zeros(nunits, n)
+        r = _VF._laplace_coreset_try(V, values, true, nothing; scores=S)
+        gp = zeros(length(_VF._laplace_extend(laplace, values)))
+        _VF._ctsem_log_prior_gradient!(gp, laplace.objective, _VF._laplace_extend(laplace, values))
+        @test vec(sum(S; dims=1)) .+ gp[1:n] ≈ r.gradient atol = 1e-10
+        @test V.lam_trial == trial
+        s = _VF.CTSEMProbeScreen(V, values, nothing, Float64[], Float64[], NaN, NaN,
+            falses(0, 0), zeros(0, 0))
+        xt = values .+ 0.05 .* (-1.0) .^ (1:n)
+        @test _VF._ctsem_probe_trial(s, V, xt, full.value, Inf) ≈
+              _VF.ctsem_variational_evaluate(V, xt; gradient=false).value atol = 1e-8
+    end
+
+    @testset "a stage taken back" begin
+        # A run that R does not keep leaves its approximations accepted; the
+        # snapshot taken before it puts back the kept stage's, so the
+        # estimate's value needs no solve.
+        laplace, values = _fresh_nonlinear()
+        V = ctsem_variational(laplace)
+        res = ctsem_optimize(V, values; maxiter=200, newton=false)
+        x = collect(Float64, res.minimizer)
+        before = _VF.ctsem_variational_evaluate(V, x)
+        snap = _VF.ctsem_variational_snapshot(V)
+        ctsem_optimize(V, values .+ 0.3; maxiter=5, newton=false)
+        @test V.theta_acc != x
+        _VF.ctsem_variational_restore!(V, snap)
+        @test V.theta_acc == snap.state.theta_acc
+        i0 = _VF.ctsem_variational_info(V)
+        after = _VF.ctsem_variational_evaluate(V, x)
+        i1 = _VF.ctsem_variational_info(V)
+        @test after.value ≈ before.value atol = 1e-10
+        @test after.gradient ≈ before.gradient atol = 1e-8
+        @test i1.held_steps == i0.held_steps
+        @test i1.exact_iterations == i0.exact_iterations
+    end
+
     @testset "optimised, and read after the run" begin
         for fresh in (_fresh_nonlinear, _vf_nested_nonlinear)
             laplace, values = fresh()

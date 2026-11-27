@@ -5071,7 +5071,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       cached <- .ctJuliaCached(key)
       if (!is.null(cached)) return(cached)
       module <- .ctJuliaModule(spec$project)
-      objective <- do.call(module$ctsem_variational, c(list(.ctJuliaObjective(spec)),
+      # The Laplace objective underneath, from the object handed in with the
+      # bound dropped: a fit's specification does not carry the class this
+      # function checks for.
+      plain <- object
+      if (inherits(object, "ctJuliaFit")) plain$model_spec <- spec else plain <- spec
+      objective <- do.call(module$ctsem_variational, c(list(.ctJuliaObjective(plain)),
         lapply(settings, .ctJuliaMarshal)))
       return(.ctJuliaCacheStore(key, objective))
     }
@@ -6986,6 +6991,25 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     spec <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
   invisible(.ctJuliaCall("ContinuousTimeSEM.ctsem_variational_reset!",
     .ctJuliaObjective(spec)))
+}
+
+# A variational objective's accepted state before a stage R may not keep, and
+# put back where it does not (`.ctBackendCorrectResult()`): the stages after
+# the optimisation evaluate from the accepted approximations, and a rejected
+# stage left its own (`ctsem_variational_snapshot`). NULL, and nothing to put
+# back, for any other objective.
+.ctJuliaVariationalSnapshot <- function(spec) {
+  if (!.ctBackendVariational(spec)) return(NULL)
+  if (!inherits(spec, "ctJuliaModel"))
+    spec <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
+  .ctJuliaCall("ContinuousTimeSEM.ctsem_variational_snapshot", .ctJuliaObjective(spec))
+}
+.ctJuliaVariationalRestore <- function(spec, snapshot) {
+  if (is.null(snapshot)) return(invisible(NULL))
+  if (!inherits(spec, "ctJuliaModel"))
+    spec <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
+  invisible(.ctJuliaCall("ContinuousTimeSEM.ctsem_variational_restore!",
+    .ctJuliaObjective(spec), snapshot))
 }
 
 # The most iterations the prior warm-up (`optimcontrol$carefulfit`) takes by
