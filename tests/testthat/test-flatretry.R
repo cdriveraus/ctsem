@@ -70,28 +70,30 @@ test_that("a transform's ends are read off its text", {
 test_that("the escape point holds the parameter at the other side and restarts the rest", {
   .runoff_mocks()
   r <- .runoff_result(c(-16, 0.4, 9, -20), flat = list(c(0.8, 0, 0.6, 0)))
-  p <- ctsem:::.ctBackendStallEscape(r, list(), list(), restart = c(0.1, 0.2, 0.3, 0.4))
+  on <- list(flatretry = TRUE)
+  p <- ctsem:::.ctBackendStallEscape(r, on, list(), restart = c(0.1, 0.2, 0.3, 0.4))
   expect_identical(attr(p, 'kind'), 'runoff')
   expect_identical(attr(p, 'coordinates'), 1L)
   expect_equal(as.numeric(p), c(ctsem:::.ctDataStartRawBound, 0.2, 0.3, 0.4))
   expect_null(attr(p, 'unusable'))
   # Without a start to go back to, from where the stage ended.
-  expect_equal(as.numeric(ctsem:::.ctBackendStallEscape(r, list(), list())),
+  expect_equal(as.numeric(ctsem:::.ctBackendStallEscape(r, on, list())),
     c(ctsem:::.ctDataStartRawBound, 0.4, 9, -20))
-  # Off by its control, and a measured better point goes first.
+  # Off unless asked for, and a measured better point goes first.
+  expect_null(ctsem:::.ctBackendStallEscape(r, list(), list()))
   expect_null(ctsem:::.ctBackendStallEscape(r, list(flatretry = FALSE), list()))
   o <- r
   o$overshot <- TRUE
   o$overshoot_point <- c(-15, 0.4, 9, -20)
   o$overshoot_parameters <- 1L
   o$overshoot_gain <- 1
-  expect_null(attr(ctsem:::.ctBackendStallEscape(o, list(), list()), 'kind'))
+  expect_null(attr(ctsem:::.ctBackendStallEscape(o, on, list()), 'kind'))
 })
 
 test_that("a point the optimiser cannot start from is marked, for the caller to skip", {
   .runoff_mocks(usable = FALSE)
   r <- .runoff_result(c(-16, 0.4, 9, -20), flat = list(c(1, 0, 0, 0)))
-  p <- ctsem:::.ctBackendStallEscape(r, list(), list())
+  p <- ctsem:::.ctBackendStallEscape(r, list(flatretry = TRUE), list())
   expect_true(attr(p, 'unusable'))
   expect_identical(attr(p, 'coordinates'), 1L)
 })
@@ -121,7 +123,7 @@ test_that("a run-off escape that wins is kept, and one that loses leaves the sta
   first <- .runoff_result(c(-16, 0.4, 9, -20), flat = list(c(1, 0, 0, 0)))
   tried <- integer()
   escape <- function(r, runoffonly = FALSE) {
-    p <- ctsem:::.ctBackendStallEscape(r, list(), list(), tried = tried,
+    p <- ctsem:::.ctBackendStallEscape(r, list(flatretry = TRUE), list(), tried = tried,
       runoffonly = runoffonly)
     if (identical(attr(p, 'kind'), 'runoff')) tried <<- c(tried, attr(p, 'coordinates'))
     p
@@ -149,6 +151,63 @@ test_that("a run-off escape that wins is kept, and one that loses leaves the sta
 
 test_that("the retry is a julia control", {
   expect_silent(ctsem:::.ctFitCheckControls(list(flatretry = FALSE), 'julia'))
+  expect_silent(ctsem:::.ctFitCheckControls(list(flatretry = TRUE), 'julia'))
   expect_silent(ctsem:::.ctFitCheckControls(list(flatretry = FALSE), 'stan'))
   expect_error(ctsem:::.ctFitCheckControls(list(flatretry = TRUE), 'stan'), 'flatretry')
+})
+
+test_that("a fit that did not run the escape names every parameter it would hold", {
+  .runoff_mocks()
+  x <- c(-16, 0.4, 9, -20)
+  r <- .runoff_result(x, flat = list(c(1, 0, 0, 0), c(0, 1, 0, 0), c(0, 0, 0, 1)))
+  expect_identical(ctsem:::.ctBackendFlatRetryCandidates(r, list(), 4L), c(1L, 4L))
+  expect_length(ctsem:::.ctBackendFlatRetryCandidates(.runoff_result(x), list(), 4L), 0L)
+  one <- ctsem:::.ctBackendFlatRetryMessage('popsd_cint')
+  expect_match(one, '^popsd_cint ran off to where the data say little about it[.]')
+  expect_match(one, 'ctFitFlatRetry(fit)', fixed = TRUE)
+  expect_match(one, 'its range')
+  several <- ctsem:::.ctBackendFlatRetryMessage(c('a', 'b', 'c'))
+  expect_match(several, '^a, b and c ran off to where the data say little about them[.]')
+  expect_match(several, "each one's range", fixed = TRUE)
+})
+
+# A fit as ctFitFlatRetry() reads it, and ctFitUpdate() mocked to return
+# `refit`, recording what it was asked.
+.flatretry_fit <- function(names) structure(list(optim = list(
+  flatretry_parameters = names), args = list(input = list(optimcontrol =
+  list(stallretries = 1L)))), class = c('ctJuliaFit', 'ctFit'))
+
+test_that("ctFitFlatRetry refits with the escape on and keeps only a win", {
+  asked <- NULL
+  refit <- NULL
+  testthat::local_mocked_bindings(
+    .ctFitIsJulia = function(fit) TRUE,
+    .ctFitReplayArgs = function(fit) fit$args$input,
+    ctFitUpdate = function(oldfit, ...) {
+      asked <<- list(...)
+      message('from the refit')
+      refit
+    })
+  fit <- .flatretry_fit('popsd_cint')
+  # Kept: the new fit, and what its refit said.
+  refit <- list(optim = list(corrections = list(list(status = 'runoff', resumed = TRUE))))
+  said <- testthat::capture_messages(out <- ctFitFlatRetry(fit, cores = 3L))
+  expect_identical(out, refit)
+  expect_true(asked$refit)
+  expect_true(asked$optimcontrol$flatretry)
+  expect_identical(asked$optimcontrol$stallretries, 1L)
+  expect_identical(asked$cores, 3L)
+  expect_true(any(grepl('from the refit', said)))
+  # Not kept: the fit as it was, and the refit's messages left out.
+  refit <- list(optim = list(corrections = list(list(status = 'runoff', resumed = FALSE))))
+  said <- testthat::capture_messages(out <- ctFitFlatRetry(fit))
+  expect_identical(out, fit)
+  expect_false(any(grepl('from the refit', said)))
+  expect_true(any(grepl('popsd_cint did not raise the log likelihood', said)))
+  expect_null(asked$cores)
+  # Nothing run off: no refit.
+  asked <- NULL
+  said <- testthat::capture_messages(out <- ctFitFlatRetry(.flatretry_fit(character())))
+  expect_null(asked)
+  expect_true(any(grepl('returned unchanged', said)))
 })

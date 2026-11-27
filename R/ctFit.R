@@ -108,7 +108,7 @@
       "parameter table, which the stan path does not build. Pass inits, or ",
       "optimcontrol$initsd for the scale of the random start")),
   flatretry = list(only = 'julia',
-    inert = function(v) isFALSE(v),
+    inert = function(v) !isTRUE(v),
     msg = paste0("refits a julia fit with a parameter held at the other side of ",
       "its range, where the parameter ran off where the likelihood is flat. ",
       "The stan path has no equivalent")),
@@ -838,7 +838,9 @@ T0VARredundancies <- function(ctm) {
 #' flags (\code{optimcontrol$checks}). The reported estimates, standard errors
 #' and log likelihood are from the refined fit, with the Laplace log
 #' likelihood kept in \code{loglik_laplace}. The refinement takes seconds to
-#' minutes, longer with nested levels.
+#' minutes, longer with nested levels. How far the integration's error may move
+#' the estimates is set by \code{optimcontrol$uncertaintyControl$quadratureTolerance},
+#' in standard errors (0.5 by default; see \code{\link{ctFitUncertainty}}).
 #' \code{ctFitUncertainty(fit, intoverpop = 'quadrature')} does the same after
 #' a fit.
 #'

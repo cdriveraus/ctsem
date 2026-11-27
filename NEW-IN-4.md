@@ -109,6 +109,7 @@ with the drift as a latent process, constant or changing over the session.
 | `ctModelImprove(fit, reduceOnly = TRUE)` | simplify the parts of a model the data do not identify: parameters the data do not determine, or a random effects covariance of too high a rank |
 | `ctLOO(fit, method = 'psis')` | cross validation without refitting |
 | `ctFitProfile(fit)` | profile likelihood |
+| `ctFitFlatRetry(fit)` | fit again from the other end of the range of a parameter the fit left where the data say little about it, and keep the better fit |
 | `anova()`, `coef()`, `vcov()`, `logLik()` | the standard R generics |
 
 `ctModelHigherOrder()`, `ctModelSlowComponent()`, `ctModelPeriodicComponent()`

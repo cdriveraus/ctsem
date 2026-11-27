@@ -192,10 +192,10 @@ end
     @test all(V -> P.sets[V] === sets[V], P.placed)
     # Without a curvature there is nothing to carry the error through.
     @test isempty(C._placed_slope_check(P, theta, zeros(1, 1)).units)
-    # Product units' contributions share a sign and add as vectors; lattice
-    # units' add in quadrature.
+    # Every unit's contribution is summed with its sign, and the lattice
+    # units' root of squares is added.
     @test C._placed_slope_measure([1.0 -2.0; 0.5 1.0; 3.0 4.0], [true, true, false],
-        trues(3)) ≈ [1.5 + 3.0, 1.0 + 4.0]
+        trues(3)) ≈ [4.5 + 3.0, 3.0 + 4.0]
     @test C._placed_slope_measure([1.0 -2.0; 0.5 1.0; 3.0 4.0], [true, true, false],
         [true, false, false]) ≈ [1.0, 2.0]
     # Product units are read by their node step and raised by it, the step's
@@ -212,6 +212,16 @@ end
     @test R.cont.unit_rules[V].nodes == n0 + 2
     @test R.sets[V][1].count == n0 + 2
     @test isfinite(R.cont.centre_error[V])
+    # At its most nodes a product rule is read against its own last step, so
+    # the check still reads every unit and its sd is the fit's se.
+    C._placed_raise!(R, theta1, [V]; times=2)
+    @test R.cont.unit_rules[V].nodes == C._CONTINUATION_NODES_MAX
+    @test C._placed_coarser(R.cont.unit_rules[V]) ==
+        C.CTSEMRuleChoice(:product, C._CONTINUATION_NODES_MAX - 2, 0)
+    @test C._placed_coarser(C.CTSEMRuleChoice(:lattice, 5, C._LATTICE_MAX)) === nothing
+    t2 = C._placed_slope_check(R, theta1, ctsem_laplace_placed_hessian(R, theta1); bar=0.0)
+    @test t2.complete && isfinite(t2.sd) && t2.sd > 0
+    @test V in t2.units
     # A mixed rule's finer one steps its nodes as well as its points, along
     # the refine's mixed sequence; at the most of both there is none.
     @test C._placed_finer(C.CTSEMRuleChoice(:mixed, 5, 16)) ==
