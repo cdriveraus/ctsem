@@ -594,15 +594,16 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
     ctOptimUncertainty(fit, uncertainty = "hessian", finishsamples = 100, verbose = 0)))
   interval <- summary(uncertain)
   expect_identical(colnames(interval$popmeans),
-    c("mean", "sd", "2.5%", "50%", "97.5%", "mode"))
-  # The mode column is the fit's estimate through the same transforms: what the
-  # point-estimate summary of the same fit reports as its value.
-  expect_equal(interval$popmeans[, "mode"], point$popmeans[, "mean"])
-  expect_true(grepl("mode is the fit's estimate", interval$popNote))
-  expect_true(all(c("Mean", "sd", "2.5%", "50%", "97.5%", "mode") %in%
-      colnames(interval$parmatrices)))
-  # The system matrices' mode is the estimate's matrices too.
-  expect_equal(interval$parmatrices$mode, point$parmatrices$Mean)
+    c("mean", "sd", "2.5%", "50%", "97.5%"))
+  # A single parameter's median under the normal draws is the estimate, so
+  # the 50% column holds it: what the point-estimate summary reports.
+  expect_equal(interval$popmeans[, "50%"], point$popmeans[, "mean"])
+  expect_identical(colnames(interval$parmatrices)[4:8],
+    c("Mean", "sd", "2.5%", "50%", "97.5%"))
+  # The system matrices' cells that are single parameters too.
+  drift <- interval$parmatrices$matrix == "DRIFT"
+  expect_equal(interval$parmatrices[drift, "50%"],
+    point$parmatrices$Mean[point$parmatrices$matrix == "DRIFT"])
   # `ndraws`, not `nsamples`: an optimised fit never sampled, and reporting a
   # sample count for uncertainty draws read as MCMC output.
   expect_equal(interval$ndraws, 100)
@@ -673,7 +674,7 @@ test_that("a default julia fit carries uncertainty, as an optimized Stan fit doe
 
   out <- summary(fit, parmatrices = FALSE)
   expect_identical(colnames(out$popmeans),
-    c("mean", "sd", "2.5%", "50%", "97.5%", "mode"))
+    c("mean", "sd", "2.5%", "50%", "97.5%"))
   expect_false(is.null(out$residCovStd))
   expect_false(is.null(out$logposterior))
   # The filter output summary() reads for that is cached at fit time, as the
@@ -1164,21 +1165,22 @@ test_that("an RI-CLPM reports the same T0cov on the Laplace and augmented routes
     fit$estimate$rawposterior <- NULL
     fit$transformedpars <- NULL
     T0cov <- withCallingHandlers(ctSummaryMatrices(fit)$T0cov, warning = keep)
+    point <- withCallingHandlers(summary(fit), warning = keep)
     list(loglik = fit$estimate$loglik, warned = warned, T0cov = T0cov,
-      estimate = estimate, summary = s)
+      estimate = estimate, summary = s, point = point)
   })
-  # The estimate beside the draws: what summary() prints as `mode`, unrounded,
-  # and the same as the matrices of the fit without its draws.
+  # The estimate beside the draws: the 50% of each drift parameter, whose
+  # median it is, and the same as the matrices of the fit without its draws.
   for (route in names(t0cov)) {
     estimate <- t0cov[[route]]$estimate
     pm <- t0cov[[route]]$summary$parmatrices
     drift <- pm[pm$matrix == "DRIFT", ]
-    expect_equal(drift$mode, estimate$DRIFT[cbind(drift$row, drift$col)],
+    expect_equal(drift[["50%"]], estimate$DRIFT[cbind(drift$row, drift$col)],
       tolerance = 1e-3, label = route)
     expect_equal(estimate$T0cov, t0cov[[route]]$T0cov, tolerance = 1e-8, label = route)
-    popsd <- t0cov[[route]]$summary$popsd
+    popsd <- t0cov[[route]]$point$popsd
     expect_equal(unname(sqrt(diag(estimate$popcov))[rownames(popsd)]),
-      unname(popsd[, "mode"]), tolerance = 1e-3, label = route)
+      unname(popsd[, "mean"]), tolerance = 1e-3, label = route)
   }
   # The initial means' block of the random-effects covariance at the estimate
   # is T0cov there, the floor aside: one quantity, read two ways.

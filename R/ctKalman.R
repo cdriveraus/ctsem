@@ -137,7 +137,8 @@
 #' @param cores Integer number of cpu cores to use. Only needed if savescores was set to FALSE when fitting.
 #' \code{backend='stan'} only, and an error for a julia fit.
 #' @param collapsefunc function to apply over samples, such as \code{mean}
-#' @param pointest If TRUE, uses the posterior mode as the single sample.
+#' @param pointest If TRUE, uses the fit's point as the single sample: its
+#' estimate, or for a sampled fit the median of each raw parameter's draws.
 #' @param standardisederrors If TRUE, computes standardised errors for prior, upd, smooth conditions.
 #' @param subjectpars if TRUE, state estimates are not returned, instead, predictions of each subjects parameters
 #' are returned, for parameters that had random effects specified.

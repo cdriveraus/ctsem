@@ -18,9 +18,13 @@ local_no_julia <- function(startable = FALSE, env = parent.frame()) {
 test_that("the example fit's reports need no Julia", {
   local_no_julia()
   s <- summary(ctsemtestfit)
-  expect_true("mode" %in% colnames(s$popmeans))
-  expect_equal(s$popmeans["drift_eta1", "mode"],
+  expect_false("mode" %in% colnames(s$popmeans))
+  # A single parameter's median under the fit's normal draws is its estimate.
+  expect_equal(s$popmeans["drift_eta1", "50%"],
     unname(ctSummaryMatrices(ctsemtestfit)$estimate$DRIFT[1, 1]), tolerance = 1e-3)
+  r2 <- ctDerived(ctsemtestfit, function(m) m$DRIFT[1, 1])
+  expect_equal(summary(r2)[["50%"]], s$popmeans["drift_eta1", "50%"],
+    tolerance = 1e-3)
   dp <- ctDiscretePars(ctsemtestfit, times = c(0, 1, 2), nsamples = 20)
   expect_equal(dim(dp), c(20L, 1L, 3L, 2L, 2L))
   expect_equal(nrow(summary(dp)), 16L)

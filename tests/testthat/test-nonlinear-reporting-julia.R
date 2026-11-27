@@ -336,7 +336,10 @@ test_that("a fitted network's edges are the linearisation it says they are", {
 # eta1 + c1 and f2 = d21 eta1 + d22 eta2 + c2.
 .handJacobian <- function(fit, s) {
   pm <- summary(fit, parmatrices = FALSE, digits = 12)$popmeans
-  m <- stats::setNames(pm$mode, rownames(pm))
+  # The 50% column holds each parameter's estimate, its median under the
+  # fit's normal draws; a fit without draws has its estimate as the mean.
+  m <- stats::setNames(pm[[intersect(c("50%", "mean"), names(pm))[1L]]],
+    rownames(pm))
   matrix(c(m[['dr11']] * (1 + 0.2 * s[2]), m[['d21']],
     0.2 * m[['dr11']] * s[1], m[['d22']]), 2, 2)
 }

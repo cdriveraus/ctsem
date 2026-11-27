@@ -712,7 +712,8 @@ ctDiscreteParsDrift<-function(ctpars,times, impulseType,  standardise,cov=FALSE,
 #'@param line What the line shows. \code{'estimate'} (the default) draws the
 #'effects at the fit's estimate when \code{x} carries them
 #'(\code{attr(x, 'estimate')}, for an optimised fit), and otherwise the
-#'middle of \code{quantiles}. \code{'median'} draws the middle of
+#'middle of \code{quantiles}. At the estimate the line has no simulation
+#'noise, and for an optimised fit it is close to the median of the draws. \code{'median'} draws the middle of
 #'\code{quantiles}. The band shows the quantiles of the draws.
 #'@param latentNames Vector of character strings denoting names for the latent variables.
 #''auto' just uses eta1 eta2 etc.

@@ -17,9 +17,13 @@ ctSummaryMatrices(
 \arguments{
 \item{fit}{fit object from \code{\link{ctFit}}}
 
-\item{calcfunc}{Function to apply over samples, must return a single value. 
-By default the median over all samples is returned using the \code{\link[stats]{quantile}} function, 
-but one might also be interested in the \code{\link[base]{mean}} or \code{\link[stats]{sd}}, for instance.}
+\item{calcfunc}{Function to apply over samples, must return a single value.
+By default the median over all samples is returned using the \code{\link[stats]{quantile}} function,
+but one might also be interested in the \code{\link[base]{mean}} or \code{\link[stats]{sd}}, for instance.
+Each matrix element is summarised over its own draws, so a matrix of
+medians is not a set of matrices from any one draw: compute a quantity from
+several matrices with \code{\link{ctDerived}}, which applies a function to
+each draw's matrices.}
 
 \item{calcfuncargs}{A list of additional parameters to pass to calcfunc. 
 For instance, with the default of calcfunc = quantile, 
@@ -80,10 +84,12 @@ as for intercepts and initial means.
 
 On an optimised fit, \code{estimate} holds the same matrices at the fit's
 estimate, unrounded. For example \code{ctSummaryMatrices(fit)$estimate$DRIFT}
-is the estimated drift matrix, which can differ from the median of the
-draws, and \code{ctSummaryMatrices(fit, state = s)$estimate$JAx} is the
-model linearised at \code{s} at the estimate. A sampled fit has no
-\code{estimate}, and a \code{backend='stan'} fit's has no \code{popcov}.
+is the estimated drift matrix, and \code{ctSummaryMatrices(fit, state = s)$estimate$JAx} is the
+model linearised at \code{s} at the estimate. On a julia fit whose draws come
+from the normal approximation at its estimate, the median of an element that
+depends on a single parameter is its value at the estimate, and the default
+summary gives that value. A sampled fit has no \code{estimate}, and a
+\code{backend='stan'} fit's has no \code{popcov}.
 }
 \description{
 Summarise model-implied parameter matrices from a ctsem fit object.

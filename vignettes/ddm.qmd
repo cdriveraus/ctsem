@@ -86,9 +86,9 @@ model
 ```{r fit1}
 fit <- ctFit(dat, model, cores = 4)
 s <- summary(fit)
-data.frame(estimate = s$popmeans[names(truth$popmeans), 'mode'],
+data.frame(estimate = s$popmeans[names(truth$popmeans), '50%'],
   sd = s$popmeans[names(truth$popmeans), 'sd'], generated = truth$popmeans)
-data.frame(estimate = s$popsd[names(truth$popsd), 'mode'],
+data.frame(estimate = s$popsd[names(truth$popsd), '50%'],
   generated = truth$popsd)
 ```
 
@@ -146,7 +146,7 @@ dat2 <- data.frame(gen2)
 ```{r fit2}
 fit2 <- ctFit(dat2, model2, cores = 4)
 s2 <- summary(fit2)
-data.frame(estimate = s2$popmeans[names(truth2$popmeans), 'mode'],
+data.frame(estimate = s2$popmeans[names(truth2$popmeans), '50%'],
   sd = s2$popmeans[names(truth2$popmeans), 'sd'], generated = truth2$popmeans)
 ```
 

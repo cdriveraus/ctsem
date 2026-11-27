@@ -12,7 +12,7 @@
 # `.ctJuliaOptimiseFit()` -- the same pipeline `ctFit(optimize = TRUE)` runs --
 # and hands *that* fit to the assembler, so most of what this file used to
 # catch is now structurally impossible: the two routes share one constructor
-# up to `$sample` and the few `$estimate` fields a posterior mean cannot carry.
+# up to `$sample` and the few `$estimate` fields a posterior median cannot carry.
 # This file is kept because "structurally impossible" is a claim worth a test,
 # not an assumption, and because `ctFitUncertainty(fit, 'sample')`'s own field
 # additions (`$estimate$rawposterior`, `$uncertainty`, `$sample`) are a second
@@ -110,7 +110,7 @@ suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
 # already carries them (NULL-valued where they do not apply) before
 # `.ctBackendSampleAssemble()` runs, the same way `$estimate$loglik` has
 # always described the placement point on a sampled fit rather than the
-# posterior mean that replaces it in `$raw`. `.SHAPE_ESTIMATE_SAMPLED_ONLY`
+# posterior median that replaces it in `$raw`. `.SHAPE_ESTIMATE_SAMPLED_ONLY`
 # below is the only remaining asymmetry, and it is a real one: an optimised
 # fit has no comparable "point the chain started from" to report.
 .SHAPE_ESTIMATE_OPTIMISED_ONLY <- character(0)
@@ -132,7 +132,7 @@ suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
 
 .SHAPE_ESTIMATE_SAMPLED_ONLY <- c(
   # The point the chains were placed from, kept so it can be told from the
-  # posterior mean that replaced it in `$raw`.
+  # posterior median that replaced it in `$raw`.
   "placed_raw")
 
 test_that("both ctFit routes produce a fit of the same class", {
@@ -193,7 +193,7 @@ test_that("a sampled fit reports its identifiability findings, not just stores t
       is.integer(f$identifiability$nweak))
   }
   # The random-effect check, on both, saying where it was taken: on the
-  # sampled fit the estimate is now the posterior mean, and the check
+  # sampled fit the estimate is now the posterior median, and the check
   # describes the optimum that placed the sampler.
   opt <- fits$optimised$identifiability$effects
   smp <- fits$sampled$identifiability$effects

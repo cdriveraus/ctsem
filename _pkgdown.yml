@@ -115,6 +115,8 @@ reference:
   - plot.ctJuliaFit
   - plot.ctStanFit
   - ctSummaryMatrices
+  - ctDerived
+  - summary.ctDerived
   - ctSubjectPars
   - ctExtract
   - ctRawParnames

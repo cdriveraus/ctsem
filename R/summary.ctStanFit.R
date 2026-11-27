@@ -80,9 +80,13 @@ ctStanRawSamples<-function(fit){
 #' \code{ctStanContinuousPars} is maintained as a backward-compatible alias.
 #'
 #'@param fit fit object from \code{\link{ctFit}}
-#'@param calcfunc Function to apply over samples, must return a single value. 
-#'By default the median over all samples is returned using the \code{\link[stats]{quantile}} function, 
+#'@param calcfunc Function to apply over samples, must return a single value.
+#'By default the median over all samples is returned using the \code{\link[stats]{quantile}} function,
 #'but one might also be interested in the \code{\link[base]{mean}} or \code{\link[stats]{sd}}, for instance.
+#'Each matrix element is summarised over its own draws, so a matrix of
+#'medians is not a set of matrices from any one draw: compute a quantity from
+#'several matrices with \code{\link{ctDerived}}, which applies a function to
+#'each draw's matrices.
 #'@param calcfuncargs A list of additional parameters to pass to calcfunc. 
 #'For instance, with the default of calcfunc = quantile, 
 #'the probs argument is needed to ensure only a single value is returned.
@@ -143,10 +147,12 @@ ctStanRawSamples<-function(fit){
 #'
 #'On an optimised fit, \code{estimate} holds the same matrices at the fit's
 #'estimate, unrounded. For example \code{ctSummaryMatrices(fit)$estimate$DRIFT}
-#'is the estimated drift matrix, which can differ from the median of the
-#'draws, and \code{ctSummaryMatrices(fit, state = s)$estimate$JAx} is the
-#'model linearised at \code{s} at the estimate. A sampled fit has no
-#'\code{estimate}, and a \code{backend='stan'} fit's has no \code{popcov}.
+#'is the estimated drift matrix, and \code{ctSummaryMatrices(fit, state = s)$estimate$JAx} is the
+#'model linearised at \code{s} at the estimate. On a julia fit whose draws come
+#'from the normal approximation at its estimate, the median of an element that
+#'depends on a single parameter is its value at the estimate, and the default
+#'summary gives that value. A sampled fit has no \code{estimate}, and a
+#'\code{backend='stan'} fit's has no \code{popcov}.
 #'@aliases ctStanContinuousPars
 #'@export
 # `state` is part of the generic, not an extra the julia method happens to
@@ -210,8 +216,9 @@ ctStanContinuousPars <- ctSummaryMatrices
 #' \code{ctStanSubjectPars} is maintained as a backward-compatible alias.
 #'
 #' @param fit A fit from \code{\link{ctFit}}.
-#' @param pointest if TRUE, returns only the set of individual difference parameters
-#' based on the max a posteriori estimate (or the median if sampling approaches were used).
+#' @param pointest if TRUE, returns only the individual parameters at the
+#' fit's point: its estimate, or for a sampled fit the median of each raw
+#' parameter's draws.
 #' @param cores Number of cores to use. \code{backend='stan'} only, and an
 #' error for a julia fit, which already holds the subject matrices.
 #' @param nsamples Number of samples to calculate parameters for. Not used if pointest=TRUE.
@@ -432,11 +439,12 @@ getparnames <- function(fit,reonly=FALSE, subjvariationonly=FALSE, popstatesonly
 #' @param residualcov Whether or not to show standardised residual covariance. Takes a little longer to compute.
 #' @param ... Additional arguments to pass to \code{priorcheckreport}, such as \code{meanlim}, or \code{sdlim}.
 #' @return List containing summary items, with a \code{print} method for readable console and knitr output.
-#'   On an optimised \code{backend = 'julia'} fit with uncertainty draws, the
-#'   parameter tables and \code{parmatrices} have a \code{mode} column beside
-#'   the draws' mean, sd and quantiles. This is the fit's estimate on the same
-#'   scale, the point that likelihood ratio tests and information criteria
-#'   refer to.
+#'   The parameter tables and \code{parmatrices} give the mean, sd and
+#'   quantiles of each quantity's draws. The \code{50\%} column, the median,
+#'   is the point value. For an optimised fit whose draws come from the normal
+#'   approximation at its estimate, the median of a quantity that depends on a
+#'   single parameter is that quantity at the estimate, and \code{50\%} holds
+#'   it. The matrices at the estimate are \code{ctSummaryMatrices(fit)$estimate}.
 #'
 #'   \code{popmeans} reports each free parameter. A \code{T0VAR},
 #'   \code{DIFFUSION} or \code{MANIFESTVAR} parameter on the diagonal is a

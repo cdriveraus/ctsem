@@ -94,6 +94,7 @@
 "test-ctModelImprove.R","reporting","core"
 "test-ctModelReduce.R","reporting","core"
 "test-ctsemtestfit.R","reporting","core"
+"test-ctDerived.R","reporting","core"
 "test-print-model.R","reporting","core"
 "test-ctACF.R","reporting","extended"
 "test-ctModelLatex.R","reporting","extended"
