@@ -150,14 +150,16 @@ test_that("ctTracePlot draws, and refuses a fit with no trace", {
 
 test_that("a sampled fit's trace is each chain's draws, and plot() offers it", {
   skip_without_julia()
+  # NUTS by name: `chains` chooses no sampler, and this model's default, SMC,
+  # runs chains of its own.
   model <- suppressMessages(ctModel(type = "ct", manifestNames = "Y1",
     latentNames = "eta1", LAMBDA = matrix(1)))
   model$pars$indvarying <- FALSE
   fit <- suppressMessages(ctFit(ctsemtestdat, model, backend = "julia",
     cores = 1, priors = TRUE))
   sampled <- suppressWarnings(suppressMessages(ctFitUncertainty(fit, "sample",
-    cores = 1, control = list(chains = 2, minESS = 50, rhatTarget = 1.1,
-      processes = FALSE))))
+    cores = 1, control = list(sampler = "nuts", chains = 2, minESS = 50,
+      rhatTarget = 1.1, processes = FALSE))))
   draws <- ctTracePlot(sampled, plot = FALSE)
   expect_equal(levels(draws$chain), c("1", "2"))
   expect_equal(nrow(draws),
