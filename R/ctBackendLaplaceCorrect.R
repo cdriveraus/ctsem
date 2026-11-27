@@ -808,9 +808,12 @@
   # the tolerance, and the fit is left alone to the bit. Not at a jump: the
   # screen says the hybrid agrees with Laplace at the point, which is no
   # optimum of either (round 9's jump point passed the screen with a gradient
-  # of 2.5e5), and the climb is what leaves it. Nor where the shift
-  # check found a move to make: the screen reads values, the check the move.
-  if (is.null(jump) && is.null(check) && record$screen <= record$tolerance) {
+  # of 2.5e5), and the climb is what leaves it. Nor where a shift check found
+  # a move to make, this call's or the fit's whose units are forced (`force`,
+  # as a refinement asked for after the fit passes them): the screen reads
+  # values, the check the move.
+  if (is.null(jump) && is.null(check) && !length(force) &&
+      record$screen <= record$tolerance) {
     record$seconds <- timed()
     fit$laplace$correction <- record
     return(fit)
@@ -892,4 +895,26 @@
       " standard errors") else "a standard error or more", " (most: ", worst,
     "). ctFitUncertainty(fit, 'sample', intoverpop = 'none') gives intervals ",
     "to report.")
+}
+
+# A variational fit as the Laplace fit its refinement starts from
+# (`ctFitUncertainty(fit, intoverpop = 'quadrature')`,
+# `.ctBackendUncertaintyQuadrature()`). The refined fit is the Laplace
+# objective with the flagged units integrated, so it climbs that objective from
+# the variational estimate, and the units the random-effects check names
+# against Laplace there are flagged whatever the screen says
+# (`check$carriers`), as a Laplace fit's own check names them. The check the
+# variational fit made for its log likelihood was against its bound
+# (`.ctVariationalLoglik()`), which names no units.
+.ctVariationalAsLaplace <- function(fit, cores,
+  control = .ctLaplaceContinueDefaults) {
+  fit$model_spec$laplace$variational <- NULL
+  check <- .ctBackendWithMaxChunks(cores, .ctLaplaceShiftCheck(fit,
+    draws = as.integer(control$check_draws),
+    seeds = seq_len(as.integer(control$check_seeds)),
+    bar = as.numeric(control$material), control = control))
+  fit$laplace$correction <- list(method = "quadrature", status = "variational",
+    applied = FALSE, laplace_estimate = as.numeric(fit$estimate$raw),
+    check = .ctLaplaceShiftRecord(check, fit))
+  fit
 }

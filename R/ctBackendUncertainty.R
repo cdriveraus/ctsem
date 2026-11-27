@@ -1082,6 +1082,9 @@
       "in the state and has no separate integral to take by quadrature; ",
       "filter = 'particle' is its exact reference.", call. = FALSE)
   }
+  # A variational fit is refined from its estimate on the Laplace objective
+  # its bound is built on, with the units the check names there flagged.
+  if (.ctBackendVariational(fit$model_spec)) fit <- .ctVariationalAsLaplace(fit, cores)
   already <- .ctLaplaceIsCorrected(fit)
   if (already && isTRUE(control$correctEstimate)) {
     stop("This fit was already corrected by quadrature when it was fitted ",
@@ -1123,6 +1126,9 @@
   # replace it with one that says the fit was never moved. What the draws were
   # taken on is in `fit$uncertainty$details$laplace_correction`.
   if (already) fit$laplace$correction <- corrected
+  # The check whose carriers were forced, where the refined fit made none.
+  if (!already && is.null(fit$laplace$correction$check))
+    fit$laplace$correction$check <- corrected$check
   drawn <- identical(fit$uncertainty$settings$method, uncertainty) &&
     !is.null(fit$uncertainty$details$laplace_correction$error)
   if (!drawn) {

@@ -43,7 +43,8 @@ sections.}
 
 \item{intoverpop}{How the random effects are integrated, with the values
 of \code{\link{ctFit}}'s argument. \code{NULL} (the default) keeps the
-fit's own. \code{'quadrature'}, for a Laplace fit, refines the fit by
+fit's own. \code{'quadrature'}, for a Laplace or variational fit, refines
+the fit by
 integrating numerically the subjects or groups the random-effects check
 flags, and describes the posterior there, as
 \code{ctFit(intoverpop = 'quadrature')} does. It works with
@@ -278,7 +279,8 @@ Laplace approximation's for random effects on variances, in nonlinear
 dynamics or with non-Gaussian indicators. It usually takes several times
 as long as the fit.
 
-With \code{intoverpop = 'quadrature'} (julia, Laplace fits), \code{'is'}
+With \code{intoverpop = 'quadrature'} (julia, Laplace and variational
+fits), \code{'is'}
 and \code{'checked'} draw from a more exact density, in which the subjects
 or groups flagged by the random-effects check are integrated by quadrature
 (\code{control$nodes} per effect, 5 by default) and the rest by the
