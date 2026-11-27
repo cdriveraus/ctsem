@@ -2251,7 +2251,10 @@ ctScoreTest <- function(fit, covariates = NULL,
   args$fit <- FALSE
   args$inits <- NULL
   args$datalong <- .ctFitLongData(fit)
-  args$intoverpop <- .ctBackendIntOverPop(spec)
+  # A variational fit's route is 'laplace' with the bound asked of it, and its
+  # extension takes the bound too, or it would not reproduce the fit at zero.
+  args$intoverpop <- if (.ctBackendVariational(spec)) "variational" else
+    .ctBackendIntOverPop(spec)
   args$verbose <- 0
   spec2 <- suppressMessages(suppressWarnings(do.call(ctFit, args)))
   if (!is.null(spec$laplace$known) && !is.null(spec2$laplace))

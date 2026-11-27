@@ -172,6 +172,31 @@ test_that("without the random-effects check a variational fit reports its bound"
     tolerance = 1e-4)
 })
 
+test_that("leave-one-out and the score tests read a variational fit's bound", {
+  skip_on_cran()
+  skip_without_julia()
+  vf <- .vf_fit("nonlinear", "variational")
+  est <- as.numeric(vf$estimate$raw)
+  # The units' terms are their bounds, and a subject with every row withheld
+  # scores nothing.
+  ut <- ctsem:::.ctBackendUnitTerms(vf$model_spec, est)
+  expect_equal(sum(ut$unit_loglik), vf$estimate$loglik_lowerbound, tolerance = 1e-6)
+  training <- vf$model_spec$data
+  training[training$id == unique(training$id)[3], "Y1"] <- NA
+  tf <- ctsem:::.ctFitReplaceData(vf, training)
+  emptied <- ctsem:::.ctBackendUnitTerms(tf$model_spec, est, subjects = 3L)
+  expect_equal(emptied$unit_loglik[3, 1], 0, tolerance = 1e-8)
+  l <- suppressWarnings(suppressMessages(ctLOO(vf, folds = 4, cores = 2,
+    casewiseApproximation = TRUE)))
+  expect_true(all(is.finite(l$outsampleLogLikSubject)))
+  expect_match(l$scoring, "variational bound")
+  # A subject's row scores sum to its score on the bound, up to the inner
+  # solves' tolerance.
+  R <- ctsem:::.ctBackendRowScores(vf, est, diag(length(est)), 2)
+  S <- ctsem:::.ctBackendScoreMatrix(vf, est, prior = FALSE)
+  expect_lt(max(abs(rowsum(R, ctsem:::.ctFitRowSubject(vf)) - S)), 1e-3)
+})
+
 # Persons in studies: a manifest mean that varies at both levels (a Gaussian
 # integrand, where the bound is the integral), and with `drift` a person-level
 # drift through `-log1p_exp` beside it (not Gaussian).

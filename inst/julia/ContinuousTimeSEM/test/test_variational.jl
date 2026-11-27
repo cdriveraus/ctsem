@@ -271,4 +271,49 @@ _vf_threelevel_gauss() = (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE;
             @test V.accepted && !V.running
         end
     end
+
+    @testset "units' terms and rows' scores read the bound" begin
+        # On a Gaussian integrand the bound is Laplace's term, so leave-one-out's
+        # units' terms and the score tests' row scores are Laplace's; and
+        # neither moves the approximations the objective holds.
+        laplace, values = _fresh_linear()
+        V = ctsem_variational(laplace; family="gauss", tol=1e-12)
+        _VF.ctsem_variational_evaluate(V, values)
+        held = deepcopy(V.lam)
+        draws = hcat(values, values .+ 0.05)
+        tv = ctsem_unit_terms(V, draws)
+        tl = ctsem_unit_terms(laplace, draws)
+        @test all(tv.converged)
+        @test tv.unit_loglik ≈ tl.unit_loglik atol = 1e-7
+        @test tv.value ≈ tl.value atol = 1e-6
+        one = ctsem_unit_terms(V, draws[:, 1:1]; subjects=2)
+        @test one.unit_loglik[2, 1] ≈ tl.unit_loglik[2, 1] atol = 1e-7
+        @test all(isnan, one.unit_loglik[[1; 3:end], 1]) && isnan(one.value[1])
+        n = length(values)
+        D = Matrix{Float64}(I, n, n)
+        @test ctsem_row_scores(V, values, D) ≈ ctsem_row_scores(laplace, values, D) atol = 1e-6
+        @test V.lam == held
+        # Off it a subject's rows sum to its unit's score on the bound.
+        laplace, values = _fresh_nonlinear()
+        V = ctsem_variational(laplace; tol=1e-12)
+        r = _VF.ctsem_variational_evaluate(V, values; units=true)
+        D = Matrix{Float64}(I, length(values), length(values))
+        R = ctsem_row_scores(V, values, D)
+        @test all(isfinite, R)
+        rows = [size(s.data, 2) for s in laplace.objective.full_subjects]
+        stop = cumsum(rows)
+        for (U, members) in enumerate(laplace.units.members)
+            i = members[1]
+            span = (stop[i] - rows[i] + 1):stop[i]
+            w = _VF._laplace_unit_weight(laplace, U)
+            @test vec(sum(R[span, :]; dims=1)) .* w ≈ r.unit_gradient[:, U] atol = 1e-6
+        end
+        # The Hessian's columns are the whole Hessian's, and leave the
+        # approximations' derivatives where the whole one put them.
+        Hfull = ctsem_hessian(V, values)
+        dlam = deepcopy(V.dlam)
+        Hc = ctsem_hessian_columns(V, values, [1, 3])
+        @test Hc ≈ Hfull[:, [1, 3]] rtol = 1e-4 atol = 1e-5
+        @test V.dlam == dlam
+    end
 end
