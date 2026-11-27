@@ -1893,9 +1893,17 @@ errors to fall as `n^-0.7`, the slowest rate the lattice showed (at ten
 effects; `point_sets.jl`) -- one to five, and checked again after -- and
 whether it read every flagged unit (`complete`: none on frozen draws or at a
 product rule's most nodes).
+
+`known` holds, for units whose two gradients the caller has at `values` on
+these rules, the pair (`_placed_choose!`'s, unit => (own, other)), which are
+read rather than evaluated again: at the start of a climb the choice has just
+formed every one-block unit's, and evaluating them again was a quarter of
+that stage on the hc-wellbeing life satisfaction fit (1,247 of 4,656 s at
+8 cores, dev3, 2026-11-26).
 """
 function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
-    H::AbstractMatrix; bar::Real=_PLACED_SLOPE_BAR, progress=nothing)
+    H::AbstractMatrix; bar::Real=_PLACED_SLOPE_BAR, progress=nothing,
+    known::Union{Nothing,Dict{Int,Tuple{Vector{Float64},Vector{Float64}}}}=nothing)
     o = P.cont
     laplace = o.laplace
     spec = laplace.spec
@@ -1921,8 +1929,17 @@ function _placed_slope_check(P::CTSEMLaplacePlaced, values::AbstractVector,
     finer = [_placed_finer(o.unit_rules[U]) for U in units]
     alt = [f === nothing ? _rule_sets(laplace, U, o.unit_rules[U]; alt=1) :
         _rule_sets(laplace, U, f) for (U, f) in zip(units, finer)]
-    tick = _placed_tick(progress, nu)
-    ok = _laplace_parallel(laplace, 1:nu) do i
+    if known !== nothing
+        for (i, U) in enumerate(units)
+            pair = get(known, U, nothing)
+            pair === nothing && continue
+            own[i] = pair[1]
+            other[i] = pair[2]
+        end
+    end
+    todo = Int[i for i in 1:nu if known === nothing || !haskey(known, units[i])]
+    tick = _placed_tick(progress, length(todo))
+    ok = _laplace_parallel(laplace, todo) do i
         local U, r
         U = units[i]
         r = _placed_unit!(own[i], P, U, theta, Ls, dL, positions, true).ok &&
@@ -2053,10 +2070,14 @@ chose by the value's error (`_continuation_refine!`), which the lattice
 meets far sooner than its gradient: on w4s every unit took a 128-point
 lattice there, and the estimate needed about 2,000 points a unit, where the
 625 of the 5-node product rule did as well. A unit no rule takes there keeps
-the one with the smallest share. Returns how many units changed rule.
+the one with the smallest share. Returns how many units changed rule; with
+`known`, each unit's two gradients on the rule it took and the rule that
+measured it go there, for the slope check that follows at `values`
+(`_placed_slope_check`).
 """
 function _placed_choose!(P::CTSEMLaplacePlaced, values::AbstractVector,
-    H::AbstractMatrix; bar::Real=_PLACED_SLOPE_BAR, progress=nothing)
+    H::AbstractMatrix; bar::Real=_PLACED_SLOPE_BAR, progress=nothing,
+    known::Union{Nothing,Dict{Int,Tuple{Vector{Float64},Vector{Float64}}}}=nothing)
     o = P.cont
     laplace = o.laplace
     spec = laplace.spec
@@ -2071,12 +2092,22 @@ function _placed_choose!(P::CTSEMLaplacePlaced, values::AbstractVector,
     dL = _laplace_level_chol_derivatives(theta, spec)
     positions = [_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
     chosen = Vector{CTSEMRuleChoice}(undef, length(units))
+    pairs = Vector{Union{Nothing,Tuple{Vector{Float64},Vector{Float64}}}}(nothing,
+        length(units))
     tick = _placed_tick(progress, length(units))
     _laplace_parallel(laplace, eachindex(units)) do i
-        chosen[i] = _placed_choose_unit(P, units[i], theta, Ls, dL, positions,
-            metric, n, budget)
+        local r
+        r = _placed_choose_unit(P, units[i], theta, Ls, dL, positions, metric, n,
+            budget)
+        chosen[i] = r.rule
+        pairs[i] = r.pair
         _placed_tick!(tick)
         return true
+    end
+    if known !== nothing
+        for (i, U) in enumerate(units)
+            pairs[i] === nothing || (known[U] = pairs[i])
+        end
     end
     rules = copy(o.unit_rules)
     changed = 0
@@ -2095,7 +2126,9 @@ end
 
 """One unit of `_placed_choose!`: the cheapest rule of its families
 (`_continuation_steps`) whose share is within `budget`, by the cost of the
-pair of rules that measures it."""
+pair of rules that measures it. Returns `(rule, pair)`, `pair` the unit's
+gradients on that rule and on the one that measured it, or `nothing` where
+no rule met the value's targets and the unit keeps its own."""
 function _placed_choose_unit(P::CTSEMLaplacePlaced, U::Int, theta::Vector{Float64},
     Ls, dL, positions, metric, n::Int, budget::Float64)
     o = P.cont
@@ -2125,6 +2158,7 @@ function _placed_choose_unit(P::CTSEMLaplacePlaced, U::Int, theta::Vector{Float6
     systematic = o.draws_se / sqrt(max(length(o.flagged), 1))
     best = o.unit_rules[U]
     bestshare = Inf
+    bestpair = nothing
     a = zeros(npar)
     b = zeros(npar)
     scratch = zeros(npar)
@@ -2153,10 +2187,11 @@ function _placed_choose_unit(P::CTSEMLaplacePlaced, U::Int, theta::Vector{Float6
         if share < bestshare
             best = c
             bestshare = share
+            bestpair = (copy(a), copy(b))
         end
-        share <= budget && return c
+        share <= budget && return (rule=c, pair=bestpair)
     end
-    return best
+    return (rule=best, pair=bestpair)
 end
 
 """
@@ -2280,13 +2315,16 @@ function ctsem_laplace_placed_optimize(P::CTSEMLaplacePlaced, start::AbstractVec
     slope = NaN
     if hessian !== nothing
         # Each unit on the cheapest rule its share of the estimate's error
-        # allows, then the whole checked as it will be at the end.
+        # allows, then the whole checked as it will be at the end, on the
+        # gradients the choice formed.
         H0 = Matrix{Float64}(hessian)
-        raised += _placed_choose!(P, x, H0;
+        known = Dict{Int,Tuple{Vector{Float64},Vector{Float64}}}()
+        raised += _placed_choose!(P, x, H0; known=known,
             progress=_placed_stage_progress(kwargs, "Refined fit, choosing rules"))
         ctsem_laplace_placed_evaluate(P, x; gradient=false)
-        check = _placed_slope_check(P, x, H0;
+        check = _placed_slope_check(P, x, H0; known=known,
             progress=_placed_stage_progress(kwargs, "Refined fit, slope check"))
+        empty!(known)
         slope = check.complete ? check.sd : NaN
         steep = Int[U for U in check.units if
             _placed_finer(P.cont.unit_rules[U]) !== nothing]
