@@ -872,7 +872,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # The model's matrices for each draw, draws x rows x cols, trimmed to the
 # processes and labelled as ctSummaryMatrices() reports them, with dtDRIFT and
 # each covariance's correlations computed draw by draw. `.ctCollapseArrays()`
-# summarises them, and ctDerived() hands a user's function one draw of them.
+# summarises them, and ctCalcPerDraw() hands a user's function one draw of them.
 .ctSummaryArrays <- function(e, continuoustime, latentNames, manifestNames,
   TDpredNames, timeinterval = 1, binaryNames = NULL, jacobians = FALSE) {
 

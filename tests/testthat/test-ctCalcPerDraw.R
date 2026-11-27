@@ -1,4 +1,4 @@
-# ctDerived() and the medians the summaries take from the estimate. All on
+# ctCalcPerDraw() and the medians the summaries take from the estimate. All on
 # ctsemtestfit, an optimised fit with normal draws, which needs no Julia.
 
 test_that("a median is the estimate's value only where one coordinate moves it", {
@@ -12,14 +12,14 @@ test_that("a median is the estimate's value only where one coordinate moves it",
   expect_true(all(is.na(ctsem:::.ctExactMedians(values, NULL, at))))
 })
 
-test_that("ctDerived computes a quantity draw by draw", {
+test_that("ctCalcPerDraw computes a quantity draw by draw", {
   fit <- ctsemtestfit
   e <- ctExtract(fit)
-  one <- ctDerived(fit, function(m) m$DRIFT[1, 1])
-  expect_s3_class(one, "ctDerived")
+  one <- ctCalcPerDraw(fit, function(m) m$DRIFT[1, 1])
+  expect_s3_class(one, "ctCalcPerDraw")
   expect_equal(as.numeric(one), as.numeric(e$pop_DRIFT[, 1, 1]))
 
-  both <- ctDerived(fit, function(m) c(drift = m$DRIFT[1, 1],
+  both <- ctCalcPerDraw(fit, function(m) c(drift = m$DRIFT[1, 1],
     asym = m$asymDIFFUSIONcov[1, 1]))
   expect_equal(dim(both), c(dim(e$pop_DRIFT)[1L], 2L))
   s <- summary(both)
@@ -35,7 +35,7 @@ test_that("ctDerived computes a quantity draw by draw", {
 
   # A matrix comes back by row and column; the Lyapunov equation holds in
   # every draw, where a matrix of medians does not.
-  lyapunov <- ctDerived(fit, function(m) {
+  lyapunov <- ctCalcPerDraw(fit, function(m) {
     A <- m$DRIFT
     S <- m$asymDIFFUSIONcov
     A %*% S + S %*% t(A) + m$DIFFUSIONcov
@@ -44,7 +44,7 @@ test_that("ctDerived computes a quantity draw by draw", {
   expect_lt(max(abs(lyapunov), na.rm = TRUE), 1e-6)
   expect_identical(colnames(summary(lyapunov))[1:2], c("row", "col"))
 
-  few <- ctDerived(fit, function(m) m$DRIFT[1, 1], nsamples = 10)
+  few <- ctCalcPerDraw(fit, function(m) m$DRIFT[1, 1], nsamples = 10)
   expect_equal(dim(few), c(10L, 1L))
 })
 

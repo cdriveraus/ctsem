@@ -22,7 +22,7 @@ By default the median over all samples is returned using the \code{\link[stats]{
 but one might also be interested in the \code{\link[base]{mean}} or \code{\link[stats]{sd}}, for instance.
 Each matrix element is summarised over its own draws, so a matrix of
 medians is not a set of matrices from any one draw: compute a quantity from
-several matrices with \code{\link{ctDerived}}, which applies a function to
+several matrices with \code{\link{ctCalcPerDraw}}, which applies a function to
 each draw's matrices.}
 
 \item{calcfuncargs}{A list of additional parameters to pass to calcfunc. 

@@ -103,7 +103,7 @@ with the drift as a latent process, constant or changing over the session.
 - The median of the draws (the `50%` column) is the point value. For a single
   parameter of an optimised fit it is the estimate, without simulation noise.
   `ctSummaryMatrices(fit)$estimate` gives the matrices at the estimate.
-- `ctDerived()` computes a quantity from the model's matrices for each draw,
+- `ctCalcPerDraw()` computes a quantity from the model's matrices for each draw,
   such as an explained variance or an indirect effect, and gives its median and
   interval.
 

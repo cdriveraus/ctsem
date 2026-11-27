@@ -16,7 +16,7 @@
 #'   evaluated, as in \code{\link{ctSummaryMatrices}}. Needs
 #'   \code{backend='julia'}.
 #' @param nsamples \code{'all'}, or the number of draws to use.
-#' @return An array of class \code{ctDerived}, with one row per draw and the
+#' @return An array of class \code{ctCalcPerDraw}, with one row per draw and the
 #'   quantity's own dimensions after it. For an optimised fit,
 #'   \code{attr(x, 'estimate')} holds the quantity at the fit's estimate.
 #'   \code{summary()} gives the mean, sd, 2.5\%, 50\% and 97.5\% of each
@@ -31,7 +31,7 @@
 #' @examples
 #' # The share of each process's stationary variance accounted for by the
 #' # state one time unit earlier.
-#' r2 <- ctDerived(ctsemtestfit, function(m) {
+#' r2 <- ctCalcPerDraw(ctsemtestfit, function(m) {
 #'   A <- m$dtDRIFT
 #'   S <- m$asymDIFFUSIONcov
 #'   diag(A %*% S %*% t(A)) / diag(S)
@@ -41,7 +41,7 @@
 #' # The draws themselves, one row per draw.
 #' dim(r2)
 #' @export
-ctDerived <- function(fit, FUN, ..., timeinterval = 1, state = NULL,
+ctCalcPerDraw <- function(fit, FUN, ..., timeinterval = 1, state = NULL,
   nsamples = 'all') {
   if (!inherits(fit, 'ctFit')) stop('fit must be a fit from ctFit().', call. = FALSE)
   FUN <- match.fun(FUN)
@@ -120,20 +120,20 @@ ctDerived <- function(fit, FUN, ..., timeinterval = 1, state = NULL,
     attr(out, 'exactmedian') <- .ctExactMedians(t(draws), centred,
       as.numeric(estimate))
   }
-  class(out) <- c('ctDerived', 'array')
+  class(out) <- c('ctCalcPerDraw', 'array')
   out
 }
 
-#' Summarise a quantity computed by ctDerived
+#' Summarise a quantity computed by ctCalcPerDraw
 #'
-#' @param object Output of \code{\link{ctDerived}}.
+#' @param object Output of \code{\link{ctCalcPerDraw}}.
 #' @param probs Quantiles of each element over draws.
 #' @param ... Not used.
 #' @return A data frame with one row per element of the quantity, giving the
 #'   mean, sd and quantiles of its draws. For a matrix, the \code{row} and
 #'   \code{col} columns name the element.
 #' @export
-summary.ctDerived <- function(object, probs = c(.025, .5, .975), ...) {
+summary.ctCalcPerDraw <- function(object, probs = c(.025, .5, .975), ...) {
   d <- dim(object)
   n <- d[1L]
   draws <- matrix(unclass(object), nrow = n)
@@ -161,7 +161,7 @@ summary.ctDerived <- function(object, probs = c(.025, .5, .975), ...) {
 }
 
 #' @export
-print.ctDerived <- function(x, digits = 4L, ...) {
+print.ctCalcPerDraw <- function(x, digits = 4L, ...) {
   s <- summary(x)
   values <- vapply(s, is.numeric, logical(1L)) & !names(s) %in% c('row', 'col')
   s[values] <- lapply(s[values], round, digits)
