@@ -129,6 +129,9 @@ is a normal distribution, with skew and bending added for subjects with up
 to three random effects. The reported log likelihood is integrated by the
 random-effects check (\code{optimcontrol$checks}), and the bound is kept in
 \code{loglik_lowerbound}. Without that check the bound is reported.
+Subject-level parameters and Kalman output are taken from the fitted
+approximation. Its cost grows faster than Laplace's with the number of
+random effects per subject.
 
 \code{FALSE}, or \code{'none'}, samples the random effects with the other
 parameters and needs \code{optimize=FALSE}, because maximising over every
