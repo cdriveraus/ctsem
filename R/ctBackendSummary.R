@@ -1847,10 +1847,11 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   }
   # The engine reports deviations its filter integrates at their conditional
   # modes, and linearises them with the effects for draws
-  # (`.ctBackendHybridReports`); a fit that sampled its effects has a draw of
-  # every coordinate, so it reads them from the layer holding them.
-  objective <- .ctJuliaObjective(fit, layer = sampled || !ti_effects ||
-    !.ctBackendHybridReports(spec))
+  # (`.ctBackendHybridReports`); a variational fit reports its approximations'
+  # effects; a fit that sampled its effects has a draw of every coordinate, so
+  # it reads them from the layer holding them.
+  objective <- .ctJuliaObjective(fit, layer = sampled ||
+    !.ctBackendHybridReports(spec) || (!ti_effects && !.ctBackendVariational(spec)))
   effects <- NULL
   if (!is.null(draws) && sampled) {
     saved <- fit$sample$effects
