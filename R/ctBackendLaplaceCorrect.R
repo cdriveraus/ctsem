@@ -314,10 +314,11 @@
 # step measures how far correcting the bound's error would move it
 # (`.ctVariationalLoglik()`), which takes the integral alone where there is no
 # curvature (`shiftless`; `status` then "unchecked"), and no unit's step
-# (`carriers = FALSE`).
+# (`carriers = FALSE`), and floors each unit's integral at its bound (`floor`,
+# `.ctLaplaceCheckIntegral()`).
 .ctLaplaceShiftCheck <- function(fit, draws = 128L, seeds = 1:4, bar = 0.1,
   control = .ctLaplaceContinueDefaults, progress = NULL, shiftless = FALSE,
-  carriers = TRUE) {
+  carriers = TRUE, floor = NULL) {
   est <- as.numeric(fit$estimate$raw)
   hessian <- .ctBackendStoredHessian(fit, est)
   basis <- if (!is.null(hessian) && all(is.finite(hessian)))
@@ -350,7 +351,7 @@
   G <- matrix(as.numeric(r$gradient), nrow = length(est))
   scored <- apply(G, 2L, function(g) all(is.finite(g)))
   if (sum(scored) < 2L) return(NULL)
-  integral <- .ctLaplaceCheckIntegral(r, scored)
+  integral <- .ctLaplaceCheckIntegral(r, scored, floor = floor)
   counts <- list(units = length(integral$laplace_units), draws = as.integer(draws),
     seeds = sum(scored), seconds = proc.time()[["elapsed"]] - started)
   if (is.null(basis)) return(c(list(status = "unchecked"), integral, counts))
@@ -386,20 +387,47 @@
 # (`.ctLaplaceExpanded()`), that, whose bounds `gap_bound` sums; on the rest,
 # the draws, whose seeds `scored` give `gap_se`. Read by the check and by a
 # variational fit's log likelihood (`.ctVariationalLoglik()`).
-.ctLaplaceCheckIntegral <- function(r, scored) {
+#
+# `floor`, where given, is a lower bound on each unit's integral (a
+# variational fit's bound): a unit whose integral comes out below it by more
+# than three of its own standard errors takes it (`floored`), and its draws
+# leave `gap_se`. The draws centre on one of Laplace's maxima, so where a
+# unit's posterior has another they miss its mass: on test-julia-variational.R's
+# two-signed loading the integral came out 3.7 nats under the bound the fit
+# maximised. Within its error a unit keeps its integral: the bound is a bound
+# to its rule's error, and over 1,000 units of the simulated pair
+# (review/LAPLACE-plateau-credit-2026-11-25.md) it lay 0.5 nats above the
+# integral, so a floor at the bound itself took every unit whose draws fell
+# below it and would have raised the sum by about two nats.
+.ctLaplaceCheckIntegral <- function(r, scored, floor = NULL) {
   laplace_units <- as.numeric(r$laplace_unit)
   checked <- matrix(as.numeric(r$check_unit), nrow = length(laplace_units))
   expanded <- .ctLaplaceExpanded(r, length(laplace_units), scored)
   expansion <- as.numeric(r$expansion_term) + as.numeric(r$expansion_correction) -
     laplace_units
-  gaps <- colSums(checked[!expanded, scored, drop = FALSE]) -
-    sum(laplace_units[!expanded])
   unit_gap <- rowMeans(checked[, scored, drop = FALSE]) - laplace_units
   unit_gap[expanded] <- expansion[expanded]
-  list(laplace_units = laplace_units, gap = sum(expansion[expanded]) + mean(gaps),
+  floored <- rep(FALSE, length(laplace_units))
+  if (length(floor) == length(laplace_units)) {
+    # Each unit's error: its seeds' spread, or their own replicate error where
+    # that is larger; on an expanded unit the expansion's bound.
+    drawn_se <- matrix(as.numeric(r$check_se), nrow = length(laplace_units))
+    spread <- apply(checked[, scored, drop = FALSE], 1L, stats::sd) / sqrt(sum(scored))
+    replicate <- sqrt(rowMeans(drawn_se[, scored, drop = FALSE]^2) / sum(scored))
+    unit_se <- pmax(spread, replicate, na.rm = TRUE)
+    unit_se[expanded] <- as.numeric(r$expansion_bound)[expanded]
+    floored <- is.finite(floor) & is.finite(unit_se) &
+      laplace_units + unit_gap < floor - 3 * unit_se
+    unit_gap[floored] <- floor[floored] - laplace_units[floored]
+  }
+  drawn <- !expanded & !floored
+  gaps <- colSums(checked[drawn, scored, drop = FALSE]) - sum(laplace_units[drawn])
+  list(laplace_units = laplace_units,
+    gap = sum(unit_gap[!drawn]) + mean(gaps),
     gap_se = stats::sd(gaps) / sqrt(length(gaps)),
-    gap_bound = sum(as.numeric(r$expansion_bound)[expanded]),
-    expanded = sum(expanded), expanded_units = which(expanded), unit_gap = unit_gap)
+    gap_bound = sum(as.numeric(r$expansion_bound)[expanded & !floored]),
+    expanded = sum(expanded & !floored), expanded_units = which(expanded & !floored),
+    floored = which(floored), unit_gap = unit_gap)
 }
 
 # The smallest eigenvalue of a unit's curvature in its effects, relative to the
@@ -843,11 +871,25 @@
     timed = timed)
 }
 
+# Each unit's bound at a variational fit's estimate, from the approximations
+# the objective holds (the fit's, in the session that fitted), nothing kept;
+# NULL for any other fit or where the bound cannot be evaluated.
+.ctVariationalUnitBounds <- function(fit) {
+  if (!.ctBackendVariational(fit$model_spec)) return(NULL)
+  r <- tryCatch(.ctJuliaGet(.ctJuliaCall("ContinuousTimeSEM.ctsem_variational_evaluate",
+    .ctJuliaObjective(fit), .ctJuliaNumericVector(as.numeric(fit$estimate$raw)),
+    gradient = FALSE, keep = FALSE)), error = function(e) NULL)
+  if (is.null(r)) return(NULL)
+  as.numeric(r$unit_loglik)
+}
+
 # A variational fit's log likelihood (`intoverpop = 'variational'`): the
 # random-effects check's integral at the estimate (`.ctLaplaceShiftCheck()` on
 # the Laplace objective underneath), which integrates every unit whatever its
 # width or nesting, with its standard error and the expansion's bound, as a
-# checked Laplace fit reports its own (`.ctLaplaceCheckedLoglik()`). The bound
+# checked Laplace fit reports its own (`.ctLaplaceCheckedLoglik()`); and on
+# each unit at least the unit's bound, which the integral is above wherever
+# the draws do not miss its mass (`.ctLaplaceCheckIntegral()`'s `floor`). The bound
 # the optimiser maximised is kept as `loglik_lowerbound`, which
 # `.ctFitOptimisedLoglik()` reads. Where the fit has a Hessian the check also
 # steps from the estimate towards the integral's maximum, as it does on a
@@ -856,7 +898,8 @@
 .ctVariationalLoglik <- function(fit, cores, draws = 128L, seeds = 1:4,
   quiet = FALSE) {
   check <- .ctBackendWithMaxChunks(cores, .ctLaplaceShiftCheck(fit, draws = draws,
-    seeds = seeds, shiftless = TRUE, carriers = FALSE))
+    seeds = seeds, shiftless = TRUE, carriers = FALSE,
+    floor = .ctVariationalUnitBounds(fit)))
   if (is.null(check)) stop("the check scored every unit at fewer than two seeds")
   units <- check$laplace_units + check$unit_gap
   value <- sum(units)

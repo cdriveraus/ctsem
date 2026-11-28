@@ -5045,12 +5045,15 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   list(ekf = arguments, objective = objective_args, laplace = laplace_args)
 }
 
-# Whether a fit's reports read deviations its subject filter integrates from
-# the objective that integrates them: a Laplace fit's do (subject parameters
-# at the conditional modes, population sds, plug-in trajectories); a sampled
-# fit's effects are draws of every coordinate, so its reports keep the layer.
+# Whether a fit's reports read the effects from the fit's objective rather
+# than the layer: a Laplace fit's do where its subject filter integrates
+# deviations (subject parameters at the conditional modes, population sds,
+# plug-in trajectories), and a variational fit's always, from its
+# approximations; a sampled fit's effects are draws of every coordinate, so its
+# reports keep the layer.
 .ctBackendHybridReports <- function(spec) {
-  !is.null(spec$laplace$hybrid) && !identical(.ctBackendIntOverPop(spec), "none")
+  (!is.null(spec$laplace$hybrid) || .ctBackendVariational(spec)) &&
+    !identical(.ctBackendIntOverPop(spec), "none")
 }
 
 .ctJuliaObjective <- function(object, layer = FALSE) {

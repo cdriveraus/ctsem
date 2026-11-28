@@ -437,7 +437,8 @@ end
 """A unit's family: Gaussian on its block tree, or shaped on one block; the
 family's parameters' blocks (the unit's tree over them, `pblocks`, with each
 parameter's block and place in it), each coordinate's mean, log diagonal and
-row parameters (Gaussian), and its members."""
+row parameters (Gaussian) with the coordinate each multiplies (`rowc`), and
+its members."""
 struct CTSEMVLayout
     shaped::Union{Nothing,CTSEMVFamily}
     d::Int
@@ -448,6 +449,7 @@ struct CTSEMVLayout
     im::Vector{Int}
     ild::Vector{Int}
     rowp::Vector{Vector{Int}}
+    rowc::Vector{Vector{Int}}
     members::Vector{_VFMember}
     rule::Symbol
 end
@@ -530,8 +532,8 @@ function _vf_tree_layout(laplace::CTSEMLaplaceObjective, U::Int, rule::Symbol, s
         push!(members, _VFMember(mm, chain, plist, [local_of(im[i]) for i in chain],
             [local_of(ild[i]) for i in chain], jrow, Z, w))
     end
-    return CTSEMVLayout(nothing, d, at, pblocks, pblock, plocal, im, ild, rowp, members,
-        rule)
+    return CTSEMVLayout(nothing, d, at, pblocks, pblock, plocal, im, ild, rowp, rowc,
+        members, rule)
 end
 
 """The shaped family on unit `U`, one block of `f.d` coordinates: every
@@ -547,7 +549,7 @@ function _vf_shaped_layout(laplace::CTSEMLaplaceObjective, U::Int, f::CTSEMVFami
         Z, w) for mm in eachindex(laplace.units.members[U])]
     pblocks = [CTSEMLaplaceBlock(0, f.p, blocks[1].members, blocks[1].level, Int[])]
     return CTSEMVLayout(f, f.d, f.p, pblocks, fill(1, f.p), collect(1:f.p), Int[], Int[],
-        Vector{Int}[], members, :product)
+        Vector{Int}[], Vector{Int}[], members, :product)
 end
 
 # ---- a unit's terms --------------------------------------------------------------------
@@ -1349,9 +1351,8 @@ function _ctsem_take_search_modes!(V::CTSEMVariational, x::AbstractVector, found
         base = isempty(V.shares[U]) ? _vf_solve(V, U, ctx, V.lam[U]) :
             _vf_solve_held(V, U, ctx, V.lam[U], V.shares[U])
         isfinite(base.e.B) || return true
-        f = CTSEMVFamily(lay0.d, true; bend=true)
-        lay = _vf_shaped_layout(laplace, U, f, 5)
-        lam0 = vcat(base.lam, zeros(f.p - lay0.p))
+        lay = _vf_bend_layout(laplace, U, lay0.d)
+        lam0 = vcat(base.lam, zeros(lay.p - lay0.p))
         # Solved on the bending layout without touching the unit's own.
         trial = _VFOne(V, U, lay)
         s = _vf_solve(trial, U, ctx, lam0)
@@ -1489,6 +1490,141 @@ made at `values`; for a caller outside an optimisation.
 """
 ctsem_variational_choose!(V::CTSEMVariational, values::AbstractVector) =
     _ctsem_take_search_modes!(V, collect(Float64, values), nothing)
+
+# ---- a fit's approximations, kept with it -----------------------------------------------
+
+# A unit's bending family, as the family by need takes it.
+_vf_bend_layout(laplace::CTSEMLaplaceObjective, U::Int, d::Int) =
+    _vf_shaped_layout(laplace, U, CTSEMVFamily(d, true; bend=true), 5)
+
+# Which of its two families a unit holds: 0 the one it starts on, 1 the bending
+# family the family by need gave it.
+_vf_kind(V::CTSEMVariational, U::Int) = V.layouts[U] === V.start[1][U] ? 0 : 1
+
+"""
+    _ctsem_anchor_modes(V::CTSEMVariational; known = true)
+
+The accepted approximations, reported as a run's modes are
+(`_ctsem_fit_modes`), so that R keeps them on the fit as its modes
+(R/ctJuliaFitModes.R) and every stage that reads the fit holds them (`ctsem_laplace_hold_modes!`):
+unit `units[j]`'s family (`_vf_kind`) and then its parameters, in column `j`
+of a NaN-padded matrix. A column is `1 + p` long against a unit's `d` effects,
+so a Laplace objective, which takes a mode only at its unit's length, passes
+over them. Nothing before the first accepted point.
+"""
+function _ctsem_anchor_modes(V::CTSEMVariational; known::Bool=true)
+    V.accepted || return nothing
+    n = length(V.layouts)
+    n == 0 && return nothing
+    values = fill(NaN, 1 + maximum(l -> l.p, V.layouts), n)
+    for U in 1:n
+        values[1, U] = _vf_kind(V, U)
+        values[1 .+ (1:length(V.lam[U])), U] .= V.lam[U]
+    end
+    return (units=collect(1:n), values=values)
+end
+
+# The approximations that columns of `modes` give (`_ctsem_anchor_modes`):
+# each unit's family and parameters where a column fits it.
+function _vf_state_from(V::CTSEMVariational, units::AbstractVector, modes::AbstractMatrix)
+    n = length(V.layouts)
+    M = Matrix{Float64}(modes)
+    layouts = copy(V.layouts)
+    lam = [copy(l) for l in V.lam]
+    pending = copy(V.pending)
+    given = fill(false, n)
+    for (j, U) in enumerate(units)
+        (1 <= U <= n && j <= size(M, 2) && !given[U]) || continue
+        col = _laplace_known_column(M, j)
+        (length(col) >= 2 && all(isfinite, col)) || continue
+        kind = round(Int, col[1])
+        start = V.start[1][U]
+        lay = if kind == 0
+            start
+        elseif kind == 1 && V.start[2][U]
+            V.layouts[U] === start ? _vf_bend_layout(V.laplace, U, start.d) : V.layouts[U]
+        else
+            continue
+        end
+        length(col) - 1 == lay.p || continue
+        layouts[U] = lay
+        lam[U] = col[2:end]
+        pending[U] = kind == 0 && V.start[2][U]
+        given[U] = true
+    end
+    return (layouts=layouts, lam=lam, pending=pending, given=given, count=count(given))
+end
+
+# Puts approximations in place as the accepted ones at the free parameters
+# `at`, their held curvature to be formed afresh. Where every unit is given
+# what the objective already accepts, nothing changes, the held curvature and
+# the last Hessian's derivative included. Returns whether anything changed.
+function _vf_put_state!(V::CTSEMVariational, s, at::Vector{Float64})
+    changed = !V.accepted
+    for U in eachindex(V.layouts)
+        s.given[U] || continue
+        V.accepted && s.layouts[U] === V.layouts[U] && s.lam[U] == V.lam[U] && continue
+        changed = true
+        V.layouts[U] = s.layouts[U]
+        V.pending[U] = s.pending[U]
+        V.lam[U] = copy(s.lam[U])
+        V.shares[U] = Matrix{Float64}[]
+        V.lam_trial[U] = copy(s.lam[U])
+        V.shares_trial[U] = Matrix{Float64}[]
+    end
+    changed || return false
+    V.dlam = nothing
+    V.theta_acc = copy(at)
+    V.accepted = true
+    V.has_trial = false
+    return true
+end
+
+# The state each hold replaced (`ctsem_laplace_hold_modes!`), innermost last,
+# and whether it replaced anything.
+const _VF_HOLDS = IdDict{Any,Vector{Any}}()
+const _VF_HOLDS_LOCK = ReentrantLock()
+
+"""
+    ctsem_laplace_hold_modes!(V::CTSEMVariational, values, units, modes)
+    ctsem_laplace_release_modes!(V::CTSEMVariational)
+
+Holds a variational fit's approximations (`_ctsem_anchor_modes`, kept on the
+fit as its modes) as the accepted ones, at the fit's estimate `values`, until
+the release. Every evaluation of a stage that reads the fit then starts each
+unit from the fit's own approximation, so the value is the parameters' given
+the fit, in any session and after any other stage on the objective, as the
+Laplace route's held modes make its value. A unit whose bound has two optima
+follows the one its start leads to. Where the objective already holds them
+(the session that fitted), nothing changes. The release puts back what the
+hold replaced. Returns the units held.
+"""
+function ctsem_laplace_hold_modes!(V::CTSEMVariational, values::AbstractVector,
+    units::AbstractVector, modes::AbstractMatrix)
+    s = _vf_state_from(V, units, modes)
+    s.count == 0 && return 0
+    kept = ctsem_variational_snapshot(V)
+    changed = _vf_put_state!(V, s, collect(Float64, values))
+    lock(_VF_HOLDS_LOCK) do
+        push!(get!(() -> Any[], _VF_HOLDS, V), (kept, changed))
+    end
+    return s.count
+end
+
+function ctsem_laplace_release_modes!(V::CTSEMVariational)
+    left, under = lock(_VF_HOLDS_LOCK) do
+        stack = get(_VF_HOLDS, V, Any[])
+        under = isempty(stack) ? nothing : pop!(stack)
+        isempty(stack) && delete!(_VF_HOLDS, V)
+        (length(stack), under)
+    end
+    if under !== nothing && under[2]
+        lbfgs = V.lbfgs
+        ctsem_variational_restore!(V, under[1])
+        V.lbfgs = lbfgs
+    end
+    return left
+end
 
 # ---- the optimisable protocol -----------------------------------------------------------
 
@@ -1714,9 +1850,15 @@ _ctsem_optimise_result_extra(V::CTSEMVariational, final, log) =
 
 # Within an optimisation each evaluation starts from the approximations the
 # last accepted point left; the per-step callback accepts the last
-# evaluation's.
+# evaluation's. A run on an objective with none accepted -- a new session's,
+# a resume from a checkpoint -- starts from the approximations it is handed
+# (`_ctsem_anchor_modes`, as a checkpoint keeps them), where it is handed any.
 function _ctsem_anchor_start!(V::CTSEMVariational, x::AbstractVector;
     resume_units=nothing, resume_values=nothing)
+    if !V.accepted && resume_units !== nothing && resume_values !== nothing
+        s = _vf_state_from(V, resume_units, resume_values)
+        s.count > 0 && _vf_put_state!(V, s, collect(Float64, x))
+    end
     V.accepted || ctsem_variational_evaluate(V, x)
     V.running = true
     return nothing
@@ -1752,11 +1894,191 @@ function ctsem_laplace_evaluate(V::CTSEMVariational, values::AbstractVector;
     return ctsem_variational_evaluate(V, values; gradient=gradient)
 end
 
-# The readers of the effects, the plans made before a fit (substeps,
-# relinearisation), generation, and the random-effects check whose integral a
-# variational fit reports, take the Laplace objective the bound is built on:
-# a variational fit reports each unit's effects at their conditional modes
-# there, at the fit's estimate. What reads the objective's value per unit or
+# ---- what a variational fit reports of the effects --------------------------------------
+
+"""
+    _vf_unit_mean(lay, lam)
+    _vf_unit_draw(lay, lam, z)
+
+A unit's approximation at its parameters `lam`: the mean of its effects, in the
+unit's coordinates as a Laplace objective's modes are, and its effects at the
+standard normal `z`. The Gaussian tree family's mean is its `m`; a shaped
+family's is taken through its map on a product rule of 9 nodes a coordinate.
+"""
+function _vf_unit_mean(lay::CTSEMVLayout, lam::AbstractVector)
+    lay.shaped === nothing && return collect(Float64, lam[lay.im])
+    f = lay.shaped
+    Z, w = _vf_rule_product(f.d, 9)
+    m = zeros(f.d)
+    for k in axes(Z, 2)
+        m .+= w[k] .* _vf_map_generic(f, lam, view(Z, :, k))[1]
+    end
+    return m
+end
+
+function _vf_unit_draw(lay::CTSEMVLayout, lam::AbstractVector, z::AbstractVector)
+    lay.shaped === nothing || return collect(Float64, _vf_map_generic(lay.shaped, lam, z)[1])
+    u = lam[lay.im] .+ exp.(lam[lay.ild]) .* z
+    for i in 1:lay.d, t in eachindex(lay.rowp[i])
+        u[i] += lam[lay.rowp[i][t]] * z[lay.rowc[i][t]]
+    end
+    return u
+end
+
+# Each unit's approximation at `values`, solved from the accepted ones as an
+# evaluation outside a run solves them, and nothing kept.
+function _vf_solved(V::CTSEMVariational, values::AbstractVector)
+    kept = (copy(V.lam_trial), copy(V.shares_trial), V.has_trial, copy(V.unit_value),
+        copy(V.theta_trial))
+    r = _vf_evaluate(V, collect(Float64, values), false, false, nothing, false)
+    lam = [copy(l) for l in V.lam_trial]
+    V.lam_trial, V.shares_trial, V.has_trial, V.unit_value, V.theta_trial = kept
+    r.converged || throw(ErrorException(
+        "the variational bound cannot be evaluated at these parameters"))
+    return lam
+end
+
+# Each subject's raw vector, before TI-predictor effects, at its unit's
+# effects `us[U]`, with the levels inside `from_level` left out; the
+# deviations its filter integrates at their conditional modes given those
+# effects, as `ctsem_laplace_subject_values` puts them at the modes, and with
+# `rng` a draw from their conditional posterior about them.
+function _vf_shifted_values(V::CTSEMVariational, theta::Vector{Float64},
+    Ls::Vector{Matrix{Float64}}, us, from_level::Integer; rng=nothing)
+    laplace = V.laplace
+    shifted = _laplace_shifted_values(laplace, theta, Ls, U ->
+        _laplace_restrict_levels(laplace, U, us[U], from_level))
+    h = laplace.objective.params.hybrid
+    (from_level <= 1 && _hybrid_on(h)) || return shifted
+    lv = laplace.spec.levels[1]
+    B = _hybrid_dev_map(h, lv, theta)
+    aws = _laplace_workspace!(laplace, Float64, length(theta))
+    for U in eachindex(laplace.units.members)
+        hook = _hybrid_member_modes(laplace, U, theta, Ls, us[U], aws)
+        if hook === nothing
+            for i in laplace.units.members[U]
+                shifted[i, :] .= NaN
+            end
+            continue
+        end
+        for (m, i) in enumerate(laplace.units.members[U])
+            d = copy(hook.dhat[m])
+            if rng !== nothing && !isempty(d)
+                F = cholesky(Symmetric((hook.A[m] .+ transpose(hook.A[m])) ./ 2); check=false)
+                issuccess(F) && (d .+= F.U \ randn(rng, length(d)))
+            end
+            for (c, k) in enumerate(hook.items[m]), p in axes(B, 1)
+                b = B[p, k]
+                iszero(b) || (shifted[i, lv.re_index[p]] += b * d[c])
+            end
+        end
+    end
+    return shifted
+end
+
+"""
+    ctsem_laplace_subject_values(V::CTSEMVariational, values; from_level = 1,
+        ti_effects = true)
+
+Each subject's own raw parameter vector on a variational fit: the population
+vector shifted by the mean of its unit's approximation at `values` (solved
+from the accepted approximations), the deviations its filter integrates at
+their conditional modes given that, and then its TI-predictor effects. A
+Laplace objective's method puts the effects at their modes; the approximation
+is this fit's posterior of them, and where a unit's posterior is skewed or
+bent (a wall, a random drift on short records) its mean and the mode differ.
+`ti_effects` and `from_level` as there. `nsubjects x length(values)`.
+"""
+function ctsem_laplace_subject_values(V::CTSEMVariational, values::AbstractVector;
+    from_level::Integer=1, ti_effects::Bool=true)
+    laplace = V.laplace
+    lam = _vf_solved(V, values)
+    theta = _laplace_extend(laplace, collect(Float64, values))
+    Ls = [Matrix{Float64}(M) for M in _laplace_popchols(theta, laplace.spec)]
+    us = [_vf_unit_mean(V.layouts[U], lam[U]) for U in eachindex(lam)]
+    shifted = _vf_shifted_values(V, theta, Ls, us, from_level)
+    return ti_effects ? _laplace_add_ti_effects(laplace, shifted) : shifted
+end
+
+"""
+    ctsem_laplace_subject_values(V::CTSEMVariational, draws, thetahat;
+        ti_effects = true, conditional = false, seed = 1, from_level = 1)
+
+Each subject's raw vector at every draw of the parameters, as the Laplace
+objective's method of this form gives them: each unit's approximation at the
+draw, linearised about `thetahat` by the last Hessian's derivative of it where
+the objective holds one there (`V.dlam`) and otherwise held at `thetahat`'s,
+and its mean, or with `conditional` a draw from it (plausible values); the
+deviations the filter integrates at their conditional modes given the drawn
+effects, and with `conditional` drawn from their conditional posterior. The
+effects take `seed`'s stream alone, so the same seed at two `from_level`s
+makes the same draw of them. `ndraws x nsubjects x npar`.
+"""
+function ctsem_laplace_subject_values(V::CTSEMVariational, draws::AbstractMatrix,
+    thetahat::AbstractVector; ti_effects::Bool=true, conditional::Bool=false,
+    seed::Integer=1, from_level::Integer=1)
+    laplace = V.laplace
+    centre = collect(Float64, thetahat)
+    n = length(centre)
+    lam0 = _vf_solved(V, centre)
+    linear = V.dlam !== nothing && V.accepted && length(V.theta_acc) == n &&
+        _laplace_maxabsdiff(V.theta_acc, centre) <= 1e-8 * max(1.0, maximum(abs, centre))
+    draws = _laplace_extend_rows(laplace, draws)
+    rng = MersenneTwister(seed)
+    rngd = MersenneTwister(hash((seed, :deviations)))
+    nd = size(draws, 1)
+    out = zeros(Float64, nd, length(laplace.objective.subject_objectives), size(draws, 2))
+    for s in 1:nd
+        theta = collect(Float64, view(draws, s, :))
+        Ls = [Matrix{Float64}(M) for M in _laplace_popchols(theta, laplace.spec)]
+        step = view(theta, 1:n) .- centre
+        us = Vector{Vector{Float64}}(undef, length(V.layouts))
+        for U in eachindex(V.layouts)
+            lay = V.layouts[U]
+            lam = linear ? V.lam[U] .+ V.dlam[U] * step : lam0[U]
+            us[U] = conditional ? _vf_unit_draw(lay, lam, randn(rng, lay.d)) :
+                _vf_unit_mean(lay, lam)
+        end
+        shifted = _vf_shifted_values(V, theta, Ls, us, from_level;
+            rng=conditional ? rngd : nothing)
+        out[s, :, :] = ti_effects ? _laplace_add_ti_effects(laplace, shifted) : shifted
+    end
+    return out
+end
+
+"""
+    ctsem_kalman(V::CTSEMVariational, values; from_level = 1, subject_values = nothing,
+        kwargs...)
+
+The Laplace objective's Kalman pass at each subject's values from the fit's
+approximations (`ctsem_laplace_subject_values` above) where the caller hands
+none.
+"""
+function ctsem_kalman(V::CTSEMVariational, values::AbstractVector; from_level::Integer=1,
+    subject_values::Union{Nothing,AbstractMatrix}=nothing, kwargs...)
+    if subject_values === nothing
+        subject_values = ctsem_laplace_subject_values(V, values; from_level=from_level,
+            ti_effects=false)
+    end
+    return ctsem_kalman(V.laplace, values; from_level=from_level,
+        subject_values=subject_values, kwargs...)
+end
+
+# One draw of `ctsem_kalman_subject_matrices` on a variational fit's objective.
+function _kalman_draw_subject_matrices(V::CTSEMVariational, draws::AbstractMatrix,
+    d::Integer, subject_values, from_level::Integer)
+    rows = subject_values === nothing ? nothing :
+        Matrix{Float64}(view(subject_values, d, :, :))
+    return ctsem_kalman(V, Vector{Float64}(view(draws, d, :)); from_level=from_level,
+        subject_matrices=true, fields=["subject_loglik"],
+        subject_values=rows).subject_matrices
+end
+
+# The plans made before a fit (substeps, relinearisation), generation, the
+# predictions from each subject's earlier rows, and the random-effects check
+# whose integral a variational fit reports, take the Laplace objective the
+# bound is built on. Each subject's effects and the Kalman pass at them are
+# the approximations' (above). What reads the objective's value per unit or
 # per row -- LOO's unit terms, the score tests' Hessian columns and row
 # scores -- reads the bound (variational_readers.jl); the joint samplers take
 # the Laplace objective's joint target.

@@ -58,7 +58,12 @@ TanHybRow(n::Int, mo::Int, nh::Int, W::Int) = TanHybRow{W}(
 """
 A subject's hybrid state and its closing's scratch: the columns `X` and the
 cotangent `Xbar` they carry back; `S`, `s`; and `Sbar`, `sbar`, `Gbar`, the
-closing term's cotangents, which the reverse walk reads at every row.
+closing term's cotangents, which the reverse walk reads at every row. A fold
+(`_tan_fold_start!`) keeps its factor in the latents' rows in `C` and takes
+its cotangent in `Cbar`, both `n x nh`: in `Xc` and `Tc`, the closing's
+`nh x nh` scratch, a model with more latents than folded initial means read
+past them, and the Julia session died fitting one (two processes, ordinal
+items, one initial mean varying).
 """
 struct TanHybState{W}
     X::TanMat{W}; Xt::TanMat{W}; Xbar::TanMat{W}
@@ -68,12 +73,13 @@ struct TanHybState{W}
     b::TanVec{W}; beta::TanVec{W}
     Sbar::TanMat{W}; sbar::TanVec{W}; Gbar::TanMat{W}
     col::TanVec{W}; inc::TanVec{W}; sv::TanVec{W}
+    C::TanMat{W}; Cbar::TanMat{W}
 end
 function TanHybState(n::Int, nh::Int, W::Int)
     T, V = TanMat{W}, TanVec{W}
     return TanHybState{W}(T(n, nh), T(n, nh), T(n, nh), T(nh, nh), V(nh),
         (T(nh, nh) for _ in 1:8)..., zeros(nh, nh), V(nh), V(nh), T(nh, nh), V(nh),
-        T(nh, nh), V(n), V(n), V(n))
+        T(nh, nh), V(n), V(n), V(n), T(n, nh), T(n, nh))
 end
 
 """

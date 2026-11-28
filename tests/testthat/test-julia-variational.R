@@ -298,6 +298,120 @@ test_that("persons in studies with a random drift: the bound lies below the inte
   expect_lte(e$loglik_lowerbound, e$loglik + 4 * e$loglik_se + e$loglik_bound)
 })
 
+test_that("a variational fit's subject effects are its approximations' means", {
+  skip_on_cran()
+  skip_without_julia()
+  vf <- .vf_fit("nonlinear", "variational")
+  est <- as.numeric(vf$estimate$raw)
+  V <- ctsem:::.ctJuliaObjective(vf)
+  # Each person's posterior mean of their drift effect by a dense grid of
+  # their exact integrand, against the mean of their approximation and the
+  # mode Laplace reports, in posterior sds.
+  ctsem:::.ctJuliaEval(paste(
+    "function _vf_test_means(V, x)",
+    "  C = ContinuousTimeSEM",
+    "  lap = V.laplace",
+    "  lam = C._vf_solved(V, x)",
+    "  theta = C._laplace_extend(lap, collect(Float64, x))",
+    "  Ls = [Matrix{Float64}(M) for M in C._laplace_popchols(theta, lap.spec)]",
+    "  aws = C._laplace_workspace!(lap, Float64, length(theta))",
+    "  grid = collect(-8.0:0.005:8.0)",
+    "  out = zeros(length(lam), 4)",
+    "  for U in eachindex(lam)",
+    "    g = [C._laplace_unit_objective_gradient(lap, U, theta, Ls, [u], aws).value for u in grid]",
+    "    w = exp.(g .- maximum(g)); w ./= sum(w)",
+    "    ex = sum(w .* grid)",
+    "    out[U, :] = [C._vf_unit_mean(V.layouts[U], lam[U])[1],",
+    "      C._laplace_newton_unit_mode(lap, U, theta, Ls, aws, zeros(1)).u[1], ex,",
+    "      sqrt(sum(w .* (grid .- ex) .^ 2))]",
+    "  end",
+    "  out",
+    "end", sep = "\n"))
+  r <- matrix(as.numeric(ctsem:::.ctJuliaCall("Main._vf_test_means", V,
+    ctsem:::.ctJuliaNumericVector(est))), ncol = 4)
+  expect_lt(max(abs(r[, 1] - r[, 3]) / r[, 4]), 0.01)
+  expect_gt(stats::median(abs(r[, 2] - r[, 3]) / r[, 4]), 0.05)
+  # Each subject's raw drift is the population's shifted by that mean.
+  module <- ctsem:::.ctJuliaModule(vf$model_spec$project)
+  sv <- as.matrix(ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_subject_values(V,
+    ctsem:::.ctJuliaNumericVector(est), ti_effects = FALSE)))
+  drift <- match("drift", ctsem:::.ctBackendRawParameterNames(vf, length(est)))
+  expect_equal(cor(sv[, drift], r[, 1]), 1, tolerance = 1e-6)
+  # And the readers of the effects run on them.
+  expect_equal(dim(ctSubjectPars(vf)), c(1L, 40L, 1L))
+  expect_true(nrow(suppressMessages(ctKalman(vf, subjects = 1:2))) > 0)
+  ex <- ctExtract(vf, subjectMatrices = TRUE, nsamples = 10)
+  expect_false(is.null(ex))
+})
+
+# A person-specific loading whose sign the data barely say: each person's
+# posterior has two maxima, one each side of zero (test-julia-laplace-modes.R's
+# sign fixture), so each unit's bound has an optimum near each.
+.vf_sign_data <- function() {
+  set.seed(3)
+  n <- 12; nt <- 8
+  d <- data.frame(id = rep(1:n, each = nt), time = rep(0:(nt - 1), n))
+  lambda <- 1.5 * sample(c(-1, 1), n, TRUE)
+  eta <- unlist(lapply(1:n, function(i) {
+    e <- numeric(nt)
+    e[1] <- stats::rnorm(1)
+    for (t in 2:nt) e[t] <- 0.6 * e[t - 1] + stats::rnorm(1, 0, 0.8)
+    e
+  }))
+  d$Y1 <- lambda[d$id] * eta + stats::rnorm(n * nt, 0, 0.3)
+  d
+}
+
+.vf_sign_model <- function() {
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", id = "id",
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix("lambda"),
+    DRIFT = matrix(-0.5), DIFFUSION = matrix(0.8), MANIFESTVAR = matrix(0.3),
+    MANIFESTMEANS = matrix(0), T0MEANS = matrix(0), T0VAR = matrix(1),
+    CINT = matrix(0))))
+  m$pars$indvarying <- m$pars$param %in% "lambda"
+  m$pars$transform[m$pars$param %in% "lambda"] <- "param"
+  m
+}
+
+test_that("a variational fit keeps its approximations, and a stage that reads it holds them", {
+  skip_on_cran()
+  skip_without_julia()
+  set.seed(1)
+  vf <- suppressWarnings(suppressMessages(ctFit(.vf_sign_data(), .vf_sign_model(),
+    backend = "julia", intoverpop = "variational", cores = 2)))
+  e <- vf$estimate
+  modes <- ctsem:::.ctJuliaFitModes(vf)
+  expect_identical(modes$units, 1:12)
+  spec <- structure(vf$model_spec, class = c("ctJuliaModel", "ctFitModel"))
+  V <- ctsem:::.ctJuliaObjective(spec)
+  value <- function(x) as.numeric(ctJuliaEvaluate(spec, x, gradient = FALSE,
+    cores = 1L)$value)
+  at <- value(e$raw)
+  # Outside a run an evaluation keeps nothing, so a line through the estimate
+  # reads the same whichever way it is walked, and without a jump.
+  grid <- e$raw[1] + seq(-2, 2, by = 0.25)
+  out <- vapply(grid, function(a) value(c(a, e$raw[2])), numeric(1))
+  back <- rev(vapply(rev(grid), function(a) value(c(a, e$raw[2])), numeric(1)))
+  expect_identical(out, back)
+  bend <- abs(diff(out, differences = 2))
+  expect_lt(max(bend), 2 * stats::median(bend))
+  # An objective that has forgotten them (as a new session's has), read first
+  # at the mirrored loading, follows other optima; the fit's held
+  # approximations give the fit's value back.
+  reset <- function() invisible(ctsem:::.ctJuliaCall(
+    "ContinuousTimeSEM.ctsem_variational_reset!", V))
+  reset()
+  invisible(value(c(-e$raw[1], e$raw[2])))
+  held <- local({
+    expect_identical(ctsem:::.ctJuliaHoldModes(spec, modes), 12L)
+    value(e$raw)
+  })
+  expect_equal(held, at, tolerance = 1e-6)
+  # The reported integral is at least the bound wherever the draws, centred on
+  # one of Laplace's maxima, would have missed the other's mass.
+  expect_gte(e$loglik, e$loglik_lowerbound - 3 * e$loglik_se)
+})
+
 test_that("intoverpop = 'variational' is refused where it cannot apply", {
   skip_on_cran()
   expect_error(suppressWarnings(suppressMessages(ctFit(.vf_linear_data(5, 3),
