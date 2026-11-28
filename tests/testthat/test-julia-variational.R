@@ -407,6 +407,14 @@ test_that("a variational fit keeps its approximations, and a stage that reads it
     value(e$raw)
   })
   expect_equal(held, at, tolerance = 1e-6)
+  # An objective built for the stored fit, as a new session builds it, starts
+  # from the fit's approximations, so read first at the mirrored loading it
+  # still gives the fit's value at the estimate.
+  cache <- get(".ct_julia_cache", envir = asNamespace("ctsem"))
+  cache$objectives <- new.env(parent = emptyenv())
+  invisible(ctsem:::.ctJuliaObjective(vf))
+  invisible(value(c(-e$raw[1], e$raw[2])))
+  expect_equal(value(e$raw), at, tolerance = 1e-6)
   # The reported integral is at least the bound wherever the draws, centred on
   # one of Laplace's maxima, would have missed the other's mass.
   expect_gte(e$loglik, e$loglik_lowerbound - 3 * e$loglik_se)

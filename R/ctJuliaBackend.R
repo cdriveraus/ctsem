@@ -5081,6 +5081,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       if (inherits(object, "ctJuliaFit")) plain$model_spec <- spec else plain <- spec
       objective <- do.call(module$ctsem_variational, c(list(.ctJuliaObjective(plain)),
         lapply(settings, .ctJuliaMarshal)))
+      # Built for a stored fit (a new session's): from the fit's own
+      # approximations, its modes (R/ctJuliaFitModes.R), rather than every
+      # unit solved from the prior at its first evaluation.
+      modes <- if (inherits(object, "ctJuliaFit")) .ctJuliaFitModes(object)
+      if (!is.null(modes)) try(.ctJuliaCall("ContinuousTimeSEM.ctsem_variational_start!",
+        objective, .ctJuliaNumericVector(modes$at),
+        .ctJuliaVector(as.integer(modes$units)), modes$values), silent = TRUE)
       return(.ctJuliaCacheStore(key, objective))
     }
   }

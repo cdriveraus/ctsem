@@ -81,7 +81,7 @@ Laplace objective underneath), which integrates nested units block by block.
 export ctsem_variational, ctsem_variational_info, ctsem_variational_reset!,
     ctsem_variational_choose!, ctsem_set_variational_predict!,
     ctsem_variational_snapshot, ctsem_variational_restore!,
-    ctsem_variational_tolerance!
+    ctsem_variational_tolerance!, ctsem_variational_start!
 
 # ---- the shaped family (one block, at most three coordinates) ----------------------
 
@@ -1580,6 +1580,26 @@ function _vf_put_state!(V::CTSEMVariational, s, at::Vector{Float64})
     return true
 end
 
+"""
+    ctsem_variational_start!(V, values, units, modes)
+
+Starts an objective that has accepted nothing from a fit's approximations
+(`_ctsem_anchor_modes`, kept on the fit as its modes), at the fit's estimate
+`values`. R does this where it builds the objective for a stored fit, so a
+reader in a new session starts each unit from the fit's own approximation
+rather than solving it from the prior, which at width is most of a fit and
+on a unit with two optima need not find the fit's. A resume from a
+checkpoint starts so too (`_ctsem_anchor_start!`). Returns the units
+started, 0 where the objective has accepted approximations already.
+"""
+function ctsem_variational_start!(V::CTSEMVariational, values::AbstractVector,
+    units::AbstractVector, modes::AbstractMatrix)
+    V.accepted && return 0
+    s = _vf_state_from(V, units, modes)
+    s.count > 0 && _vf_put_state!(V, s, collect(Float64, values))
+    return s.count
+end
+
 # The state each hold replaced (`ctsem_laplace_hold_modes!`), innermost last,
 # and whether it replaced anything.
 const _VF_HOLDS = IdDict{Any,Vector{Any}}()
@@ -1855,10 +1875,8 @@ _ctsem_optimise_result_extra(V::CTSEMVariational, final, log) =
 # (`_ctsem_anchor_modes`, as a checkpoint keeps them), where it is handed any.
 function _ctsem_anchor_start!(V::CTSEMVariational, x::AbstractVector;
     resume_units=nothing, resume_values=nothing)
-    if !V.accepted && resume_units !== nothing && resume_values !== nothing
-        s = _vf_state_from(V, resume_units, resume_values)
-        s.count > 0 && _vf_put_state!(V, s, collect(Float64, x))
-    end
+    resume_units === nothing || resume_values === nothing ||
+        ctsem_variational_start!(V, x, resume_units, resume_values)
     V.accepted || ctsem_variational_evaluate(V, x)
     V.running = true
     return nothing
