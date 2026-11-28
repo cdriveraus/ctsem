@@ -397,8 +397,9 @@
 # maximised. Within its error a unit keeps its integral: the bound is a bound
 # to its rule's error, and over 1,000 units of the simulated pair
 # (review/LAPLACE-plateau-credit-2026-11-25.md) it lay 0.5 nats above the
-# integral, so a floor at the bound itself took every unit whose draws fell
-# below it and would have raised the sum by about two nats.
+# integral, so a floor at the bound itself would take every unit whose draws
+# fall below it, about 0.4 of a unit's error each: some two nats over 1,000
+# such units (estimated).
 .ctLaplaceCheckIntegral <- function(r, scored, floor = NULL) {
   laplace_units <- as.numeric(r$laplace_unit)
   checked <- matrix(as.numeric(r$check_unit), nrow = length(laplace_units))
