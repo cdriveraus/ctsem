@@ -521,7 +521,7 @@ function _tan_sweep!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     _tan_copy!(P, mod.T0V)
     # Initial means folded into the first state (`_hybrid_fold!`); R folds
     # none where the first state is stationary.
-    mod.fold && _tan_fold_start!(P, hs.Xc, mod)
+    mod.fold && _tan_fold_start!(P, hs.C, mod)
     _tan_hcols(mod) && _tan_hybrid_start!(hs, mod.hyb)
     elements = _stationary_elements_on(sp.stationary_elements)
     if shared && R.bkind != 0
@@ -718,7 +718,7 @@ function _tan_sweep!(acc::TanAcc{W}, Hb::Matrix{Float64}, sw::TanSweep{W},
     # the closing's is.
     if mod.fold
         _tan_zero!(hs.Gbar)
-        _tan_fold_reverse!(hs.Gbar, hs.Tc, rv.Ps, hs.Xc, mod, 1.0)
+        _tan_fold_reverse!(hs.Gbar, hs.Cbar, rv.Ps, hs.C, mod, 1.0)
     end
     # The hybrid factor's cotangent, kept in `acc` past the flushes, which
     # leave it.

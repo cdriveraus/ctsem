@@ -1448,6 +1448,15 @@ test_that("beside a categorical indicator the filter integrates initial means al
     expect_equal(rh$value, fw$value, tolerance = 1e-10)
     expect_equal(as.numeric(rh$gradient), as.numeric(fw$gradient), tolerance = 1e-6)
   }
+  # One process's initial mean folded beside two latents: the fold's factor
+  # is two latents by one deviation, where the cases above have it square.
+  one <- .pu_spec(d, .pu_fold_model(c("t0m1", "cint1", "cint2")))
+  expect_equal(one$laplace$hybrid$kind, 2L)
+  x <- rnorm(length(.pu_names(one)), 0, 0.3)
+  rh <- .pu_eval(one, x)
+  fw <- .pu_eval(one, x, "forward")
+  expect_equal(rh$value, fw$value, tolerance = 1e-10)
+  expect_equal(as.numeric(rh$gradient), as.numeric(fw$gradient), tolerance = 1e-6)
 })
 
 test_that("initial means alone are folded as the augmented route integrates them", {
